@@ -148,6 +148,10 @@ pub struct PersonaSnapshotExportedCopy {
     /// The copy edited to issue this version; null for the initial export.
     pub previous_export_id: Option<EntityId>,
     pub memory_pack: PersonaSnapshotMemoryPack,
+    /// The MemoryPack-lite render's exact bytes, as the export issued them
+    /// and its receipt's fingerprint covers them; `memory_pack` is their
+    /// typed view.
+    pub memory_pack_json: String,
     pub markdown: String,
     pub included_row_ids: Vec<String>,
     pub struck_row_ids: Vec<String>,
@@ -164,8 +168,8 @@ pub struct PersonaSnapshotExportedCopy {
 pub struct PersonaSnapshotCopyReceipt {
     /// The ref choice the copy was made under.
     pub refs: CopyRefs,
-    /// blake3 hex over both renders as the export issued them: the
-    /// MemoryPack-lite JSON, a NUL byte, then the markdown.
+    /// blake3 hex over both renders as the export issued them:
+    /// `memory_pack_json`, a NUL byte, then `markdown`.
     pub artifact_fingerprint: String,
     /// The vault ref slots both renders left out (`subject_ref`,
     /// `audience_ref` and `provenance_refs` dropped; `row_id` and
@@ -228,6 +232,7 @@ fn exported_copy(
         previous_export_id,
         memory_pack: serde_json::from_str(&artifact.memory_pack_json)
             .map_err(|_| MemoryError::bad_request("invalid persona MemoryPack JSON"))?,
+        memory_pack_json: artifact.memory_pack_json,
         markdown: artifact.markdown,
         included_row_ids: artifact.included_row_ids,
         struck_row_ids: artifact.struck_row_ids,

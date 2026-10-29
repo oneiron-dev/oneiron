@@ -1311,6 +1311,7 @@ class PersonaSnapshotExportedCopy(TypedDict):
     stamp: str
     previous_export_id: NotRequired[EntityId | None]
     memory_pack: PersonaSnapshotMemoryPack
+    memory_pack_json: str
     markdown: str
     included_row_ids: list[str]
     struck_row_ids: list[str]

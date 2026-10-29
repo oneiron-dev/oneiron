@@ -261,7 +261,7 @@ declare namespace Sdk {
   type PersonaSnapshotMemoryPackRow = { row_id: string; kind: string; text: string; subject_ref?: EntityId | null; provenance_refs?: string[] | null; salience?: number | null; attribution?: string | null };
   type PersonaSnapshotMemoryPack = { schema: string; kind: string; subject_ref?: EntityId | null; identity_line?: string | null; audience_ref?: string | null; takes_included: boolean; compiled_at_secs: number; stale_after_secs: number; persona_compile_stamp: string; rows: PersonaSnapshotMemoryPackRow[] };
   type PersonaSnapshotCopyReceipt = { refs: CopyRefs; artifact_fingerprint: string; omitted_refs: string[] };
-  type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number; receipt: PersonaSnapshotCopyReceipt };
+  type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; memory_pack_json: string; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number; receipt: PersonaSnapshotCopyReceipt };
   type PersonaSnapshotTextEdit = { row_id: string; text: string };
   type PersonaSnapshotCopyEditRequest = { export_id: EntityId; stamp: string; edits: PersonaSnapshotTextEdit[]; strike?: string[]; unstrike?: string[]; travel?: CopyTravelChoice | null };
   type DiaryQueryRequest = { agent: string; reason: string };

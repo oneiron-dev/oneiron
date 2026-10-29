@@ -71,8 +71,8 @@ pub struct SessionRunWait {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionWaitAnswer {
     pub key: WaitKey,
-    /// A reply was delivered to the wait before this call; that first reply
-    /// stands and this one was not delivered.
+    /// Another reply settled the wait first, before this call or beside
+    /// it; that first reply stands and this one was not delivered.
     pub already_answered: bool,
     /// When the reply that stands was delivered.
     pub delivered_at_ms: u64,
@@ -257,23 +257,15 @@ impl SessionCodeRun<'_> {
                 "Enter the run again with self.off_record.execute once it has settled.",
             ));
         }
-        if let Some(delivery) = self.deliveries.delivery(&key)? {
-            return Ok(SessionWaitAnswer {
-                key,
-                already_answered: true,
-                delivered_at_ms: delivery.delivered_at_ms,
-            });
-        }
-        let now = crate::unix_millis_now();
-        self.deliveries.deliver(key.wait_id, reply, now)?;
-        let delivered_at_ms = self
+        // Whose reply stands is the settle's own put-if-absent, so two
+        // concurrent answers never both hear that theirs was delivered.
+        let (won, settled) = self
             .deliveries
-            .delivery(&key)?
-            .map_or(now, |delivery| delivery.delivered_at_ms);
+            .settle_reporting(key.wait_id, reply, crate::unix_millis_now())?;
         Ok(SessionWaitAnswer {
             key,
-            already_answered: false,
-            delivered_at_ms,
+            already_answered: !won,
+            delivered_at_ms: settled.delivered_at_ms,
         })
     }
 }

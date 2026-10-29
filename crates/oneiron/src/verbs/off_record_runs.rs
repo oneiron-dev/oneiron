@@ -158,8 +158,8 @@ pub struct OffRecordWaitAnswered {
     /// 32 hex.
     pub wait_id: String,
     pub generation: u64,
-    /// A reply was already delivered before this call; that first reply
-    /// stands and this one was not delivered.
+    /// Another reply settled the wait first, before this call or beside
+    /// it; that first reply stands and this one was not delivered.
     pub already_answered: bool,
     /// When the reply that stands was delivered (Unix ms). Enter the run
     /// again with `self.off_record.execute` to go on.
