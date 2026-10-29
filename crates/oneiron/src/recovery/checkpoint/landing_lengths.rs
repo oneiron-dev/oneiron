@@ -26,7 +26,8 @@ impl LandingRowLengths {
     pub(super) fn of(image: &CheckpointImage, retired: &BTreeSet<[u8; 16]>) -> Self {
         let mut lengths = BTreeMap::<String, BTreeMap<Vec<u8>, u64>>::new();
         for carried in &image.inline_bodies {
-            if carried.superseded || retired.contains(&carried.instance) {
+            if carried.superseded || retired.contains(&carried.instance) || carried.replay.is_some()
+            {
                 continue;
             }
             let landed = carried
@@ -36,6 +37,14 @@ impl LandingRowLengths {
                 .entry(carried.database.clone())
                 .or_default()
                 .insert(carried.key.clone(), landed);
+        }
+        // FIX 9180: a row or start recomposed from its parts lands at its
+        // grouped length, never one part's (L04 ACKED 03:50).
+        for (key, landed) in super::carried_bodies::replay::landed_lengths(image, retired) {
+            lengths
+                .entry("vault_meta".to_owned())
+                .or_default()
+                .insert(key, landed);
         }
         Self(lengths)
     }

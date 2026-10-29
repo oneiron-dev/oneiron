@@ -348,6 +348,44 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// The vault's resident-run consecutive-try cap (FIX 7748): its row,
+    /// else the shipped three. A fail-closed manifest reads the shipped
+    /// row, since the shipped cap grants no extra try.
+    pub(crate) fn resident_run_max_tries(&self) -> u64 {
+        let fallback =
+            crate::gate::policy_values::shipped_default_max_tries("resident_run_max_tries");
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::ResidentRunMaxTries,
+                &PolicyEvaluationScope::default(),
+                PolicyValue::ResidentRunMaxTries(fallback),
+            )
+            .value
+        {
+            PolicyValue::ResidentRunMaxTries(tries) => tries,
+            _ => unreachable!("typed policy key"),
+        }
+    }
+
+    /// The vault's workflow-step consecutive-try cap (FIX 7748): its row,
+    /// else the shipped five. A fail-closed manifest reads the shipped
+    /// row, since the shipped cap grants no extra try.
+    pub(crate) fn workflow_step_max_tries(&self) -> u64 {
+        let fallback =
+            crate::gate::policy_values::shipped_default_max_tries("workflow_step_max_tries");
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::WorkflowStepMaxTries,
+                &PolicyEvaluationScope::default(),
+                PolicyValue::WorkflowStepMaxTries(fallback),
+            )
+            .value
+        {
+            PolicyValue::WorkflowStepMaxTries(tries) => tries,
+            _ => unreachable!("typed policy key"),
+        }
+    }
+
     pub(crate) fn proposal_check_threshold_source(
         &self,
         scope: &PolicyEvaluationScope,

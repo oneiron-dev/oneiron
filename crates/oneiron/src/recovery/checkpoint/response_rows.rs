@@ -22,6 +22,11 @@
 //! whole and opaque (FIX 6227): its descriptor says so, a live instance
 //! lands its exact bytes, and a retired one leaves the explicit erased
 //! marker (a claim, its shell).
+//!
+//! A decoded replay row whose spawns reached resolved targets travels as its
+//! parts instead, each bound and carried on its own ([`replay`], FIX 9180).
+
+mod replay;
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -56,6 +61,9 @@ pub(super) enum Noted {
         digest: [u8; 32],
         opaque: bool,
     },
+    /// A replay row travelling as its parts (FIX 9180): the skeleton its
+    /// image row holds, and each part's descriptor and bytes.
+    Parts(Vec<u8>, Vec<(CarriedInline, Vec<u8>)>),
 }
 
 /// The responses a snapshot's rows hold, and the bindings it read.
@@ -95,6 +103,11 @@ impl ResponseCensus {
         let Some(family) = ResponseFamily::of_row(db, key, value) else {
             return Ok(Noted::Not);
         };
+        if family == ResponseFamily::Replay
+            && let Some(noted) = replay::note_row(self, store, txn, key, value)?
+        {
+            return Ok(noted);
+        }
         let Some((carriage, opaque)) = family.scan(key, value).carriage() else {
             return Ok(Noted::Not);
         };
@@ -171,6 +184,7 @@ pub(super) fn carry(
         landed_len,
         opaque,
         superseded: false,
+        replay: None,
     };
     Ok((carried, body, carriage.stub))
 }
@@ -204,6 +218,10 @@ pub(super) fn bind_in_txn(
     carrier: &[u8],
     instance: [u8; 16],
 ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    // A replay part's carrier names no row (FIX 9180).
+    if let Some(history) = replay::bind_in_txn(store, txn, carrier, instance)? {
+        return Ok(history);
+    }
     let Some((db, key)) = carrier_row(carrier) else {
         return Ok(Vec::new());
     };
@@ -271,13 +289,17 @@ pub(super) fn release_stale_in_txn(
         let Some(carrier) = full.strip_prefix(RESPONSE_BINDINGS.decl().prefix) else {
             continue;
         };
-        let holds = match carrier_row(carrier) {
-            Some((db, key)) => row_in_txn(store, txn, db, key)?.is_some_and(|value| {
-                ResponseFamily::of_row(db, key, &value)
-                    .and_then(|family| family.scan(key, &value).carriage())
-                    .is_some()
-            }),
-            None => false,
+        // A replay part's carrier names no row (FIX 9180).
+        let holds = match replay::holds_in_txn(store, txn, carrier)? {
+            Some(holds) => holds,
+            None => match carrier_row(carrier) {
+                Some((db, key)) => row_in_txn(store, txn, db, key)?.is_some_and(|value| {
+                    ResponseFamily::of_row(db, key, &value)
+                        .and_then(|family| family.scan(key, &value).carriage())
+                        .is_some()
+                }),
+                None => false,
+            },
         };
         if !holds {
             release_response_in_txn(store, txn, carrier)?;

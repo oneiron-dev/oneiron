@@ -4,6 +4,10 @@
 //! lane's projection and the resume writer read the same resolved value, so
 //! an owner's pacing moves both together. Pacing, never a cap: the work
 //! always resumes, as the same try, once its pause passed.
+//!
+//! The served runners' consecutive-try caps (FIX 7748): the vault's own
+//! `resident_run_max_tries` and `workflow_step_max_tries` rows, else the
+//! shipped three and five. Each is at least one try.
 
 use crate::Vault;
 use crate::error::Result;
@@ -15,6 +19,30 @@ impl Vault {
     /// seconds.
     pub(crate) fn dreamer_retry_park_secs_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
         Ok(crate::gate::resolve_policy_manifest(&self.store, txn)?.dreamer_retry_park_seconds())
+    }
+
+    /// The vault's resident-run consecutive-try cap at `txn`'s revision.
+    pub(crate) fn resident_run_max_tries_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        Ok(crate::gate::resolve_policy_manifest(&self.store, txn)?.resident_run_max_tries())
+    }
+
+    /// The vault's workflow-step consecutive-try cap at `txn`'s revision.
+    pub(crate) fn workflow_step_max_tries_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        Ok(crate::gate::resolve_policy_manifest(&self.store, txn)?.workflow_step_max_tries())
+    }
+
+    /// The vault's resident-run consecutive-try cap in one fresh snapshot:
+    /// its `resident_run_max_tries` row, else the shipped three.
+    pub fn resident_run_max_tries(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        self.resident_run_max_tries_in_txn(&txn)
+    }
+
+    /// The vault's workflow-step consecutive-try cap in one fresh snapshot:
+    /// its `workflow_step_max_tries` row, else the shipped five.
+    pub fn workflow_step_max_tries(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        self.workflow_step_max_tries_in_txn(&txn)
     }
 }
 
