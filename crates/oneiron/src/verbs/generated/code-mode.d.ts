@@ -690,7 +690,7 @@ declare namespace Sdk {
   type RetrievalPolicyDisposition = "applied" | "offered";
   type RetrievalPolicyUpdateReceipt = { disposition: RetrievalPolicyDisposition; reason?: string | null; candidate: RetrievalPolicyCandidate; view: RetrievalPolicyView };
   type ExportDelivery = "inline" | "transfer";
-  type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null };
+  type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null; secrets_recipient?: EntityId | null };
   type OwnerWorkRefusal = "stale_revision" | "owner_not_live" | "world_not_live" | "executor_not_reader" | "home_not_linked" | "secret_not_portable" | "secret_not_active" | "recipient_changed" | "invalid_input" | "custody_conflict" | "wider_than_floor" | "root_revision_mismatch";
   type OwnerWorkStatus = { state: "recorded_awaiting_holder" } | { state: "enacted" } | { state: "refused"; reason: OwnerWorkRefusal } | { state: "cancelled" } | { state: "superseded" };
   type HolderExportUnassigned = "no_owner_act" | "owner_not_live" | "no_recipient" | "recipient_not_linked" | "no_holder" | "no_carrier";

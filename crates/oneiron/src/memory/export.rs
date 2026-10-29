@@ -40,6 +40,13 @@ pub struct ExportOptions {
     /// own file through [`Memory::export_to`].
     #[serde(default)]
     pub delivery: Option<ExportDelivery>,
+    /// FIX 4624(b): the linked machine the owner names to receive, sealed to
+    /// it alone, each custody secret the archive carries as its handle
+    /// because it did not open here; its holder seals it there. Absent, the
+    /// export is as before and its receipt lists each such secret as
+    /// unassigned: no recipient named.
+    #[serde(default)]
+    pub secrets_recipient: Option<EntityId>,
 }
 
 /// How a server hands one export over: in its reply, or as a transfer the
@@ -740,7 +747,7 @@ fn render_export_to<W: Read + Write + Seek>(
             act: by.act,
             thread_roots: std::mem::take(&mut export.thread_roots),
             holder_requests: std::mem::take(&mut export.holder_requests),
-            recipient: None,
+            recipient: opts.secrets_recipient,
         },
     );
     Ok((

@@ -1345,7 +1345,7 @@ export type RetrievalPolicyUpdateReceipt = { disposition: RetrievalPolicyDisposi
 /** `oneiron::memory::export::ExportDelivery` */
 export type ExportDelivery = "inline" | "transfer"
 /** `oneiron::memory::export::ExportOptions` */
-export type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null }
+export type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null; secrets_recipient?: EntityId | null }
 /** `oneiron_authority::authority::owner_work::result::OwnerWorkRefusal` */
 export type OwnerWorkRefusal = "stale_revision" | "owner_not_live" | "world_not_live" | "executor_not_reader" | "home_not_linked" | "secret_not_portable" | "secret_not_active" | "recipient_changed" | "invalid_input" | "custody_conflict" | "wider_than_floor" | "root_revision_mismatch"
 /** `oneiron::world_keys::owner_work::OwnerWorkStatus` */

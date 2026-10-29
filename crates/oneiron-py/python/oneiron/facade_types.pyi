@@ -3504,6 +3504,7 @@ class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
     delivery: NotRequired[ExportDelivery | None]
+    secrets_recipient: NotRequired[EntityId | None]
 OwnerWorkRefusal = Literal["stale_revision", "owner_not_live", "world_not_live", "executor_not_reader", "home_not_linked", "secret_not_portable", "secret_not_active", "recipient_changed", "invalid_input", "custody_conflict", "wider_than_floor", "root_revision_mismatch"]
 class OwnerWorkStatusRecordedAwaitingHolder(TypedDict):
     state: Literal["recorded_awaiting_holder"]
