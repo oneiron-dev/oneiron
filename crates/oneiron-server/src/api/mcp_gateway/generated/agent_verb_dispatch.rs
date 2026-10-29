@@ -1098,6 +1098,9 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.skills.outcomes.get" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.read" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.replace" => a.spec.clone().ok_or_else(invalid),
+        "vault.settings.web_connector" => a.spec.clone().ok_or_else(invalid),
+        "vault.settings.web_connector.replace" => a.spec.clone().ok_or_else(invalid),
+        "vault.connectors.web.usage" => a.spec.clone().ok_or_else(invalid),
         "vault.models.oneironer.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.models.routes.read" => a.spec.clone().ok_or_else(invalid),
         "vault.models.routes.replace" => a.spec.clone().ok_or_else(invalid),
@@ -4057,6 +4060,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.models.manifest.replace" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.settings.web_connector" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.settings.web_connector.replace" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.connectors.web.usage" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.models.oneironer.bind" => {
@@ -17556,6 +17568,53 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_models_manifest_replace(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.settings.web_connector" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.settings.web_connector", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_settings_web_connector(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.settings.web_connector.replace" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.settings.web_connector.replace", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::web_connector::WebConnectorSetting =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_settings_web_connector_replace(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.connectors.web.usage" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.connectors.web.usage", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::web_connector::WebConnectorUsageRead =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_connectors_web_usage(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));

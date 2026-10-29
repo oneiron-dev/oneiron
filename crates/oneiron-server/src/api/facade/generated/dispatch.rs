@@ -26445,6 +26445,109 @@ async fn vault_models_manifest_replace(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_settings_web_connector(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.web_connector")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.web_connector", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.settings.web_connector", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_web_connector(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_settings_web_connector_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.web_connector.replace")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.web_connector.replace", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.settings.web_connector.replace", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_web_connector_replace(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_connectors_web_usage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.web.usage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.web.usage", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.connectors.web.usage", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_web_usage(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_models_oneironer_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38804,6 +38907,11 @@ async fn call_verb_row(
         "vault.skills.outcomes.get" => vault_skills_outcomes_get(server, call, input).await,
         "vault.models.manifest.read" => vault_models_manifest_read(server, call, input).await,
         "vault.models.manifest.replace" => vault_models_manifest_replace(server, call, input).await,
+        "vault.settings.web_connector" => vault_settings_web_connector(server, call, input).await,
+        "vault.settings.web_connector.replace" => {
+            vault_settings_web_connector_replace(server, call, input).await
+        }
+        "vault.connectors.web.usage" => vault_connectors_web_usage(server, call, input).await,
         "vault.models.oneironer.bind" => vault_models_oneironer_bind(server, call, input).await,
         "vault.models.routes.read" => vault_models_routes_read(server, call, input).await,
         "vault.models.routes.replace" => vault_models_routes_replace(server, call, input).await,

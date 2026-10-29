@@ -2597,6 +2597,15 @@ impl OneironClient {
                 "vault.models.manifest.replace" => remote_agent_verb_output::<
                     oneiron::llm::manifest::ModelManifest,
                 >(client, verb, &input),
+                "vault.settings.web_connector" => remote_agent_verb_output::<
+                    oneiron::web_connector::WebConnectorSetting,
+                >(client, verb, &input),
+                "vault.settings.web_connector.replace" => remote_agent_verb_output::<
+                    oneiron::web_connector::WebConnectorSetting,
+                >(client, verb, &input),
+                "vault.connectors.web.usage" => remote_agent_verb_output::<
+                    oneiron::web_connector::WebConnectorUsagePage,
+                >(client, verb, &input),
                 "vault.models.oneironer.bind" => remote_agent_verb_output::<
                     oneiron::llm::manifest::ModelManifest,
                 >(client, verb, &input),
@@ -13972,6 +13981,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.models.manifest.replace", value)
+    }
+    pub fn vault_settings_web_connector(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::web_connector::WebConnectorSetting, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.web_connector", value)
+    }
+    pub fn vault_settings_web_connector_replace(
+        &self,
+        input: &oneiron::web_connector::WebConnectorSetting,
+    ) -> Result<oneiron::web_connector::WebConnectorSetting, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.web_connector.replace", value)
+    }
+    pub fn vault_connectors_web_usage(
+        &self,
+        input: &oneiron::web_connector::WebConnectorUsageRead,
+    ) -> Result<oneiron::web_connector::WebConnectorUsagePage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.web.usage", value)
     }
     pub fn vault_models_oneironer_bind(
         &self,

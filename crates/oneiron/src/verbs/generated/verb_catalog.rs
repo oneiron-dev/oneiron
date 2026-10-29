@@ -842,6 +842,9 @@ pub enum AgentVerb {
     VaultSkillsOutcomesGet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
+    VaultSettingsWebConnector,
+    VaultSettingsWebConnectorReplace,
+    VaultConnectorsWebUsage,
     VaultModelsOneironerBind,
     VaultModelsRoutesRead,
     VaultModelsRoutesReplace,
@@ -2050,6 +2053,9 @@ impl AgentVerb {
         Self::VaultSkillsOutcomesGet,
         Self::VaultModelsManifestRead,
         Self::VaultModelsManifestReplace,
+        Self::VaultSettingsWebConnector,
+        Self::VaultSettingsWebConnectorReplace,
+        Self::VaultConnectorsWebUsage,
         Self::VaultModelsOneironerBind,
         Self::VaultModelsRoutesRead,
         Self::VaultModelsRoutesReplace,
@@ -3281,6 +3287,9 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
             Self::VaultModelsManifestRead => "vault.models.manifest.read",
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
+            Self::VaultSettingsWebConnector => "vault.settings.web_connector",
+            Self::VaultSettingsWebConnectorReplace => "vault.settings.web_connector.replace",
+            Self::VaultConnectorsWebUsage => "vault.connectors.web.usage",
             Self::VaultModelsOneironerBind => "vault.models.oneironer.bind",
             Self::VaultModelsRoutesRead => "vault.models.routes.read",
             Self::VaultModelsRoutesReplace => "vault.models.routes.replace",
@@ -4499,6 +4508,9 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultSettingsWebConnector
+                | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
@@ -5736,6 +5748,9 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultSettingsWebConnector
+                | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
@@ -7070,6 +7085,9 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultSettingsWebConnector
+                | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
@@ -7911,6 +7929,7 @@ impl AgentVerb {
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
+                | Self::VaultSettingsWebConnectorReplace
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultSkillsAttributionSettle
@@ -9003,6 +9022,9 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultSettingsWebConnector => &["spec"],
+            Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
             Self::VaultModelsRoutesReplace => &["spec"],
@@ -10212,6 +10234,9 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultSettingsWebConnector => &["spec"],
+            Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
             Self::VaultModelsRoutesReplace => &["spec"],
@@ -13047,6 +13072,15 @@ impl AgentVerb {
             }
             Self::VaultModelsManifestReplace => {
                 "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."
+            }
+            Self::VaultSettingsWebConnector => {
+                "Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."
+            }
+            Self::VaultSettingsWebConnectorReplace => {
+                "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."
+            }
+            Self::VaultConnectorsWebUsage => {
+                "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."
             }
             Self::VaultModelsOneironerBind => {
                 "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."
