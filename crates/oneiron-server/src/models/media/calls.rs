@@ -10,20 +10,26 @@ use super::{
 
 /// A runtime that keeps its jobs hands each running job's permit off as it
 /// stops, charging nothing: the job runs on at its provider, and the runtime
-/// that takes it up from its kept row pays its end, once. A job in a poll
-/// that holds it is left to its own permit.
+/// that takes it up from its kept row pays its end, once. A program's job
+/// whose row was not kept has no row to take it up from: it pays its
+/// reservation on its run's line now (FIX 780, 6083). A job in a poll that
+/// holds it is left to its own permit.
 impl Drop for MediaRuntime {
     fn drop(&mut self) {
         if self.store.is_none() {
             return;
         }
-        for job in self.lock_jobs().values() {
+        for (ticket, job) in self.lock_jobs().iter() {
             let Held::Running(job) = job else {
                 continue;
             };
             let Ok(mut job) = job.try_lock() else {
                 continue;
             };
+            if self.unkept_program_job(ticket) {
+                job.settle_failed();
+                continue;
+            }
             if let Some(permit) = job.permit.take()
                 && let Err(denied) = permit.hand_off_media()
             {
@@ -169,7 +175,11 @@ impl MediaRuntime {
         let stamps = submit_stamps(actor, &request);
         let sent = self.store.as_ref().map(|_| request.clone());
         let ladder = self.ladder(&request)?;
-        let MediaAnswer::Job(job) = ladder.media(run, request, None, None).await? else {
+        // A media call's one deadline is its caller's (FIX 8134), as
+        // `submit`'s walk.
+        let deadline = crate::models::CallDeadline::Open;
+        let walked = ladder.media_by(run, request, None, None, deadline);
+        let MediaAnswer::Job(job) = walked.await? else {
             return Err(FatalLlmError::EmptyResponse.into());
         };
         let id = job_ticket(&job.provider_job);

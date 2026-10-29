@@ -74,6 +74,11 @@ impl MediaRuntime {
         self.lock_submitted().insert(ticket.to_owned(), line);
     }
 
+    /// Whether job `ticket` is a program's job whose row was not kept.
+    pub(super) fn unkept_program_job(&self, ticket: &str) -> bool {
+        self.lock_submitted().contains_key(ticket)
+    }
+
     /// Whether job `id` was submitted on run `run`'s line: as its kept row
     /// names it, erased or not, or as its submit noted it here when its row
     /// was not kept.
