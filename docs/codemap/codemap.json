@@ -15019,7 +15019,23 @@
      "path": "src/code_run/consent_wait/binding.rs",
      "purpose": "The binding: minted beside the held effect's pending row, in its writer; sealed with the parked checkpoint…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AdmittedBrowserAct",
+      "CodeConsentBrowserOutcome"
+     ],
+     "path": "src/code_run/consent_wait/browser.rs",
+     "purpose": "A browser act a press held, bound to a code consent wait (FIX 10423)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -15054,7 +15070,7 @@
      "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -15074,7 +15090,7 @@
      "path": "src/code_run/consent_wait/settle.rs",
      "purpose": "The answer and the settlement (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -15083,6 +15099,7 @@
      "kind": "src",
      "notable": [
       "CodeConsentAnswerInput",
+      "CodeConsentBrowserAction",
       "CodeConsentChoice",
       "CodeConsentSavedCredential",
       "CodeConsentSettleOutcome",
@@ -15092,10 +15109,10 @@
      "path": "src/code_run/consent_wait/types.rs",
      "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 3,
       "fn": 3,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -43312,6 +43329,7 @@
      "kind": "src",
      "notable": [
       "CodeWaitAnswerView",
+      "CodeWaitBrowserAction",
       "CodeWaitChoice",
       "CodeWaitConsumptionView",
       "CodeWaitLedgerLinks",
@@ -43327,7 +43345,7 @@
      "purpose": "Code wait request, answer, settlement and receipt records",
      "surface": {
       "enum": 3,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -80284,7 +80302,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 166,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81581,7 +81599,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5437,
+   "source_files": 5438,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84972,7 +84990,7 @@
       "enum": 1,
       "fn": 1,
       "mod": 1,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -85152,6 +85170,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PressAnswer",
+      "PressOutcome"
+     ],
+     "path": "src/press_answer.rs",
+     "purpose": "What a press a browser act waited on came to (FIX 10423), as the answer a code run's parked call resumes…",
+     "surface": {
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -85316,7 +85348,7 @@
      "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 2
      }
     },
@@ -85368,6 +85400,22 @@
       "crate-vis": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeldPress",
+      "PressNeed"
+     ],
+     "path": "src/session/held.rs",
+     "purpose": "The act a press held, kept for the host to bind (FIX 10423), and the one press an owner's answer arms for it",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -85672,6 +85720,13 @@
      "layout": "file",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
     },
+    "press_answer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What a press a browser act waited on came to (FIX 10423), as the answer a code run's parked call resumes…"
+    },
     "programs": {
      "files": 1,
      "impl_vault": false,
@@ -85736,7 +85791,7 @@
      "purpose": "One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card…"
     },
     "session": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -85773,7 +85828,7 @@
    },
    "over_bar": 0,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 79,
+   "source_files": 81,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -101200,7 +101255,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs/browser_guest.rs",
      "purpose": "A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -101231,6 +101286,16 @@
      "purpose": "A code-mode run's browser and desktop guests: started, driven and planned for one run",
      "surface": {
       "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/code_mode_verbs/held_press.rs",
+     "purpose": "A code run's held browser presses (FIX 10423): the act a refused press held, taken from the run's browser…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -104168,6 +104233,16 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_consent_host/browser.rs",
+     "purpose": "The served host's answered pass over a held browser act (FIX 10423)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -112792,7 +112867,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 595,
+     "files": 596,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112862,10 +112937,10 @@
      "purpose": "The engine's native cloud registration client (G7, FIX 5347): the owner links this vault to the Oneiron…"
     },
     "code_consent_host": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
@@ -113284,7 +113359,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1359,
+   "source_files": 1361,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -114234,6 +114309,7 @@
       "CodeViewReadRequest",
       "CodeViewRequest",
       "CodeWaitAnswerView",
+      "CodeWaitBrowserAction",
       "CodeWaitChoice",
       "CodeWaitConsumptionView",
       "CodeWaitLedgerLinks",
@@ -116173,6 +116249,8 @@
       "PrepSection",
       "PrepSectionKind",
       "Preset",
+      "PressAnswer",
+      "PressOutcome",
       "PressedThrough",
       "PricedModelBackend",
       "PriorOrigin",
@@ -117671,8 +117749,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1032,
-      "struct": 3153
+      "enum": 1033,
+      "struct": 3155
      }
     },
     {
