@@ -5,6 +5,12 @@
 //! after the owner table wrote its generic operations, so the document
 //! teaches a client the fields the route takes, with no SDK row added.
 
+mod routes_backups_to_signing_keys;
+mod routes_packs;
+mod routes_pads_to_runs;
+mod routes_secret_scan_to_skills;
+mod routes_space_posting_to_worlds;
+
 use serde_json::{Value, json};
 
 use oneiron_contracts::code_run::vault_read::request_schema;
@@ -624,6 +630,11 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
         concern_prompt_inject_outcome_schema(),
         &[],
     );
+    routes_backups_to_signing_keys::merge(spec);
+    routes_packs::merge(spec);
+    routes_pads_to_runs::merge(spec);
+    routes_secret_scan_to_skills::merge(spec);
+    routes_space_posting_to_worlds::merge(spec);
 }
 
 /// Sets one operation's body and answer schemas and adds its refusals, where
