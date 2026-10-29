@@ -118,7 +118,7 @@ pub(super) struct Diverged {
 }
 
 /// The owner's answer to a diverged copy's ask.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DivergedAnswer {
     Keep,

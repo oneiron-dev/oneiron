@@ -83,7 +83,7 @@ pub(super) mod owner_work_routes;
 pub(super) mod pack_preview_routes;
 pub(super) mod pack_routes;
 #[cfg(target_os = "linux")]
-mod outbox_diverged_routes;
+pub(super) mod outbox_diverged_routes;
 pub(super) mod pad_routes;
 pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;

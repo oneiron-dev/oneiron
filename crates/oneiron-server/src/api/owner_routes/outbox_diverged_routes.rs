@@ -30,6 +30,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/outbox/diverged", get(members).post(answer))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/outbox/diverged`'s body: [`AnswerBody`].
+pub(crate) fn answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerBody>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/outbox/diverged`'s answer:
+/// [`AnswerReceipt`].
+pub(crate) fn answer_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerReceipt>()
+}
+
 /// The carrier's members as the owner sees them.
 #[derive(Debug, Serialize)]
 struct MembersPage {
@@ -66,9 +77,11 @@ struct CardAction {
     route: &'static str,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerBody {
+    /// The outbox kind, as the page lists it.
+    #[schemars(with = "String")]
     kind: VmOutboxKind,
     member: String,
     /// The kept copy's digest, as the page lists it.
@@ -78,8 +91,9 @@ struct AnswerBody {
 }
 
 /// What the route did with the owner's answer.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct AnswerReceipt {
+    #[schemars(with = "String")]
     kind: VmOutboxKind,
     member: String,
     held: String,
