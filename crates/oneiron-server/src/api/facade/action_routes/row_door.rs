@@ -186,11 +186,7 @@ impl FacadeRowDoor {
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
                 AgentVerbRefusal { code }
             })?;
-            return Ok(AgentVerbAnswer {
-                output,
-                rows: None,
-                observations: Vec::new(),
-            });
+            return Ok(AgentVerbAnswer::new(output, None));
         }
         let body = serde_json::to_vec(&call.input).map_err(|_| refused())?;
         let mut request = axum::http::Request::post(format!("/{}", call.verb.as_str()))
@@ -225,11 +221,7 @@ impl FacadeRowDoor {
             *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
             AgentVerbRefusal { code }
         })?;
-        Ok(AgentVerbAnswer {
-            output,
-            rows: None,
-            observations: Vec::new(),
-        })
+        Ok(AgentVerbAnswer::new(output, None))
     }
 }
 

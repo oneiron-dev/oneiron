@@ -30,6 +30,17 @@ pub struct AgentVerbAnswer {
 }
 
 impl AgentVerbAnswer {
+    /// An answer of `output`, served from `rows`, with no observation
+    /// beside it.
+    #[must_use]
+    pub fn new(output: serde_json::Value, rows: Option<Vec<EntityId>>) -> Self {
+        Self {
+            output,
+            rows,
+            observations: Vec::new(),
+        }
+    }
+
     /// The rows a run that read this answer is released by: the answer's
     /// own and every observation's (DEC-0005). `None` when the answer was
     /// recorded with no row set.

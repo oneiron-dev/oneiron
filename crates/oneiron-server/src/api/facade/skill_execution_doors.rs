@@ -191,11 +191,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
             let _ = sender.send(answer);
         });
         Ok(match receiver.recv() {
-            Ok(Ok(answer)) => Ok(AgentVerbAnswer {
-                output: answer.value,
-                rows: answer.rows,
-                observations: Vec::new(),
-            }),
+            Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
             Ok(Err(error)) => Err(AgentVerbRefusal {
                 code: error.into_memory_error().code,
             }),
