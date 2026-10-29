@@ -4130,8 +4130,8 @@ declare namespace Sdk {
   type NoteActor = string;
   type NoteAuthorship = { operation: string; actor: NoteActor; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
-  type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
-  type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteEdit; reason?: string | null };
+  type NoteProgramEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
+  type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteProgramEdit; reason?: string | null };
   type NoteForkRecordView = { note_ref: string; fork_ref: string; parent: string; frontier: number[]; actor?: string | null; rewrite: boolean; proposal_ref?: string | null; decided: boolean };
   type NoteForkView = { record: NoteForkRecordView; markdown?: string | null };
   type NoteForkReadRequest = { note_ref: string; fork_ref: string; reason?: string | null };
@@ -4149,8 +4149,8 @@ declare namespace Sdk {
   type NoteEditorBinding = { binding: string; note: NoteReadView };
   type NoteEditorCloseRequest = { binding: string };
   type NoteEditorClosed = { closed: boolean };
-  type EditNoteRequest = { note_ref: string; edit: NoteEdit };
-  type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
+  type EditNoteRequest = { note_ref: string; edit: NoteProgramEdit };
+  type NoteProgramEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
   type NoteRefRequest = { note_ref: string };
   type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: NoteActor; sealed_at: number };
   type NoteLifecycleStatus = "active" | "sealed" | "archived" | "tombstoned";
@@ -6346,7 +6346,7 @@ declare const vault: Sdk.VaultHost & {
     /** One NOTE's overrides and the extraction, context and retention defaults its gates read after them. */
     defaults(input: Sdk.NoteRefRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
     /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
-    edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteEditOutcome | StoredResult>;
+    edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteProgramEditOutcome | StoredResult>;
     editor: {
       /** Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves. */
       bind(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteEditorBinding | null> | StoredResult>;
