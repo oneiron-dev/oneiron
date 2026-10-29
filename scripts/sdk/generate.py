@@ -1382,9 +1382,10 @@ def facade_dispatch(facade_rows):
         # an answer, never a refusal, is named an attachment.
         routes += f'''async fn {handler}(
             caller: super::clock_ingress::FacadeCaller, State(server): State<Arc<SyncServer>>, uri: axum::http::Uri,
-            headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>,
+            headers: HeaderMap, extensions: axum::http::Extensions,
+            payload: Result<Json<serde_json::Value>, JsonRejection>,
         ) -> Response {{
-            let mut answer = facade_route(caller, State(server), uri, headers, payload).await;
+            let mut answer = facade_route(caller, State(server), uri, headers, extensions, payload).await;
             if answer.extensions().get::<FacadeApiError>().is_none() {{
                 answer.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, HeaderValue::from_static({disposition}));
             }}

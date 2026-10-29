@@ -1294,9 +1294,10 @@ async fn vault_off_record_rooms_export_attachment(
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
+    extensions: axum::http::Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
-    let mut answer = facade_route(caller, State(server), uri, headers, payload).await;
+    let mut answer = facade_route(caller, State(server), uri, headers, extensions, payload).await;
     if answer.extensions().get::<FacadeApiError>().is_none() {
         answer.headers_mut().insert(
             axum::http::header::CONTENT_DISPOSITION,
