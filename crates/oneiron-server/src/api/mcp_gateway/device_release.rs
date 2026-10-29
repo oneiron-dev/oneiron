@@ -109,7 +109,8 @@ pub(super) fn mcp_release_result(
 /// naming a row a device-local world keeps now, or a short ref that resolves
 /// to no row, or whose call's rows are unknown (`None`), leaves as its code
 /// alone, with no scope. A failed run's type feedback, released apart
-/// (FIX 10390), is never among its words and stays as it is.
+/// (FIX 10390), is never among its words and stays as it is. A hook stop, a
+/// retry delay and the reason codes stay as they are too (FIX 10617).
 pub(super) fn mcp_release_error(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -148,6 +149,9 @@ pub(super) fn mcp_release_error(
     };
     McpGatewayError {
         program_steps: error.program_steps,
+        hook: error.hook,
+        retry_after: error.retry_after,
+        reason_codes: error.reason_codes,
         ..McpGatewayError::new(
             error.code,
             error.kind,

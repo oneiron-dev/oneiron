@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1182 facade rows, 4281 declarations.
-Inputs: 1113 of 1182 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1032 of 1182 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1183 facade rows, 4281 declarations.
+Inputs: 1114 of 1183 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1033 of 1183 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 116; unread shapes: 0.
 """
 

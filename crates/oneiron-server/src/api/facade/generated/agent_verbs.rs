@@ -1154,6 +1154,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.sieve.lease.refill", post(facade_route))
         .route("/vault.free_time.policy.get", post(facade_route))
         .route("/vault.free_time.policy.set", post(facade_route))
+        .route("/vault.free_time.policy.set_as", post(facade_route))
         .route("/vault.free_time.cycles", post(facade_route))
         .route("/vault.free_time.cycle", post(facade_route))
         .route("/vault.claims.vet", post(facade_route))

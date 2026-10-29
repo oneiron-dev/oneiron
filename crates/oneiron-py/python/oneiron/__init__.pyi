@@ -3255,6 +3255,8 @@ class Oneiron:
             """The owner reads one agent's free-time policy with its revision: the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set."""
         def set(self, spec: Facade.FreeTimePolicySetRequest) -> Facade.FreeTimePolicyView:
             """The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
+        def set_as(self, spec: Facade.FreeTimePolicySetRequest) -> Facade.FreeTimePolicyView:
+            """An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
     class _VaultMemoryVerbs:
         @property
         def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs": ...

@@ -71,13 +71,18 @@ pub(crate) async fn execute_mcp_invoke_action(
         request,
     )
     .await;
-    let output = output.map_err(|error| {
+    let mut output = output.map_err(|error| {
         let mut error = mcp_action_error(error);
         if row_receipt(&row).is_some() {
             error.row_receipt = Some(Box::new(row.clone()));
         }
         error
     })?;
+    // A step's type feedback leaves on its own release (FIX 10390), as on
+    // the generated verb path: the row's output rides string-encoded in its
+    // outcome.
+    let feedback =
+        super::type_feedback_release::hold_action_feedback(&args.verb, &mut output);
     let mut structured = json!({
         "tool": MCP_INVOKE_ACTION_TOOL,
         "verb": args.verb,
@@ -101,7 +106,15 @@ pub(crate) async fn execute_mcp_invoke_action(
         McpCarrierPolicy::Drain,
     )
     .await;
-    mcp_release_result(server, actor, &[], false, result)
+    mcp_release_result(server, actor, &[], false, result).map(|result| {
+        super::type_feedback_release::attach_action_feedback(
+            server,
+            actor,
+            Some(&[]),
+            feedback,
+            result,
+        )
+    })
 }
 
 /// What the action's verb-table row's reply stated of its call receipt, as
