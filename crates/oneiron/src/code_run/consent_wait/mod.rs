@@ -18,18 +18,25 @@
 //! replay commit, and the replay commit that takes the reply consumes it
 //! once (1b, `replay.rs`).
 //!
+//! A browser act a press held binds the same way (FIX 10423, `browser.rs`):
+//! its exact act, row, page and guest, settled by the served host's one
+//! answered pass with the act's own answer.
+//!
 //! This module owns the control row; only it writes it.
 
 mod binding;
+mod browser;
 mod host;
 mod ledger;
 mod replay;
 mod settle;
 mod types;
 
+pub use self::browser::{AdmittedBrowserAct, CodeConsentBrowserOutcome};
 pub(crate) use self::binding::{
     CodeConsentDraft, attach_code_consent_ask_in_txn, code_consent_binds,
-    code_consent_binds_held_call, code_consent_wait_id, code_consent_waits_bound_to_in_txn,
+    code_consent_binds_held_browser, code_consent_binds_held_call, code_consent_wait_id,
+    code_consent_waits_bound_to_in_txn,
     mint_code_consent_wait_in_txn, read_code_consent_wait_in_txn,
     record_code_consent_admission_in_txn,
 };
@@ -44,8 +51,9 @@ pub(crate) use self::settle::{
     settle_code_consent_wait_listing_in_txn,
 };
 pub use self::types::{
-    CodeConsentAnswerInput, CodeConsentChoice, CodeConsentSavedCredential,
-    CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
+    CodeConsentAnswerInput, CodeConsentBrowserAction, CodeConsentChoice,
+    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
+    CodeConsentWaitView,
 };
 pub(crate) use self::types::{
     CodeConsentCallSite, CodeConsentConnectorCall, CodeConsentPendingEffect, CodeConsentPrincipal,

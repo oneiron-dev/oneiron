@@ -80,8 +80,10 @@ pub(crate) use self::consent_wait::{
     verify_parked_code_consent,
 };
 pub use self::consent_wait::{
-    CodeConsentAnswerInput, CodeConsentChoice, CodeConsentEffectHost, CodeConsentSavedCredential,
-    CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
+    AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
+    CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
+    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
+    CodeConsentWaitView,
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{

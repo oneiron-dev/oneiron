@@ -50,14 +50,26 @@ pub(super) fn is_code_consent_ask_intent(intent_key: &str) -> bool {
     intent_key.starts_with(INTENT_PREFIX)
 }
 
-/// The label one choice's option carries.
-const fn choice_label(choice: CodeConsentChoice) -> &'static str {
-    match choice {
-        CodeConsentChoice::ApproveOnce => "Approve once: this call only",
-        CodeConsentChoice::ApproveAndStopAsking => {
-            "Approve and stop asking: this call, and this tool no longer asks"
+/// The label one choice's option carries. A held browser act's names the
+/// act itself, its row as the page showed it (FIX 10423); a connector
+/// call's speaks of the call and its tool.
+fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
+    let Some(action) = row.binding.pending.browser_action() else {
+        return match choice {
+            CodeConsentChoice::ApproveOnce => "Approve once: this call only",
+            CodeConsentChoice::ApproveAndStopAsking => {
+                "Approve and stop asking: this call, and this tool no longer asks"
+            }
+            CodeConsentChoice::Deny => "Deny: nothing is sent",
         }
-        CodeConsentChoice::Deny => "Deny: nothing is sent",
+        .to_owned();
+    };
+    let act = format!("the click on {} \"{}\"", action.role, action.name);
+    match choice {
+        CodeConsentChoice::ApproveOnce | CodeConsentChoice::ApproveAndStopAsking => {
+            format!("Approve once: {act}, this time only")
+        }
+        CodeConsentChoice::Deny => format!("Deny: {act} does not happen"),
     }
 }
 
@@ -72,7 +84,7 @@ fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
         .map(|choice| {
             Ok((
                 TaskAskOptionId::new(choice.as_str())?,
-                choice_label(choice).to_owned(),
+                choice_label(choice, row),
             ))
         })
         .collect::<MemoryResult<BTreeMap<_, _>>>()?;
