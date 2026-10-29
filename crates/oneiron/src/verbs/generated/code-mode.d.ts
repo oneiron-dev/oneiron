@@ -3418,7 +3418,7 @@ declare namespace Sdk {
   type OperandGap = "no_custody" | "refused" | "unknown_kind" | "unbound";
   type TypeOperand = { operand: "literal"; text: string } | { operand: "secret"; kind: SecretKind; handle: string } | { operand: "withheld"; kind?: SecretKind | null; cause: OperandGap };
   type TextReference = { id: string; text: string };
-  type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null; secret?: string | null };
+  type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null; secret?: string | null; secret_is_text?: boolean };
   type ReplayAction = { action: "open"; url: string } | { action: "click"; locator: string } | { action: "type"; locator: string; operand: TypeOperand; clear?: boolean } | { action: "select"; locator: string; option: string } | { action: "fill"; locator: string; field: FieldSpec };
   type ReceiptOutcome = "unknown";
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number };
@@ -4225,7 +4225,9 @@ declare namespace Sdk {
   type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" } | { why: "not_started"; refusal: string };
   type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind };
   type DemonstrationStopCause = "stopped" | "handed_over" | "handed_back" | "abandoned" | "guest_lost" | "engine_switched" | "session_closed";
-  type ProposeInput = { subgoal?: string; params?: string[]; steps?: BatchStep[]; postcondition?: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null; candidate?: string | null };
+  type SecretArg = { handle: string } | { text: string };
+  type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null };
+  type ProposeInput = { subgoal?: string; params?: string[]; steps?: BatchStep[]; postcondition?: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null; candidate?: string | null; secret_args?: Record<string, SecretArg>; snapshot_bounds?: SnapshotBounds | null };
   type SlotField = "text" | "option";
   type SlotCandidate = { step: number; seq: number; field: SlotField; literal: string; suggested_param: string };
   type DraftGapKind = { why: "pre_press"; effect_class: string } | { why: "unknown_press" } | { why: "no_action" } | { why: "secret_withheld"; kind?: SecretKind | null; cause: OperandGap } | { why: "failed"; cause: BatchStopCause } | { why: "no_effect" } | { why: "missing_opening" } | { why: "empty_span" } | { why: "no_live_origin" } | { why: "foreign_origin"; origin?: string | null } | { why: "tab_change" } | { why: "generated_fill" } | { why: "unrecorded_navigation" } | { why: "missing_context" } | { why: "check_unknown_ref"; check: number } | { why: "check_secret_withheld"; check: number; cause: OperandGap } | { why: "no_postcondition" } | { why: "no_subgoal" };
@@ -4235,7 +4237,7 @@ declare namespace Sdk {
   type DemonstrationOutput = { id: DemonstrationId; source: DemonstrationSource; label?: string | null; origin?: string | null; steps: RecordedStep[]; gaps?: RecordingGap[]; started_at_ms: number; stopped_at_ms: number; stop_cause: DemonstrationStopCause; draft: DraftOutput };
   type PressOutcome = "delivered" | "refused" | "delivery_unknown";
   type PressAnswer = { wait: string; outcome: PressOutcome; reasons?: string[]; step?: ObservationPage | null; receipt?: EffectReceipt | null };
-  type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null; demonstration?: DemonstrationOutput | null; session_manifest?: SessionManifest | null; press?: PressAnswer | null };
+  type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null; demonstration?: DemonstrationOutput | null; session_manifest?: SessionManifest | null; press?: PressAnswer | null; solved_capture?: string | null };
   type BrowserObservationPage = BrowserAnswer<ObservationPage>;
   type BrowserFindOutput = BrowserAnswer<FindOutput>;
   type BrowserWaitForOutput = BrowserAnswer<WaitForOutput>;
@@ -4268,12 +4270,10 @@ declare namespace Sdk {
   type LibraryRetiredOutput = { site: string; retired: RetiredCard[] };
   type BrowserLibraryRetiredOutput = BrowserAnswer<LibraryRetiredOutput>;
   type LibraryRunMode = "strict" | "assisted";
-  type SecretArg = { handle: string } | { text: string };
   type LibraryRunInput = { workflow: string; args?: Record<string, string>; base?: ObservationBase | null; mode?: LibraryRunMode | null; secret_args?: Record<string, SecretArg> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: LibraryRunMode; model_free: boolean; model_free_unproven?: number | null; unmet?: number[]; batch: BatchOutput };
   type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>;
   type BrowserHandoverOutput = BrowserAnswer<HandoverOutput>;
-  type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null };
   type SwitchEngineInput = { engine: BrowserEngine; reason: string; snapshot_bounds?: SnapshotBounds | null };
   type SwitchEngineOutput = { receipt: EffectReceipt; observation?: ObservationPage | null };
   type BrowserSwitchEngineOutput = BrowserAnswer<SwitchEngineOutput>;

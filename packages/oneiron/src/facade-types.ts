@@ -8244,10 +8244,10 @@ export type SecretKind = "card" | "cvv" | "otp" | "password"
 export type OperandGap = "no_custody" | "refused" | "unknown_kind" | "unbound"
 /** `oneiron_browser::replay::TypeOperand` */
 export type TypeOperand = { operand: "literal"; text: string } | { operand: "secret"; kind: SecretKind; handle: string } | { operand: "withheld"; kind?: SecretKind | null; cause: OperandGap }
-/** `oneiron_browser::field::TextReference` */
+/** `oneiron_browser::field::spec::TextReference` */
 export type TextReference = { id: string; text: string }
-/** `oneiron_browser::field::FieldSpec` */
-export type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null; secret?: string | null }
+/** `oneiron_browser::field::spec::FieldSpec` */
+export type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null; secret?: string | null; secret_is_text?: boolean }
 /** `oneiron_browser::replay::ReplayAction` */
 export type ReplayAction = { action: "open"; url: string } | { action: "click"; locator: string } | { action: "type"; locator: string; operand: TypeOperand; clear?: boolean } | { action: "select"; locator: string; option: string } | { action: "fill"; locator: string; field: FieldSpec }
 /** `oneiron_browser::demonstration::RecordedStep` */
@@ -8270,8 +8270,12 @@ export type DecideStep = { question: string; targets?: string[]; role?: string |
 export type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" }) | { step: "fill"; ref: string; field: FieldSpec }
 /** `oneiron_browser::library::admission::WorkflowSeed` */
 export type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string }
-/** `oneiron_browser::library::ProposeInput` */
-export type ProposeInput = { subgoal?: string; params?: string[]; steps?: BatchStep[]; postcondition?: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null; candidate?: string | null }
+/** `oneiron_browser::library::live_run::SecretArg` */
+export type SecretArg = { handle: string } | { text: string }
+/** `oneiron_browser::switch::SnapshotBounds` */
+export type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null }
+/** `oneiron_browser::library::propose::ProposeInput` */
+export type ProposeInput = { subgoal?: string; params?: string[]; steps?: BatchStep[]; postcondition?: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null; candidate?: string | null; secret_args?: Record<string, SecretArg>; snapshot_bounds?: SnapshotBounds | null }
 /** `oneiron_browser::library::draft::SlotField` */
 export type SlotField = "text" | "option"
 /** `oneiron_browser::library::draft::SlotCandidate` */
@@ -8365,7 +8369,7 @@ export type ObservationPage = VerbsObservation & { next?: string | null }
 /** `oneiron_browser::press_answer::PressAnswer` */
 export type PressAnswer = { wait: string; outcome: PressOutcome; reasons?: string[]; step?: ObservationPage | null; receipt?: EffectReceipt | null }
 /** `oneiron_browser::answer::BrowserAnswer` */
-export type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null; demonstration?: DemonstrationOutput | null; session_manifest?: SessionManifest | null; press?: PressAnswer | null }
+export type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null; demonstration?: DemonstrationOutput | null; session_manifest?: SessionManifest | null; press?: PressAnswer | null; solved_capture?: string | null }
 /** `oneiron::verbs::browser::BrowserObservationPage` */
 export type BrowserObservationPage = BrowserAnswer<ObservationPage>
 /** `oneiron_browser::observation::ObservationBase` */
@@ -8446,7 +8450,7 @@ export type BrowserDemonstrationStartOutput = BrowserAnswer<DemonstrationStarted
 export type DemonstrationStopInput = { id: DemonstrationId; subgoal?: string; postcondition?: ExpectInput[] }
 /** `oneiron::verbs::browser::BrowserDemonstrationStopOutput` */
 export type BrowserDemonstrationStopOutput = BrowserAnswer<DemonstrationOutput>
-/** `oneiron_browser::library::WorkflowCheck` */
+/** `oneiron_browser::library::propose::WorkflowCheck` */
 export type WorkflowCheck = "solved" | "replay" | "secret_replay" | "held_out" | "fresh_guest" | "supersedes"
 /** `oneiron_browser::library::admission::SupersedeRefusal` */
 export type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer"
@@ -8456,7 +8460,7 @@ export type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: str
 export type ReplayGuest = { engine: BrowserEngine; carried: SwitchCarried[]; not_carried: SwitchNotCarried[] }
 /** `oneiron_browser::library::admission::SupersedeOutcome` */
 export type SupersedeOutcome = "retired" | "linked" | "dropped"
-/** `oneiron_browser::library::ProposeOutput` */
+/** `oneiron_browser::library::propose::ProposeOutput` */
 export type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; refusal?: AdmissionRefusal | null; unmet?: number[]; missed?: CheckReceipt[]; replay?: BatchOutput | null; replay_guest?: ReplayGuest | null; superseded?: SupersedeOutcome | null }
 /** `oneiron::verbs::browser::BrowserLibraryProposeOutput` */
 export type BrowserLibraryProposeOutput = BrowserAnswer<ProposeOutput>
@@ -8476,11 +8480,9 @@ export type LibraryRetiredOutput = { site: string; retired: RetiredCard[] }
 export type BrowserLibraryRetiredOutput = BrowserAnswer<LibraryRetiredOutput>
 /** `oneiron_browser::library::live_run::LibraryRunMode` */
 export type LibraryRunMode = "strict" | "assisted"
-/** `oneiron_browser::library::SecretArg` */
-export type SecretArg = { handle: string } | { text: string }
-/** `oneiron_browser::library::LibraryRunInput` */
+/** `oneiron_browser::library::live_run::LibraryRunInput` */
 export type LibraryRunInput = { workflow: string; args?: Record<string, string>; base?: ObservationBase | null; mode?: LibraryRunMode | null; secret_args?: Record<string, SecretArg> }
-/** `oneiron_browser::library::LibraryRunOutput` */
+/** `oneiron_browser::library::live_run::LibraryRunOutput` */
 export type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: LibraryRunMode; model_free: boolean; model_free_unproven?: number | null; unmet?: number[]; batch: BatchOutput }
 /** `oneiron::verbs::browser::BrowserLibraryRunOutput` */
 export type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>
@@ -8490,8 +8492,6 @@ export type HandoverInput = { reason: string; demonstrate?: boolean }
 export type HandoverOutput = { reason: string; asked_at_ms: number }
 /** `oneiron::verbs::browser::BrowserHandoverOutput` */
 export type BrowserHandoverOutput = BrowserAnswer<HandoverOutput>
-/** `oneiron_browser::switch::SnapshotBounds` */
-export type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null }
 /** `oneiron_browser::switch::SwitchEngineInput` */
 export type SwitchEngineInput = { engine: BrowserEngine; reason: string; snapshot_bounds?: SnapshotBounds | null }
 /** `oneiron_browser::switch::SwitchEngineOutput` */
