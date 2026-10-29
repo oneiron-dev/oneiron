@@ -1112,7 +1112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/residence_page.rs` | src | s | 1 crate-vis | — | The home's paged residence search (FIX 8865): one ranked text list as deep as a device's whole request, past… |
 | `src/claim/scoped_read/retrieval_loop.rs` | src | s | 4 crate-vis | — | Scoped admission shared by the read-only retrieval loop's verbs |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 4 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
-| `src/claim/scoped_read/search.rs` | src | m | 7 fn · 13 crate-vis | — | — |
+| `src/claim/scoped_read/search.rs` | src | m | 7 fn · 18 crate-vis | — | — |
 | `src/claim/scoped_read/selected_search.rs` | src | s | 1 crate-vis | — | A text search narrowed by a device's resolved recall scope (FIX 2905): the home's side of an opened device's… |
 | `src/claim/scoped_read/served_forms.rs` | src | s | 2 fn | — | The served-form receipts a read writes (OF-329): what it served of each asset, recorded under the holder it… |
 | `src/claim/scoped_read/served_forms/session.rs` | src | s | 1 crate-vis | — | The served-form receipts a read in an off-record room keeps (WILL L11-01 S01-2b, OF-329): what it served of… |
@@ -1702,7 +1702,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/builder/pack_run.rs` | src | m | 2 struct · 8 fn · 6 crate-vis | SerializedContextPack, UnfinalizedContextPack | What a pack run produces and how its telemetry row is finalized or discarded |
 | `src/context_pack/builder/query.rs` | src | m | 1 struct · 66 fn · 5 crate-vis | ContextPackBuilder | The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration |
 | `src/context_pack/builder/replay.rs` | src | s | 2 crate-vis | — | Opt-in pack-assembly and terminal-projection settings for offline replay |
-| `src/context_pack/builder/scoped.rs` | src | s | 4 crate-vis | — | Candidate narrowing passthrough to the existing retrieval pipeline |
+| `src/context_pack/builder/scoped.rs` | src | s | 5 crate-vis | — | Candidate narrowing passthrough to the existing retrieval pipeline |
 | `src/context_pack/builder/selection.rs` | src | s | 1 fn · 3 crate-vis | — | Critical-first row selection under a pack's existing budgets, and the critical accounting a pack reports… |
 | `src/context_pack/edge_walk.rs` | src | m | 6 crate-vis | — | Edge loading and multi-hop neighbor expansion during pack assembly |
 | `src/context_pack/empty_pack.rs` | src | s | 1 struct · 1 enum · 1 fn · 7 crate-vis | EmptyContext, EmptyReason | Why a context pack came back empty, at each serialization stage |
@@ -4135,13 +4135,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/blend.rs` | src | m | 10 crate-vis | — | — |
 | `src/pipeline/budget.rs` | src | m | 13 crate-vis | — | — |
 | `src/pipeline/budget/selection.rs` | src | s | 5 crate-vis | — | Critical-first selection of a pack run's scored rows under its existing budgets (FIX 9760): every cut is… |
-| `src/pipeline/builder/mod.rs` | src | L | 1 struct · 43 fn · 15 crate-vis | PipelineBuilder | — |
+| `src/pipeline/builder/mod.rs` | src | L | 1 struct · 43 fn · 16 crate-vis | PipelineBuilder | — |
 | `src/pipeline/builder/terminal.rs` | src | s | 5 fn | — | — |
 | `src/pipeline/builder_capture.rs` | src | s | 7 fn · 8 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
 | `src/pipeline/builder_effort.rs` | src | s | 2 fn · 4 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
 | `src/pipeline/capabilities.rs` | src | m | 9 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
 | `src/pipeline/channels.rs` | src | L | 16 crate-vis | — | — |
-| `src/pipeline/corpus_filter.rs` | src | s | 7 crate-vis | — | — |
+| `src/pipeline/corpus_filter.rs` | src | s | 9 crate-vis | — | — |
 | `src/pipeline/criticality.rs` | src | s | 2 crate-vis | — | Narrow-only manifest criticality selection at candidate admission, and the critical claims a pack's… |
 | `src/pipeline/decay_tests.rs` | test | m | — | — | ONE-1402 · read-side memory decay at the pipeline seam |
 | `src/pipeline/execution/channels/admit.rs` | src | s | 4 crate-vis | — | The admit step every channel shares: signal components, the optional trace record, and the ranked-list push |
@@ -4190,7 +4190,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/trace/replay_inputs.rs` | src | s | 1 crate-vis | — | Opt-in replay input capture from the resolved query, never from a fork hash |
 | `src/pipeline/trace/trace_fork_hash.rs` | src | m | 2 crate-vis | — | Deterministic replay fork-hashing: evidence dispatcher, all fork_hash segments, and primitives |
 | `src/pipeline/trace/trace_records.rs` | src | s | 10 crate-vis | — | Pure trace-data shaping: channel, fused, top and stage records, score breakdowns, and candidate-set assembly |
-| `src/pipeline/types.rs` | src | L | 9 struct · 5 enum · 15 fn · 4 const · 1 re-export · 36 crate-vis | ActiveWorldSelection, DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding, RelMode +6 | — |
+| `src/pipeline/types.rs` | src | L | 9 struct · 5 enum · 15 fn · 4 const · 1 re-export · 38 crate-vis | ActiveWorldSelection, DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding, RelMode +6 | — |
 | `src/pipeline/vector_refinement.rs` | src | s | 1 struct · 1 crate-vis | VectorRefinement | The dimensional space the existing HNSW funnel actually scores in |
 | `src/pipeline/world_authority.rs` | src | m | 1 fn · 9 crate-vis | — | Per-turn world authority, bound to the host's executing principal |
 | `src/pipeline/world_authority_tests.rs` | test | m | — | — | ONE-1420 principal binding, durable default authorship, and authority reuse |
