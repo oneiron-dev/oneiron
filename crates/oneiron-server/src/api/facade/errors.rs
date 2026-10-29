@@ -144,6 +144,12 @@ impl From<MemoryError> for FacadeApiError {
             // served writes answer (K18): temporary, and lifted by the reap's
             // abort or the vault's wake, never this server's failure.
             crate::managed::WRITES_FROZEN_TAG => StatusCode::SERVICE_UNAVAILABLE,
+            // FIX 679: `ai.ask_image`'s door refuses under its route's own
+            // code, and answers with the route's status.
+            code if host_doors::ask_image_refusal_status(code).is_some() => {
+                host_doors::ask_image_refusal_status(code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
