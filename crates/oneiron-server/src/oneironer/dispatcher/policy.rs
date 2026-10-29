@@ -77,12 +77,21 @@ pub(super) fn route_live(
 
 /// Why a worker runs a call a routing `rule` gave it: `pinned` when the slot
 /// serves one configured worker; `fallback` when a worker ranked above it is
-/// not ready; else the rule itself.
-pub(super) fn reason(pinned: bool, preferred_away: bool, rule: ExecutionPick) -> ExecutionPick {
+/// not ready; `free` when it is the one ready worker the call could run on
+/// and the rule names a queue choice none was made from; else the rule
+/// itself.
+pub(super) fn reason(
+    pinned: bool,
+    preferred_away: bool,
+    single: bool,
+    rule: ExecutionPick,
+) -> ExecutionPick {
     if pinned {
         ExecutionPick::Pinned
     } else if preferred_away {
         ExecutionPick::Fallback
+    } else if single && rule == ExecutionPick::ShorterQueue {
+        ExecutionPick::Free
     } else {
         rule
     }

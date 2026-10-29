@@ -37,12 +37,13 @@ impl MediaRuntime {
             .is_some_and(|alone| alone.health().iter().all(|(_, health)| health.live_now()))
     }
 
-    /// What the media meter has left to spend, in token units.
+    /// What the media meter has left to spend, in token units; none without
+    /// a meter or when the meter has no cap (FIX 10593).
     #[must_use]
     pub fn units_left(&self) -> Option<u64> {
         self.meter
             .as_ref()
-            .map(|meter| meter.read().remaining_units)
+            .and_then(|meter| meter.read().capped_remaining_units())
     }
 
     /// The seat id and widest locality that serve `operation`.

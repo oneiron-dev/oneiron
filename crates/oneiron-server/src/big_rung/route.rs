@@ -66,6 +66,7 @@ impl BigModel {
             pin: self.pin.clone(),
             trial_usage: self.trial_usage.clone(),
             send: DecisionSendConstraint::OnHost,
+            paired: self.paired.clone(),
         }
     }
 

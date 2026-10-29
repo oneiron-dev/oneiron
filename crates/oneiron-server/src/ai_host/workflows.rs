@@ -233,7 +233,12 @@ fn pump_once(
     }
     // A step parked on its payer goes on once the owners said yes (FIX 805);
     // a funding change no commit signals is caught on the recheck.
-    recheck |= super::payer_funding::resume_payer_parks(vault, LEASE_OWNER, now_secs()) > 0;
+    recheck |= super::payer_funding::resume_payer_parks(
+        vault,
+        LEASE_OWNER,
+        now_secs(),
+        Some(&runner.spent),
+    ) > 0;
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
@@ -364,6 +369,12 @@ fn pump_once(
                                 step.attempt.id,
                                 LEASE_OWNER,
                                 &fault,
+                                runner
+                                    .spent
+                                    .lock()
+                                    .expect("step spend mutex poisoned")
+                                    .get(&step.attempt.id)
+                                    .copied(),
                                 now_secs(),
                             )?;
                             parked = true;

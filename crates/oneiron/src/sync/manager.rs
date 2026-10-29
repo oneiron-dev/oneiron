@@ -31,12 +31,16 @@
 //!
 //! # Lock semantics
 //!
-//! - The registry mutex is held across the ENTIRE open (recovery included).
-//!   Concurrent opens of the same key serialize; the loser observes the
-//!   winner's instance. Opens are rare (startup + on-demand month faults),
-//!   so the coarse critical section is deliberate.
-//! - Lock order: **registry lock → materializer lock** (open holds the
-//!   registry lock while step-5 forward remat takes the materializer lock).
+//! - A cold open loads and recovers, and an unload persists, its window
+//!   outside the registry mutex under a per-window transition mark. A second
+//!   open of the window, and `window`/`unload_window`/`discard_window`/
+//!   replacement of it, wait for the mark; `loaded_keys` lists no window in
+//!   transition and never waits; opens and unloads of other windows never
+//!   wait on it. The registry mutex covers only lookups, the fast path,
+//!   registration and removal.
+//! - Lock order: **registry lock → materializer lock** (a cold open takes the
+//!   materializer lock for step-5 forward remat, and an unload for its
+//!   persist, without the registry lock).
 //!   Observer callbacks take ONLY the materializer lock and never the
 //!   registry lock, so observer traffic cannot deadlock against
 //!   open/unload. Code built on the manager must never acquire the registry
@@ -85,6 +89,10 @@ pub struct WindowManager {
     issued_handles: Mutex<HashMap<WindowKey, Vec<Weak<LoadedWindow>>>>,
     /// Windows a sweep holds closed while it compacts them.
     sweep_fence: super::sweep_fence::SweepFence,
+    /// Windows in transition outside the registry lock: a cold open loading
+    /// and recovering one, or an unload persisting one. The same per-window
+    /// mark a sweep uses.
+    transition: super::sweep_fence::SweepFence,
     /// Shared Observer A outbound sink: every window this manager opens
     /// routes its persisted local updates here (every attached channel,
     /// durable `SyncQueue` when none is).
@@ -137,6 +145,7 @@ impl WindowManager {
             windows: Mutex::new(HashMap::new()),
             issued_handles: Mutex::new(HashMap::new()),
             sweep_fence: super::sweep_fence::SweepFence::default(),
+            transition: super::sweep_fence::SweepFence::default(),
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
             live_mirror: Arc::default(),
@@ -242,12 +251,12 @@ impl WindowManager {
         // as the vault's delete router. Idempotent; takes only the vault's
         // attach mutex, never the registry lock.
         self.attach_to_vault();
-        let mut registry = self.lock_registry();
+        let mut registry = self.lock_registry_settled(key);
         // A window a sweep holds closed opens once the sweep is done.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);
-            registry = self.lock_registry();
+            registry = self.lock_registry_settled(key);
         }
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
@@ -263,6 +272,11 @@ impl WindowManager {
             drop(registry);
             return Ok((existing, false));
         }
+        let opening = self
+            .transition
+            .close(key)
+            .expect("no step on the window is under way under the registry lock");
+        drop(registry);
 
         // Startup steps 1-2 (per-window slice): persisted snapshot + pending
         // updates, or a fresh bare doc. A fresh doc still goes through full
@@ -329,10 +343,12 @@ impl WindowManager {
             &self.materializer,
             Some(Arc::clone(&self.outbound)),
         ));
+        let mut registry = self.lock_registry();
         registry.insert(key.clone(), Arc::clone(&window));
         #[cfg(test)]
         self.maybe_pause_handle_issue();
         self.track_issued_handle(key, &window);
+        drop(opening);
         drop(registry);
         Ok((window, true))
     }
@@ -374,7 +390,7 @@ impl WindowManager {
     /// never opens. This is the lookup seam M4-10 delete routing uses to
     /// commit tombstones through the live doc when the window is loaded.
     pub fn window(&self, key: &WindowKey) -> Option<Arc<LoadedWindow>> {
-        let registry = self.lock_registry();
+        let registry = self.lock_registry_settled(key);
         let window = registry.get(key).map(Arc::clone)?;
         #[cfg(test)]
         self.maybe_pause_handle_issue();
@@ -403,7 +419,7 @@ impl WindowManager {
         f: impl FnOnce() -> T,
     ) -> Option<T> {
         let registry = self.windows.lock().ok()?;
-        if registry.contains_key(key) {
+        if registry.contains_key(key) || self.transition.holds(key) {
             return None;
         }
         let retained = {
@@ -420,9 +436,16 @@ impl WindowManager {
         Some(result)
     }
 
-    /// Returns the keys of all currently loaded windows.
+    /// Returns the keys of all currently loaded windows, except one an unload
+    /// is persisting now. Never waits on a cold open or an unload.
     pub fn loaded_keys(&self) -> Vec<WindowKey> {
-        self.lock_registry().keys().cloned().collect()
+        let registry = self.lock_registry();
+        let transition = self.transition.keys();
+        registry
+            .keys()
+            .filter(|key| !transition.contains(key))
+            .cloned()
+            .collect()
     }
 
     /// Unloads the window for `key`: persists its Doc state to `sync_state`
@@ -451,12 +474,12 @@ impl WindowManager {
     /// with outstanding holders because its doc state is known-stale.
     ///
     /// The check runs under the registry lock and counts only EXTERNAL
-    /// holders (the registry's own `Arc` is excluded). When it passes, no
-    /// external handle exists and none can appear before deregistration:
-    /// minting a new handle requires `open_window`/`window`, which both
-    /// need the registry lock this method holds.
+    /// holders (the registry's own `Arc` is excluded). When it passes, the
+    /// window is marked in transition before the lock is released, so no
+    /// external handle can appear before deregistration: minting one
+    /// requires `open_window`/`window`, which wait for the mark.
     pub fn unload_window(&self, key: &WindowKey) -> Result<bool> {
-        let mut registry = self.lock_registry();
+        let registry = self.lock_registry_settled(key);
         let Some(window) = registry.get(key) else {
             return Ok(false);
         };
@@ -470,12 +493,25 @@ impl WindowManager {
                 outstanding_handles,
             }));
         }
+        let window = Arc::clone(window);
+        // The persist runs outside the registry lock, under the window's
+        // transition mark: every per-window step waits for it, so no handle to
+        // the window is minted meanwhile. A failed persist returns with the
+        // window still registered and observed; the mark drops on return.
+        let closing = self
+            .transition
+            .close(key)
+            .expect("no step on the window is under way under the registry lock");
+        drop(registry);
         // Persist BEFORE deregistering, while observers still cover the doc.
         window.persist_state(&self.vault)?;
-        let window = registry
+        let mut registry = self.lock_registry();
+        let registered = registry
             .remove(key)
-            .expect("window present under registry lock");
+            .expect("window present under its transition mark");
+        drop(registered);
         drop(window);
+        drop(closing);
         drop(registry);
         self.prune_issued_handles_for_key(key);
         Ok(true)
@@ -507,7 +543,7 @@ impl WindowManager {
     /// (and its observer subscriptions) alive until they drop; this is
     /// logged because their writes are orphaned by design.
     pub fn discard_window(&self, key: &WindowKey) -> bool {
-        let mut registry = self.lock_registry();
+        let mut registry = self.lock_registry_settled(key);
         let Some(window) = registry.remove(key) else {
             return false;
         };
@@ -602,6 +638,22 @@ impl WindowManager {
         self.windows
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The registry lock, taken once `key` is in no transition: a per-window
+    /// step then sees the window a cold open registered, or finds the one an
+    /// unload removed gone; steps on other windows never wait on it.
+    fn lock_registry_settled(
+        &self,
+        key: &WindowKey,
+    ) -> MutexGuard<'_, HashMap<WindowKey, Arc<LoadedWindow>>> {
+        let mut registry = self.lock_registry();
+        while self.transition.holds(key) {
+            drop(registry);
+            self.transition.wait_until_open(key);
+            registry = self.lock_registry();
+        }
+        registry
     }
 
     fn track_issued_handle(&self, key: &WindowKey, window: &Arc<LoadedWindow>) {

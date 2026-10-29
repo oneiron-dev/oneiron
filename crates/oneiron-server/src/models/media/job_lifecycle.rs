@@ -9,7 +9,7 @@
 //! and row, since it may still run and bill at its provider, and its caller
 //! may poll it or delete it again.
 //! Entry: `MediaRuntime::cancel_kept_job`.
-use super::{FatalLlmError, Held, LlmResult, MediaJobState, MediaRuntime, erased_poll};
+use super::{FatalLlmError, Held, KeptJob, LlmResult, MediaJobState, MediaRuntime, erased_poll};
 
 /// What writing a job's end came to.
 pub(super) enum JobWrite {
@@ -23,9 +23,12 @@ pub(super) enum JobWrite {
 
 impl MediaRuntime {
     /// Keeps job `id`'s end `state` in its row, the row and its clips in one
-    /// write over the row already kept, and lets the job go from here. An
-    /// end the vault refuses, or a job whose row was never kept, stays held
-    /// here with its end, for the next poll to answer and write again. A
+    /// write over the row already kept, and lets the job go from here. A
+    /// held write of the job goes in place first (FIX 2963). An end the
+    /// vault refuses, or a job whose row was never kept, stays held here
+    /// with its end, for the next poll to answer and write again, and is
+    /// held in the vault as the job's held write, so a restart neither polls
+    /// an ended job on a fresh permit nor pays its end again. A
     /// job dropped meanwhile stays dropped: a delete's job is gone, and its
     /// poll finds no job. A job an erase took keeps nothing of its end,
     /// which goes from here unanswered: the answer is its erased end
@@ -39,6 +42,7 @@ impl MediaRuntime {
             self.store
                 .as_ref()
                 .map_or(Ok(JobWrite::Kept), |store| -> Result<JobWrite, String> {
+                    store.flush(id);
                     let kept = store
                         .get(id)
                         .ok_or_else(|| "its row is not kept".to_owned())?;
@@ -63,6 +67,7 @@ impl MediaRuntime {
             }
             Err(error) => {
                 tracing::error!(%error, ticket = id, "a media job's end is held, not kept");
+                self.hold_end(id, state);
                 if let Some(held) = jobs.get_mut(id)
                     && matches!(held, Held::Running(_))
                 {
@@ -73,6 +78,28 @@ impl MediaRuntime {
         Ok(state.clone())
     }
 
+    /// Holds job `id`'s end `state` as its held write (FIX 2963), over the
+    /// row its own key keeps or, when that was never kept, its held submit.
+    /// A job with neither keeps its end here only.
+    fn hold_end(&self, id: &str, state: &MediaJobState) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let base = store
+            .read(id, false)
+            .and_then(KeptJob::live)
+            .or_else(|| store.held_row(id));
+        let held = base
+            .ok_or_else(|| "no row of it is kept".to_owned())
+            .and_then(|mut row| {
+                row.ended = Some(state.clone());
+                store.hold(id, row)
+            });
+        if let Err(error) = held {
+            tracing::error!(%error, ticket = id, "a media job's end is held here only");
+        }
+    }
+
     /// Stops job `id` at its provider and drops it, here and in the vault.
     /// A running job is stopped first, under the lock its polls take; only
     /// a stop its provider confirmed settles its permit and lets it go. A
@@ -81,7 +108,11 @@ impl MediaRuntime {
     pub(super) async fn cancel_kept_job(&self, id: &str) -> LlmResult<()> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
-            Held::Unkept(_) | Held::Ended(_) => return self.drop_kept_job(id),
+            // Nothing can stop it at its provider until its submit is
+            // answered: the caller asks again (FIX 2248).
+            Held::Submitting(_) => return Err(oneiron::RetryableLlmError::ServerError.into()),
+            // Its provider's job cannot be reached: its row is let go.
+            Held::Unsent(_) | Held::Unkept(_) | Held::Ended(_) => return self.drop_kept_job(id),
         };
         let mut held = job.lock().await;
         held.cancel().await?;

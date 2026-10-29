@@ -251,6 +251,7 @@ pub(super) fn measure_reads(trial: &ModelTrial, reads: Vec<CaseReads>) -> Result
         candidate_cost_per_thousand,
         trial_cost,
         unknown_arms,
+        resent_unknown_arms: trial.resent_arms.len(),
     })
 }
 

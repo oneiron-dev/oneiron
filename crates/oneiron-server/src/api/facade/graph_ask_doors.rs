@@ -25,11 +25,12 @@ mod question_answers;
 pub(crate) use self::question_answers::vault_questions_answers;
 
 use oneiron::llm::decision::questions::{
-    AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionRecord,
-    QuestionScheduleHead, ScheduledBackfill, calibration_pairs, create_question, edit_question,
-    outcome_labels, pause_question, project_bound_outcomes, question_call_budget, read_question,
-    read_question_schedule, refresh_artifact_question_now, refresh_standing_question_with,
-    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type, standing_ask_route,
+    AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext,
+    OutcomeWindowClose, QuestionRecord, QuestionScheduleHead, ScheduledBackfill, calibration_pairs,
+    closed_outcome_windows, create_question, edit_question, outcome_labels, pause_question,
+    project_bound_outcomes, question_call_budget, read_question, read_question_schedule,
+    refresh_artifact_question_now, refresh_standing_question_with, run_graph_ask_receipted,
+    schedule_backfill, select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
@@ -37,9 +38,10 @@ use oneiron::llm::decision::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
     GraphAdmitRequest, GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionBackfillRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
-    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    QuestionScheduleRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -374,6 +376,35 @@ async fn vault_questions_read_answer(
             input.id,
             input.version,
         )?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.outcome_windows`: the caller's standing question's closed
+/// outcome windows, across its versions; none when the question is not theirs.
+/// Beside it, no row: the windows live in a side table.
+pub(crate) async fn vault_questions_outcome_windows(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomeWindowsRequest,
+) -> Listed<Vec<OutcomeWindowClose>> {
+    naming(
+        vault_questions_outcome_windows_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
+async fn vault_questions_outcome_windows_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomeWindowsRequest,
+) -> MemoryResult<Vec<OutcomeWindowClose>> {
+    const VERB: &str = "vault.questions.outcome_windows";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<OutcomeWindowClose>> {
+        Ok(closed_outcome_windows(server.vault(), principal, input.id)?)
     })
     .await
     .map_err(|_| internal(VERB))?

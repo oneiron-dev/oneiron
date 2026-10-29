@@ -23,8 +23,10 @@ use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,
     PreparedAuthorization, PreparedEffect, execute_outbound_effect,
 };
-use crate::outbound_consent::OutboundBindingAuthority;
-use crate::outbound_intent_ledger::BudgetClass;
+use crate::outbound_consent::{OutboundBindingAuthority, OutboundResultSender};
+use crate::outbound_intent_ledger::{
+    BudgetClass, FrozenOutboundCall, IntentLedgerError, OutboundSendOutcome, RemoteTaskHandle,
+};
 
 /// What one run of the outward leg did.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -82,10 +84,7 @@ pub(super) struct EnrollmentLegDispatch {
 ///
 /// Gate, budget, ledger, and storage failures surface as
 /// [`OutboundEffectError`].
-// The host driver that pumps this queue is ONE-1778 surface work; until it
-// lands the leg has only its oracle. Same posture `gate.rs` takes for the
-// crate-visible effect surfaces it exposes ahead of their call sites.
-#[cfg_attr(not(test), allow(dead_code))]
+// The host drives it through [`drive_enrollment_outbound_leg`] (FIX 2636).
 pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -153,6 +152,86 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         effect: result,
         first_asked_event_ref: ask.first_event_ref,
     }))
+}
+
+/// What the host's drive of one attempt's outward leg came to (ONE-1778,
+/// FIX 2636).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnrollmentLegDrive {
+    /// The chokepoint took the call: it sent it, replayed the frozen bytes
+    /// the ledger already holds, or settled it.
+    Dispatched,
+    /// The Gate holds the call for the owner's approve-once press on this
+    /// digest (FIX 6424 part 2a); nothing went out.
+    AwaitingApproval {
+        /// The digest the press names, 64 lower-hex.
+        approval_digest: String,
+    },
+    /// Nothing is owed outward: the step declares no outward leg, or the
+    /// member's own state holds the send.
+    NothingOwed,
+    /// Another node holds the designation; nothing was sent.
+    NotHomeNode(CampaignHomeNodeDesignation),
+    /// No node holds it; nothing was sent.
+    NoHomeNode,
+}
+
+/// Drives the outward leg of the claimed enrollment `attempt` through the
+/// host's `sender` (ONE-1778, FIX 2636), after its membership leg applied.
+/// The leg is the same self-contained bridge a crash resumes: the call's
+/// identity is the consequence and the step's durable `call_seq`, so a
+/// re-drive after a crash takes the stored intent and replays its frozen
+/// bytes instead of freezing a second send. Consent and sender inputs are
+/// the leg's own, unchanged.
+///
+/// # Errors
+///
+/// Gate, budget, ledger and storage failures, as the leg returns them.
+pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
+    vault: &Vault,
+    local_node_id: u64,
+    attempt: &AttemptRecord,
+    sender: &mut S,
+    now_ms: u64,
+) -> std::result::Result<EnrollmentLegDrive, IntentLedgerError> {
+    let authority = OutboundBindingAuthority::for_vault(vault)?;
+    let mut transport = SenderTransport(sender);
+    Ok(
+        match run_enrollment_outbound_leg(
+            vault,
+            &authority,
+            local_node_id,
+            attempt,
+            &mut transport,
+            now_ms,
+        )? {
+            EnrollmentOutboundLeg::Dispatched(dispatch) => match dispatch.effect.approval_digest {
+                Some(approval_digest) => EnrollmentLegDrive::AwaitingApproval { approval_digest },
+                None => EnrollmentLegDrive::Dispatched,
+            },
+            EnrollmentOutboundLeg::NoOutboundStep | EnrollmentOutboundLeg::MembershipNotReady => {
+                EnrollmentLegDrive::NothingOwed
+            }
+            EnrollmentOutboundLeg::NotHomeNode(designation) => {
+                EnrollmentLegDrive::NotHomeNode(designation)
+            }
+            EnrollmentOutboundLeg::NoHomeNode => EnrollmentLegDrive::NoHomeNode,
+        },
+    )
+}
+
+/// The host's result sender as the chokepoint's transport. The leg keeps no
+/// result body, so only the send's outcome and its remote task pass through.
+struct SenderTransport<'a, S>(&'a mut S);
+
+impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        self.0.send(call).outcome
+    }
+
+    fn remote_task(&self) -> Option<RemoteTaskHandle> {
+        self.0.remote_task()
+    }
 }
 
 /// FIX 6424 part 2a (Engine 10-20 21:0x ruling 1): the approve-once digest

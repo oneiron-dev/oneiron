@@ -31,6 +31,10 @@ pub use wire::DecisionWireLabels;
 /// A noul's labels as the generation answers them, yes first.
 const NOUL_LABELS: [&str; 2] = ["yes", "no"];
 
+/// The invariant an admitted read's settlement breaks when the guard cannot settle the lease
+/// it issued: the reply came back, and the read returns this as its error.
+pub const GENERATED_SETTLEMENT_INVARIANT: &str = "generated read budget settlement";
+
 /// The rung whose read is one generation: its backend, how each request goes out, and the
 /// request it goes out as.
 pub struct GeneratedRung<'a> {
@@ -335,7 +339,7 @@ async fn admitted(
         Ok(reply) => guard.settle_per_call(&lease.lease, &reply.usage),
         Err(_) => guard.settle_reserved(&lease.lease),
     }
-    .map_err(|_| Error::InvariantViolation("generated read budget settlement"))?;
+    .map_err(|_| Error::InvariantViolation(GENERATED_SETTLEMENT_INVARIANT))?;
     Ok(response.map_err(GeneratedMiss::Backend))
 }
 

@@ -112,6 +112,9 @@ impl TinyExtractor {
         }
     }
 
+    /// Entity labels and salient terms for live transcript `text`. The input
+    /// is heard audio, never vault rows, so the call runs unsourced (`None`);
+    /// no complete empty set is claimed.
     pub(super) async fn extract(&self, text: &str) -> Result<PartialEnrichment, HostError> {
         let request = self.request(text);
         let admission = self

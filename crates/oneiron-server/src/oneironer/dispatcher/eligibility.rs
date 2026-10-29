@@ -132,14 +132,21 @@ impl Scheduler {
 
     /// Why worker `index` runs a call of `window` tokens a routing `rule`
     /// gave it: `fallback` when a worker ranked above it that holds the call
-    /// is not ready. A better-ranked worker too short for the call is no
-    /// fallback's reason.
+    /// is not ready, `free` when it is the one ready worker that holds the
+    /// call. A better-ranked worker too short for the call is no fallback's
+    /// reason.
     pub(super) fn reason(&self, index: usize, rule: ExecutionPick, window: usize) -> ExecutionPick {
         let rank = self.workers[index].rank;
         let preferred_away = self.workers.iter().any(|worker| {
             worker.rank < rank && worker.fits(window) && worker.state != WorkerState::Ready
         });
-        policy::reason(self.pinned, preferred_away, rule)
+        let single = self
+            .workers
+            .iter()
+            .filter(|worker| worker.state == WorkerState::Ready && worker.fits(window))
+            .count()
+            == 1;
+        policy::reason(self.pinned, preferred_away, single, rule)
     }
 
     /// Worker `index` left Ready: each live call routed to it goes through

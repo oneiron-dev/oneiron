@@ -11,8 +11,8 @@ pub use self::image::{
 };
 mod media;
 pub use self::media::{
-    OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
-    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
+    EmbedShape, OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest,
+    OpenAiMediaHttpResponse, OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
 mod options;
 mod responses;

@@ -137,6 +137,10 @@ pub(super) fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<
     if let Some(role) = audit.acting_pattern_role {
         reasons.push(format!("gate.policy_model.pattern_role.{}", role.as_str()));
     }
+    // The fault that ended the read after its reply came back (FIX 1202).
+    if let Some(error) = audit.read_error {
+        reasons.push(format!("gate.policy_model.read_error.{}", error.as_str()));
+    }
     // Model-supplied strings were never validated by anyone, so they are
     // tokenized here before they can shape a ledger key. What reaches this
     // point has already been cut down to rules the plane resolved, so the

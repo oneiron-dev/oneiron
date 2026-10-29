@@ -4704,6 +4704,9 @@ class Oneiron:
         def run(self, spec):
             """Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_run(json.dumps(spec))))
+        def resend_arm(self, spec):
+            """Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown."""
+            return json.loads(_translate(lambda: self._client.vault_models_trials_resend_arm(json.dumps(spec))))
         def complete(self, spec):
             """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_complete(json.dumps(spec))))
@@ -4779,6 +4782,9 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_backfill(json.dumps(spec))))
         def read(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
+        def outcome_windows(self, spec):
+            """Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed."""
+            return json.loads(_translate(lambda: self._client.vault_questions_outcome_windows(json.dumps(spec))))
         def answers(self, spec):
             """Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."""
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
@@ -4828,6 +4834,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_decisions_asks_answer(json.dumps(spec))))
         def climb(self, spec):
             return json.loads(_translate(lambda: self._client.vault_decisions_asks_climb(json.dumps(spec))))
+        def confirm_grant(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_confirm_grant(json.dumps(spec))))
     class _VaultBookingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5471,6 +5479,9 @@ class Oneiron:
         def budget(self) -> "Oneiron._SelfBudgetVerbs":
             return Oneiron._SelfBudgetVerbs(self._client)
         @property
+        def billing(self) -> "Oneiron._SelfBillingVerbs":
+            return Oneiron._SelfBillingVerbs(self._client)
+        @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs":
             return Oneiron._SelfCredentialVerbs(self._client)
         @property
@@ -5641,6 +5652,18 @@ class Oneiron:
         def land(self, spec):
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
             return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
+    class _SelfBillingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def account(self) -> "Oneiron._SelfBillingAccountVerbs":
+            return Oneiron._SelfBillingAccountVerbs(self._client)
+    class _SelfBillingAccountVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def file(self, spec):
+            """Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."""
+            return json.loads(_translate(lambda: self._client.self_billing_account_file(json.dumps(spec))))
     class _SelfCredentialVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5920,16 +5943,16 @@ class Oneiron:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
         def image(self, spec):
-            """One image out of the host's image model; reference images make it an edit."""
+            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."""
             return json.loads(_translate(lambda: self._client.ai_image(json.dumps(spec))))
         def speech(self, spec):
-            """Speech audio out of text, from the host's speech model."""
+            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."""
             return json.loads(_translate(lambda: self._client.ai_speech(json.dumps(spec))))
         def transcribe(self, spec):
-            """Text out of speech audio, from the host's transcription model."""
+            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."""
             return json.loads(_translate(lambda: self._client.ai_transcribe(json.dumps(spec))))
         def embed(self, spec):
-            """One embedding vector per input text, from the host's embedding model."""
+            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."""
             return json.loads(_translate(lambda: self._client.ai_embed(json.dumps(spec))))
         @property
         def video(self) -> "Oneiron._AiVideoVerbs":
@@ -6025,7 +6048,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """Starts a video render as a provider job and answers with its ticket."""
+            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."""
             return json.loads(_translate(lambda: self._client.ai_video(json.dumps(spec))))
         def poll(self, spec):
             """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""

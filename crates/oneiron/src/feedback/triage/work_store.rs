@@ -367,6 +367,7 @@ impl Vault {
                     reason: PARK_REASON.to_owned(),
                     cause: DreamerParkCause::Signal,
                     park_owner: COACH_FEEDBACK_TRIAGE_PARK_OWNER.to_owned(),
+                    carried_spend: None,
                     now,
                 },
                 DreamerTryLease {

@@ -12,6 +12,9 @@
 //! attempt parks as its executor parks any limit refusal, for a later pass to
 //! resume. A limit with no stated reset, or one the schedule reaches, keeps
 //! today's retries.
+//!
+//! The reset a refusal states also rides out with it: the attempt's Retry
+//! park comes due at that reset ([`stated_reset_at`]).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -58,31 +61,19 @@ pub(super) async fn generate_with_retry(
 
 /// Whether `error`, met before retry `retry` of `max_retries`, waits past every interval
 /// the schedule has left: spent credit, or a rate limit or spent window whose stated reset
-/// (its `retry_after`, else its first `resets_at` still ahead) comes later than all of
-/// them. A refusal that states no reset never does.
+/// ([`stated_reset_secs`]) comes later than all of them. A refusal that states no reset
+/// never does.
 fn waits_past_schedule(error: &RetryableLlmError, retry: usize, max_retries: usize) -> bool {
-    let (retry_after, resets_at) = match error {
+    if matches!(
+        error,
         RetryableLlmError::QuotaSpent {
             kind: SpentKind::Credit,
             ..
-        } => return true,
-        RetryableLlmError::RateLimited {
-            retry_after,
-            resets_at,
         }
-        | RetryableLlmError::QuotaSpent {
-            retry_after,
-            resets_at,
-            ..
-        } => (*retry_after, resets_at),
-        _ => return false,
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    let Some(reset_ms) = retry_after
-        .or_else(|| resets_at.iter().find(|at| **at > now).map(|at| at - now))
-        .map(|secs| secs.saturating_mul(1000))
+    ) {
+        return true;
+    }
+    let Some(reset_ms) = stated_reset_secs(error, unix_now()).map(|secs| secs.saturating_mul(1000))
     else {
         return false;
     };
@@ -94,6 +85,42 @@ fn waits_past_schedule(error: &RetryableLlmError, retry: usize, max_retries: usi
         }
     }
     true
+}
+
+/// How many seconds after `now` (Unix seconds) a rate limit or a spent usage window says
+/// it resets: its `retry_after`, else its first `resets_at` still ahead. None for a
+/// refusal that states no reset, and for spent credit, which only the owner's answer
+/// brings back.
+fn stated_reset_secs(error: &RetryableLlmError, now: u64) -> Option<u64> {
+    let (retry_after, resets_at) = match error {
+        RetryableLlmError::RateLimited {
+            retry_after,
+            resets_at,
+        }
+        | RetryableLlmError::QuotaSpent {
+            kind: SpentKind::Window,
+            retry_after,
+            resets_at,
+        } => (*retry_after, resets_at),
+        _ => return None,
+    };
+    retry_after.or_else(|| resets_at.iter().find(|at| **at > now).map(|at| at - now))
+}
+
+/// When the provider limit `error` says it resets, in Unix seconds (FIX 11226): a Retry
+/// park the refusal makes comes due then. None when it states none.
+pub(super) fn stated_reset_at(error: &LlmError) -> Option<u64> {
+    let LlmError::Retryable(error) = error else {
+        return None;
+    };
+    let now = unix_now();
+    stated_reset_secs(error, now).map(|secs| now.saturating_add(secs))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 /// std-only timer future (zero-new-deps pin, design D1): a helper thread

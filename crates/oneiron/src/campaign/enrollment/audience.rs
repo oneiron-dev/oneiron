@@ -24,7 +24,8 @@ pub struct AudienceWakeReport {
     /// The wake's counts and resume point, as an unbound query's wake
     /// reports them.
     pub wake: WakeEvaluationReport,
-    /// Entries detection recorded, one per bound program a candidate entered.
+    /// Transitions detection recorded, one per bound program a candidate
+    /// entered or, no longer matching, left (FIX 2635).
     pub recorded: u32,
     /// Attempts newly queued; a recorded entry whose consequence is already
     /// queued coalesces onto that row.

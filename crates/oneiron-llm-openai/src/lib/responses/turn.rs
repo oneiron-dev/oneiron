@@ -8,6 +8,8 @@ use super::{
     REASONING_BUDGET_PARAM, ReasoningEffort, ResponseFormat, json, responses_items, responses_tool,
     validate_capabilities,
 };
+use crate::wire::SOLO_FIELD;
+use oneiron::llm::is_solo;
 
 impl OpenAiResponsesTurn {
     /// The `response.create` frame that chains `previous_response_id` and
@@ -69,6 +71,12 @@ pub fn build_openai_responses_turn(
     }
     for (key, value) in provider_options.to_wire_fields() {
         head.insert(key, value);
+    }
+    // A call the host marked solo runs alone on an own server that admits
+    // calls so. Only such a provider's config sends the field; any other
+    // provider never sees it.
+    if config.solo_admission() && is_solo(request) {
+        head.insert(SOLO_FIELD.to_owned(), JsonValue::Bool(true));
     }
     let mut reasoning = match head.remove("reasoning") {
         Some(JsonValue::Object(options)) => options,
