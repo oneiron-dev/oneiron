@@ -335,7 +335,17 @@ impl Vault {
         match self.put_authority_log_rows_in_txn(&mut wtxn, &entries, true) {
             Ok(AuthorityPut::Stored(_)) => {}
             Ok(AuthorityPut::Pending(_)) => return Ok(PendingLanding::Waiting),
-            Err(error) if super::super::readonly_fold::is_history_incomplete(&error) => {
+            // A row whose signer's enrollment has not landed waits for it,
+            // as one waiting for history does.
+            Err(error)
+                if super::super::readonly_fold::is_history_incomplete(&error)
+                    || matches!(
+                        error,
+                        crate::error::Error::Record(
+                            crate::error::RecordError::AuthorityLogSignerPending { .. }
+                        )
+                    ) =>
+            {
                 return Ok(PendingLanding::Waiting);
             }
             Err(error @ crate::error::Error::Record(_)) => {
