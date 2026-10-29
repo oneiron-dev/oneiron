@@ -118,6 +118,7 @@ impl FallbackRegistry {
             },
             // A deterministic runner is no host evidence: it asserts no record.
             reply_assertions: ReplyAssertions::default(),
+            token_scores: None,
         })
     }
 

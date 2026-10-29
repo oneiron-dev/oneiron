@@ -7,7 +7,7 @@ are `Any`, and the census below counts them.
 Census: 1164 facade rows, 4181 declarations.
 Inputs: 1099 of 1164 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1164 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 107; unread shapes: 0.
+Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -15119,6 +15119,7 @@ class LlmResponse(TypedDict):
     usage: LlmUsage
     finish_reason: FinishReason
     reply_assertions: NotRequired[ReplyAssertions]
+    token_scores: NotRequired[Any | None]
 class NerSpan(TypedDict):
     message: int
     start: int

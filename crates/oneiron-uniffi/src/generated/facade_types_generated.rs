@@ -47276,6 +47276,12 @@ pub struct LlmResponse {
         skip_serializing_if = "Option::is_none"
     )]
     pub reply_assertions: Option<ReplyAssertions>,
+    #[serde(
+        rename = "token_scores",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_scores: Option<crate::WireJson>,
 }
 
 /// `oneiron::memory::extraction::types::NerSpan`.

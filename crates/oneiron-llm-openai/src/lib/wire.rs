@@ -245,6 +245,7 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
         finish_reason,
         // A provider's reply asserts no record: its host alone does (FIX 3416).
         reply_assertions: Default::default(),
+        token_scores: None,
     })
 }
 

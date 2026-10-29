@@ -3,7 +3,7 @@
 // Census: 1164 facade rows, 4181 declarations.
 // Inputs: 1099 of 1164 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 // Results: 1042 of 1164 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Opaque serde_json::Value leaves: 107; unread shapes: 0.
+// Opaque serde_json::Value leaves: 108; unread shapes: 0.
 /** `oneiron::memory::commitment_doors::types::CommitmentObligorKind` */
 export type CommitmentObligorKind = "owner" | "agent" | "third_party"
 /** `oneiron::memory::commitment_doors::types::CommitmentObligor` */
@@ -6011,7 +6011,7 @@ export type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind:
 /** `oneiron::llm::manifest::doors::ModelRoleInvoke` */
 export type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput }
 /** `oneiron_model::llm::protocol::LlmResponse` */
-export type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions }
+export type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions; token_scores?: unknown | null }
 /** `oneiron::memory::extraction::types::NerSpan` */
 export type NerSpan = { message: number; start: number; end: number; label: string; confidence: number }
 /** `oneiron::memory::extraction::types::CorefLink` */
