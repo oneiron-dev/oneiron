@@ -23,6 +23,7 @@ use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, live_weave_lens_request,
 };
 use oneiron::lens::{GeneratedUiSurfaceCapabilities, HostedLensRender, LensFrameCard};
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
@@ -34,6 +35,7 @@ use oneiron::{
 };
 
 use crate::auth::CoreAuth;
+use crate::lens_frames::CardOwner;
 use crate::server::SyncServer;
 
 const VERB: &str = "vault.weave.lens";
@@ -65,6 +67,16 @@ pub(crate) enum WeaveLensCaller {
         admin: AuthenticatedWeaveAdmin,
         auth: CoreAuth,
         actor: EntityId,
+    },
+    /// A pumped run reads its own agent's lens (FIX 2086): on the agent's
+    /// own lane on this device, its step spending on the run's own `line`
+    /// when one binds the entry, and its card held for the run, whose end
+    /// closes it. The run holds no credential and borrows none.
+    Run {
+        actor: EntityId,
+        class: EdgeActorClass,
+        run: EntityId,
+        line: Option<RunAdmission>,
     },
 }
 
@@ -110,17 +122,22 @@ impl LensReader<'_> {
 }
 
 impl WeaveLensCaller {
-    /// The credential that asked, under which its card's frame is held.
-    fn auth(&self) -> &CoreAuth {
+    /// The credential that asked, under which its card's frame is held;
+    /// `None` for a run, which holds its card itself.
+    fn auth(&self) -> Option<&CoreAuth> {
         match self {
             Self::Credential { auth, .. } | Self::Owner { auth, .. } | Self::Admin { auth, .. } => {
-                auth
+                Some(auth)
             }
+            Self::Run { .. } => None,
         }
     }
 
+    /// Where the caller reads from: a credential's locality; a run's own
+    /// door is on this device.
     fn locality(&self) -> CallerLocality {
-        self.auth().locality()
+        self.auth()
+            .map_or(CallerLocality::OnDevice, CoreAuth::locality)
     }
 
     /// Runs `read` on the caller's own handle, reading at `reads_at` and
@@ -156,6 +173,13 @@ impl WeaveLensCaller {
                     .at(reads_at)
                     .listing_producers(producers),
                 LensReader::Admin(admin),
+            ),
+            Self::Run { actor, class, .. } => read(
+                &vault
+                    .memory(*actor, *class)
+                    .at(reads_at)
+                    .listing_producers(producers),
+                LensReader::Bound(None),
             ),
         }
     }
@@ -202,20 +226,23 @@ pub(crate) async fn render_live_weave_lens(
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
 ) -> MemoryResult<LensFrameCard> {
-    render_live_weave_lens_listing(server, caller, request)
+    render_live_weave_lens_listing(server, caller, request, None)
         .await
         .0
 }
 
 /// [`render_live_weave_lens`], beside the rows its report reads listed:
-/// every read the lens rendered from, a reread's with them.
+/// every read the lens rendered from, a reread's with them. The card is
+/// lowered for `surface` when the caller names one (FIX 7969), else for the
+/// whole atom kit.
 pub(crate) async fn render_live_weave_lens_listing(
     server: &Arc<SyncServer>,
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
+    surface: Option<GeneratedUiSurfaceCapabilities>,
 ) -> (MemoryResult<LensFrameCard>, Vec<EntityId>) {
     let producers = Arc::new(ProducerRows::default());
-    let answer = render_listing(server, caller, request, &producers, None).await;
+    let answer = render_listing(server, caller, request, &producers, None, surface).await;
     (answer, producers.take())
 }
 
@@ -229,9 +256,10 @@ pub(crate) async fn render_live_weave_lens_for_run(
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
     owner: crate::lens_frames::CardOwner,
+    surface: Option<GeneratedUiSurfaceCapabilities>,
 ) -> (MemoryResult<LensFrameCard>, Vec<EntityId>) {
     let producers = Arc::new(ProducerRows::default());
-    let answer = render_listing(server, caller, request, &producers, Some(owner)).await;
+    let answer = render_listing(server, caller, request, &producers, Some(owner), surface).await;
     (answer, producers.take())
 }
 
@@ -241,7 +269,9 @@ async fn render_listing(
     request: WeaveReportRequest,
     producers: &Arc<ProducerRows>,
     owner: Option<crate::lens_frames::CardOwner>,
+    surface: Option<GeneratedUiSurfaceCapabilities>,
 ) -> MemoryResult<LensFrameCard> {
+    let surface = surface.unwrap_or_default();
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
     // An agent that dreams on its own model reads its own lens on that
@@ -249,6 +279,11 @@ async fn render_listing(
     // extraction role's.
     let own = match &caller {
         WeaveLensCaller::Credential {
+            actor,
+            class: EdgeActorClass::Agent,
+            ..
+        }
+        | WeaveLensCaller::Run {
             actor,
             class: EdgeActorClass::Agent,
             ..
@@ -295,22 +330,30 @@ async fn render_listing(
             CallerLocality::OffDevice
         };
     let (first, actor) = prepare_live(&vault, &caller, &request, reads_at, producers).await?;
-    // The caller's own line pays for every step, as a chat turn's does.
-    let settings = server.ai.chat_settings();
-    let run_id = format!(
-        "weave_lens:{}:{}",
-        actor.entity_ref().to_hex(),
-        vault.now_recorded_at()
-    );
-    let meter = vault.policy_budget_guard(
-        run_id.clone(),
-        settings.turn_budget_units,
-        oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
-        BudgetExhaustionPolicy::Suspend,
-        actor,
-    )?;
-    let run = server.ai.undeclared_run(run_id, meter);
-    let auth = caller.auth().clone();
+    // The caller's own line pays for every step, as a chat turn's does: a
+    // run's, the line its entry spends on (FIX 2086).
+    let run = match &caller {
+        WeaveLensCaller::Run {
+            line: Some(line), ..
+        } => line.clone(),
+        _ => {
+            let settings = server.ai.chat_settings();
+            let run_id = format!(
+                "weave_lens:{}:{}",
+                actor.entity_ref().to_hex(),
+                vault.now_recorded_at()
+            );
+            let meter = vault.policy_budget_guard(
+                run_id.clone(),
+                settings.turn_budget_units,
+                oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
+                BudgetExhaustionPolicy::Suspend,
+                actor,
+            )?;
+            server.ai.undeclared_run(run_id, meter)
+        }
+    };
+    let auth = caller.auth().cloned();
     let mut next = Some(first);
     for _ in 0..=WEAVE_LIVE_LENS_REREADS {
         let live = match next.take() {
@@ -387,19 +430,30 @@ async fn render_listing(
         let Some(hosted) = hosted else {
             continue;
         };
-        let (frame, card) = hosted.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
-        match owner {
-            Some(owner) => {
+        let (frame, card) = hosted.lower(&surface)?;
+        match (&caller, &auth, owner) {
+            // A run holds its card itself, and its end closes it (FIX 2086).
+            (WeaveLensCaller::Run { run, .. }, _, owner) => {
+                let owner = owner.unwrap_or_else(|| CardOwner {
+                    creator_run: run.to_hex(),
+                    subscription: None,
+                });
+                server
+                    .lens_frames
+                    .replace_for_run(*run, frame, card.render.clone(), owner)?;
+            }
+            (_, Some(auth), Some(owner)) => {
                 server.lens_frames.replace_for_subscription(
-                    &auth,
+                    auth,
                     frame,
                     card.render.clone(),
                     owner,
                 )?;
             }
-            None => server
+            (_, Some(auth), None) => server
                 .lens_frames
-                .record(&auth, frame, card.render.clone())?,
+                .record(auth, frame, card.render.clone())?,
+            (_, None, _) => return Err(joined()),
         }
         return Ok(card);
     }

@@ -9,6 +9,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// caller can hold while it writes, or the vault's writer deadlocks.
 pub trait Clock: Send + Sync {
     fn now_recorded_at(&self) -> u64;
+    /// Wall milliseconds for capture-time metadata (FIX 10517): the
+    /// source's own time, held at no floor, so a stamp read this way moves
+    /// no later write's clock. The default reads seconds.
+    fn now_recorded_ms(&self) -> u64 {
+        self.now_recorded_at().saturating_mul(1000)
+    }
 }
 /// The engine mints ids inside the vault's write transaction, under the same
 /// contract as [`Clock`]: an implementation must only mint ids.
@@ -21,6 +27,11 @@ impl Clock for SystemClock {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |v| v.as_secs())
+    }
+    fn now_recorded_ms(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |v| u64::try_from(v.as_millis()).unwrap_or(u64::MAX))
     }
 }
 impl IdGen for SystemClock {
@@ -99,6 +110,11 @@ impl StoreClock {
     pub(crate) fn wall_now(&self) -> u64 {
         self.source.now_recorded_at()
     }
+    /// The source's wall milliseconds, held at no floor: capture-time
+    /// metadata (FIX 10517); never a stamp on what the vault records.
+    pub fn now_recorded_ms(&self) -> u64 {
+        self.source.now_recorded_ms()
+    }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
     pub fn now_recorded_at(&self) -> u64 {
@@ -146,6 +162,11 @@ impl crate::Vault {
     /// Sample this vault's injected, nondecreasing policy/recording clock.
     pub fn now_recorded_at(&self) -> u64 {
         self.store.clock.now_recorded_at()
+    }
+    /// Wall milliseconds from this vault's injected clock, held at no
+    /// floor: capture-time metadata (FIX 10517).
+    pub fn now_recorded_ms(&self) -> u64 {
+        self.store.clock.now_recorded_ms()
     }
     /// Allocate an id from this vault's injected source without opening a writer.
     /// A subsequent mutation persists the allocation floor in its transaction.

@@ -150,8 +150,9 @@ impl Vault {
         wtxn.commit()?;
         let cleanup = match &row.target {
             SecretGrantTarget::HostDestination { .. } if replaced => SecretCleanup::Absent,
+            // FIX 7954: a stale teardown clears only its own grant's copy.
             SecretGrantTarget::HostDestination { name } => delivery
-                .withdraw(&row.holder, name)
+                .withdraw(&row.holder, &row.grant_id, name)
                 .unwrap_or(SecretCleanup::Kept),
             _ => file,
         };

@@ -20,8 +20,7 @@ pub use self::atom_leaves::{
 };
 pub use self::atom_node::LensNode;
 pub use self::atom_scalars::{
-    FiniteF64, GENERATED_LENS_ATOM_KINDS, LENS_ATOM_KIT_VERSION, LENS_RESULT_SET_UNSUPPORTED,
-    LensText, RESULT_SET_ATOM_KIND,
+    FiniteF64, GENERATED_LENS_ATOM_KINDS, LENS_ATOM_KIT_VERSION, LensText, RESULT_SET_ATOM_KIND,
 };
 
 pub(in crate::lens) use self::atom_node::LensNodeSeed;

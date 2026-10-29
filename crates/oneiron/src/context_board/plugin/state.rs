@@ -116,6 +116,7 @@ fn refused_block() -> MemoryError {
         hook: None,
         retry_after: None,
         resets_at: Vec::new(),
+        reason_codes: Vec::new(),
     }
 }
 

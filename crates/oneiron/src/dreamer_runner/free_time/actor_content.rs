@@ -12,18 +12,25 @@ use crate::EntityId;
 use crate::authority::ActSurface;
 
 /// `record`'s policy in force without `actor`'s attribution: who set it,
-/// when that was `actor`, and the linked machine it was said on, when that
-/// machine was `actor`. The settings, revision, times and `prior`, and the
-/// record's act witnesses, stay as they were, never hashed again. Whether
-/// it changed.
+/// when that was `actor`, and the linked machine it, or the clear the row
+/// witnesses, was said on, when that machine was `actor`. The settings,
+/// revision, times and `prior`, and the record's act witnesses, stay as
+/// they were, never hashed again. Whether it changed.
 pub(super) fn scrub_policy_attribution(
     record: &mut FreeTimePolicyRecord,
     actor: &EntityId,
 ) -> bool {
-    let Some(policy) = record.policy.as_mut() else {
-        return false;
-    };
     let mut changed = false;
+    // A clear's witness keeps the machine it was said on too (FIX 5721).
+    if let Some(ActSurface::LinkedDevice { machine }) = record.clear_surface
+        && machine == *actor
+    {
+        record.clear_surface = None;
+        changed = true;
+    }
+    let Some(policy) = record.policy.as_mut() else {
+        return changed;
+    };
     if policy.set_by == Some(*actor) {
         policy.set_by = None;
         changed = true;

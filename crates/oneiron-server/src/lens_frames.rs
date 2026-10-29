@@ -171,7 +171,7 @@ impl LensFrameStore {
         frame: LensRenderFrame,
         render: GeneratedUiRender,
     ) -> MemoryResult<()> {
-        self.hold(auth, frame, render, None).map(drop)
+        self.hold(Custody::of(auth), frame, render, None).map(drop)
     }
 
     /// [`Self::record`] for a run's successful render of a live
@@ -186,9 +186,35 @@ impl LensFrameStore {
         render: GeneratedUiRender,
         owner: CardOwner,
     ) -> MemoryResult<usize> {
-        let custody = Custody::of(auth);
+        self.replace_held(Custody::of(auth), frame, render, owner)
+    }
+
+    /// [`Self::replace_for_subscription`] for a card a pumped run rendered
+    /// for itself (FIX 2086): the run holds no credential, so the card's
+    /// custody is the run's own, which no credential's matches. No
+    /// credential closes it; its run's retirement does
+    /// ([`Self::close_run`]).
+    pub(crate) fn replace_for_run(
+        &self,
+        run: EntityId,
+        frame: LensRenderFrame,
+        render: GeneratedUiRender,
+        owner: CardOwner,
+    ) -> MemoryResult<usize> {
+        self.replace_held(Custody::of_run(run), frame, render, owner)
+    }
+
+    /// Holds a card with `owner` under `custody`, then closes every other
+    /// card the same custody holds for the same owner and subscription.
+    fn replace_held(
+        &self,
+        custody: Custody,
+        frame: LensRenderFrame,
+        render: GeneratedUiRender,
+        owner: CardOwner,
+    ) -> MemoryResult<usize> {
         let card = render.card_id.clone();
-        if !self.hold(auth, frame, render, Some(owner.clone()))? {
+        if !self.hold(custody.clone(), frame, render, Some(owner.clone()))? {
             return Ok(0);
         }
         let mut frames = self.lock();
@@ -238,7 +264,7 @@ impl LensFrameStore {
     /// not hold it.
     fn hold(
         &self,
-        auth: &CoreAuth,
+        custody: Custody,
         frame: LensRenderFrame,
         render: GeneratedUiRender,
         owner: Option<CardOwner>,
@@ -250,7 +276,6 @@ impl LensFrameStore {
                 &[],
             ));
         }
-        let custody = Custody::of(auth);
         let key = render.card_id.clone();
         let base = footprint(&custody, &frame, &render);
         let state = render.state.clone();
@@ -451,6 +476,15 @@ impl Custody {
         Self {
             principal: auth.idempotency_principal(),
             on_device: auth.locality() == CallerLocality::OnDevice,
+        }
+    }
+
+    /// A pumped run's own custody, on this device, by the name its model
+    /// lines carry; no credential's idempotency principal takes this form.
+    fn of_run(run: EntityId) -> Self {
+        Self {
+            principal: format!("agent-run:{}", run.to_hex()),
+            on_device: true,
         }
     }
 }
