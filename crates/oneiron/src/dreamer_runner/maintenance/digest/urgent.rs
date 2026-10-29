@@ -470,6 +470,60 @@ impl Vault {
     }
 }
 
+/// The dedupe key a host-built urgent assessment's witness rides under
+/// (FIX 10942): namespaced apart from the wording-bound basis keys, over
+/// the full assessment, so only byte-identical decisions coalesce. Its
+/// candidate names the recipient, so the key is per-owner.
+///
+/// # Errors
+///
+/// The assessment does not encode.
+pub(crate) fn host_witness_key(assessment: &UrgentDigestAssessment) -> Result<String> {
+    let json = serde_json::to_vec(assessment).map_err(|_| invalid())?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:digest-harm-host:v1");
+    hasher.update(&(json.len() as u64).to_be_bytes());
+    hasher.update(&json);
+    Ok(format!(
+        "{DIGEST_URGENT_FACET}:host:{}",
+        crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes())
+    ))
+}
+
+/// Enqueues the witness for one host-built urgent assessment in the
+/// caller's write (FIX 10942): a [`DIGEST_URGENT_FACET`] job carrying the
+/// passed assessment verbatim, with no assess job, no parent attempt and
+/// no run. Either queue answer names the witness.
+///
+/// # Errors
+///
+/// The assessment does not encode, or the queue write fails.
+pub(crate) fn enqueue_host_witness_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    assessment: &UrgentDigestAssessment,
+    now: u64,
+) -> Result<AttemptId> {
+    let input = Value::Map(vec![json_entry(ASSESSMENT_KEY, assessment)?]);
+    let key = host_witness_key(assessment)?;
+    let outcome = DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
+        txn,
+        super::super::MAINTENANCE_QUEUE_KIND,
+        DreamerAttemptPayload {
+            attempt_type: DIGEST_URGENT_FACET.into(),
+            input,
+            parent_attempt: None,
+        },
+        Some(key),
+        None,
+        now,
+    )?;
+    match outcome {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status.attempt.id),
+    }
+}
+
 /// A harm question with no host to ask it waits for one, never judged.
 pub(crate) fn unlent_assessment() -> DreamerAttemptExecution {
     DreamerAttemptExecution::Park {
@@ -548,7 +602,8 @@ impl DigestAudience<'_> {
     }
 
     /// The witness job a witnessed delivery is kept by (FIX 8955); `None`
-    /// for every other assembly.
+    /// for every other audience. A host-built urgent delivery's witness is
+    /// the job its assembly enqueued (FIX 10942), not this.
     pub(super) const fn witness(&self) -> Option<AttemptId> {
         match self {
             Self::Witnessed(_, witness) => Some(*witness),
