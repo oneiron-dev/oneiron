@@ -82,13 +82,15 @@ impl From<Error> for WriteError {
 /// Runs `read` in a read snapshot, then `write` with what it read in a
 /// short writer. The read phase pins the vault's commit generation (LMDB's
 /// last committed txn id, which every commit moves) before its snapshot
-/// opens, and the writer checks it before any write: when it still matches,
-/// no commit landed in between and the writer starts from exactly the state
-/// `read` saw. When it moved, the writer writes nothing and the pair runs
-/// again after a short jittered pause. After [`READ_PHASE_TRIES`] stale
-/// tries the pass defers, or with [`OnStale::OneWriter`] reads and writes
-/// in one writer, as before the split. `pass` names the pass in the log
-/// line each run leaves: its read time and its stale tries.
+/// opens, and the writer checks it before any write: when every commit since
+/// is a noted replay-only one (a slip's nonce, the clock floor:
+/// [`crate::store::Diagnostics`]), no commit changed what `read` read, and
+/// the writer starts from the state `read` saw. Otherwise the writer writes
+/// nothing and the pair runs again after a short jittered pause. After
+/// [`READ_PHASE_TRIES`] stale tries the pass defers, or with
+/// [`OnStale::OneWriter`] reads and writes in one writer, as before the
+/// split. `pass` names the pass in the log line each run leaves: its read
+/// time and its stale tries.
 pub(crate) fn read_then_write<R, T>(
     vault: &Vault,
     pass: &'static str,
@@ -124,7 +126,12 @@ pub(crate) fn read_then_write<R, T>(
             break ReadWrite::Stopped;
         };
         let written = vault.try_with_write_txn(|txn| {
-            if vault.store.env.info().last_txn_id != generation {
+            let last = vault.store.env.info().last_txn_id;
+            if !vault
+                .diagnostics()
+                .replay_only_commits
+                .only_noted_between(generation, last)
+            {
                 return Err(WriteError::Stale);
             }
             Ok(write(txn, reads)?)
