@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 129] = [
+    pub const ALL: [Self; 130] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -135,6 +135,7 @@ impl EngineLimit {
         Self::ConnectorDispatchBatch,
         Self::IdentityDecisionStateBytes,
         Self::IdentityExcerptBytes,
+        Self::CommunityCacheBytes,
     ];
 
     /// The config key that sets the row.
@@ -269,6 +270,7 @@ impl EngineLimit {
             Self::ConnectorDispatchBatch => "limits.connector_dispatch_batch",
             Self::IdentityDecisionStateBytes => "limits.identity_decision_state_bytes",
             Self::IdentityExcerptBytes => "limits.identity_excerpt_bytes",
+            Self::CommunityCacheBytes => "limits.community_cache_bytes",
         }
     }
 
@@ -464,6 +466,9 @@ impl EngineLimit {
             Self::ConnectorDispatchBatch => 4_096,
             Self::IdentityDecisionStateBytes => 65_536,
             Self::IdentityExcerptBytes => 65_536,
+            // The 64 MiB cache the community refresh refused past before
+            // Rule 5 (FIX 8854).
+            Self::CommunityCacheBytes => 64 << 20,
         }
     }
 }

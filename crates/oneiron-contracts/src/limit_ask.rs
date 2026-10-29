@@ -501,6 +501,10 @@ pub enum EngineLimit {
     /// (FIX 8303). Past it the row asks and the whole message is still kept
     /// and sent.
     IdentityExcerptBytes,
+    /// Bytes one community-cache family holds, read or published whole
+    /// (FIX 8854). Past it the row asks whether everything is okay and the
+    /// snapshot is still served whole; nothing is refused or cut.
+    CommunityCacheBytes,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
