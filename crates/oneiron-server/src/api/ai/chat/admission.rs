@@ -13,6 +13,7 @@ use super::{
     room_launch_funding, segments, sitting, sources, text_message, turn_generate_pre,
     verb_hook_boundary, witness_through_row, witness_turn,
 };
+use crate::api::ai::room_place::{reply_place, stamp_reply};
 
 pub(in crate::api::ai::chat) fn start_turn(
     auth: &CoreAuth,
@@ -44,6 +45,19 @@ pub(in crate::api::ai::chat) fn start_turn(
         ));
     }
     let invocation = invocation(headers)?;
+    // FIX 3572: the TURN this turn answers in its thread, when it names one.
+    let reply_to = request
+        .reply_to
+        .as_deref()
+        .map(EntityId::from_hex)
+        .transpose()
+        .map_err(|_| {
+            refused(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "reply_to is not a 32-hex TURN id",
+            )
+        })?;
     let seat = server.ai.chat_seat().cloned().ok_or_else(|| {
         refused(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -256,10 +270,18 @@ pub(in crate::api::ai::chat) fn start_turn(
     let origin = resolve_entity_ref(&vault, &request.conversation_ref).ok();
     // A turn in a room bills the payer whose consent on the answering
     // agent's join funds that room (FIX 805), resolved before anything is
-    // written: a turn with no payer to bill is refused, typed.
+    // written: a turn with no payer to bill is refused, typed. A turn that
+    // answers in a thread is funded by the join filed for that thread
+    // first, then the room's, as a queued Continue or Retry is (FIX 3572).
+    let branch = match origin {
+        Some(room) => crate::server::blocking(|| reply_place(&vault, room, reply_to))
+            .map_err(|error| engine(&error))?
+            .branch,
+        None => None,
+    };
     let funding = match origin {
         Some(room) => {
-            crate::server::blocking(|| room_launch_funding(&vault, room, None, agent, actor))
+            crate::server::blocking(|| room_launch_funding(&vault, room, branch, agent, actor))
                 .map_err(|fault| {
                     refused(
                         StatusCode::PAYMENT_REQUIRED,
@@ -294,13 +316,20 @@ pub(in crate::api::ai::chat) fn start_turn(
     // Each session is judged on the call's own input (FIX 10344), as a row
     // door's is: a call that serves a room NOTE keeps its records there.
     let at = vault.now_recorded_at();
-    let user_turn = witness_turn(
+    // A turn that answers in a thread replies there to the TURN it names,
+    // its own id minted here so the reply below answers it (FIX 3572); a
+    // trunk turn keeps the witness's own id.
+    let user_turn_id = reply_to.map(|_| EntityId::now());
+    let mut user_turn = witness_turn(
         &request.conversation_ref,
-        None,
+        user_turn_id,
         WitnessAuthor::User,
         request.text.clone(),
         at,
     );
+    if let Some(parent) = reply_to {
+        stamp_reply(&mut user_turn, parent);
+    }
     let generate_session = verb_hook_boundary::hook_session_for_call(
         Some(&hooked_call()),
         HOST_TURN_GENERATE,
@@ -406,6 +435,18 @@ pub(in crate::api::ai::chat) fn start_turn(
     } else {
         MessageWriteMode::Atomic
     };
+    // The reply lands beside the turn it answers: in its thread, when it
+    // answers in one (FIX 3572).
+    let mut reply = witness_turn(
+        &request.conversation_ref,
+        Some(turn),
+        WitnessAuthor::Companion,
+        String::new(),
+        at,
+    );
+    if let Some(user) = user_turn_id {
+        stamp_reply(&mut reply, user);
+    }
     let hooks_vault = Arc::clone(&vault);
     let answering = begin_sourced_answer(
         &server.ai,
@@ -415,13 +456,7 @@ pub(in crate::api::ai::chat) fn start_turn(
             session_key: Some(session_key),
             activity: signals.then_some(session_key),
             open: AnswerOpen::Turn {
-                turn: witness_turn(
-                    &request.conversation_ref,
-                    Some(turn),
-                    WitnessAuthor::Companion,
-                    String::new(),
-                    at,
-                ),
+                turn: reply,
                 conversation,
             },
             mode,
