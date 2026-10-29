@@ -266,10 +266,10 @@ fn clusters_from(
             if !minable.admits(&substitution) {
                 continue;
             }
-            let target = binding.as_ref().map_or_else(Default::default, |_| {
+            let target = binding.as_ref().map_or_else(Default::default, |row| {
                 super::policy::infer_target(
                     &policies,
-                    binding.expect("bound decision").principal,
+                    row.principal,
                     &judgment.scope,
                     &substitution.from,
                     &substitution.to,
