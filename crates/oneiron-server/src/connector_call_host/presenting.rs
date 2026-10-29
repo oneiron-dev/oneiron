@@ -116,14 +116,16 @@ impl Presenting {
                 grant,
                 target,
                 custody,
-            } => match vault.redeem_secret_grant_at_door(&grant, &target, &mut present) {
-                Ok(redeemed) => Ok(custody
-                    .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
-                Err(error) => {
-                    grant_refused = matches!(error, oneiron::Error::Secret(_));
-                    Ok(None)
+            } => {
+                match vault.redeem_secret_grant_at_door(&grant, &target, &mut present) {
+                    Ok(redeemed) => Ok(custody
+                        .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
+                    Err(error) => {
+                        grant_refused = matches!(error, oneiron::Error::Secret(_));
+                        Ok(None)
+                    }
                 }
-            },
+            }
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),

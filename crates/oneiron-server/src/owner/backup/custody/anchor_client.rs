@@ -149,8 +149,8 @@ impl HttpAnchor {
                         .map_err(|_| failed("has no HTTP client on this host"))?;
                     let response =
                         credentialed(request(&client, &self.url), &self.url, credentials)?
-                        .send()
-                        .map_err(|_| failed("is out of reach"))?;
+                            .send()
+                            .map_err(|_| failed("is out of reach"))?;
                     let status = response.status();
                     if !status.is_success() {
                         let refused = format!("refused the call (HTTP {})", status.as_u16());

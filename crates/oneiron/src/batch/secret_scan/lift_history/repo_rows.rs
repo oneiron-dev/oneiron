@@ -33,9 +33,11 @@ pub(super) fn hit(
     if texts.is_empty() {
         return Ok(Some(None));
     }
-    Ok(Some(
-        crate::batch::secret_scan::carrier_texts_hit_in_txn(&vault.store, txn, &texts)?,
-    ))
+    Ok(Some(crate::batch::secret_scan::carrier_texts_hit_in_txn(
+        &vault.store,
+        txn,
+        &texts,
+    )?))
 }
 
 /// Reads carrier row `key` (the whole key) of `decl` again and marks a hit
@@ -55,7 +57,8 @@ pub(super) fn lift(
     };
     let texts = texts_of(&stored);
     let row = key.strip_prefix(decl.prefix).unwrap_or(key);
-    let marked = crate::batch::secret_scan::mark_carrier_texts_in_txn(vault, txn, decl, row, &texts)?;
+    let marked =
+        crate::batch::secret_scan::mark_carrier_texts_in_txn(vault, txn, decl, row, &texts)?;
     Ok(Some(super::retained::text_done(marked)))
 }
 

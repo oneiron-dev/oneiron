@@ -319,10 +319,7 @@ fn hourly(
             return Decision::Recent;
         }
     }
-    if unrecorded
-        .max(guard_ms)
-        .is_some_and(within)
-    {
+    if unrecorded.max(guard_ms).is_some_and(within) {
         Decision::UnrecordedRecent
     } else if last.is_some() {
         Decision::Changed
