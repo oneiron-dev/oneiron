@@ -3408,8 +3408,10 @@ pub enum ShapeRow {
     Manifest {
         #[serde(rename = "manifest_ref")]
         manifest_ref: String,
-        #[serde(rename = "body")]
-        body: String,
+        #[serde(rename = "body", default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+        #[serde(rename = "json", default, skip_serializing_if = "Option::is_none")]
+        json: Option<crate::WireJson>,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -3518,6 +3520,17 @@ pub enum ShapeItemState {
         #[serde(rename = "reason")]
         reason: String,
     },
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "request_ref")]
+        request_ref: String,
+        #[serde(rename = "approval_digest")]
+        approval_digest: String,
+        #[serde(rename = "quarantine_until")]
+        quarantine_until: u64,
+        #[serde(rename = "requested_at")]
+        requested_at: u64,
+    },
     #[serde(rename = "ceremony")]
     Ceremony,
     #[serde(rename = "no_door")]
@@ -3545,6 +3558,12 @@ pub struct ShapeApplyItem {
     pub state: ShapeItemState,
     #[serde(rename = "approval", default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ShapeApprovalDependencies>,
+    #[serde(
+        rename = "slips_kept",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub slips_kept: Option<bool>,
 }
 
 /// `oneiron::vault_shape::run::ShapeApplyRun`.

@@ -5,9 +5,9 @@ Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
 Census: 1164 facade rows, 4182 declarations.
-Inputs: 1099 of 1164 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1164 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 108; unread shapes: 0.
+Inputs: 1097 of 1164 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1039 of 1164 fully typed, 125 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1065,7 +1065,8 @@ class ShapeRowGrant(TypedDict):
 class ShapeRowManifest(TypedDict):
     kind: Literal["manifest"]
     manifest_ref: str
-    body: str
+    body: NotRequired[str]
+    json: NotRequired[Any | None]
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -1101,6 +1102,12 @@ class ShapeItemStateFiled(TypedDict):
 class ShapeItemStateFileRefused(TypedDict):
     state: Literal["file_refused"]
     reason: str
+class ShapeItemStateHeld(TypedDict):
+    state: Literal["held"]
+    request_ref: str
+    approval_digest: str
+    quarantine_until: int
+    requested_at: int
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -1108,13 +1115,14 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateFileRefused | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateFileRefused | ShapeItemStateHeld | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApprovalDependencies(TypedDict):
     digest: str
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
     approval: NotRequired[ShapeApprovalDependencies | None]
+    slips_kept: NotRequired[bool]
 class ShapeApplyRun(TypedDict):
     run_id: str
     root: str
