@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1191 facade rows, 4306 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1143.
+// UniFFI census: 1192 facade rows, 4307 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1144.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -6020,6 +6020,16 @@ pub struct PinnedRef {
     pub digest: String,
 }
 
+/// `oneiron_browser::library::live_run::SecretArg`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(deny_unknown_fields)]
+pub enum SecretArg {
+    #[serde(rename = "handle")]
+    Handle(String),
+    #[serde(rename = "text")]
+    Text(String),
+}
+
 /// `oneiron::task_verb::brief::WorkflowBinding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -6028,6 +6038,12 @@ pub struct WorkflowBinding {
     pub handle: String,
     #[serde(rename = "args", default, skip_serializing_if = "Option::is_none")]
     pub args: Option<std::collections::HashMap<String, String>>,
+    #[serde(
+        rename = "secret_args",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_args: Option<std::collections::HashMap<String, SecretArg>>,
 }
 
 /// `oneiron::task_verb::brief::BriefContext`.
@@ -11136,6 +11152,22 @@ impl std::fmt::Debug for CredentialAttenuated {
         f.debug_struct("CredentialAttenuated")
             .finish_non_exhaustive()
     }
+}
+
+/// `oneiron::verbs::self_actor::SelfActorRefs`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SelfActorRefs {
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "actor_class")]
+    pub actor_class: String,
+    #[serde(
+        rename = "person_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_ref: Option<String>,
 }
 
 /// `oneiron::memory::scoped_export::RecordPositionRequest`.
@@ -32268,6 +32300,12 @@ pub struct PackAttributionFields {
     pub type_ref: CellTypeRef,
     #[serde(rename = "executor")]
     pub executor: String,
+    #[serde(
+        rename = "agent_definition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_definition: Option<String>,
     #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
     pub judge: Option<String>,
     #[serde(rename = "pattern")]
@@ -66777,16 +66815,6 @@ pub struct WorkflowSeed {
     pub digest: String,
     #[serde(rename = "license")]
     pub license: String,
-}
-
-/// `oneiron_browser::library::live_run::SecretArg`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(deny_unknown_fields)]
-pub enum SecretArg {
-    #[serde(rename = "handle")]
-    Handle(String),
-    #[serde(rename = "text")]
-    Text(String),
 }
 
 /// `oneiron_browser::switch::SnapshotBounds`.

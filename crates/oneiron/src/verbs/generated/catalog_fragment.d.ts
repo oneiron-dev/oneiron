@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1242 code-mode rows (1202 host rows, 40 run rows), 4364 declarations.
-// Replies: 1065 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1243 code-mode rows (1203 host rows, 40 run rows), 4365 declarations.
+// Replies: 1066 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -359,7 +359,8 @@ declare namespace Sdk {
   type BriefConstraints = { notes?: string[]; policy_refs?: EntityId[]; budget_ref?: EntityId | null; deadline?: number | null; pins?: SpawnPins };
   type PinnedPack = { pack_ref: EntityId; context_version?: number | null; retrieval_run_id?: EntityId | null; digest: string };
   type PinnedRef = { target: EntityId; frontier?: number[] | null; digest: string };
-  type WorkflowBinding = { handle: string; args?: Record<string, string> };
+  type SecretArg = { handle: string } | { text: string };
+  type WorkflowBinding = { handle: string; args?: Record<string, string>; secret_args?: Record<string, SecretArg> };
   type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type QuestionCriteria<Line> = { yes_if_all?: Line[]; no_if_any?: Line[]; not_a_reason_to_say_no?: Line[] };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
@@ -708,6 +709,7 @@ declare namespace Sdk {
   type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null; comm?: CommReach | null };
   type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null };
   type CredentialAttenuated = { token: string; binding_key: number[] };
+  type SelfActorRefs = { actor_ref: string; actor_class: string; person_ref?: string | null };
   type RecordPositionRequest = { record_ref: string };
   type RecordPosition = { kind: "position"; scope: Scope };
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
@@ -2081,7 +2083,7 @@ declare namespace Sdk {
   type SkillContribution = { skill: EntityId; check: ContributionCheck };
   type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: ContributionCheck | null };
   type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean };
-  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
+  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; agent_definition?: string | null; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
   type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields };
   type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null; measurement_version?: string | null };
   type LearningEvidenceView = { receipt: string; evidence: EvidenceRow };
@@ -4240,7 +4242,6 @@ declare namespace Sdk {
   type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" } | { why: "not_started"; refusal: string };
   type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind };
   type DemonstrationStopCause = "stopped" | "handed_over" | "handed_back" | "abandoned" | "guest_lost" | "engine_switched" | "session_closed";
-  type SecretArg = { handle: string } | { text: string };
   type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null };
   type ProposeInput = { subgoal?: string; params?: string[]; steps?: BatchStep[]; postcondition?: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null; candidate?: string | null; secret_args?: Record<string, SecretArg>; snapshot_bounds?: SnapshotBounds | null };
   type SlotField = "text" | "option";
@@ -4573,6 +4574,8 @@ declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.RevealPending |
   wait(input: Sdk.RevealWaitRequest): Promise<Sdk.RevealWaitAnswer | StoredResult>;
 };
 declare namespace self {
+  /** The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else. */
+  const actor: (input: Sdk.EmptyRequest) => Promise<Sdk.SelfActorRefs | StoredResult>;
   const admission: {
     /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
     receipts(input: Sdk.AdmissionReceiptsRequest): Promise<Sdk.AdmissionReceipt[] | StoredResult>;
