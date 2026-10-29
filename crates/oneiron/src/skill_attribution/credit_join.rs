@@ -402,6 +402,37 @@ pub(crate) fn standing_credit_observation_in_txn(
         .map(|mass| (true, *mass)))
 }
 
+/// The observation a credit write for `subject` lands under `credit`'s
+/// stable key: the credited `success` at `weight`, unless a judged
+/// amendment currently charges the attempt, whose loss at its defect share
+/// is the attempt's one effective run whichever door writes the row
+/// (FIX 10148). The reliability projection states the same effective form,
+/// so the two doors converge instead of overwriting each other.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn effective_observation_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+    fields: &PackAttributionFields,
+    subject: &EntityId,
+    success: bool,
+    weight: f64,
+) -> Result<(bool, f64)> {
+    match crate::skill_reliability::amended_share_in_txn(
+        vault,
+        txn,
+        subject,
+        Some(fields.executor.as_str()),
+        &credit.attempt_receipt,
+    )? {
+        Some(share) => Ok((false, f64::from(share))),
+        None => Ok((success, weight)),
+    }
+}
+
 /// Reconciles every successful credited outcome of the run `attempt_receipt`
 /// in `txn` (see the module docs), each in a savepoint of its own; capture
 /// only.
@@ -491,7 +522,9 @@ fn reconcile_in_txn(
     for (subject, weight) in &after {
         if before.get(subject) != Some(weight) {
             let cell = credit_cell(&fields, &credit.axis, *subject);
-            let evidence = credit_evidence(credit, &fields, true, *weight);
+            let (success, weight) =
+                effective_observation_in_txn(vault, txn, credit, &fields, subject, true, *weight)?;
+            let evidence = credit_evidence(credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &evidence, now)?;
         }
     }
@@ -500,13 +533,30 @@ fn reconcile_in_txn(
         .filter(|subject| !after.contains_key(*subject))
     {
         let cell = credit_cell(&fields, &credit.axis, *subject);
-        crate::learning::evidence::withdraw_evidence_in_txn(
+        // A subject the standing credit no longer carries loses its row,
+        // unless a standing amendment charges it: then the flipped loss is
+        // the row (FIX 10148).
+        match crate::skill_reliability::amended_share_in_txn(
             vault,
             txn,
-            &cell,
-            &credit.receipt_id,
-            now,
-        )?;
+            subject,
+            Some(fields.executor.as_str()),
+            &credit.attempt_receipt,
+        )? {
+            Some(share) => {
+                let evidence = credit_evidence(credit, &fields, false, f64::from(share));
+                record_credit_in_txn(vault, txn, &fields, &cell, &evidence, now)?;
+            }
+            None => {
+                crate::learning::evidence::withdraw_evidence_in_txn(
+                    vault,
+                    txn,
+                    &cell,
+                    &credit.receipt_id,
+                    now,
+                )?;
+            }
+        }
     }
     let index = chain
         .last()

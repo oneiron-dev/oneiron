@@ -24,7 +24,9 @@ mod read;
 mod resident;
 mod rule_outcome;
 
-pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
+pub(crate) use self::amended::{
+    AmendedOutcome, amended_share_in_txn, reconcile_amended_outcomes_in_txn,
+};
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
 pub(crate) use self::floor::open_floor_crossings_in_txn;

@@ -11,7 +11,11 @@
 //! while the amendment stands, the credit's standing observation (its
 //! latest adjustment included) once it is withdrawn. The receipt key, the cell, the anchor and the
 //! judge/goal/context provenance never move, and no attempt-keyed row is
-//! added beside it.
+//! added beside it. The flip is read per executor arm, like the attempt
+//! lane's own outcomes: it assumes the attempt's stamped executor is the
+//! arm its amendment charges (the pack stamp's validity rule), so a
+//! callable invoked under other executors would need the scan widened to
+//! every invoker arm.
 
 use std::collections::BTreeMap;
 

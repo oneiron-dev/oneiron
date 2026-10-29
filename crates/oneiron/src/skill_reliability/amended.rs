@@ -145,6 +145,26 @@ pub(super) fn amended_shares_in_txn(
         .collect())
 }
 
+/// The defect share one arm's amendment of `attempt` currently charges, if
+/// it charges any. The credit doors read it before writing the attempt's
+/// native anchored observation, so a standing amendment governs that row
+/// whichever door writes it (FIX 10148).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn amended_share_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    executor: Option<&str>,
+    attempt: &str,
+) -> Result<Option<f32>> {
+    Ok(amended_shares_in_txn(vault, rtxn, skill, executor)?
+        .get(attempt)
+        .copied())
+}
+
 /// The amended attempts of `skill` across every arm: attempt receipt → defect
 /// share. A callable's arms all carry the one amendment's share.
 pub(super) fn amended_receipt_shares_in_txn(
