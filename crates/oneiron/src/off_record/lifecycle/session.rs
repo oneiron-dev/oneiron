@@ -23,6 +23,7 @@ use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
 mod type_feedback;
+mod vector_search;
 
 /// Vault-bound factory for explicit off-record session entry.
 pub struct OffRecordSessionVault<'vault> {
@@ -425,7 +426,14 @@ impl OffRecordSession<'_> {
             (search, false)
         };
         let started = (search.started_at, search.started);
-        self.register_search(route, search.scores, started, limit, holds_room_rows)
+        self.register_search(
+            route,
+            crate::store::RetrievalSignal::Text,
+            search.scores,
+            started,
+            limit,
+            holds_room_rows,
+        )
     }
 
     /// [`Self::search_text_routed`] on `lane`, a narrow key's lane over
@@ -447,7 +455,14 @@ impl OffRecordSession<'_> {
         let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
         let (scores, started) =
             crate::memory::scoped_session_text(self.vault, view, lane, query, limit, admit)?;
-        self.register_search(route, scores, started, limit, view.read().holds_room_rows())
+        self.register_search(
+            route,
+            crate::store::RetrievalSignal::Text,
+            scores,
+            started,
+            limit,
+            view.read().holds_room_rows(),
+        )
     }
 
     /// The reads a run bound to this room serves for its caller (WILL
@@ -468,11 +483,13 @@ impl OffRecordSession<'_> {
         self.vault.verb_hooks_may_run(verb)
     }
 
-    /// Registers one in-room search's run through `route` and hands its
-    /// `scores` back; `started` is when the search began.
+    /// Registers one in-room search's run, read on `signal`, through
+    /// `route` and hands its `scores` back; `started` is when the search
+    /// began.
     fn register_search(
         &self,
         route: &SessionWriteRoute,
+        signal: crate::store::RetrievalSignal,
         scores: Vec<ScoredEntity>,
         (started_at, started): (u64, std::time::Instant),
         limit: usize,
@@ -493,7 +510,7 @@ impl OffRecordSession<'_> {
         }
         let record = Vault::vault_search_retrieval_run_record(
             crate::store::RetrievalRunId::from_bytes(self.vault.store.clock.ulid()?),
-            crate::store::RetrievalSignal::Text,
+            signal,
             started_at,
             started,
             &scores,
