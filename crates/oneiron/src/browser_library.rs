@@ -61,6 +61,7 @@ pub use evidence::{
     SolvedCaptureGap, SolvedCaptureReceipt, SolvedGroupKey, SolvedRunCapture, SolvedRunEvidence,
     SolvedRunScope, SolvedSource,
 };
+pub use index::all_groups::all_solved_groups;
 pub use index::{
     DirtySolvedGroup, FailureLineage, Page, PageCursor, ProgramFailureRef, ProgramSeen,
     SOLVED_PAGE, dirty_solved_groups, mark_group_clean, mark_program_seen_in_txn, program_seen,
