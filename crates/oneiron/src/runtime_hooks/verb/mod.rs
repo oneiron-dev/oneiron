@@ -31,6 +31,7 @@ use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::work_line::TaskWorkTurn;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
+use super::block::HookTurnTarget;
 pub use ask::HOOK_RESULT_NOT_RETAINED;
 pub(crate) use ask::VERB_HOOK_INTENT;
 pub use credential::{
@@ -114,6 +115,8 @@ pub struct VerbCall {
     /// knows one; a hook's own scope only narrows.
     pub scope: Option<String>,
     pub board_epoch: Option<u64>,
+    /// The host turn a block added by this call targets, when it has one.
+    pub turn: Option<HookTurnTarget>,
     pub domain: VerbDomain,
     /// The caller's scoped-read key: its proof, room turn and locality. A
     /// hook reads through it, capped by its grant. `None` for a host's own
@@ -141,6 +144,7 @@ impl VerbCall {
             class: hook_class(memory.actor_class()),
             scope: None,
             board_epoch: None,
+            turn: None,
             domain,
             reader: Self::reader_of(memory, verb)?,
         })

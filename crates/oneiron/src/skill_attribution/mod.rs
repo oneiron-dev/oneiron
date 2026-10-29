@@ -50,7 +50,8 @@ mod judge_supersession;
 #[cfg(test)]
 pub(crate) use judge_supersession::set_pre_writer_hook;
 pub(crate) use judge_supersession::{
-    judgment_displaced, judgment_displaced_in_txn, judgment_judge_in_txn,
+    displacing_revision_in_txn, ensure_current_attribution_judge_in_txn, judgment_displaced,
+    judgment_displaced_in_txn, judgment_judge_in_txn,
 };
 mod contribution;
 pub use contribution::{

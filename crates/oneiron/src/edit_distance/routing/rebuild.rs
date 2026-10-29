@@ -53,13 +53,16 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
             };
             let outcome = run_outcome_in_txn(vault, &rtxn, judgment)?;
             // A judgment that holds keeps its binding and folds nothing.
+            let mut counted = None;
             if let Some(fold) = fold_of(judgment, outcome)? {
+                counted.clone_from(&fold.outcome);
                 let key = aggregate_key(&head_of(judgment))?;
                 apply_fold(rebuilt.entry(key).or_default(), fold)?;
             }
             let member = StoredExecutor {
                 v: ROW_VERSION,
                 executor: judgment.executor_key().to_owned(),
+                outcome: counted,
             };
             members.push((receipt_id, member));
         }

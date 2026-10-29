@@ -124,6 +124,12 @@ pub struct CoreHydrateRequest {
     /// Defaults to `false`.
     #[serde(default, rename = "image_input", alias = "imageInput")]
     pub image_input: bool,
+    /// The task the reader's model serves. With `image_input`, the host's
+    /// per-image pick reads it beside each image's description, and an image
+    /// the task needs no more of is served as its thumbnail or its text
+    /// rather than in full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
 }
 
 /// Accepted `POST /v1/core/batch/shortId/hydrate` request body.
@@ -148,6 +154,12 @@ pub struct CoreBatchShortIdHydrateRequest {
     /// Defaults to `false`.
     #[serde(default, rename = "image_input", alias = "imageInput")]
     pub image_input: bool,
+    /// The task the reader's model serves. With `image_input`, the host's
+    /// per-image pick reads it beside each image's description, and an image
+    /// the task needs no more of is served as its thumbnail or its text
+    /// rather than in full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
 }
 
 /// Canonical transport body for the accepted

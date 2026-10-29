@@ -2177,7 +2177,7 @@ export type HookReplayCase = { on: "fact"; source: FactSource; position: FactPos
 /** `oneiron::runtime_hooks::replay::HookReplayCompare` */
 export type HookReplayCompare = "same" | "differs" | "incomplete"
 /** `oneiron::verbs::host::hooks_replay::HookReplayOutcome` */
-export type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string }
+export type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "withheld"; reason: string } | { status: "missing_history"; reason: string }
 /** `oneiron::verbs::host::hooks_replay::HookReplayRow` */
 export type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome }
 /** `oneiron::verbs::hub::HubHookReplay` */
@@ -4127,7 +4127,7 @@ export type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: 
 /** `oneiron::receipt::pack_attribution::CreditOptions` */
 export type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean }
 /** `oneiron::receipt::pack_attribution::PackAttributionFields` */
-export type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions }
+export type PackAttributionFields = { typeRef: CellTypeRef; executor: string; agent_definition?: string | null; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions }
 /** `oneiron::receipt::pack_attribution::PackLearningContext` */
 export type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields }
 /** `oneiron::learning::evidence::EvidenceRow` */
@@ -4495,7 +4495,7 @@ export type HookRegenBindingRequest = { binding: EntityId }
 /** `oneiron::runtime_hooks::regen::HookContractStamp` */
 export type HookContractStamp = { verb_table: string; sandbox: string }
 /** `oneiron::runtime_hooks::regen::HookGoldenDiff` */
-export type HookGoldenDiff = { cases: number; changed: string[] }
+export type HookGoldenDiff = { cases: number; changed: string[]; execution_failed: string[]; withheld: string[]; missing_history: string[] }
 /** `oneiron::runtime_hooks::regen::HookRegenFailurePhase` */
 export type HookRegenFailurePhase = "intent" | "generate" | "validate" | "golden_replay"
 /** `oneiron::runtime_hooks::regen::HookRegenFailure` */

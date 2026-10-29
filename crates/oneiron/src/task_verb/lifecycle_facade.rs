@@ -343,6 +343,9 @@ impl Memory<'_> {
                 owner,
             )?;
         }
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11618).
+        crate::edit_distance::routing::refold_task_outcomes_in_txn(self.vault(), wtxn, task_ref);
 
         // The TASK put above is announced after commit; the board
         // publisher (`context_board::stream::publish`) routes it.
@@ -427,6 +430,16 @@ impl Memory<'_> {
                 "generated code cannot answer in a person's name",
                 &["Ask the person to answer through their own client."],
             ));
+        }
+        if let Some(answer) = self.vault().verb_hook_state.session.answer_ask(
+            self.vault(),
+            handle.group_ref,
+            self.actor(),
+            self.actor_class(),
+            word,
+            self.vault().store.clock.now_recorded_at(),
+        ) {
+            return answer;
         }
         // The owner proof the host bound for a direct request. An attendee
         // ask admits a word, and cuts on it, only under that proof; every
