@@ -114,6 +114,11 @@ pub struct Memory<'v> {
     /// The exact instrument that credential is, when the host can verify it
     /// again (`with_credential_instrument`).
     pub(super) credential_instrument: Option<crate::runtime_hooks::verb::VerbAskInstrument>,
+    /// The managed vault's attested owner the host bound this caller to
+    /// (FIX 11129), carried apart from the vault's authority id, so a
+    /// rootless managed vault's owner is still known; `None` for any other
+    /// caller.
+    pub(super) attested_owner: Option<EntityId>,
     /// The door the caller came in by, when its host can run the call again
     /// through it (`with_credential_door`).
     pub(super) credential_door: Option<crate::runtime_hooks::verb::VerbAskDoor>,
