@@ -353,6 +353,7 @@ fn context_pack_request() -> CoreContextPackRequest {
 
 fn hydrate_request(reference: &str) -> CoreHydrateRequest {
     CoreHydrateRequest {
+        task: None,
         reference: Some(reference.to_owned()),
         short_id: None,
         content_hash: None,
@@ -452,6 +453,7 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
     }
 
     let batch = |reference: &str| CoreBatchShortIdHydrateRequest {
+        task: None,
         refs: vec![reference.to_owned()],
         view: Some(View::Full),
     };

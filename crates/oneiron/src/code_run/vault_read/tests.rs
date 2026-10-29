@@ -186,6 +186,7 @@ fn query_request(query: &str) -> CoreQueryRequest {
 
 fn hydrate_request(reference: &str) -> CoreHydrateRequest {
     CoreHydrateRequest {
+        task: None,
         reference: Some(reference.to_owned()),
         short_id: None,
         content_hash: None,
@@ -453,6 +454,7 @@ fn scoped_grant_denial_reads_as_absence() {
 
     let batch = adapter
         .hydrate_many(CoreBatchShortIdHydrateRequest {
+            task: None,
             refs: vec![admitted_ref, denied_ref.clone(), missing_ref.to_owned()],
             view: None,
         })
@@ -793,6 +795,7 @@ fn batch_aborting_error_carries_the_batch_method() {
 
     let batch = adapter
         .hydrate_many(CoreBatchShortIdHydrateRequest {
+            task: None,
             refs: vec![reference],
             view: None,
         })
