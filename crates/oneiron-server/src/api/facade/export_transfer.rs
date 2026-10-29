@@ -232,8 +232,9 @@ async fn read_transfer(
     State(server): State<Arc<SyncServer>>,
     Path(transfer_ref): Path<String>,
     headers: HeaderMap,
+    extensions: Extensions,
 ) -> Response {
-    let call = FacadeCall::http(&server, &auth, &headers);
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
     let kept = match admitted(&server, &call, &transfer_ref) {
         Ok(kept) => kept,
         Err(refused) => return refused.into_response(),
@@ -277,8 +278,9 @@ async fn release_transfer(
     State(server): State<Arc<SyncServer>>,
     Path(transfer_ref): Path<String>,
     headers: HeaderMap,
+    extensions: Extensions,
 ) -> Response {
-    let call = FacadeCall::http(&server, &auth, &headers);
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
     match admitted(&server, &call, &transfer_ref)
         .and_then(|_| server.export_transfers.release(&transfer_ref))
     {

@@ -57,7 +57,7 @@ use self::execution::{execute, execute_stamped, run_bound, run_bound_stamped};
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
 use crate::api::call_receipt::CallStamp;
-use crate::api::owner_routes::machine_routes::act_surface;
+use crate::api::owner_routes::machine_routes::act_surface_admitted;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::{LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer};
 
@@ -172,7 +172,7 @@ async fn invoke_action_stamped(
     verb: String,
     request: ActionRequest,
 ) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
-    let (bound, call) = match admit_action(server, auth, &headers, verb, request) {
+    let (bound, call) = match admit_action(server, auth, &headers, &extensions, verb, request) {
         Ok(admitted) => admitted,
         Err(refused) => return (Err(refused), CallStamp::Unrecorded),
     };
@@ -185,6 +185,7 @@ fn admit_action(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     headers: &HeaderMap,
+    extensions: &Extensions,
     verb: String,
     request: ActionRequest,
 ) -> Result<(ActionBound, AgentActionCall), FacadeApiError> {
@@ -201,7 +202,7 @@ fn admit_action(
     facade_actor(server, auth)?;
     // Where the owner spoke from: a linked machine this request's own
     // headers prove, else the header-less rule (FIX 4625).
-    let surface = act_surface(server, auth, headers);
+    let surface = act_surface_admitted(server, auth, headers, extensions);
     let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
@@ -345,13 +346,19 @@ pub(crate) fn rest_action_bound<T: serde::Serialize>(
     server: &SyncServer,
     auth: &CoreAuth,
     headers: &HeaderMap,
+    extensions: &Extensions,
     input: &T,
 ) -> Result<Option<ActionBound>, FacadeApiError> {
     crate::api::host_action::facade_host_action(server, auth)?;
     if headers.contains_key(super::ROOM_TURN_HEADER) {
         return Ok(None);
     }
-    let Some(bound) = action_bound(server, auth, act_surface(server, auth, headers))? else {
+    let Some(bound) = action_bound(
+        server,
+        auth,
+        act_surface_admitted(server, auth, headers, extensions),
+    )?
+    else {
         return Ok(None);
     };
     Ok(action_json(input)?.map(|_| bound))
