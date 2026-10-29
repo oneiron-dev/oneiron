@@ -55,6 +55,7 @@ pub use receipt::{
     Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape, record_team_receipt,
     settle_team_outcome, team_receipt, team_receipts,
 };
+pub(crate) use receipt::{ReceiptScan, team_receipts_in_txn};
 pub use run::{
     SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput,
     TeamRecordInput, TeamRunAnswer, TeamStartInput,
