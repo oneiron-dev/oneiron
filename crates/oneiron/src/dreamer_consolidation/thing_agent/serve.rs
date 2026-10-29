@@ -254,7 +254,7 @@ impl ConsolidationExecutor<'_> {
                 Ok(event) => event,
                 Err(error) => {
                     launched.session.stop(THING_CHILD_PARENT_FAILED);
-                    charges.record_units(launched.session.generation_units());
+                    charges.record_units(launched.session.close_generation());
                     return Err(error.into());
                 }
             };
@@ -285,7 +285,7 @@ impl ConsolidationExecutor<'_> {
                 Err(error) => {
                     call.answer(Err(THING_CHILD_PARENT_FAILED));
                     launched.session.stop(THING_CHILD_PARENT_FAILED);
-                    charges.record_units(launched.session.generation_units());
+                    charges.record_units(launched.session.close_generation());
                     return Err(error);
                 }
             }
@@ -523,7 +523,7 @@ fn stop_thing_child(
     charges: &mut StepChargeTally,
 ) -> DurableStepResult<ThingPassEnd> {
     launched.session.stop(stop_code(&run));
-    charges.record_units(launched.session.generation_units());
+    charges.record_units(launched.session.close_generation());
     proposals::stage_checkpoint(
         pass.ctx.vault,
         launched.parent_run,
@@ -545,7 +545,7 @@ fn thing_child_settled(
     settled: &ThingChildSettled,
     charges: &mut StepChargeTally,
 ) -> DurableStepResult<ThingPassEnd> {
-    charges.record_units(launched.session.generation_units());
+    charges.record_units(launched.session.close_generation());
     let child_run = launched.session.child_run();
     let (resolved, unresolved) =
         proposals::check_report(settled.report.as_deref(), child_run, &table.issued);
