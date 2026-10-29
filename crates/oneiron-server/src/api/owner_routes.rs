@@ -252,10 +252,11 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
     // support grant being its path (FIX 2222).
     if let Some(action) = super::host_action::host_action_of(server.vault(), auth) {
         let action = action.map_err(super::host_action::host_action_refusal)?;
+        // A typed refusal the recheck carries keeps its code (FIX 6032).
         return server
             .vault()
             .authenticate_host_action_owner(&action, GateDecisionId::now())
-            .map_err(|_| refused());
+            .map_err(|error| super::error_map::carried_refusal(&error).unwrap_or_else(refused));
     }
     if !auth.is_owner_grade() {
         return Err(refused());
