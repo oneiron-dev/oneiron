@@ -44,12 +44,12 @@ impl ConsolidationExecutor<'_> {
                 return self.run_sieve_window_audit(attempt, ctx, window).await;
             }
         };
-        if let Some(completed_units) =
+        if let Some((completed_units, step_hashes)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units,
-                step_hashes: Vec::new(),
+                step_hashes,
             });
         }
         if sieve::rung_superseded(ctx.vault, &input)?

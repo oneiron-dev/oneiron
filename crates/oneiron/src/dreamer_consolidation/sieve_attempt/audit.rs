@@ -76,12 +76,12 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         input: WindowAuditInput,
     ) -> Result<DreamerAttemptExecution> {
-        if let Some(completed_units) =
+        if let Some((completed_units, step_hashes)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units,
-                step_hashes: Vec::new(),
+                step_hashes,
             });
         }
         let retry_at = ctx

@@ -163,12 +163,12 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let (proposals, chunks) = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some(completed_units) =
+            if let Some((completed_units, step_hashes)) =
                 landed_units_in_txn(ctx.vault, &txn, attempt.status.attempt.id)?
             {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units,
-                    step_hashes: Vec::new(),
+                    step_hashes,
                 });
             }
             // A listed child's retry chunks fan in beside it (FIX 7495).
