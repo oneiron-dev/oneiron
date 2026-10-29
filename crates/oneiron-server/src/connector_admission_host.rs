@@ -256,8 +256,8 @@ pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnector
         .map(|manifest| manifest.with_elicitation(true))
 }
 
-/// What the owner names for one tool at registration. MCP declares neither.
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+/// What the owner names for one tool at registration. MCP declares none of it.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ToolClass {
     #[serde(default = "default_data_class")]
@@ -265,6 +265,9 @@ pub(crate) struct ToolClass {
     /// Whether a call spends.
     #[serde(default)]
     pub(crate) spends: bool,
+    /// What one call costs, for a Spend row that preauthorizes (FIX 8689).
+    #[serde(default)]
+    pub(crate) price: Option<oneiron::connector_key::ConnectorSpendEstimate>,
 }
 
 impl Default for ToolClass {
@@ -272,6 +275,7 @@ impl Default for ToolClass {
         Self {
             data_class: DEFAULT_DATA_CLASS,
             spends: false,
+            price: None,
         }
     }
 }
@@ -293,7 +297,7 @@ pub(crate) fn slate_manifest(
         .iter()
         .filter_map(|row| {
             let listed = tools.iter().find(|tool| tool.name == row.name)?;
-            let class = classes.get(&row.name).copied().unwrap_or_default();
+            let class = classes.get(&row.name).cloned().unwrap_or_default();
             Some(SlateToolManifest {
                 name: row.name.clone(),
                 data_class: class.data_class,
@@ -306,6 +310,7 @@ pub(crate) fn slate_manifest(
                 legacy_ask: false,
                 read_only: listed.read_only,
                 idempotent: listed.idempotent,
+                price: class.price,
             })
         })
         .collect();

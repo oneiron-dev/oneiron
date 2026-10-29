@@ -23,6 +23,7 @@ mod charge;
 mod rate_window;
 mod reservation;
 mod row;
+mod spend_reserve;
 pub(crate) use self::charge::{
     charge_effector_budgets, charge_effector_budgets_pooled, preflight_effector_budgets_pooled,
     shares_budget_pool,
@@ -36,6 +37,7 @@ use self::row::row_ordinal;
 pub use self::row::{
     EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource,
 };
+pub(crate) use self::spend_reserve::{SpendReserve, reserve_connector_spend_in_txn};
 
 /// vault_meta usage rows: key id (16 bytes) ++ row source tag u8 ++ row
 /// ordinal u64 BE (`EffectorBudgetRowId::usage_key`) -> canonical msgpack
@@ -380,6 +382,26 @@ pub struct EffectorBudgetCharge {
     /// when the send certainly did not go (FIX 7964). Empty when nothing
     /// debited.
     pub debits: Vec<EffectorBudgetDebit>,
+}
+
+impl EffectorBudgetCharge {
+    /// The steering messages this charge fired (FIX 3759, FIX 3761): its
+    /// key's ladder events, then its catalog pool's, each threshold that
+    /// carries one (80% plan, 95% land) once. The reply of the call, or the
+    /// wake, that made the charge carries them to the agent.
+    #[must_use]
+    pub fn steering_messages(&self) -> Vec<String> {
+        let pool = self.pool.iter().flat_map(|pool| &pool.ladder_events);
+        let mut messages: Vec<String> = Vec::new();
+        for event in self.ladder_events.iter().chain(pool) {
+            if let Some(signal) = &event.steering
+                && !messages.contains(&signal.message)
+            {
+                messages.push(signal.message.clone());
+            }
+        }
+        messages
+    }
 }
 
 /// What one charge did to a per-grant key's catalog pool (ONE-1794). It is

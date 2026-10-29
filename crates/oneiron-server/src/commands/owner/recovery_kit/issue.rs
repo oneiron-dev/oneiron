@@ -17,7 +17,7 @@ use zeroize::Zeroizing;
 use super::{emit, open, read_passphrase};
 use crate::cli::RecoveryKitIssueArgs;
 use crate::commands::credential_file;
-use crate::owner::local_owner;
+use crate::owner::host_owner;
 use crate::owner::recovery_kit::kit_id;
 use crate::owner::vault_key::hex;
 
@@ -44,7 +44,7 @@ struct Issued {
 pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
     let (homes, passphrase) = issue_inputs(&args)?;
     let vault = open(&args.serve)?;
-    let owner = local_owner(&vault)?;
+    let owner = host_owner(&vault)?;
     let vault_id = vault
         .world_kit_status()?
         .vault_id
@@ -104,7 +104,7 @@ struct IssuedVaultKey {
 pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
     let (homes, passphrase) = issue_inputs(&args)?;
     let vault = open(&args.serve)?;
-    let owner = local_owner(&vault)?;
+    let owner = host_owner(&vault)?;
     match vault.vault_key_status()? {
         VaultKeyStatus::NoKey => {
             anyhow::bail!("the vault has no data key yet: there is nothing to put in a kit")
