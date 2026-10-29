@@ -247,7 +247,13 @@ pub async fn run_task_realize(
             return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
+        // A failed call's paid usage has no terminal step: it is handed
+        // to the driver's settlement with the park (FIX 11554).
         Err(other) => {
+            if let DurableStepError::SpentLlm { usage, .. } = &other {
+                charges.record_usage(usage);
+            }
+            ctx.note_spend_before_error(charges.units, &charges.step_hashes);
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
                 cause: DreamerParkCause::of_step(&other),
@@ -265,14 +271,16 @@ pub async fn run_task_realize(
     };
     // The NOTE parts and the row's result commit together, under ids the
     // attempt derives, so a replay never writes a second NOTE (FIX 1334).
-    landing::land_answer(
+    if let Err(error) = landing::land_answer(
         ctx.vault,
         record,
         model.actor,
         RESULT_NOTE_KIND,
         &super::note_parts::parts(&answer, crate::note::MAX_NOTE_BYTES),
         ctx.now_ms / 1_000,
-    )?;
+    ) {
+        return super::residency::spent_or_deferred(error, ctx, &charges);
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
         step_hashes: charges.step_hashes.clone(),

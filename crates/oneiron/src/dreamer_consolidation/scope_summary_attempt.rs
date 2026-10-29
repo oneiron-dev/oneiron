@@ -323,7 +323,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
             }
             // Parks Retry unless only an owner act clears it (FIX 7369).
+            // A failed call's paid usage has no terminal step: it is handed
+            // to the driver's settlement with the park (FIX 11554).
             Err(other) => {
+                if let DurableStepError::SpentLlm { usage, .. } = &other {
+                    charges.record_usage(usage);
+                }
+                ctx.note_spend_before_error(charges.units, &charges.step_hashes);
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),
                     cause: DreamerParkCause::of_step(&other),

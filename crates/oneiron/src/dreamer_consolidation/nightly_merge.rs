@@ -195,10 +195,13 @@ impl ConsolidationExecutor<'_> {
             let first = &members[0].body;
             let mut identity: BTreeMap<Vec<u8>, Vec<&Proposal>> = BTreeMap::new();
             for member in members {
-                identity
-                    .entry(identity_key(&member.body)?)
-                    .or_default()
-                    .push(member);
+                let key = match identity_key(&member.body) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
+                };
+                identity.entry(key).or_default().push(member);
             }
             for cohort in identity.values().filter(|cohort| cohort.len() > 1) {
                 let same = cohort
@@ -360,12 +363,14 @@ impl ConsolidationExecutor<'_> {
                     failure_policy,
                     ..
                 }) => {
-                    charges.record_terminal(
+                    if let Err(error) = charges.record_terminal(
                         ctx.vault,
                         attempt.status.attempt.id,
                         hash,
                         &response.usage,
-                    )?;
+                    ) {
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
                     if failure_policy.is_some() {
                         return charges.park_on_fallback(
                             ctx.vault,

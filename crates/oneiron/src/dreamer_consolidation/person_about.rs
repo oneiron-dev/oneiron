@@ -12,6 +12,7 @@
 //! transaction, until the next pass reads the facts again.
 
 use super::request_sources::{CallBackend, SourcedBackend};
+use super::residency::spent_or_deferred;
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_PERSON_ABOUT_ATTEMPT_TYPE, invalid_consolidation};
@@ -21,10 +22,7 @@ use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerParkCause,
     DreamerRunnerStore,
 };
-use crate::dreamer_wake::{
-    DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, DreamerAttemptExecutor,
-    WakeAttemptContext,
-};
+use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::error::{Error, Result};
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
@@ -616,14 +614,26 @@ impl<E> PersonAboutExecutor<'_, E> {
                 provider_options: BTreeMap::new(),
                 host_segments: None,
             };
-            let mut request = ctx
-                .vault
-                .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?
-                .into_request();
-            super::roles::bind_reasoning(ctx.vault, self.backend, &mut request)?;
-            let step_hash = request
-                .canonical_hash()
-                .map_err(|_| invalid_consolidation("about request did not hash"))?;
+            let authorized = match ctx.vault.authorize_model_role(
+                super::DREAMER_NARRATIVE_ROLE,
+                request,
+                &self.inference,
+            ) {
+                Ok(authorized) => authorized,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            let mut request = authorized.into_request();
+            if let Err(error) = super::roles::bind_reasoning(ctx.vault, self.backend, &mut request)
+            {
+                return spent_or_deferred(error, ctx, &charges);
+            }
+            let Ok(step_hash) = request.canonical_hash() else {
+                return spent_or_deferred(
+                    invalid_consolidation("about request did not hash"),
+                    ctx,
+                    &charges,
+                );
+            };
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id,
@@ -645,30 +655,28 @@ impl<E> PersonAboutExecutor<'_, E> {
             .await
             {
                 Ok(StepOutcome::Finished { response, .. }) => {
-                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+                    if let Err(error) =
+                        charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                    {
+                        return spent_or_deferred(error, ctx, &charges);
+                    }
                     response
                 }
                 Ok(StepOutcome::Trapped { .. }) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: "durable step trapped for resume".to_owned(),
-                        cause: DreamerParkCause::Signal,
-                    });
+                    return Ok(charges
+                        .park_for("durable step trapped for resume", DreamerParkCause::Signal));
                 }
                 Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                     charges.record_usage(&usage);
                     return Ok(charges.checkpoint());
                 }
                 Err(DurableStepError::DeadlineHardCut) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                        cause: DreamerParkCause::Checkpoint,
-                    });
+                    return Ok(charges.checkpoint());
                 }
                 Err(DurableStepError::FinalizeRefused) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: "wake pass finalize window".to_owned(),
-                        cause: DreamerParkCause::Checkpoint,
-                    });
+                    return Ok(
+                        charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint)
+                    );
                 }
                 // An empty line the check refused was paid and never
                 // memoized: it is asked again after its retry delay (FIX
@@ -677,12 +685,13 @@ impl<E> PersonAboutExecutor<'_, E> {
                     charges.record_usage(&usage);
                     return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
                 }
-                Err(DurableStepError::Engine(error)) => return Err(error),
+                Err(DurableStepError::Engine(error)) => {
+                    return spent_or_deferred(error, ctx, &charges);
+                }
                 Err(other) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: other.to_string(),
-                        cause: DreamerParkCause::of_step(&other),
-                    });
+                    return Ok(
+                        charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
+                    );
                 }
             };
             let text = match about_line(&response) {
@@ -706,8 +715,14 @@ impl<E> PersonAboutExecutor<'_, E> {
         // The lines must stand on the facts as they are: a fact that moved
         // while the model wrote sends the attempt round again, soon.
         let now_facts = {
-            let txn = snapshot(ctx.vault)?;
-            person_facts(ctx.vault, &read, &txn, person)?
+            let txn = match snapshot(ctx.vault) {
+                Ok(txn) => txn,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            match person_facts(ctx.vault, &read, &txn, person) {
+                Ok(now_facts) => now_facts,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            }
         };
         if facts_digest(&now_facts, TOP_BAND) != digest {
             return Ok(DreamerAttemptExecution::Deferred {
@@ -720,7 +735,7 @@ impl<E> PersonAboutExecutor<'_, E> {
             });
         }
         let at = ctx.now_ms.div_ceil(1_000);
-        let landed = ctx.vault.with_write_txn(|txn| {
+        let landed = match ctx.vault.with_write_txn(|txn| {
             // FIX 8697: an erase that lands between the snapshot above and
             // this write must not have its text put back. The PERSON and the
             // exact facts the lines stand on are read again through this
@@ -745,7 +760,10 @@ impl<E> PersonAboutExecutor<'_, E> {
             row.at = at;
             PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)?;
             Ok(true)
-        })?;
+        }) {
+            Ok(landed) => landed,
+            Err(error) => return spent_or_deferred(error, ctx, &charges),
+        };
         if !landed {
             tracing::warn!(
                 target: "oneiron::dreamer",

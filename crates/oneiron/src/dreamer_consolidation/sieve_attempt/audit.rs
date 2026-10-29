@@ -216,12 +216,14 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(
+                if let Err(error) = charges.record_terminal(
                     ctx.vault,
                     attempt.status.attempt.id,
                     step_hash,
                     &response.usage,
-                )?;
+                ) {
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
+                }
                 if failure_policy.is_some() {
                     return charges.park_on_fallback(
                         ctx.vault,

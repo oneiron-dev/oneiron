@@ -285,7 +285,11 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
+                {
+                    return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
+                }
                 if failure_policy.is_some() {
                     return charges
                         .park_on_fallback(
@@ -454,7 +458,11 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
+                {
+                    return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
+                }
                 if failure_policy.is_some() {
                     return charges
                         .park_on_fallback(
