@@ -164,26 +164,27 @@ impl Vault {
     }
 
     /// Whether a write through the door with nothing of its own would still
-    /// do per-write work (FIX 11664): scan checks waiting to be kept, a
-    /// stale-stamp sweep owed, a found-key notice due, or a scope summary
-    /// owed its rederive. A timer pass whose opening write would carry none
-    /// of them skips that write.
+    /// do per-write work (FIX 11664). A timer pass whose opening write would
+    /// carry none of it skips that write.
     #[doc(hidden)]
     pub fn write_door_work_due(&self) -> crate::error::Result<bool> {
-        if self.store.pending_scan_checks.any_waiting()
-            || self
-                .store
-                .federation_stale_sweep_owed
-                .load(std::sync::atomic::Ordering::Acquire)
-        {
-            return Ok(true);
-        }
+        // One entry per piggyback the door above carries: a piggyback added
+        // there is added here too.
         let txn = self.store.env.read_txn()?;
-        Ok(
-            crate::secret_custody::found_key_notices_due_in_txn(self, &txn)?
-                || (!crate::scope_summary::rederive_deferred()
-                    && crate::scope_summary::rederive_owed_in_txn(self, &txn)?),
-        )
+        let due = [
+            // keep_waiting_scan_checks
+            self.store.pending_scan_checks.any_waiting(),
+            // StaleSweepWatch::finish
+            self.store
+                .federation_stale_sweep_owed
+                .load(std::sync::atomic::Ordering::Acquire),
+            // raise_found_key_notices_in_txn
+            crate::secret_custody::found_key_notices_due_in_txn(self, &txn)?,
+            // rederive_changed_in_txn, unless this thread defers it
+            !crate::scope_summary::rederive_deferred()
+                && crate::scope_summary::rederive_owed_in_txn(self, &txn)?,
+        ];
+        Ok(due.contains(&true))
     }
 
     /// The wakes an empty write's commit sends, sent with no write: every

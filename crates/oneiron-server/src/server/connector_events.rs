@@ -107,12 +107,12 @@ impl SyncServer {
 /// only the general write door's per-write work and its commit's wake, which
 /// that pass's claim through the door carried before FIX 5678. With no
 /// per-write work due the tick takes no write and sends that wake alone
-/// (FIX 11664).
+/// (FIX 11664); a check that fails takes the write, so no work is skipped.
 pub(super) fn carry_write_piggybacks(vault: &Vault, tick: bool) -> oneiron::Result<()> {
     if !(tick && IDLE_TICK_CARRIES_WRITE_PIGGYBACKS) {
         return Ok(());
     }
-    if vault.write_door_work_due()? {
+    if vault.write_door_work_due().unwrap_or(true) {
         vault.with_write_txn_grouped(|_| Ok(()))
     } else {
         vault.send_empty_commit_wakes();
