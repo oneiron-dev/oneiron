@@ -13,7 +13,7 @@ use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribut
 use crate::temporal::TimeRange;
 
 use super::amended::amended_shares_in_txn;
-use super::anchored_amendment::{anchored_rows_in_txn, effective_evidence_in_txn};
+use super::anchored_amendment::{AnchoredEffect, anchored_rows_in_txn, effective_evidence_in_txn};
 use super::codec::invalid;
 use super::equivalent::redirect_equivalent_subjects_in_txn;
 use super::ledger::{
@@ -263,9 +263,16 @@ pub(super) fn project_in_txn(
     let native_attempts: BTreeSet<&str> =
         anchored.iter().map(|held| held.attempt.as_str()).collect();
     let mut anchored_writes = Vec::new();
+    let mut anchored_withdrawals = Vec::new();
     for held in &anchored {
-        if let Some(evidence) = effective_evidence_in_txn(vault, txn, skill, held, &amended)? {
-            anchored_writes.push((held.cell.clone(), evidence));
+        match effective_evidence_in_txn(vault, txn, skill, held, &amended)? {
+            AnchoredEffect::Stand => {}
+            AnchoredEffect::Record(evidence) => {
+                anchored_writes.push((held.cell.clone(), evidence));
+            }
+            AnchoredEffect::Withdraw => {
+                anchored_withdrawals.push((held.cell.clone(), held.receipt.clone()));
+            }
         }
     }
     let mut desired: BTreeMap<LearningCell, (SkillReliabilityQuery, Vec<LearningEvidence>)> =
@@ -356,6 +363,10 @@ pub(super) fn project_in_txn(
     // prior for; the stable key replaces the row in place.
     for (cell, evidence) in anchored_writes {
         crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, at)?;
+        changed.remove(&cell.digest());
+    }
+    for (cell, receipt) in anchored_withdrawals {
+        crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, &cell, &receipt, at)?;
         changed.remove(&cell.digest());
     }
     for digest in changed {

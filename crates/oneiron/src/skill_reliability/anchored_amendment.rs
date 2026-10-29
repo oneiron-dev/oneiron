@@ -22,7 +22,7 @@ use crate::learning::evidence::{EVIDENCE, EvidenceRow, cells_for_subject_in_txn}
 use crate::learning::{
     EvidenceSource, LearningCell, LearningEvidence, LearningPredicate, Observation,
 };
-use crate::skill_attribution::{credit_evidence, late_credit_receipt_in_txn};
+use crate::skill_attribution::{late_credit_receipt_in_txn, standing_credit_observation_in_txn};
 
 /// One anchored pack-outcome observation held in `skill`'s reliability
 /// cells, with the attempt its stored context names.
@@ -71,15 +71,26 @@ pub(super) fn anchored_rows_in_txn(
     Ok(rows)
 }
 
-/// The evidence `held` should now store, or `None` when the stored row
-/// already says it (or its sealed credit is gone, so the native form cannot
-/// be restated and the row is left as it stands).
-///
-/// While an amendment charges the attempt, the observation is that
-/// amendment's loss at its defect share, under the native row's anchor and
-/// provenance. Otherwise it is the sealed credit's own observation for
-/// `skill` — a direct subject's whole run, or a credited share's weighted
-/// win — as the pack outcome recorded it.
+/// What one anchored row should now store under its stable key.
+pub(super) enum AnchoredEffect {
+    /// The stored row already says it; write nothing.
+    Stand,
+    /// Replace the stored row with this evidence.
+    Record(LearningEvidence),
+    /// The standing credit credits this subject nothing (its row is a
+    /// flipped loss the credit never carried): withdraw the row.
+    Withdraw,
+}
+
+/// The effect `held` should now take. While an amendment charges the
+/// attempt, the effective observation is that amendment's loss at its
+/// defect share. Otherwise it is the credit's standing observation — the
+/// latest credit adjustment's mass, not only the sealed projection's — so
+/// a withdrawn amendment restores exactly what the credit side last wrote.
+/// The sealed credit gone, or erased to no attribution, leaves the row as
+/// it stands rather than guessed at. Either restatement keeps the stored
+/// row's receipt key, time, anchor, judge, goal revision and pack context;
+/// only the observation and its weight ever move.
 ///
 /// # Errors
 ///
@@ -90,50 +101,59 @@ pub(super) fn effective_evidence_in_txn(
     skill: &EntityId,
     held: &AnchoredRow,
     amended: &BTreeMap<String, f32>,
-) -> Result<Option<LearningEvidence>> {
+) -> Result<AnchoredEffect> {
     let row = &held.row;
-    let evidence = if let Some(share) = amended.get(&held.attempt) {
-        let mut evidence = LearningEvidence::anchored(
-            held.receipt.clone(),
-            row.at,
-            row.anchor,
-            Observation::Success(false),
-        );
-        evidence.weight = f64::from(*share);
-        evidence.judge.clone_from(&row.judge);
-        evidence.on_judge_model = row.on_judge_model;
-        evidence.outcome_label.clone_from(&row.outcome_label);
-        evidence.pack_attribution.clone_from(&row.pack_attribution);
-        evidence.goal_revision.clone_from(&row.goal_revision);
-        evidence
-            .measurement_version
-            .clone_from(&row.measurement_version);
-        evidence
-    } else {
-        let Some(credit) = late_credit_receipt_in_txn(vault, txn, &held.receipt)? else {
-            return Ok(None);
-        };
-        let Some(fields) = &credit.attribution else {
-            return Ok(None);
-        };
-        let (success, weight) = if credit
-            .direct_subjects
-            .iter()
-            .any(|subject| *subject == Some(*skill))
-        {
-            (credit.succeeded, 1.0)
-        } else if let Some(share) = credit
-            .shares
-            .iter()
-            .find(|share| share.subject == Some(*skill))
-        {
-            (true, share.weight)
+    if let Some(share) = amended.get(&held.attempt) {
+        let evidence = restated(held, false, f64::from(*share));
+        return Ok(if matches_row(row, &evidence) {
+            AnchoredEffect::Stand
         } else {
-            return Ok(None);
-        };
-        credit_evidence(&credit, fields, success, weight)
+            AnchoredEffect::Record(evidence)
+        });
+    }
+    let Some(credit) = late_credit_receipt_in_txn(vault, txn, &held.receipt)? else {
+        return Ok(AnchoredEffect::Stand);
     };
-    Ok((!matches_row(row, &evidence)).then_some(evidence))
+    if credit.attribution.is_none() {
+        return Ok(AnchoredEffect::Stand);
+    }
+    match standing_credit_observation_in_txn(vault, txn, &credit, skill)? {
+        Some((success, weight)) => {
+            let evidence = restated(held, success, weight);
+            Ok(if matches_row(row, &evidence) {
+                AnchoredEffect::Stand
+            } else {
+                AnchoredEffect::Record(evidence)
+            })
+        }
+        // Only a credited win's masses can move to nothing; a failed
+        // credit that never named this subject is not this leaf's row to
+        // judge.
+        None if credit.succeeded => Ok(AnchoredEffect::Withdraw),
+        None => Ok(AnchoredEffect::Stand),
+    }
+}
+
+/// `held`'s stored row restated at one observation and weight, keeping
+/// every other field the native credit row froze.
+fn restated(held: &AnchoredRow, success: bool, weight: f64) -> LearningEvidence {
+    let row = &held.row;
+    let mut evidence = LearningEvidence::anchored(
+        held.receipt.clone(),
+        row.at,
+        row.anchor,
+        Observation::Success(success),
+    );
+    evidence.weight = weight;
+    evidence.judge.clone_from(&row.judge);
+    evidence.on_judge_model = row.on_judge_model;
+    evidence.outcome_label.clone_from(&row.outcome_label);
+    evidence.pack_attribution.clone_from(&row.pack_attribution);
+    evidence.goal_revision.clone_from(&row.goal_revision);
+    evidence
+        .measurement_version
+        .clone_from(&row.measurement_version);
+    evidence
 }
 
 /// Whether `evidence` stores exactly the row already held.

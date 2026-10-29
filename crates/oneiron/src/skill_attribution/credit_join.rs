@@ -332,7 +332,7 @@ fn capture_first_prior_in_txn(
 
 /// One subject's observation of `credit`'s outcome at `weight`, under the
 /// sealed receipt's own evidence key, so a later reconciliation replaces it.
-pub(crate) fn credit_evidence(
+pub(super) fn credit_evidence(
     credit: &LateCreditReceipt,
     fields: &PackAttributionFields,
     success: bool,
@@ -367,6 +367,39 @@ fn masses(direct: &[Option<EntityId>], shares: &[LateCreditShare]) -> BTreeMap<E
         }
     }
     out
+}
+
+/// The observation `subject`'s evidence for `credit` currently stands at:
+/// the win and mass of the latest adjustment beside the sealed credit, or
+/// the sealed projection's own when no adjustment landed. `None` when the
+/// credit currently credits `subject` nothing. A failed credit is never
+/// adjusted, so its direct subjects stand whole at the failure. The
+/// anchored-amendment join (FIX 10148) restores to exactly this, never to
+/// the sealed projection alone.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn standing_credit_observation_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+    subject: &EntityId,
+) -> Result<Option<(bool, f64)>> {
+    if !credit.succeeded {
+        return Ok(credit
+            .direct_subjects
+            .contains(&Some(*subject))
+            .then_some((false, 1.0)));
+    }
+    let chain = chain_in_txn(&vault.store, txn, &credit.receipt_id)?;
+    let (direct, shares) = match chain.last() {
+        Some((_, last)) => (&last.direct_subjects, &last.shares),
+        None => (&credit.direct_subjects, &credit.shares),
+    };
+    Ok(masses(direct, shares)
+        .get(subject)
+        .map(|mass| (true, *mass)))
 }
 
 /// Reconciles every successful credited outcome of the run `attempt_receipt`
