@@ -651,7 +651,43 @@ fn promote_one(
     // 5. Post-commit landed verification (Hermes gate 9c): re-read and check
     // predicate, source, and taint. A failure cannot roll back the committed
     // writes; it rejects the candidate, and the caller must not complete the attempt.
-    verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
+    let approval = verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)?;
+    log_read_disposition(vault, run, &candidate.claim_id);
+    Ok(approval)
+}
+
+/// Whether the machine-claim read gate admits a landed claim: a Quarantined
+/// claim is invisible to every recall, the owner's included. One line per
+/// claim, WARN when Quarantined; ids and the class only, never claim text.
+fn log_read_disposition(vault: &Vault, run: &DreamerRunContext, claim_id: &EntityId) {
+    use crate::authority::CausalWriteDisposition;
+    let attempt_id = bytes_to_hex_lower(run.attempt_id.as_bytes());
+    let claim = claim_id.to_hex();
+    let read = vault.claim_write_disposition(claim_id);
+    let disposition = match &read {
+        Ok(Some(CausalWriteDisposition::Admitted)) => "Admitted",
+        Ok(Some(CausalWriteDisposition::Unbound)) => "Unbound",
+        Ok(Some(CausalWriteDisposition::Quarantined)) => "Quarantined",
+        Ok(None) => "none",
+        Err(_) => "unread",
+    };
+    let error_kind = read.as_ref().err().map(Error::kind);
+    if disposition == "Quarantined" {
+        tracing::warn!(
+            attempt_id = %attempt_id,
+            claim = %claim,
+            disposition,
+            "dreamer claim read disposition"
+        );
+    } else {
+        tracing::info!(
+            attempt_id = %attempt_id,
+            claim = %claim,
+            disposition,
+            error_kind = ?error_kind,
+            "dreamer claim read disposition"
+        );
+    }
 }
 
 /// The review group of the pending-consent row `claim` waits in, if any.
