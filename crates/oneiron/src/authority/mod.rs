@@ -144,6 +144,7 @@ mod world_privacy;
 mod world_privacy_door;
 mod world_refold;
 mod world_strength;
+mod work_rebind;
 mod write_authorization;
 
 #[cfg(test)]
@@ -328,6 +329,9 @@ pub use support_grant::{
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
+pub use work_rebind::{
+    InstrumentRebind, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS, REBIND_WIDENS,
+};
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{

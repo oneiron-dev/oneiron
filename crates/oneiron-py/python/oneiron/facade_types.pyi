@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4174 declarations.
-Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1162 fully typed, 120 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1163 facade rows, 4176 declarations.
+Inputs: 1098 of 1163 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1043 of 1163 fully typed, 120 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 106; unread shapes: 0.
 """
 
@@ -1603,6 +1603,7 @@ TaskAssignee = Literal["dreamer"] | TaskAssigneeAgentDef | TaskAssigneePeer | Ta
 class TaskAskGuest(TypedDict):
     companion_ref: EntityId
     disclosure_grant_ref: str
+    holder_key: NotRequired[str | None]
 class TaskAskTargetAuthority(TypedDict):
     authority: AskAuthorityScope
 class TaskAskTargetResponder(TypedDict):
@@ -7166,7 +7167,7 @@ class GuestRevokeResponse(TypedDict):
     courtesy_skipped: NotRequired[str | None]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
-    holder_key: str
+    holder_key: NotRequired[str | None]
     expires_at: int
     comm: NotRequired[CommReach | None]
 class GuestSlipMinted(TypedDict):
@@ -14784,6 +14785,15 @@ class TurnActionReceipt(TypedDict):
     turn_id: str
     message_id: str
     attempt_id: str
+class TurnActionRebindRequest(TypedDict):
+    attempt_id: str
+class TurnActionRebindReceipt(TypedDict):
+    action: TurnAction
+    turn_id: str
+    attempt_id: str
+    predecessor_slip: str
+    successor_slip: str
+    owner_work: bool
 class MessageReactionExternal(TypedDict):
     connector: str
     id: str

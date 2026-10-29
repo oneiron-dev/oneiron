@@ -2485,6 +2485,9 @@ impl OneironClient {
                 "vault.conversations.turn.retry" => remote_agent_verb_output::<
                     oneiron::conversation::TurnActionReceipt,
                 >(client, verb, &input),
+                "vault.conversations.turn.rebind" => remote_agent_verb_output::<
+                    oneiron::conversation::TurnActionRebindReceipt,
+                >(client, verb, &input),
                 "vault.messages.react" => remote_agent_verb_output::<
                     oneiron::reaction::MessageReactionReceipt,
                 >(client, verb, &input),
@@ -13453,6 +13456,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.conversations.turn.retry", value)
+    }
+    pub fn vault_conversations_turn_rebind(
+        &self,
+        input: &oneiron::conversation::TurnActionRebindRequest,
+    ) -> Result<oneiron::conversation::TurnActionRebindReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.conversations.turn.rebind", value)
     }
     pub fn vault_messages_react(
         &self,

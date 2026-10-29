@@ -4001,6 +4001,11 @@ export_facade! {
     let output = client.vault_conversations_turn_retry(&input)?;
     crate::codec::lift_record("vault.conversations.turn.retry", &output)
 };
+"vault.conversations.turn.rebind" => fn vault_conversations_turn_rebind(&self, input: TurnActionRebindRequest) -> TurnActionRebindReceipt = |client| {
+    let input: oneiron::conversation::TurnActionRebindRequest = crate::codec::lower_record("vault.conversations.turn.rebind", input)?;
+    let output = client.vault_conversations_turn_rebind(&input)?;
+    crate::codec::lift_record("vault.conversations.turn.rebind", &output)
+};
 "vault.messages.react" => fn vault_messages_react(&self, input: MessageReactionRequest) -> MessageReactionReceipt = |client| {
     let input: oneiron::reaction::MessageReactionRequest = crate::codec::lower_record("vault.messages.react", input)?;
     let output = client.vault_messages_react(&input)?;
