@@ -428,7 +428,7 @@ impl Vault {
         record: &ConnectorKeyRecord,
         (prior, mut next, next_id): (&ConnectorGrantSlate, ConnectorGrantSlate, EntityId),
         receipt: Option<ConnectorQualificationReceipt>,
-        op: &str,
+        op: &'static str,
         at: u64,
     ) -> Result<Option<ConnectorKeyRecord>> {
         let admitted = matches!(
