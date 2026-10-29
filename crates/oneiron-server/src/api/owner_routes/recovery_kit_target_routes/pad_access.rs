@@ -9,8 +9,9 @@
 //!   reach here: `home_unavailable`, and nothing is granted. The answer is
 //!   what was offered, what is usable here and what stays pending, by
 //!   generation; an offer is not access.
-//! - `GET /recovery-kit/upkeep`: the last relay the upkeep finished and the
-//!   last one that failed, with their times, and the last kit grant this
+//! - `GET /recovery-kit/upkeep`: the last relay the upkeep took to the home,
+//!   the pending counts of the last one whose erase sweep counted them, the
+//!   last relay that failed, each with its time, and the last kit grant this
 //!   process answered (CALLS "4953 relay report"). Unobserved is said, never
 //!   read as zero; pending counts are observations, not promises. Nothing
 //!   here waits on the upkeep or expires.
@@ -203,7 +204,7 @@ struct TakenView {
     skipped: usize,
 }
 
-/// What one finished relay moved (`SealedBundleRelay`).
+/// What one relay that reached the home moved (`SealedBundleRelay`).
 #[derive(Debug, Serialize)]
 struct RelayView {
     taken: Option<TakenView>,
@@ -213,6 +214,11 @@ struct RelayView {
     erased: usize,
     /// Grants this machine sealed for a late joiner that the home took.
     offered: usize,
+}
+
+/// What the last erase sweep over the kept pad objects counted.
+#[derive(Debug, Serialize)]
+struct PendingView {
     /// Kept pad objects that open with no key here yet: their access is
     /// pending with the home.
     pending_pad_access: usize,
@@ -236,15 +242,26 @@ struct UpkeepAnswer {
     /// Whether this install runs a connection to a home now.
     home_connection: bool,
     relay: Observed<RelayView>,
+    pending: Observed<PendingView>,
     relay_failure: Option<RelayFailureView>,
     grant: Observed<PadAccessAnswer>,
 }
 
-fn relay_view(
-    observation: Option<SealedBundleRelayObservation>,
-) -> (Observed<RelayView>, Option<RelayFailureView>) {
+/// The upkeep's observation as the answer shows it: what the last relay that
+/// reached the home moved, what the last sweep counted, and the last failure.
+struct RelayViews {
+    relay: Observed<RelayView>,
+    pending: Observed<PendingView>,
+    failure: Option<RelayFailureView>,
+}
+
+fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews {
     let Some(observation) = observation else {
-        return (Observed::Unobserved, None);
+        return RelayViews {
+            relay: Observed::Unobserved,
+            pending: Observed::Unobserved,
+            failure: None,
+        };
     };
     let relay = observation
         .relayed
@@ -262,6 +279,13 @@ fn relay_view(
                 published: relay.published.as_ref().map(sealed_generation_hex),
                 erased: relay.erased,
                 offered: relay.offered,
+            },
+        });
+    let pending = observation
+        .swept
+        .map_or(Observed::Unobserved, |(at, relay)| Observed::Observed {
+            observed_at: rfc3339_secs(at),
+            report: PendingView {
                 pending_pad_access: relay.pending_pad_access,
                 pending_erases: relay.pending_erases,
             },
@@ -270,17 +294,22 @@ fn relay_view(
         observed_at: rfc3339_secs(at),
         error,
     });
-    (relay, failure)
+    RelayViews {
+        relay,
+        pending,
+        failure,
+    }
 }
 
 /// `GET /v1/owner/recovery-kit/upkeep`: the last sealed bundle relay this
-/// install's upkeep finished, the last that failed, and the last kit grant
-/// this process answered, each with its time or as unobserved.
+/// install's upkeep took to the home, the pending counts its last sweep
+/// counted, the last relay that failed, and the last kit grant this process
+/// answered, each with its time or as unobserved.
 async fn upkeep(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<UpkeepAnswer> {
     owner(&auth, &server)?;
     let vault = Arc::clone(&server.vault);
     let me = blocking(move || Ok(vault.local_machine()?.map(|machine| machine.id))).await?;
-    let (relay, relay_failure) = relay_view(me.as_ref().and_then(sealed_bundle_relay_observation));
+    let views = relay_views(me.as_ref().and_then(sealed_bundle_relay_observation));
     let grant = me
         .and_then(|me| grants().lock().ok()?.get(&me).cloned())
         .map_or(Observed::Unobserved, |(observed_at, report)| {
@@ -292,8 +321,9 @@ async fn upkeep(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
     Ok(Json(UpkeepAnswer {
         machine: me.map(|me| me.to_hex()),
         home_connection: me.is_some_and(|me| crate::residence_machines::connection(&me).is_some()),
-        relay,
-        relay_failure,
+        relay: views.relay,
+        pending: views.pending,
+        relay_failure: views.failure,
         grant,
     }))
 }
