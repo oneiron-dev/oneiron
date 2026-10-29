@@ -84,21 +84,21 @@ struct RequestPage {
     pending: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerRequest {
     /// The request, 32 hex characters.
     request: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct UndoChange {
     /// The settings receipt the notice carried.
     receipt: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetUnanimity {
     /// The world whose override this sets, 32 hex; none sets the vault's.
@@ -107,6 +107,58 @@ struct SetUnanimity {
     /// On or off; none clears a world's override.
     #[serde(default)]
     on: Option<bool>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/set`'s body
+/// (FIX 11611): [`WorldPrivacySetInput`].
+pub(crate) fn set_world_privacy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacySetInput>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/set`'s answer
+/// (FIX 11611): [`WorldPrivacyOutcome`].
+pub(crate) fn world_privacy_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyOutcome>()
+}
+
+/// The OpenAPI schema of the world-privacy answer routes' bodies
+/// (FIX 11611: `proposals/accept`, `proposals/decline`, `asks/confirm`,
+/// `asks/decline`, `widen-unanimity/off/confirm`,
+/// `widen-unanimity/off/decline`): [`AnswerRequest`].
+pub(crate) fn world_privacy_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/proposals/accept`'s
+/// answer (FIX 11611), shared with `proposals/decline`, `asks/confirm` and
+/// `asks/decline`: [`WorldPrivacyAnswer`].
+pub(crate) fn world_privacy_answer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyAnswer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/undo`'s body
+/// (FIX 11611): [`UndoChange`].
+pub(crate) fn undo_world_privacy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<UndoChange>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/undo`'s answer
+/// (FIX 11611): [`WorldPrivacyReceipt`].
+pub(crate) fn world_privacy_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyReceipt>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/widen-unanimity`'s
+/// body (FIX 11611): [`SetUnanimity`].
+pub(crate) fn set_widen_unanimity_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetUnanimity>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/widen-unanimity`'s
+/// answer (FIX 11611), shared with `widen-unanimity/off/confirm` and
+/// `widen-unanimity/off/decline`: [`WidenUnanimityOutcome`].
+pub(crate) fn widen_unanimity_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WidenUnanimityOutcome>()
 }
 
 /// The world-settings door (FIX 4707): the vault's owner as [`owner`] admits

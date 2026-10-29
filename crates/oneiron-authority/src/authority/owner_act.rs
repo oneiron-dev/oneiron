@@ -55,7 +55,17 @@ pub enum ActBy {
 /// Where the owner's say-so reached the carrier. Audit and receipts only: no
 /// admission rule anywhere may read it.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ActSurface {

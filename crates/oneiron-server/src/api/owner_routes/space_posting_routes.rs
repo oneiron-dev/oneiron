@@ -34,7 +34,7 @@ struct SpaceQuery {
     space: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetSpacePosting {
     identity: String,
@@ -46,7 +46,7 @@ struct SetSpacePosting {
     grant: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SpacePosting {
     identity: String,
     space: String,
@@ -58,6 +58,18 @@ struct SpacePosting {
     /// The setting's receipt, when this call wrote one.
     #[serde(skip_serializing_if = "Option::is_none")]
     setting_ref: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/space-posting`'s body (FIX 11611):
+/// [`SetSpacePosting`].
+pub(crate) fn set_space_posting_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetSpacePosting>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/space-posting`'s answer (FIX 11611):
+/// [`SpacePosting`].
+pub(crate) fn space_posting_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SpacePosting>()
 }
 
 fn plan(
