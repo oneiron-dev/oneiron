@@ -11,6 +11,8 @@
 //! there back into its journal. Each apply is one run-tree root with a child
 //! per item (see [`super::run`]), and its waiting items are one inbox group
 //! (see [`super::group`]).
+mod journal;
+
 use super::approval::{
     ShapeApprovalDependencies, check_waiting_shape_approval, moves_reach, repin_waiting,
 };
@@ -21,6 +23,7 @@ use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
 use super::shared_setup::{CreatorAnswer, ShapeLearningOutcome, creator_answer, report_unread};
 use super::{ShapeRow, ShapeTarget, invalid};
+use journal::JOURNAL;
 use crate::agent_def::{AgentDefinition, AgentScope};
 use crate::authority::{ActSurface, HostSlipIssuer, VerifiedSlip};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
@@ -29,7 +32,6 @@ use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
-use crate::side_table::{self, Named, SideTable};
 use crate::skill::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -44,10 +46,6 @@ const SHAPE_GRANT_PROPOSAL_SECS: u64 = 3600;
 
 /// The widen inbox's verdict on a filing the owner accepted, minting it.
 const SHAPE_FILING_ACCEPTED: &str = "accepted";
-
-/// Every apply's journal, keyed by the frontier of the plan it lands.
-const JOURNAL: SideTable<String, ShapeApplyReceipt, Named> =
-    SideTable::new(&side_table::VAULT_SHAPE_APPLY);
 
 /// `vault.shape.apply`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -226,39 +224,6 @@ fn list_pack_source(sources: &mut ShapeSources, source_id: &str) {
 }
 
 impl Vault {
-    /// The journal of the apply landing the plan at `frontier`.
-    ///
-    /// # Errors
-    ///
-    /// A read failure.
-    pub fn shape_apply(&self, frontier: &str) -> Result<Option<ShapeApplyReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        JOURNAL.get(&self.store, &txn, &frontier.to_owned())
-    }
-
-    /// Every apply with an item still pending or waiting for the owner.
-    ///
-    /// # Errors
-    ///
-    /// A read failure.
-    pub fn open_shape_applies(&self) -> Result<Vec<ShapeApplyReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        Ok(JOURNAL
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, receipt)| receipt)
-            .filter(|receipt| !receipt.done)
-            .collect())
-    }
-
-    /// Records `receipt`, and settles its run rows to match, in one writer.
-    pub(super) fn put_shape_apply(&self, receipt: &ShapeApplyReceipt, now: u64) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            JOURNAL.put(&self.store, txn, &receipt.frontier, receipt)?;
-            self.settle_shape_run_in_txn(txn, receipt, now)
-        })
-    }
-
     /// Lands `request.plan`. A first apply re-plans its seed over the rows
     /// `visible` admits and refuses a plan whose frontier has moved; then it
     /// stores the seed, and opens the journal and the apply's run tree in
