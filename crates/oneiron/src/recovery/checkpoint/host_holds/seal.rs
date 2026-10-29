@@ -92,7 +92,7 @@ pub enum HostHoldsSealing {
     #[default]
     NotHosted,
     /// Sealed to this recipient.
-    To(HostHoldsRecipient),
+    To(Box<HostHoldsRecipient>),
     /// A host carries the vault and gave no usable recipient: each receipt
     /// says the member is unavailable. Never a refused start.
     RecipientMissing,
