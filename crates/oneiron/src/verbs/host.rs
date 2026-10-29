@@ -162,11 +162,15 @@ pub fn put_pack_as_owner(
     Ok(vault.put_pack(owner, input.into_files()?)?.into())
 }
 
-/// `vault.packs.put` on an embedded handle: the vault's embedded owner's put.
+/// `vault.packs.put` on an embedded handle: the vault's embedded owner's put,
+/// or, on an agent's handle, the agent's own put of `local`.
 pub fn put_pack_embedded(
     memory: &Memory<'_>,
     input: PackPutRequest,
 ) -> MemoryResult<PackPutReceipt> {
+    if memory.actor_class() == crate::EdgeActorClass::Agent {
+        return put_local_pack_as_agent(memory, input);
+    }
     Ok(memory
         .put_pack_as_embedded_owner(input.into_files()?)?
         .into())
