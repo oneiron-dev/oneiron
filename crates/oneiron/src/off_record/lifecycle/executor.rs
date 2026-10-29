@@ -46,7 +46,7 @@ impl OffRecordSession<'_> {
     /// holds in BOTH modes, because a room that flipped on record is still
     /// not a place where a guest names turns. `None` is the only passing
     /// value on this surface. Deterministic executor retries use the distinct
-    /// crate-private [`Self::witness_host_executor_turn`] capability below;
+    /// crate-private [`Self::witness_host_executor_turn_sourced`] capability below;
     /// they do not weaken or special-case this refusal.
     ///
     /// `route` is the caller's RUN-ENTRY route, revalidated here so a mid-run

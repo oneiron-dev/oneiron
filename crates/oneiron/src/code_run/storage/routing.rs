@@ -506,7 +506,7 @@ impl<'a> ExecutorStorage<'a> {
     /// at the same derived identity a spoken bubble takes, its text empty,
     /// its attachment the preview and the facets, its hold on the body in
     /// the transaction that lands it.
-    /// [`Self::witness_executor_result_sourced`] with this reply's typed assertions.
+    /// A typed-result bubble with this reply's typed assertions (FIX 365 sourced variant).
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn witness_executor_result_sourced(
         &self,

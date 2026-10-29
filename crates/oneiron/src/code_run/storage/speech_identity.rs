@@ -87,7 +87,14 @@ impl HostSelfDispatcher<'_> {
                     if let Ok(receipt) =
                         serde_json::from_value::<CommitReceipt>(answer.output.clone())
                     {
-                        self.note_created_refs([receipt.claim, receipt.superseded]);
+                        let claim = receipt.claim.or_else(|| {
+                            receipt
+                                .receipt_ref
+                                .strip_prefix("claim:")
+                                .and_then(|hex| EntityId::from_hex(hex).ok())
+                                .map(|id| RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None))
+                        });
+                        self.note_created_refs([claim, receipt.superseded]);
                     }
                 }
                 _ => {}
@@ -110,14 +117,28 @@ impl HostSelfDispatcher<'_> {
         let kind = match &self.storage {
             ExecutorStorage::Canonical(vault) => {
                 let txn = vault.store.env.read_txn().ok()?;
-                crate::batch::stored_entity_type(&vault.store, &txn, &id).ok()?
+                Self::entity_type_of(&vault.store, &txn, &id).ok()?
             }
             ExecutorStorage::Session(binding) => binding
                 .session
-                .read_composed(|view, txn| crate::batch::stored_entity_type(view, txn, &id))
+                .read_composed(|view, txn| Self::entity_type_of(view, txn, &id))
                 .ok()?,
         }?;
         Some(RecordRef::from_id(kind, &id, None))
+    }
+
+    fn entity_type_of(
+        dbs: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<u8>> {
+        use crate::ports::EntityStoreRead;
+        let Some(raw) = dbs.port_entity_raw(txn, id)? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            crate::batch::EntityMetadataHeader::parse(&raw)?.entity_type,
+        ))
     }
 
     /// Takes the refs for one witness attempt. On error the caller restores
