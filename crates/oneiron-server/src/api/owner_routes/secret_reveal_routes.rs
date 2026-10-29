@@ -38,6 +38,28 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secrets/reveal", post(reveal))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveals/answer`'s body (FIX 11611):
+/// [`AnswerReveal`].
+pub(crate) fn answer_reveal_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerReveal>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveals/answer`'s answer (FIX 11611):
+/// [`AnsweredView`].
+pub(crate) fn reveal_answered_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnsweredView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveal`'s body (FIX 11611): [`OwnerReveal`].
+pub(crate) fn owner_reveal_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OwnerReveal>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveal`'s answer (FIX 11611): [`RevealedView`].
+pub(crate) fn revealed_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevealedView>()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RevealsQuery {
@@ -51,7 +73,7 @@ struct RevealsQuery {
 
 /// One reveal's receipt, as the owner reads it. It names the handle, never
 /// the value.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReceiptView {
     reveal: String,
     handle: String,
@@ -138,7 +160,7 @@ impl From<SecretRevealAsk> for RevealView {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum Answer {
     Once,
@@ -156,7 +178,7 @@ impl From<Answer> for SecretRevealAnswer {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerReveal {
     /// The reveal, as 32 hex.
@@ -177,7 +199,7 @@ struct AnswerReveal {
     scope: RevealGrantScope,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct AnsweredView {
     reveal: String,
     outcome: &'static str,
@@ -201,7 +223,7 @@ impl From<SecretRevealAnswered> for AnsweredView {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct OwnerReveal {
     /// The secret's handle, such as `sc12`; or `name`.
@@ -215,7 +237,7 @@ struct OwnerReveal {
 }
 
 /// The owner's read: the value, in this body only, and its receipt.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct RevealedView {
     value_base64: String,
     receipt: ReceiptView,

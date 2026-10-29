@@ -97,7 +97,7 @@ pub struct SteerRequest {
 
 /// `steer`'s answer: the live attempt whose inbox holds the signal, and the
 /// signal's state (pending until the child's breakpoint takes it).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SteerReceipt {
     pub task_ref: String,
     pub branch: String,

@@ -84,7 +84,9 @@ const OWNER_UNBOUND_TRUSTS_CARRIER: bool = true;
 /// contract §5, the honest receipt). Only a holder opens, mints or rewraps a
 /// key: a carrier that holds none records the decision, and its receipt says
 /// so, never "done".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyWork {
     /// The decision is recorded and needs no key work: the world reads
