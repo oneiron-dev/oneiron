@@ -44945,7 +44945,7 @@
      "purpose": "Call mode (retrieval hub #call-mode): recall for live calls",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5
      }
