@@ -41701,6 +41701,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/llm/run_admission/capture.rs",
+     "purpose": "Settlements kept for one scope on the calling thread (FIX 10075 seam): a host that must name the calls a…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "BudgetLine",
       "DeclarationEditor",
@@ -41816,7 +41826,7 @@
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -57413,23 +57423,27 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HookBodyRun",
       "HookBodyRuntime",
       "HookBodyUsage",
       "HookBudgetOverrun",
+      "HookPreparation",
       "HookRunContext",
-      "HookVerdict"
+      "HookSettledCallRef",
+      "HookVerdict",
+      "HookVerdictContext",
+      "HookVerdictReply"
      ],
      "path": "src/runtime_hooks/body.rs",
      "purpose": "The seam between the runner and the hook sandbox (ARCH-0080 §6)",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 9,
-      "struct": 4,
+      "fn": 13,
+      "struct": 8,
       "trait": 2,
       "type": 1
      }
@@ -57463,7 +57477,7 @@
      "path": "src/runtime_hooks/grant.rs",
      "purpose": "Every hook has a grant (ARCH-0080 §6)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "struct": 1
      }
@@ -57529,7 +57543,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 3,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -57554,13 +57568,35 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/pack_line.rs",
+     "purpose": "The pack lines generative fact hooks' `ai.verdict` asks spend on (FIX 10075): one per pack and author, held…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/read.rs",
      "purpose": "The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/read/grant_view.rs",
+     "purpose": "What a hook's current grant shows of one stored row (ARCH-0080 §6): the one check its scoped reads, its…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -57642,20 +57678,20 @@
      "purpose": "The fact-hook runner (ARCH-0080 §4 Delivery)",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 4,
       "struct": 2,
       "type": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/runner/body.rs",
      "purpose": "A fact-hook run's body call and what comes of it (ARCH-0080 §4, §6): its `ai.verdict` asks and their pins…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -57746,6 +57782,16 @@
      "purpose": "The verb-hook chain (ARCH-0080 §3): matching, run order, each run's input and verdict, the failure policy by…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/chain/projection.rs",
+     "purpose": "A verb hook's input, built for each hook under what both its caller and its current grant may read (FIX…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -57852,7 +57898,7 @@
      "path": "src/runtime_hooks/verb/redact.rs",
      "purpose": "A post-hook's Redact (ARCH-0080 §3): fields removed or masked in this caller's view of the result",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -80826,7 +80872,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81120,7 +81166,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 39,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81535,7 +81581,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5433,
+   "source_files": 5437,
    "test_files": 902
   },
   "oneiron-android": {
@@ -105938,7 +105984,17 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_verdict/hook.rs",
+     "purpose": "`ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -112897,10 +112953,10 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…"
     },
     "decision_verdict": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder"
     },
     "device_local": {
@@ -113228,7 +113284,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1358,
+   "source_files": 1359,
    "test_files": 182
   },
   "oneiron-spawn": {
