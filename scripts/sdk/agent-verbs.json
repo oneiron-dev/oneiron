@@ -13862,7 +13862,8 @@
       "admission": {
         "lane_record_scope": true
       },
-      "section": false
+      "section": false,
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.verdict",

@@ -6146,6 +6146,7 @@ impl AgentVerb {
                 | Self::VaultRepoCheckoutBind
                 | Self::VaultRepoExport
                 | Self::VaultWorkflowsDispatchBound
+                | Self::AiAskImage
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
                 | Self::VaultCalendarPassportsHistory
@@ -7011,7 +7012,6 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
-                | Self::AiAskImage
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
                 | Self::VaultGraphAdmit
