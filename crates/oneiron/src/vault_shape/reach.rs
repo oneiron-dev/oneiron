@@ -17,7 +17,7 @@ use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget};
 use crate::connector_key::SlateDisposition;
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundSubject, GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, BoundSubject, GrantBound,
 };
 use crate::error::Result;
 use crate::reaction::person_name_in;
@@ -556,6 +556,29 @@ fn action_requirement(actor_ref: &str, verb: &str, channel: &str) -> Option<Gran
     .ok()
 }
 
+/// Whether `grants` holds a brief-pinned send grant for `actor_ref`: an
+/// action grant on `send` whose envelope names a brief, covering its own
+/// brief's sends.
+fn brief_send_covered(grants: &[GrantBound], actor_ref: &str) -> bool {
+    grants.iter().any(|grant| match (grant.subject(), grant.class(), grant.envelope()) {
+        (
+            BoundSubject::Actor(actor),
+            BoundClass::Action(class),
+            BoundEnvelope::Action(envelope),
+        ) => {
+            actor.actor_ref() == actor_ref
+                && actor.actor_class().is_none()
+                && class.as_str() == SEND_VERB
+                && envelope.target().is_some()
+                && envelope
+                    .selectors()
+                    .iter()
+                    .any(|selector| selector.starts_with("brief:"))
+        }
+        _ => false,
+    })
+}
+
 /// `path`, and when it runs without asking, the data classes standing
 /// disclosure grants let reach their audiences along it.
 fn push_path(
@@ -576,9 +599,10 @@ fn push_path(
 }
 
 /// Every path `rows` hold. A disabled actor is not dispatched, so it holds
-/// none; a send the requirement cannot be composed for asks. A connector
-/// tool the slate never allows is no path; one it always asks for, or one
-/// the key's manifest holds, asks; one it always allows runs without asking
+/// none; a send the requirement cannot be composed for asks. A brief-pinned
+/// send grant covers its own brief's sends. A connector tool the slate
+/// never allows is no path; one it always asks for, or one the key's
+/// manifest holds, asks; one it always allows runs without asking
 /// (a covering grant); and on `auto` the standing grants decide, as they do
 /// for a send. A key bound to no actor serves every roster actor that holds
 /// no key of its own on the connector.
@@ -603,8 +627,9 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
             continue;
         }
         let actor_ref = sender.actor.to_hex();
-        let covered = action_requirement(&actor_ref, SEND_VERB, &sender.channel)
-            .is_some_and(|required| rows.grants.iter().any(|grant| grant.contains(&required)));
+        let covered = action_requirement(&actor_ref, SEND_VERB, &sender.channel).is_some_and(
+            |required| rows.grants.iter().any(|grant| grant.contains(&required)),
+        ) || brief_send_covered(&rows.grants, &actor_ref);
         let path = ShapeReachFact {
             actor: actor_ref,
             actor_name: actor.map(|actor| actor.agent_id.clone()),
