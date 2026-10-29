@@ -323,7 +323,8 @@ impl CdpDriver {
                 let target = info.get("targetId").and_then(Value::as_str);
                 !target.is_some_and(|target| self.pipe.recording_listens(target))
             })
-            .filter_map(|info| info.get("url").and_then(Value::as_str).map(str::to_owned))
+            .filter_map(|info| info.get("url").and_then(Value::as_str))
+            .map(|url| self.url_shown(url))
             .collect())
     }
 
@@ -392,8 +393,14 @@ impl CdpDriver {
                 };
                 self.demonstration_locator_policy(descriptor, &place, &mut now)
             };
-            if let Some(saw) = saw_of(&cue, &mut target) {
+            if let Some(mut saw) = saw_of(&cue, &mut target) {
+                // What the recording shows of a page is masked as an
+                // observation's URL is (FIX 10331).
+                if let Saw::Gap(RecordingGapKind::Uncovered { target: frame }) = &mut saw {
+                    *frame = self.url_shown(frame);
+                }
                 seen.push(Seen {
+                    shown: cue.top.then(|| self.url_shown(&cue.u)),
                     url: cue.top.then_some(cue.u),
                     tab: cue.tab,
                     saw,
