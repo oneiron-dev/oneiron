@@ -850,22 +850,6 @@ pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<Enti
     Some(rows)
 }
 
-/// The board frames the verb answers among `calls` carried beside their
-/// outputs (FIX 2135), in call order; an answer that does not decode
-/// carried none.
-pub(crate) fn agent_verb_observations_of(
-    calls: &[CodeRunBridgeCall],
-) -> Vec<super::RunObservation> {
-    calls
-        .iter()
-        .filter_map(|call| match decode_self_dispatch_outcome(&call.outcome) {
-            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.observations),
-            _ => None,
-        })
-        .flatten()
-        .collect()
-}
-
 /// Returns the default ABI/layout checks recorded with v1 replay records.
 #[must_use]
 pub fn code_run_replay_abi_layout_checks() -> Vec<CodeRunAbiLayoutCheck> {

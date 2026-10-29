@@ -29,6 +29,7 @@ use super::types::{
 use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
+pub(crate) use self::observations::agent_verb_observations_of;
 pub(super) use self::request::self_call_request_value;
 
 fn context_spec_json(spec: &ContextSpec) -> Result<String> {
