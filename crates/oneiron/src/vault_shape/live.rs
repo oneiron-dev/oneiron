@@ -1,6 +1,7 @@
 //! The live arrangement read as a shape: every setup-plane row the vault
 //! holds now, under the names a seed declares. Entity-backed rows and the
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
+use super::manifest_json::manifest_json;
 use super::reach::{ReachActor, ReachRows, ReachSender};
 use super::seed::hex;
 use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, ShapeTarget, invalid};
@@ -358,6 +359,7 @@ impl Vault {
                     ShapeRow::Manifest {
                         manifest_ref: id.to_hex(),
                         body: hex(&body),
+                        json: manifest_json(&body),
                     },
                     Some(id),
                 ));

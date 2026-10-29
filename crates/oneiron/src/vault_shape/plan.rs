@@ -347,6 +347,9 @@ impl Vault {
             (None, Some(stored)) => (stored.seed.clone(), true),
             (None, None) => (ShapeSeed::default(), false),
         };
+        // A manifest stated by its JSON form alone plans as the hex it
+        // writes (FIX 2760).
+        let seed = seed.with_manifest_bodies();
         seed.validate()?;
         let live = self.read_live_shape_into(visible, sources)?;
         // The stored seed is named as the caller reads it (FIX 9960).
@@ -360,7 +363,8 @@ impl Vault {
         let seed = match stored.as_ref().filter(|_| stored_seed) {
             Some(stored) => self
                 .projected_stored_seed(stored, &live.withheld, visible)?
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .with_manifest_bodies(),
             None => seed,
         };
         let frontier = frontier(&seed, &live)?;

@@ -24,6 +24,7 @@ mod grant;
 mod group;
 mod live;
 mod manifest;
+mod manifest_json;
 mod member;
 mod plan;
 mod reach;
@@ -169,7 +170,17 @@ pub enum ShapeRow {
     },
     /// A policy manifest (DEC-0005), by entity id hex, with its exact
     /// MessagePack body as hex. Every change waits for the owner's word.
-    Manifest { manifest_ref: String, body: String },
+    /// `json` is the same body as a document (FIX 2760): the live read
+    /// carries it wherever it writes back to exactly those bytes, and a seed
+    /// row may state the body by it alone. The hex is the authority when a
+    /// row states both.
+    Manifest {
+        manifest_ref: String,
+        #[serde(default)]
+        body: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        json: Option<serde_json::Value>,
+    },
     /// A sync declaration: whether one entity kind is on the wire. A shape
     /// can propose a federation; it never effects one.
     Sync { entity_kind: String, on_wire: bool },
