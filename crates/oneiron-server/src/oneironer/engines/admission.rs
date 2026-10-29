@@ -52,7 +52,7 @@ use crate::config::{EmbedderDevice, OneironerConfig};
 
 /// The down reason of a worker whose answers do not clear here, or that
 /// holds no reference case.
-const PARITY_FAILED: &str = "parity_failed";
+pub(super) const PARITY_FAILED: &str = "parity_failed";
 /// The rank of a platform worker Candle beats: after Candle's highest
 /// rank (3, behind two preferred platform workers), so it is never picked
 /// over Candle.

@@ -154,6 +154,16 @@ impl DispatcherHandle {
             shared.publish_rank(worker.0, rank);
         }
     }
+
+    /// Takes `worker` out of service for good, while the dispatcher lives,
+    /// for `why` (FIX 7108): it takes no more work, its routed calls go back
+    /// to routing, and its thread ends, dropping its model, once the unit it
+    /// runs is done.
+    pub(crate) fn retire(&self, worker: WorkerId, why: &str) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.settle(worker.0, WorkerState::Unavailable, Some(why));
+        }
+    }
 }
 
 /// How one session ended, for its supervisor.

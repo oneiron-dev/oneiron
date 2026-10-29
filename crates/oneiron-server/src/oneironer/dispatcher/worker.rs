@@ -435,8 +435,13 @@ fn bring_up(
             return None;
         }
     };
+    // A worker its owner retired while it came up stays out of service, and
+    // its next unit ends its thread (FIX 7108).
+    let serving = move |scheduler: &super::Scheduler| {
+        scheduler.workers[index].state != WorkerState::Unavailable
+    };
     if let Some(input) = warm {
-        shared.settle(index, WorkerState::Warming, None);
+        shared.settle_if(index, WorkerState::Warming, None, serving);
         // The warm-up only warms: a failed one leaves the worker taking work,
         // its calls failing and retrying one by one as an unwarmed one's do.
         let warmed = catch_unwind(AssertUnwindSafe(|| worker.run(&input)));
@@ -444,6 +449,6 @@ fn bring_up(
             tracing::warn!(worker = index, "an Oneironer worker's warm-up call failed");
         }
     }
-    shared.settle(index, WorkerState::Ready, None);
+    shared.settle_if(index, WorkerState::Ready, None, serving);
     Some(worker)
 }

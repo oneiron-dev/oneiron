@@ -32,7 +32,7 @@ use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
 use dispatcher::{Completion, Dispatcher, WorkerSpec};
-use engines::Admission;
+use engines::{Admission, BaselineCalibration};
 use local::{InferenceWindows, WindowCounter};
 
 pub(crate) use dispatcher::DispatchClaim;
@@ -233,6 +233,10 @@ pub(crate) struct TaggerSlot {
     serving: Option<engines::Serving>,
     /// The platform admission the serving build starts, until it does.
     platforms: Option<Admission>,
+    /// The after-bind calibration of the Candle baseline the serving build
+    /// starts, until it does (FIX 7108); it starts the platform admission
+    /// once it lands.
+    calibration: Option<BaselineCalibration>,
     /// The test door onto the traces the worker emitted, bounded.
     #[cfg(test)]
     traces: Mutex<VecDeque<LoggedTrace>>,
@@ -334,6 +338,9 @@ impl TaggerSlot {
     /// 6755 slice 3). Only the serving build calls it, never `init`'s
     /// check; a later call starts nothing.
     fn start_platform_workers(&mut self) {
+        if let Some(calibration) = self.calibration.take() {
+            calibration.start();
+        }
         if let Some(admission) = self.platforms.take() {
             admission.start();
         }
@@ -392,10 +399,17 @@ fn build_slot_inner(
         return Ok(None);
     };
     config.validate()?;
-    let (mut serving, mut platforms) = (None, None);
+    let (mut serving, mut platforms, mut calibration) = (None, None, None);
     let tagger = match config.provider {
         OneironerProvider::Local => {
-            let (tagger, engine) = match engines::load(config, rows_location) {
+            // The serving build measures nothing before the listener binds
+            // (FIX 7108); init's check measures as it always did.
+            let loaded = if start_workers {
+                engines::load_serving(config, rows_location)
+            } else {
+                engines::load(config, rows_location)
+            };
+            let (tagger, engine) = match loaded {
                 Ok(loaded) => loaded,
                 Err(error) => {
                     let format = error
@@ -445,7 +459,16 @@ fn build_slot_inner(
                 // A platform runtime joins it only from the serving build, in
                 // the background, and never beside a pinned engine.
                 let handle = tagger.dispatcher.handle();
-                platforms = Admission::new(config, rows_location, handle, engine, worker, card);
+                platforms = Admission::new(
+                    config,
+                    rows_location,
+                    handle.clone(),
+                    engine,
+                    worker,
+                    card.clone(),
+                );
+                calibration =
+                    BaselineCalibration::new(config, rows_location, handle, engine, worker, card);
                 tagger
             } else {
                 let _ = WorkerSpec::validate_local(engine.engine, &tagger);
@@ -483,6 +506,7 @@ fn build_slot_inner(
         card: Mutex::new(None),
         serving,
         platforms,
+        calibration,
         #[cfg(test)]
         traces: Mutex::new(VecDeque::new()),
     };

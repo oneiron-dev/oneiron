@@ -26,6 +26,12 @@
 //! Candle engine's window is the configured `max_input_tokens`, and its row
 //! is timed on every case it holds.
 //!
+//! The serving build measures nothing before the listener binds (FIX 7108):
+//! an engine with no row here is measured after the slot is built, in the
+//! background ([`baseline`]), and the built-in engine serves meanwhile, as it
+//! does for a bundle with no reference. A start whose every engine has its
+//! row picks as it always did, with nothing to measure.
+//!
 //! A platform runtime is admitted beside the baseline after the slot is
 //! built, in the background ([`admission`], FIX 6755 slices 3 and 2c): on a
 //! Mac, the bundle's managed MLX worker and its native Core ML worker, each
@@ -41,6 +47,7 @@ use crate::config::oneironer::OneironerRuntime;
 use crate::config::{EmbedderDevice, OneironerConfig};
 
 mod admission;
+mod baseline;
 mod calibration;
 mod candidate;
 mod rows;
@@ -49,6 +56,7 @@ use calibration::{Reference, Timing, measure, prefers};
 use rows::{RowKey, WindowRules, build_id, os_build, read_rows, rows_path, write_rows};
 
 pub(crate) use admission::Admission;
+pub(crate) use baseline::BaselineCalibration;
 pub(crate) use rows::Row;
 
 /// One runtime on one device.
@@ -149,6 +157,9 @@ pub(crate) enum Pick {
     /// The bundle ships no reference to hold an engine to, so the built-in
     /// engine serves.
     BuiltIn,
+    /// An engine here has no row yet: the built-in engine serves until the
+    /// after-bind calibration lands ([`BaselineCalibration`], FIX 7108).
+    Calibrating,
 }
 
 impl Pick {
@@ -157,6 +168,7 @@ impl Pick {
             Self::Named => "named",
             Self::Measured => "measured",
             Self::BuiltIn => "built-in",
+            Self::Calibrating => "calibrating",
         }
     }
 }
@@ -195,6 +207,26 @@ pub(crate) fn survey(
     config: &OneironerConfig,
     rows_location: Option<&Path>,
 ) -> anyhow::Result<Survey> {
+    survey_rows(config, rows_location, Unmeasured::Measure)?
+        .ok_or_else(|| anyhow::anyhow!("the oneironer survey left an engine unmeasured"))
+}
+
+/// What a survey does with an engine that has no row here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Unmeasured {
+    /// Measures it now.
+    Measure,
+    /// Leaves the whole survey to the after-bind calibration: `None`.
+    Defer,
+}
+
+/// [`survey`], measuring an engine with no row here only when `unmeasured`
+/// says so; `None` when it defers one.
+fn survey_rows(
+    config: &OneironerConfig,
+    rows_location: Option<&Path>,
+    unmeasured: Unmeasured,
+) -> anyhow::Result<Option<Survey>> {
     let dir = config
         .model_dir
         .as_deref()
@@ -209,12 +241,12 @@ pub(crate) fn survey(
             .copied()
             .find(|engine| engine.built_in())
             .ok_or_else(|| anyhow::anyhow!("oneironer runtime candle has no built-in engine"))?;
-        return Ok(Survey {
+        return Ok(Some(Survey {
             engines: here.into_iter().map(|engine| (engine, None)).collect(),
             default: Some(default),
             pick: Pick::BuiltIn,
             loaded: None,
-        });
+        }));
     };
     let path = rows_path(rows_location);
     let mut rows = path.as_deref().map(read_rows).unwrap_or_default();
@@ -244,6 +276,7 @@ pub(crate) fn survey(
         let kept = rows.iter().find(|row| row.is_for(&key)).cloned();
         let (row, tagger) = match kept {
             Some(row) => (row, None),
+            None if unmeasured == Unmeasured::Defer => return Ok(None),
             None => {
                 let run = measure(config, engine, &candidate, &key, &reference);
                 tracing::info!(
@@ -276,12 +309,12 @@ pub(crate) fn survey(
     if measured && let Some(path) = path.as_deref() {
         write_rows(path, &rows);
     }
-    Ok(Survey {
+    Ok(Some(Survey {
         engines,
         default: preferred.map(|(engine, _)| engine),
         pick: Pick::Measured,
         loaded,
-    })
+    }))
 }
 
 /// The engine the slot serves and how it was chosen.
@@ -297,6 +330,25 @@ pub(crate) struct Serving {
 pub(crate) fn load(
     config: &OneironerConfig,
     rows_location: Option<&Path>,
+) -> anyhow::Result<(LocalTagger, Serving)> {
+    load_with(config, rows_location, Unmeasured::Measure)
+}
+
+/// [`load`] for the serving build (FIX 7108): an engine with no row here is
+/// not measured before the listener binds. The built-in engine serves,
+/// picked [`Pick::Calibrating`], until the slot's [`BaselineCalibration`]
+/// lands; cached rows pick as [`load`] does.
+pub(crate) fn load_serving(
+    config: &OneironerConfig,
+    rows_location: Option<&Path>,
+) -> anyhow::Result<(LocalTagger, Serving)> {
+    load_with(config, rows_location, Unmeasured::Defer)
+}
+
+fn load_with(
+    config: &OneironerConfig,
+    rows_location: Option<&Path>,
+    unmeasured: Unmeasured,
 ) -> anyhow::Result<(LocalTagger, Serving)> {
     if config.device != EmbedderDevice::Auto {
         // A named device pins the Candle baseline, under `auto` too.
@@ -321,7 +373,9 @@ pub(crate) fn load(
             },
         ));
     }
-    let survey = survey(config, rows_location)?;
+    let Some(survey) = survey_rows(config, rows_location, unmeasured)? else {
+        return built_in_while_calibrating(config);
+    };
     let Some(engine) = survey.default else {
         anyhow::bail!(
             "no oneironer engine on this machine clears the bundle's parity bar; name one with oneironer.device"
@@ -336,6 +390,26 @@ pub(crate) fn load(
         Serving {
             engine,
             pick: survey.pick,
+        },
+    ))
+}
+
+/// The built-in engine, which serves while the after-bind calibration
+/// measures this machine's engines (FIX 7108), as it serves a bundle with no
+/// reference.
+fn built_in_while_calibrating(
+    config: &OneironerConfig,
+) -> anyhow::Result<(LocalTagger, Serving)> {
+    let engine = engines_here(OneironerRuntime::Candle)
+        .into_iter()
+        .find(|engine| engine.built_in())
+        .ok_or_else(|| anyhow::anyhow!("oneironer runtime candle has no built-in engine"))?;
+    let tagger = LocalTagger::load(&engine.configured(config))?;
+    Ok((
+        tagger,
+        Serving {
+            engine,
+            pick: Pick::Calibrating,
         },
     ))
 }
