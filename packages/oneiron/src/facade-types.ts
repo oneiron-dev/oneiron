@@ -2968,8 +2968,30 @@ export type OffRecordClaimRequest = { session_ref: string; claim: ScopedClaimInp
 export type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string }
 /** `oneiron::verbs::off_record::OffRecordRunStatus` */
 export type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full"
+/** `oneiron::code_run::type_diagnostics::ProgramStepIdentity` */
+export type ProgramStepIdentity = { run: string; program_seq: number; invocation: number }
+/** `oneiron::code_run::type_diagnostics::ProgramPreparationNote` */
+export type ProgramPreparationNote = { code: string; detail?: string | null }
+/** `oneiron::code_run::type_diagnostics::TypeCheckFacts` */
+export type TypeCheckFacts = { language: string; file: string; backend: string; pin: string; action_digest?: string | null; elapsed_us?: number | null; peak_memory_bytes?: number | null }
+/** `oneiron::code_run::type_diagnostics::DiagnosticMeasures` */
+export type DiagnosticMeasures = { count: number; bytes: number }
+/** `oneiron::code_run::type_diagnostics::TypeDiagnostic` */
+export type TypeDiagnostic = { file?: string | null; line: number; column: number; category: string; code: number; message: string; message_bytes: number }
+/** `oneiron::code_run::type_diagnostics::DiagnosticCollection` */
+export type DiagnosticCollection = { form: "inline"; diagnostics: TypeDiagnostic[] } | { form: "stored"; handle: string; occurrence: string; byte_len: number }
+/** `oneiron::code_run::type_diagnostics::TypeDiagnostics` */
+export type TypeDiagnostics = { state: "complete"; check: TypeCheckFacts; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "pending"; check: TypeCheckFacts } | { state: "failed"; check: TypeCheckFacts; failure: string; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "unavailable"; reason: string; detail?: string | null }
+/** `oneiron::code_run::type_diagnostics::ProgramStepFeedback` */
+export type ProgramStepFeedback = { step: ProgramStepIdentity; check_ref: string; preparation_note?: ProgramPreparationNote | null; type_diagnostics: TypeDiagnostics }
+/** `oneiron::code_run::type_diagnostics::TypeCheckState` */
+export type TypeCheckState = "complete" | "pending" | "failed" | "unavailable"
+/** `oneiron::code_run::type_diagnostics::FeedbackWithheldReason` */
+export type FeedbackWithheldReason = "recipient" | "placement" | "producers_unknown" | "conflicted_root" | "release_check_failed"
+/** `oneiron::code_run::type_diagnostics::ProgramStepFeedbackRelease` */
+export type ProgramStepFeedbackRelease = (ProgramStepFeedback & { release: "released" }) | { release: "withheld"; step: ProgramStepIdentity; check_ref: string; state: TypeCheckState; check?: TypeCheckFacts | null; failure?: string | null; unavailable?: string | null; measures?: DiagnosticMeasures | null; preparation_code?: string | null; reason: FeedbackWithheldReason }
 /** `oneiron::verbs::off_record::OffRecordExecuted` */
-export type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number }
+export type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number; program_steps?: ProgramStepFeedbackRelease[] }
 /** `oneiron::verbs::off_record_rooms::OffRecordRoomRequest` */
 export type OffRecordRoomRequest = { room: string; session_ref: string }
 /** `oneiron::off_record::lifecycle::types::OffRecordNoticeAct` */
@@ -4539,35 +4561,13 @@ export type ForeignCodeProposal = { proposal_ref: string; receipt_ref: string; a
 /** `oneiron::memory::foreign_code::ForeignCodeIsolation` */
 export type ForeignCodeIsolation = { backend: string; runtime: string; image: string; argv_digest: string; network: string; generation: string; fence_proven: boolean }
 /** `oneiron::memory::foreign_code::ForeignCodeRunResult` */
-export type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string }
+export type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string; program_steps?: ProgramStepFeedbackRelease[] }
 /** `oneiron::memory::code_run_doors::types::CodeRunModelHealCountRequest` */
 export type CodeRunModelHealCountRequest = { model_id: string }
 /** `oneiron::memory::code_run_doors::types::CodeRunModelHealCountView` */
 export type CodeRunModelHealCountView = { model_id: string; healed_turns: number }
 /** `oneiron::memory::code_run_doors::types::CodeRunTypeDiagnosticsRequest` */
-export type CodeRunTypeDiagnosticsRequest = { check_ref: string }
-/** `oneiron::code_run::type_diagnostics::ProgramStepIdentity` */
-export type ProgramStepIdentity = { run: string; program_seq: number; invocation: number }
-/** `oneiron::code_run::type_diagnostics::ProgramPreparationNote` */
-export type ProgramPreparationNote = { code: string; detail?: string | null }
-/** `oneiron::code_run::type_diagnostics::TypeCheckFacts` */
-export type TypeCheckFacts = { language: string; file: string; backend: string; pin: string; action_digest?: string | null; elapsed_us?: number | null; peak_memory_bytes?: number | null }
-/** `oneiron::code_run::type_diagnostics::DiagnosticMeasures` */
-export type DiagnosticMeasures = { count: number; bytes: number }
-/** `oneiron::code_run::type_diagnostics::TypeDiagnostic` */
-export type TypeDiagnostic = { file?: string | null; line: number; column: number; category: string; code: number; message: string; message_bytes: number }
-/** `oneiron::code_run::type_diagnostics::DiagnosticCollection` */
-export type DiagnosticCollection = { form: "inline"; diagnostics: TypeDiagnostic[] } | { form: "stored"; handle: string; occurrence: string; byte_len: number }
-/** `oneiron::code_run::type_diagnostics::TypeDiagnostics` */
-export type TypeDiagnostics = { state: "complete"; check: TypeCheckFacts; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "pending"; check: TypeCheckFacts } | { state: "failed"; check: TypeCheckFacts; failure: string; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "unavailable"; reason: string; detail?: string | null }
-/** `oneiron::code_run::type_diagnostics::ProgramStepFeedback` */
-export type ProgramStepFeedback = { step: ProgramStepIdentity; check_ref: string; preparation_note?: ProgramPreparationNote | null; type_diagnostics: TypeDiagnostics }
-/** `oneiron::code_run::type_diagnostics::TypeCheckState` */
-export type TypeCheckState = "complete" | "pending" | "failed" | "unavailable"
-/** `oneiron::code_run::type_diagnostics::FeedbackWithheldReason` */
-export type FeedbackWithheldReason = "recipient" | "placement" | "producers_unknown" | "conflicted_root" | "release_check_failed"
-/** `oneiron::code_run::type_diagnostics::ProgramStepFeedbackRelease` */
-export type ProgramStepFeedbackRelease = (ProgramStepFeedback & { release: "released" }) | { release: "withheld"; step: ProgramStepIdentity; check_ref: string; state: TypeCheckState; check?: TypeCheckFacts | null; failure?: string | null; unavailable?: string | null; measures?: DiagnosticMeasures | null; preparation_code?: string | null; reason: FeedbackWithheldReason }
+export type CodeRunTypeDiagnosticsRequest = { check_ref: string; session_ref?: string | null }
 /** `oneiron::memory::code_wait_doors::types::CodeWaitTarget` */
 export type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string }
 /** `oneiron::memory::code_wait_doors::types::CodeWaitChoice` */

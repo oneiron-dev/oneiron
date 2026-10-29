@@ -420,6 +420,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/affect/consolidation/reappraisal.rs",
+     "purpose": "A claim-VAD reappraisal's exposure (FIX 9553, 11251)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -1085,7 +1095,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 2,
       "re-export": 24
      }
@@ -1120,7 +1130,7 @@
      "purpose": "The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
@@ -1134,7 +1144,7 @@
      "path": "src/agent_dispatch/planner/budget_resolution.rs",
      "purpose": "The budget a plan is fitted to and launched under (FIX 9561)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -2374,7 +2384,7 @@
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
      "purpose": "Enqueue doors plus kind-scoped claim machinery and read-repair scans",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "fn": 5
      }
     },
@@ -2625,7 +2635,7 @@
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
-      "const": 4,
+      "const": 7,
       "crate-vis": 1,
       "fn": 4,
       "struct": 2
@@ -15915,7 +15925,7 @@
      "path": "src/code_run/shadow_runner/admit.rs",
      "purpose": "A shadow arm's writes, masked at write (FIX 5718 part 3; shadow items 2 and 5; CALLS C5718-21)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -15987,7 +15997,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ShadowBodyStore",
@@ -15996,8 +16006,8 @@
      "path": "src/code_run/shadow_runner/store.rs",
      "purpose": "A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named…",
      "surface": {
-      "crate-vis": 7,
-      "fn": 9,
+      "crate-vis": 8,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -16324,7 +16334,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -16345,6 +16355,16 @@
      "purpose": "A bound session's replay append, on the run's one route, in one routed transaction: the record compared…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/routing/type_feedback.rs",
+     "purpose": "A run's type feedback rows on its own route (FIX 10389, CALLS \"session feedback lives on the session route…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -16384,7 +16404,7 @@
      "path": "src/code_run/storage/type_diagnostics.rs",
      "purpose": "The late-result store of code-mode type feedback (FIX 8277): one row per program step, keyed by its run…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -24072,6 +24092,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/attempt_reads.rs",
+     "purpose": "The rows a Dreamer attempt's inputs were read from, as its own readers report them on its read set (FIX…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "BranchTurn",
       "ConsolidationBranchPlan",
@@ -24103,7 +24133,7 @@
      "path": "src/dreamer_consolidation/call_labels.rs",
      "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -24212,7 +24242,7 @@
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
       "crate-vis": 17,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -24449,9 +24479,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 4,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -24739,6 +24769,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SourcedBackend"
+     ],
+     "path": "src/dreamer_consolidation/request_sources.rs",
+     "purpose": "Each Dreamer model call's own source rows (FIX 6998)",
+     "surface": {
+      "crate-vis": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/residency.rs",
      "purpose": "A read refused only because a TURN's tagged MESSAGE is away from this replica (a window demoted back to…",
@@ -24967,7 +25010,7 @@
      "purpose": "The Dreamer's model roles, and the backend each one calls out on",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "struct": 3
      }
@@ -24979,7 +25022,17 @@
      "path": "src/dreamer_consolidation/root_evidence.rs",
      "purpose": "Root-owned reference pins",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/root_evidence/work.rs",
+     "purpose": "A root's pins and frontiers as fair work (FIX 8698): every bucket, reference and child is taken, however…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -25007,7 +25060,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt.rs",
      "purpose": "The Dreamer writes a declared scope summary's body (ARCH-0006a)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
      }
@@ -25955,6 +26008,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/admission/spend.rs",
+     "purpose": "What a wake-budget counter charges once spend is incurred: a settlement never refuses it (FIX 8702), so…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/admission/validation.rs",
      "purpose": "Admission validation: shape checks on a Dreamer admission request",
      "surface": {
@@ -26060,8 +26124,18 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 25,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/codec/budget.rs",
+     "purpose": "MessagePack codecs and validators for the private wake-budget rows: the counter, with its overdraft and owed…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -26092,7 +26166,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 26,
-      "crate-vis": 31
+      "crate-vis": 34
      }
     },
     {
@@ -29074,7 +29148,7 @@
      "path": "src/dreamer_wake/types.rs",
      "purpose": "Wake request and outcome vocabulary plus the executor contract",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 5,
       "struct": 7,
@@ -31187,9 +31261,29 @@
      "path": "src/engine_executor/code_check.rs",
      "purpose": "Feedback mode (FIX 8277, owner ruling CODE-MODE-TS rule 4): each generated program is type-checked as its…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/code_check/door.rs",
+     "purpose": "A program a door other than a run's own step runs, checked as a step's program is (FIX 10389): a callable…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/code_check/publication.rs",
+     "purpose": "Where a check that lands after its step keeps its result (FIX 10389): its run's own route, the vault's rows…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -31305,7 +31399,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "The recording JS host, its state and its runtime adapter",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -31372,10 +31466,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/engine_executor/host/type_feedback.rs",
+     "purpose": "The type checks of the callable skills a run's program calls (FIX 10389): each admitted once, at the call's…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 3,
       "re-export": 8
      }
@@ -31458,12 +31562,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ArmTypeFeedback"
+     ],
      "path": "src/engine_executor/shadow_step.rs",
      "purpose": "One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured…",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -31584,6 +31691,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CallableProgram",
       "EngineExecutorConfig",
       "EngineExecutorError",
       "EngineExecutorLimits",
@@ -31611,7 +31719,7 @@
       "crate-vis": 3,
       "enum": 5,
       "fn": 8,
-      "struct": 12,
+      "struct": 13,
       "trait": 2,
       "type": 1
      }
@@ -43553,6 +43661,7 @@
      "notable": [
       "ForeignCodeApproval",
       "ForeignCodeEffect",
+      "ForeignCodeFailure",
       "ForeignCodeIsolation",
       "ForeignCodeOutput",
       "ForeignCodeProposal",
@@ -43567,7 +43676,7 @@
      "surface": {
       "enum": 4,
       "fn": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -47427,6 +47536,16 @@
       "crate-vis": 39,
       "fn": 12,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/session/type_feedback.rs",
+     "purpose": "The stretch instance a session-bound run's late type feedback lands on (FIX 10389, CALLS \"session feedback…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -58057,6 +58176,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/scope_summary/request/editor_sources.rs",
+     "purpose": "The rows an edited summary's words were written from (FIX 10092)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/scope_summary/session.rs",
      "purpose": "A sitting's summary (FIX 7509, ARCH-0026 Dreamer row 4): queued by the sitting's close, written from the…",
      "surface": {
@@ -58106,7 +58235,7 @@
      "path": "src/scope_summary/word_sources.rs",
      "purpose": "Where the words of one stored revision came from",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -62163,7 +62292,7 @@
      "path": "src/skill_hub/pack_catalog/script_plan.rs",
      "purpose": "One qualified execution shape for both pack admission and foreign launch",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -76342,7 +76471,7 @@
      "path": "src/web_fetch/ladder.rs",
      "purpose": "Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 11,
       "fn": 6
      }
     },
@@ -79502,7 +79631,7 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79740,7 +79869,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 165,
+     "files": 166,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79978,7 +80107,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 144,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80006,7 +80135,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 169,
+     "files": 171,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80062,7 +80191,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 44,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80377,7 +80506,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80643,7 +80772,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81037,7 +81166,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5391,
+   "source_files": 5403,
    "test_files": 902
   },
   "oneiron-android": {
@@ -96334,6 +96463,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/request_sources.rs",
+     "purpose": "The Dreamer's routes as this server sends on them, each able to send one call under the rows the engine read…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/dreamer/run_log.rs",
      "purpose": "The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it…",
      "surface": {
@@ -96358,6 +96497,16 @@
      "purpose": "The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/dreamer_thing/generation.rs",
+     "purpose": "The served agent's generation count (FIX 7508, 9015): what its calls spent on its parent's guard, handed to…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -96672,7 +96821,7 @@
      "path": "src/ai_host/shadow_runner/mod.rs",
      "purpose": "The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1,
       "type": 1
      }
@@ -96737,6 +96886,16 @@
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/step/live_lease.rs",
+     "purpose": "A step try's spend lease, read live (FIX 1819)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -98942,7 +99101,7 @@
      "path": "src/api/facade/errors.rs",
      "purpose": "The facade's error envelope: an engine `MemoryError` or an `ApiError` as one HTTP reply",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -99272,7 +99431,7 @@
      "path": "src/api/facade/host_doors/support.rs",
      "purpose": "The host doors' shared vocabulary: listings, refusals, proofs, the calling origin and askers",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -100518,6 +100677,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/board_setup/children.rs",
+     "purpose": "The connector actor's own children on its board (FIX 1052): each child that rides no TASK row is judged by…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -100764,7 +100933,7 @@
      "path": "src/api/mcp_gateway/exec_board_verbs.rs",
      "purpose": "Execute-code and board-verb executors",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -100864,7 +101033,7 @@
      "path": "src/api/mcp_gateway/tasks_response.rs",
      "purpose": "Tasks verb and response shaping",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -100884,7 +101053,7 @@
      "path": "src/api/mcp_gateway/type_feedback_release.rs",
      "purpose": "Type feedback leaves an MCP answer on its own release (FIX 10390, CALLS \"feedback released apart from its…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -102092,7 +102261,7 @@
      "path": "src/api/report.rs",
      "purpose": "OF-537 report execution and owner triage",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -102785,6 +102954,16 @@
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
       "crate-vis": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/type_feedback_release.rs",
+     "purpose": "One program step's type feedback, released for one destination apart from the answer it rides with (FIX…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -107990,6 +108169,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/exec_host/active_run.rs",
+     "purpose": "Single flight for each durable code-mode run (FIX 9505): an entry of a run whose earlier entry still runs…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -108529,7 +108718,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -109118,7 +109307,7 @@
      "path": "src/models/worker_host/bundle.rs",
      "purpose": "The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -109128,7 +109317,7 @@
      "path": "src/models/worker_host/install.rs",
      "purpose": "A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -109148,7 +109337,17 @@
      "path": "src/models/worker_host/launcher.rs",
      "purpose": "The managed launcher for the house llama.cpp and EXL3 workers (DESIGN-V2 R2): what [`super::install`]…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/media_worker.rs",
+     "purpose": "The media workers under the owned supervisor (FIX 8318): VoxCPM2 speech and local ASR, each a managed worker…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -109158,7 +109357,7 @@
      "path": "src/models/worker_host/probe.rs",
      "purpose": "The probes for the house llama.cpp and EXL3 workers (INFERENCE R1 rules, R2 qualification): one actual chat…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 7
      }
     },
     {
@@ -109208,7 +109407,7 @@
      "path": "src/models/worker_host/session/park.rs",
      "purpose": "Parking (DESIGN-V2 §7 residency, V2-R3): an idle session's published checkpoint exported from its worker…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -110924,7 +111123,7 @@
      "path": "src/server/recall.rs",
      "purpose": "The recall verb as every server transport runs it",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -112070,14 +112269,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 98,
+     "files": 101,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 590,
+     "files": 592,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112406,7 +112605,7 @@
      "purpose": "This server's check that a managed vault's attested owner is its live owner, which his queued work runs…"
     },
     "mcp": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -112420,7 +112619,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 91,
+     "files": 92,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112569,7 +112768,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1346,
+   "source_files": 1353,
    "test_files": 182
   },
   "oneiron-spawn": {

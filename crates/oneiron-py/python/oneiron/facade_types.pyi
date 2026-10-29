@@ -7472,6 +7472,81 @@ class OffRecordExecuteRequest(TypedDict):
     run_ref: str
     task: str
 OffRecordRunStatus = Literal["complete", "waiting", "yielded", "window_full"]
+class ProgramStepIdentity(TypedDict):
+    run: str
+    program_seq: int
+    invocation: int
+class ProgramPreparationNote(TypedDict):
+    code: str
+    detail: NotRequired[str | None]
+class TypeCheckFacts(TypedDict):
+    language: str
+    file: str
+    backend: str
+    pin: str
+    action_digest: NotRequired[str | None]
+    elapsed_us: NotRequired[int | None]
+    peak_memory_bytes: NotRequired[int | None]
+class DiagnosticMeasures(TypedDict):
+    count: int
+    bytes: int
+class TypeDiagnostic(TypedDict):
+    file: NotRequired[str | None]
+    line: int
+    column: int
+    category: str
+    code: int
+    message: str
+    message_bytes: int
+class DiagnosticCollectionInline(TypedDict):
+    form: Literal["inline"]
+    diagnostics: list[TypeDiagnostic]
+class DiagnosticCollectionStored(TypedDict):
+    form: Literal["stored"]
+    handle: str
+    occurrence: str
+    byte_len: int
+DiagnosticCollection = DiagnosticCollectionInline | DiagnosticCollectionStored
+class TypeDiagnosticsComplete(TypedDict):
+    state: Literal["complete"]
+    check: TypeCheckFacts
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsPending(TypedDict):
+    state: Literal["pending"]
+    check: TypeCheckFacts
+class TypeDiagnosticsFailed(TypedDict):
+    state: Literal["failed"]
+    check: TypeCheckFacts
+    failure: str
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsUnavailable(TypedDict):
+    state: Literal["unavailable"]
+    reason: str
+    detail: NotRequired[str | None]
+TypeDiagnostics = TypeDiagnosticsComplete | TypeDiagnosticsPending | TypeDiagnosticsFailed | TypeDiagnosticsUnavailable
+class ProgramStepFeedback(TypedDict):
+    step: ProgramStepIdentity
+    check_ref: str
+    preparation_note: NotRequired[ProgramPreparationNote | None]
+    type_diagnostics: TypeDiagnostics
+TypeCheckState = Literal["complete", "pending", "failed", "unavailable"]
+FeedbackWithheldReason = Literal["recipient", "placement", "producers_unknown", "conflicted_root", "release_check_failed"]
+class ProgramStepFeedbackReleaseReleased(ProgramStepFeedback):
+    release: Literal["released"]
+class ProgramStepFeedbackReleaseWithheld(TypedDict):
+    release: Literal["withheld"]
+    step: ProgramStepIdentity
+    check_ref: str
+    state: TypeCheckState
+    check: NotRequired[TypeCheckFacts | None]
+    failure: NotRequired[str | None]
+    unavailable: NotRequired[str | None]
+    measures: NotRequired[DiagnosticMeasures | None]
+    preparation_code: NotRequired[str | None]
+    reason: FeedbackWithheldReason
+ProgramStepFeedbackRelease = ProgramStepFeedbackReleaseReleased | ProgramStepFeedbackReleaseWithheld
 class OffRecordExecuted(TypedDict):
     run_ref: str
     run_id: str
@@ -7479,6 +7554,7 @@ class OffRecordExecuted(TypedDict):
     next_step_seq: NotRequired[int | None]
     steps_run: int
     bridge_calls: int
+    program_steps: NotRequired[list[ProgramStepFeedbackRelease]]
 class OffRecordRoomRequest(TypedDict):
     room: str
     session_ref: str
@@ -11181,6 +11257,7 @@ class ForeignCodeRunResult(TypedDict):
     proposals: list[ForeignCodeProposal]
     isolation: ForeignCodeIsolation
     receipt_ref: str
+    program_steps: NotRequired[list[ProgramStepFeedbackRelease]]
 class CodeRunModelHealCountRequest(TypedDict):
     model_id: str
 class CodeRunModelHealCountView(TypedDict):
@@ -11188,81 +11265,7 @@ class CodeRunModelHealCountView(TypedDict):
     healed_turns: int
 class CodeRunTypeDiagnosticsRequest(TypedDict):
     check_ref: str
-class ProgramStepIdentity(TypedDict):
-    run: str
-    program_seq: int
-    invocation: int
-class ProgramPreparationNote(TypedDict):
-    code: str
-    detail: NotRequired[str | None]
-class TypeCheckFacts(TypedDict):
-    language: str
-    file: str
-    backend: str
-    pin: str
-    action_digest: NotRequired[str | None]
-    elapsed_us: NotRequired[int | None]
-    peak_memory_bytes: NotRequired[int | None]
-class DiagnosticMeasures(TypedDict):
-    count: int
-    bytes: int
-class TypeDiagnostic(TypedDict):
-    file: NotRequired[str | None]
-    line: int
-    column: int
-    category: str
-    code: int
-    message: str
-    message_bytes: int
-class DiagnosticCollectionInline(TypedDict):
-    form: Literal["inline"]
-    diagnostics: list[TypeDiagnostic]
-class DiagnosticCollectionStored(TypedDict):
-    form: Literal["stored"]
-    handle: str
-    occurrence: str
-    byte_len: int
-DiagnosticCollection = DiagnosticCollectionInline | DiagnosticCollectionStored
-class TypeDiagnosticsComplete(TypedDict):
-    state: Literal["complete"]
-    check: TypeCheckFacts
-    measures: DiagnosticMeasures
-    diagnostics: DiagnosticCollection
-class TypeDiagnosticsPending(TypedDict):
-    state: Literal["pending"]
-    check: TypeCheckFacts
-class TypeDiagnosticsFailed(TypedDict):
-    state: Literal["failed"]
-    check: TypeCheckFacts
-    failure: str
-    measures: DiagnosticMeasures
-    diagnostics: DiagnosticCollection
-class TypeDiagnosticsUnavailable(TypedDict):
-    state: Literal["unavailable"]
-    reason: str
-    detail: NotRequired[str | None]
-TypeDiagnostics = TypeDiagnosticsComplete | TypeDiagnosticsPending | TypeDiagnosticsFailed | TypeDiagnosticsUnavailable
-class ProgramStepFeedback(TypedDict):
-    step: ProgramStepIdentity
-    check_ref: str
-    preparation_note: NotRequired[ProgramPreparationNote | None]
-    type_diagnostics: TypeDiagnostics
-TypeCheckState = Literal["complete", "pending", "failed", "unavailable"]
-FeedbackWithheldReason = Literal["recipient", "placement", "producers_unknown", "conflicted_root", "release_check_failed"]
-class ProgramStepFeedbackReleaseReleased(ProgramStepFeedback):
-    release: Literal["released"]
-class ProgramStepFeedbackReleaseWithheld(TypedDict):
-    release: Literal["withheld"]
-    step: ProgramStepIdentity
-    check_ref: str
-    state: TypeCheckState
-    check: NotRequired[TypeCheckFacts | None]
-    failure: NotRequired[str | None]
-    unavailable: NotRequired[str | None]
-    measures: NotRequired[DiagnosticMeasures | None]
-    preparation_code: NotRequired[str | None]
-    reason: FeedbackWithheldReason
-ProgramStepFeedbackRelease = ProgramStepFeedbackReleaseReleased | ProgramStepFeedbackReleaseWithheld
+    session_ref: NotRequired[str | None]
 class CodeWaitTarget(TypedDict):
     run_id: EntityId
     wait_id: EntityId

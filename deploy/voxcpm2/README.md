@@ -91,3 +91,56 @@ between read and HTTP deadlines. All operational ceiling values are manifest
 data, not hidden second defaults. The worker refuses no text, reference
 transcript, reference WAV or metadata by its size (Rule 5): the policy's byte
 fields identify the warm target, which a request may narrow but never widen.
+
+## Under the engine's supervisor
+
+A `[models.workers.<id>]` row with `kind = "vox_cpm2"` puts this worker
+under the engine's own supervisor (FIX 8318), as `deploy/house-model/`
+describes for the chat workers. A managed row installs the house
+`voxcpm2` weights (or verifies `weights_dir` without the network), builds
+the worker's environment from the row's `env_lock` (a hash-locked lock
+compiled from `requirements-voxcpm2.txt`; no embedded lock stands in), and
+launches the bundled copy of this script with `--weights-dir`,
+`--weights-manifest`, `--launch-manifest` and `--model-id`. The worker then
+hashes every pinned file again and loads that directory alone; nothing is
+downloaded. It listens on its provider's loopback `base_url`, takes the
+provider's `key_env` credential (passed to it under that name alone), and
+renders one at a time. The supervisor counts it ready only after one
+actual render of a fixed text from a synthetic silent reference, whose
+header names this launch; `/ready` alone never qualifies. It restarts it
+after a crash, and stops it when idle only when `idle_stop_secs` asks.
+
+```toml
+[models.providers.voice]
+kind = "voxcpm2"
+base_url = "http://127.0.0.1:8769"
+key_env = "VOXCPM_TOKEN"
+
+[models.workers.voice]
+model = "voice:voxcpm2"
+kind = "vox_cpm2"
+weights = "voxcpm2"
+env_lock = "/home/lexi/oneiron-locks/voxcpm2-py312.lock"
+# idle_stop_secs = 300          # left out: the worker stays up
+
+[models.workers.voice.env]
+ONEIRON_VOICE_POLICY_FILE = "/home/lexi/oneiron-config/voice-policy.json"
+
+[models.media.speech]
+rungs = ["voice:voxcpm2"]
+```
+
+The row's `env` names the serving-policy file and nothing else; it holds
+the vault's resolved ceiling, as above. A row names no `args`, `draft` or
+`server`. `mode = "external"` keeps a worker you run yourself (this unit,
+say): it is probed with the same one render and never started or stopped.
+It stays unverified unless `expected.model` and `expected.runtime` pin it
+and its answer names them; its calls go to it either way. Each render's
+receipt names the worker's boot id as its `backend_epoch` (FIX 8898).
+Never run a managed row and this unit at once: one supervisor owns a
+worker.
+
+Whoever starts it, the worker answers `GET /health` (no credential,
+liveness only: the listener opens after the model loads) and `GET /stats`
+(bearer): its queued and active renders, each counted until its response
+is cleaned up, and the CUDA allocator's reservation in MiB.
