@@ -13,7 +13,9 @@ use super::driver::EngineNativeExecutor;
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::ExecutorStorage;
 use crate::runtime_hooks::verb::RoomHookCall;
-use crate::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
+use crate::runtime_hooks::{
+    HookTurnTarget, InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop,
+};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{ContentPart, LlmResponse};
 
@@ -55,6 +57,13 @@ impl EngineNativeExecutor<'_> {
             class: HookActorClass::System,
             scope: None,
             board_epoch: None,
+            turn: Some(HookTurnTarget {
+                run: config.run_id,
+                session: self.storage.session_ref().map(str::to_owned),
+                recipient: Some(self.gated_write.actor().entity_ref().to_hex()),
+                step: step_seq,
+                next: false,
+            }),
             domain: VerbDomain::Write,
             // The run's verified credential-bound key, independent of the
             // host's System write attribution (FIX 9841).

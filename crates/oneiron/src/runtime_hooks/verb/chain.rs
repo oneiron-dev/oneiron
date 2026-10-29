@@ -595,6 +595,10 @@ impl<'c> Chain<'c> {
             hex_lower(key),
             request,
             self.vault.store.clock.now_recorded_at(),
+            self.call
+                .turn
+                .clone()
+                .map(|target| target.for_phase(self.phase)),
         )?;
         let lineage = self.lineage(id, key);
         self.blocks.push((block_id(key)?, row, lineage));

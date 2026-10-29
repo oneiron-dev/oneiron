@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
+use crate::skill_hub::pack_catalog::HookPhase;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::filter::glob_match;
@@ -32,6 +33,26 @@ impl Default for HookBlockLifetime {
     }
 }
 
+/// The host turn a block targets. Pre hooks use the current step; post hooks
+/// use the next completed step in the same run (FIX 10072).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookTurnTarget {
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub run: EntityId,
+    pub session: Option<String>,
+    pub recipient: Option<String>,
+    pub step: u64,
+    /// Post (`true`) needs completed > step; pre (`false`) needs >= step.
+    pub next: bool,
+}
+
+impl HookTurnTarget {
+    pub(in crate::runtime_hooks) fn for_phase(mut self, phase: HookPhase) -> Self {
+        self.next = phase == HookPhase::Post;
+        self
+    }
+}
+
 /// One block row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookBlock {
@@ -51,6 +72,8 @@ pub struct HookBlock {
     /// The block reaches the first board delivery at or after this time
     /// (Unix seconds).
     pub activation: u64,
+    /// The run turn it reaches, or `None` for a non-turn fact call.
+    pub activation_turn: Option<HookTurnTarget>,
     pub deliveries_used: u32,
     pub expired_at: Option<u64>,
 }
@@ -63,6 +86,7 @@ impl HookBlock {
         run_key: String,
         request: &BlockRequest,
         at: u64,
+        activation_turn: Option<HookTurnTarget>,
     ) -> Result<Self> {
         let refs = request
             .refs
@@ -79,6 +103,7 @@ impl HookBlock {
             lifetime: request.lifetime.clone().unwrap_or_default(),
             token_cap: request.token_cap.unwrap_or(DEFAULT_TOKEN_CAP),
             activation: at,
+            activation_turn,
             deliveries_used: 0,
             expired_at: None,
         })
@@ -88,6 +113,26 @@ impl HookBlock {
         self.expired_at.is_none()
             && self.session.as_deref().is_none_or(|own| own == session)
             && self.branch.as_deref().is_none_or(|own| branch == Some(own))
+    }
+
+    /// Whether wall-clock and run-turn activation both hold. An unreadable
+    /// run record fails closed: the block is not eligible (Engine 01:22).
+    pub fn activation_open(&self, vault: &Vault, now: u64) -> bool {
+        if self.activation > now {
+            return false;
+        }
+        let Some(target) = &self.activation_turn else {
+            return true;
+        };
+        let Ok(Some(record)) = vault.get_code_run_replay_record(target.run) else {
+            return false;
+        };
+        let completed = u64::try_from(record.step_checkpoints.len()).unwrap_or(u64::MAX);
+        if target.next {
+            completed > target.step
+        } else {
+            completed >= target.step
+        }
     }
 }
 
