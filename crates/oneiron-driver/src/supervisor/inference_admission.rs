@@ -586,7 +586,7 @@ impl DeviceAdmission {
         self.changed.notify_waiters();
     }
 
-    pub(crate) fn changed(&self) -> impl std::future::Future<Output = ()> + '_ {
+    pub(crate) fn changed(&self) -> tokio::sync::futures::Notified<'_> {
         self.changed.notified()
     }
 }
