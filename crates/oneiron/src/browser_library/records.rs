@@ -87,6 +87,34 @@ pub fn workflow(vault: &Vault, id: EntityId) -> Result<Option<WorkflowRecord>> {
     WORKFLOWS.get(&vault.store, &rtxn, &(site.site, id))
 }
 
+/// The names of `id`'s secret parameters, read in `txn`: empty when the
+/// program is not filed live. A TASK try's pin keeps them beside its
+/// arguments so its receipt masks their values (FIX 8348).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn secret_param_names_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Vec<String>> {
+    let Some(site) = WORKFLOWS_BY_ID.get(&vault.store, txn, &id)? else {
+        return Ok(Vec::new());
+    };
+    let record = WORKFLOWS.get(&vault.store, txn, &(site.site, id))?;
+    Ok(record
+        .map(|record| {
+            record
+                .program
+                .secret_params
+                .into_iter()
+                .map(|param| param.name)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 /// The program a `supersedes` link names, as its site's library holds it.
 enum Predecessor {
     Live(WorkflowRecord),

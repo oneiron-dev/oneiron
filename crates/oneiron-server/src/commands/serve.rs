@@ -231,7 +231,11 @@ pub(super) async fn serve_anchored(
     // Past the floor the API listener's sockets may take the pool's owner
     // reserve, which this server judges (FIX 8274).
     let limits = config.limits.connections();
-    let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
+    let pool = crate::http_listener::ConnectionPool::new(
+        &limits,
+        questions,
+        Some(Arc::clone(&mesh_server.retained)),
+    );
     let floor_vault = mesh_server.vault();
     floor_vault.lend_host_net_floor(pool.host_net_floor());
     // Foreign guests' proposal spools keep the disk floor uploads keep, on
