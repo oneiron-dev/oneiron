@@ -21,6 +21,7 @@ use oneiron::memory::MemoryResult;
 use oneiron::receipt::GuestRevokeResponse;
 use oneiron::task_verb::sdk::{self, GuestRevokeRequest};
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::owner::guest_revoke;
@@ -40,7 +41,7 @@ pub(crate) async fn vault_guests_revoke(
         Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || -> MemoryResult<GuestRevokeResponse> {
+    let answer = clock_ingress::run_blocking(move || -> MemoryResult<GuestRevokeResponse> {
         let peer = input.peer.clone();
         let mut revoked = crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(sdk::revoke_guest_as(server.vault(), &owner, issuer, input))

@@ -4544,7 +4544,7 @@
       "description": "Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so.",
       "input": "EmptyRequest",
       "output": "crate::task_verb::sdk::AuthorityClockRepair",
-      "call": "crate::task_verb::sdk::repair_authority_clock_as_owner(memory.vault(), &memory.embedded_owner(\"vault.authority.clock.repair\")?)?",
+      "call": "crate::task_verb::sdk::repair_authority_clock_as(memory.vault(), memory.embedded_clock_repair_caller(\"vault.authority.clock.repair\")?)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
