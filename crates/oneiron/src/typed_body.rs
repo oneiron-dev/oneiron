@@ -300,7 +300,7 @@ pub(crate) fn merge_typed_body_fork_in_txn(
     actor: WriteActor,
 ) -> Result<TypedBodyHead> {
     let key = (*entity, *fork);
-    let mut record = FORKS
+    let record = FORKS
         .get(&vault.store, txn, &key)?
         .ok_or(Error::EntityNotFound)?;
     if record.state != TypedForkState::Open {
@@ -310,34 +310,7 @@ pub(crate) fn merge_typed_body_fork_in_txn(
     if record.opener.is(actor.entity_ref()) {
         return Err(invalid("a fork's opener cannot merge it"));
     }
-    validate_actor(vault, txn, actor)?;
-    require_live(&vault.store, txn, entity)?;
-    let mut head = HEADS
-        .get(&vault.store, txn, entity)?
-        .ok_or(Error::EntityNotFound)?;
-    if head.frontier != expected_head {
-        return Err(invalid(
-            "the body moved since the review; read the fork again",
-        ));
-    }
-    let live = load(DOCS.get(&vault.store, txn, entity)?, Some(&head.frontier))?;
-    let proposal = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
-    let updates = proposal
-        .export(ExportMode::updates(&live.oplog_vv()))
-        .map_err(|_| invalid("typed body fork export"))?;
-    import(&live, &updates)?;
-    head.frontier = live.oplog_frontiers().encode();
-    head.commits += record.commits;
-    DOCS.put(&vault.store, txn, entity, &snapshot(&live)?)?;
-    HEADS.put(&vault.store, txn, entity, &head)?;
-    record.state = TypedForkState::Merged {
-        by: BodyActor::Actor(actor.entity_ref()),
-        at: vault.now_recorded_at(),
-        head: head.frontier.clone(),
-    };
-    FORKS.put(&vault.store, txn, &key, &record)?;
-    FORK_DOCS.delete(&vault.store, txn, &key)?;
-    Ok(head)
+    land_typed_body_fork_in_txn(vault, txn, entity, key, record, expected_head, actor)
 }
 
 /// Lands an open fork whose proposal an office settlement answered (OF-505):
@@ -358,12 +331,27 @@ pub(crate) fn merge_admitted_typed_body_fork_in_txn(
         return Err(invalid("the admission names another fork"));
     }
     let key = (*entity, *fork);
-    let mut record = FORKS
+    let record = FORKS
         .get(&vault.store, txn, &key)?
         .ok_or(Error::EntityNotFound)?;
     if record.state != TypedForkState::Open {
         return Err(invalid("the fork is not open"));
     }
+    land_typed_body_fork_in_txn(vault, txn, entity, key, record, expected_head, actor)
+}
+
+/// Lands `record`, an open fork the caller admitted, against the head its
+/// merger reviewed: the shared tail of [`merge_typed_body_fork_in_txn`] and
+/// [`merge_admitted_typed_body_fork_in_txn`].
+fn land_typed_body_fork_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    key: (EntityId, EntityId),
+    mut record: TypedBodyFork,
+    expected_head: &[u8],
+    actor: WriteActor,
+) -> Result<TypedBodyHead> {
     validate_actor(vault, txn, actor)?;
     require_live(&vault.store, txn, entity)?;
     let mut head = HEADS

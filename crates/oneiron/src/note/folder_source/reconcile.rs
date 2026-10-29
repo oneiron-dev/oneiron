@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::super::documents::{NoteEdit, NoteEditOutcome};
+use super::super::documents::{NoteProgramEdit, NoteProgramEditOutcome};
 use super::super::files::{FileFacts, FileMeta, NameOnlyFile};
 use super::super::import::{
     ImportedNote, ImportedNoteBatch, ImportedNoteLink, revision, scan_titles, validate_batch,
@@ -363,13 +363,13 @@ impl Vault {
             current_hash == row.landed_hash || current_hash == row.file_hash
         };
         let edit = if untouched {
-            NoteEdit::WholeText {
+            NoteProgramEdit::WholeText {
                 text: file.markdown.clone(),
                 timeout_ms: WHOLE_TEXT_TIMEOUT_MS,
                 base: self.note_program_document(id)?.map(|doc| doc.version()),
             }
         } else {
-            NoteEdit::Rewrite {
+            NoteProgramEdit::Rewrite {
                 text: file.markdown.clone(),
             }
         };
@@ -380,17 +380,20 @@ impl Vault {
         );
         let mut indexed = false;
         row.state = match self.edit_note(id, &edit, actor) {
-            Ok(NoteEditOutcome::Edited { .. }) => {
+            Ok(NoteProgramEditOutcome::Edited { .. }) => {
                 report.superseded += 1;
                 row.landed_hash = hash.clone();
                 indexed = true;
                 FolderFileState::Landed
             }
-            Ok(NoteEditOutcome::RewriteFork { fork } | NoteEditOutcome::ProposedFork { fork }) => {
+            Ok(
+                NoteProgramEditOutcome::RewriteFork { fork }
+                | NoteProgramEditOutcome::ProposedFork { fork },
+            ) => {
                 report.proposed += 1;
                 FolderFileState::Proposed { fork: Some(fork) }
             }
-            Ok(NoteEditOutcome::ReviewRequired { .. }) => {
+            Ok(NoteProgramEditOutcome::ReviewRequired { .. }) => {
                 report.proposed += 1;
                 FolderFileState::Proposed { fork: None }
             }

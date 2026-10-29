@@ -125,7 +125,7 @@ pub(crate) fn revert_run_note_in_txn(
         },
     };
     let receipt = memory.apply_note_operation_in_txn(txn, note, &operation, None)?;
-    if matches!(receipt.outcome, super::NoteEditOutcome::Proposed(_)) {
+    if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {
         return Err(MemoryError::bad_request("NOTE compensation did not land"));
     }
     Ok(Some(operation.request_id.to_hex()))

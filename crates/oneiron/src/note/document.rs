@@ -15,7 +15,7 @@ pub(crate) const MAX_NOTE_BYTES: usize = 1024 * 1024;
 /// are ordered, so each operation sees the preceding operations in its batch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NoteEdit {
+pub struct NoteScalarEdit {
     pub start: usize,
     pub delete: usize,
     pub insert: String,
@@ -63,7 +63,7 @@ pub struct NoteDocumentView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NoteEditOutcome {
+pub enum NoteScalarEditOutcome {
     Applied(NoteDocumentView),
     Proposed(CommitReceipt),
 }
@@ -419,7 +419,7 @@ impl NoteDocument {
     pub(super) fn edit(
         &self,
         base: &[u8],
-        edits: &[NoteEdit],
+        edits: &[NoteScalarEdit],
         actor: &WriteActor,
         cited_by: &[NotePin],
     ) -> Result<bool> {
