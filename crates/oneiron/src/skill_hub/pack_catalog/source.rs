@@ -192,7 +192,6 @@ impl PackSection {
                 b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
             })
             || self.verbs.is_empty()
-            || self.verbs.len() > 128
             || self.verbs.iter().any(|verb| !allow.contains(verb))
             || self
                 .verbs

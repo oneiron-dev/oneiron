@@ -16,9 +16,7 @@ use crate::skill::{
 use crate::temporal::TimeRange;
 
 use super::adapter::SkillHubAdapter;
-use super::index::{
-    PREDICATE_SKILL_HUB_PROVENANCE, encode_capability_surface_value, same_hub_alias,
-};
+use super::index::{PREDICATE_SKILL_HUB_PROVENANCE, encode_capability_surface_value, same_hub_ref};
 use super::package::{HubIndexEntry, HubPackage};
 use super::record::{HubPin, HubRef, HubSyncPolicy};
 use super::support::{map_text, map_value};
@@ -453,7 +451,7 @@ impl Vault {
                         "hub provenance claim is missing hubRef",
                     )),
                 )?)?;
-                if same_hub_alias(&stored_ref, hub_ref) {
+                if same_hub_ref(&stored_ref, hub_ref) {
                     matches_provenance_alias = true;
                     break;
                 }

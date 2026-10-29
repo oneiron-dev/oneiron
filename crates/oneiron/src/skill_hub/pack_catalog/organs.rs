@@ -19,7 +19,6 @@ const ORGAN_DIR: &str = "organs/";
 const ORGAN_MANIFEST: &str = "ORGAN.json";
 /// The largest organ build a pack may pin.
 pub const MAX_ORGAN_BUILD_BYTES: u64 = 128 * 1024 * 1024;
-const MAX_ORGANS: usize = 32;
 const MAX_ORGAN_BUILDS: usize = 16;
 const MAX_ORGAN_LIST: usize = 64;
 const MAX_ORGAN_MEMORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;

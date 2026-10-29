@@ -624,3 +624,8 @@ fn decode_string_set(value: &Value) -> Result<BTreeSet<String>> {
 pub(super) fn same_hub_alias(left: &HubRef, right: &HubRef) -> bool {
     left.hub_id == right.hub_id && left.ref_string == right.ref_string && left.pin == right.pin
 }
+
+/// The same hub ref ignoring its pin: the pin is what a sync moves to.
+pub(super) fn same_hub_ref(left: &HubRef, right: &HubRef) -> bool {
+    left.hub_id == right.hub_id && left.ref_string == right.ref_string
+}
