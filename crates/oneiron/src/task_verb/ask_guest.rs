@@ -217,7 +217,11 @@ pub(super) fn mint_guest_grants(
             }
             // The guest's own key travels with the ask into the grant, for
             // the owner's slip mint to bind (FIX-LIST 1978).
-            let holder_key = guest.holder_key.as_deref().map(guest_holder_key).transpose()?;
+            let holder_key = guest
+                .holder_key
+                .as_deref()
+                .map(guest_holder_key)
+                .transpose()?;
             let grant = crate::federation::FederationGrant::ask_guest(
                 group_ref,
                 guest.companion_ref,
