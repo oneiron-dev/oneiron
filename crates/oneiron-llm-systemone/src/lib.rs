@@ -173,7 +173,15 @@ impl SystemOneSeat {
             // The wire has no point: a Point asks for a box, read as its centre.
             AnswerContract::Box | AnswerContract::Point => ("box", None),
         };
-        let mut question = json!({"type":kind,"instructions":request.question.text});
+        // A question that is no yes/no reads its criteria as the rubric of its
+        // own form after its instructions (FIX 2181).
+        let rubric = QuestionCriteria::rubric_in(&request.state, &request.question.contract)
+            .filter(|_| request.question.contract != AnswerContract::Noul);
+        let instructions = match rubric {
+            Some(rubric) => format!("{}\n\n{rubric}", request.question.text),
+            None => request.question.text.clone(),
+        };
+        let mut question = json!({"type":kind,"instructions":instructions});
         if let Some(criteria) = criteria {
             question["criteria"] = criteria;
         }
