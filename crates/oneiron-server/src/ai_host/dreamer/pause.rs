@@ -3,9 +3,28 @@
 //! causes read as the one pause the passes hold on, so a resume never lifts
 //! a managed freeze.
 
+use std::sync::Arc;
+
 use super::DreamerControl;
 
 impl DreamerControl {
+    /// A plain host's control (FIX 11573): every pass is admitted, and the
+    /// owner's own pause is the only cause, held in memory until a restart.
+    pub(crate) fn local() -> Self {
+        let (cause, _) = tokio::sync::watch::channel(false);
+        let cause = Arc::new(cause);
+        let subscribed = Arc::clone(&cause);
+        let set = Arc::clone(&cause);
+        Self {
+            admission: crate::server::admit_every_pass(),
+            pause: Arc::new(move || subscribed.subscribe()),
+            set_owner_pause: Arc::new(move |paused| {
+                set.send_replace(paused);
+            }),
+            read_owner_pause: Arc::new(move || *cause.borrow()),
+        }
+    }
+
     /// Sets the owner's own pause cause: no new pass starts, and the running
     /// attempt parks at its next boundary. Never touches the managed freeze.
     pub(crate) fn set_owner_paused(&self, paused: bool) {
