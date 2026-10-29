@@ -26,6 +26,10 @@
 //! after a doubling delay, from [`CONNECTOR_SETTLE_INTERVAL`] up to
 //! [`CONNECTOR_SETTLE_MAX_BACKOFF`], kept in memory and reset by a restart.
 //! There is no notification of a consent answer to wake the loop sooner.
+//! A call a full count-bound budget window paces skips its backoff: it waits
+//! while the window is shut and goes in the first pass after it opens, and
+//! the pass admits again the connector event wakes such a window paced
+//! (FIX 8686).
 //!
 //! Each pass first takes up again the live exchanges a restart left with a
 //! resume state on their calls' rows (FIX 9157), before it lists the pending
@@ -146,15 +150,26 @@ fn settle_connector_calls(
     if let Err(error) = vault.repair_connector_call_owner_asks() {
         tracing::warn!(%error, "connector call owner ask repair failed");
     }
+    // Connector event wakes a budget window paced are admitted again once
+    // it opens (FIX 8686).
+    if let Err(error) = vault.continue_paced_connector_wakes() {
+        tracing::warn!(%error, "paced connector wakes not admitted");
+    }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
     let pending = vault.pending_connector_calls()?;
     backoffs
         .0
         .retain(|call_ref, _| pending.iter().any(|call| call.call_ref == *call_ref));
     let now = Instant::now();
+    // A call a budget window paces waits for the window, and goes in the
+    // first pass after it opens, whatever its backoff (FIX 8686).
     let due: Vec<_> = pending
         .into_iter()
-        .filter(|call| call.settled || backoffs.due(call.call_ref, now))
+        .filter(|call| match call.paced {
+            _ if call.settled => true,
+            Some(shut) => !shut,
+            None => backoffs.due(call.call_ref, now),
+        })
         .collect();
     if due.is_empty() {
         return Ok(0);

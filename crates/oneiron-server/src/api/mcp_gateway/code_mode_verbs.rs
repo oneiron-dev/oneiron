@@ -307,6 +307,9 @@ struct VaultLibrary {
     /// The admission job its filing files for (CUA E8b): placed by rule
     /// alone, and kept against the job in the filing's write.
     admission: Option<oneiron::browser_library::ProgramAdmissionFiling>,
+    /// The envelope its filings' anchor claims are written under (FIX
+    /// 10513); none where its caller keeps no filing claim.
+    filing: Option<oneiron::WriteEnvelope>,
 }
 
 /// The fresh browser a proposal's replay runs on (CUA E1): a new guest for

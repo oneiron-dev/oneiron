@@ -25,7 +25,11 @@
 //!
 //! A decoded replay row whose spawns reached resolved targets travels as its
 //! parts instead, each bound and carried on its own ([`replay`], FIX 9180).
+//!
+//! What an erase after the image's cut took that no obligation names, a
+//! restore takes again ([`removals`]).
 
+pub(super) mod removals;
 mod replay;
 
 use std::borrow::Cow;

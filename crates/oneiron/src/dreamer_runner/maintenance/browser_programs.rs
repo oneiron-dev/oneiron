@@ -18,8 +18,9 @@ use crate::browser_library::{
     DirtySolvedGroup, ProgramAdmissionJob, ProgramFailureRef, ProgramSeen, ScopedSolvedGroupKey,
     SolvedGroupKey, SolvedRunEvidence, SolvedSource, WorkflowRecord, dirty_solved_groups,
     enqueue_program_admission_in_txn, mark_group_clean, mark_program_seen_in_txn,
-    program_admission_queued, program_seen, programs_with_failures, retired_workflow,
-    site_workflows, solved_group_coverage, solved_runs_in_group,
+    program_admission_queued, program_seen_in, programs_with_failures, retired_workflow,
+    site_workflows, solved_group_coverage_in, solved_group_coverage_read, solved_runs_in_group,
+    workflow_filing_id,
 };
 use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
@@ -207,8 +208,11 @@ impl Pass<'_> {
     /// evidence from two distinct runs.
     fn group(&mut self, dirty: &DirtySolvedGroup) -> Result<()> {
         self.report.groups += 1;
-        let (evidence, withheld) = self.drain(&dirty.key)?;
-        let covered = !solved_group_coverage(self.vault, &dirty.digest)?.is_empty();
+        let (evidence, mut withheld) = self.drain(&dirty.key)?;
+        let coverage = solved_group_coverage_read(self.read, &dirty.digest)?;
+        withheld |= coverage.receipt.suppressed_count > 0;
+        self.report.receipts.push(coverage.receipt);
+        let covered = !coverage.value.is_empty();
         let candidates = if covered {
             Vec::new()
         } else {
@@ -366,8 +370,15 @@ impl Pass<'_> {
         let tally = vault.with_write_txn_grouped(|txn| {
             let mut tally = Tally::default();
             let policy = read.live_policy_manifest_in(txn)?;
-            tally.covered = write.predecessor.is_none()
-                && !solved_group_coverage(vault, &write.digest)?.is_empty();
+            if write.predecessor.is_none() {
+                for id in solved_group_coverage_in(vault, txn, &write.digest)? {
+                    let anchor = workflow_filing_id(&id, &write.digest)?;
+                    if read.is_entity_readable_with_policy_in(txn, &policy, &anchor)? {
+                        tally.covered = true;
+                        break;
+                    }
+                }
+            }
             let candidates: &[Candidate] = if tally.covered {
                 &[]
             } else {
@@ -387,7 +398,7 @@ impl Pass<'_> {
                     continue;
                 }
                 let eligible = candidate.status.eligible();
-                let finding = match program_seen(vault, &candidate.fingerprint)? {
+                let finding = match program_seen_in(vault, txn, &candidate.fingerprint)? {
                     Some(seen) if seen.job.is_some() || !eligible => {
                         tally.seen += 1;
                         continue;

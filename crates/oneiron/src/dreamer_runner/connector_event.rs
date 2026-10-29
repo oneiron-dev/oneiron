@@ -17,6 +17,10 @@ pub const CONNECTOR_EVENT_FACET: &str = "connector_event";
 pub struct ConnectorEventWake {
     pub agent: EntityId,
     pub event: ConnectorEvent,
+    /// The 80%/95% budget messages the wake's charge fired on the agent's
+    /// connector key and catalog pool (FIX 3761), for the reply that
+    /// answers it. Empty when none fired.
+    pub budget_steering: Vec<String>,
 }
 impl ConnectorEventWake {
     pub fn from_attempt(attempt: &DreamerAdmittedAttempt) -> Result<Self> {
@@ -28,7 +32,7 @@ impl ConnectorEventWake {
         let Value::Map(fields) = &attempt.status.payload.input else {
             return Err(invalid());
         };
-        if fields.len() != 3 {
+        if !matches!(fields.len(), 3 | 4) {
             return Err(invalid());
         }
         let one = |name: &str| -> Result<&Value> {
@@ -60,17 +64,37 @@ impl ConnectorEventWake {
         {
             return Err(invalid());
         }
-        Ok(Self { agent, event })
+        // A fourth field is only the budget messages the wake's charge
+        // fired (FIX 3761).
+        let budget_steering = if fields.len() == 4 {
+            let Value::Array(messages) =
+                one(crate::connector_key::events::CONNECTOR_WAKE_BUDGET_STEERING)?
+            else {
+                return Err(invalid());
+            };
+            messages
+                .iter()
+                .map(|message| message.as_str().map(str::to_owned).ok_or_else(invalid))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            agent,
+            event,
+            budget_steering,
+        })
     }
     /// The agent a connector-event input names, read as
-    /// [`Self::from_attempt`] reads it: the `agent_ref` of the three-field
-    /// `tool_output` map. The event body is not validated here; only the
-    /// agent is needed, and only it is returned.
+    /// [`Self::from_attempt`] reads it: the `agent_ref` of the
+    /// `tool_output` map (three fields, or four with the budget messages).
+    /// The event body is not validated here; only the agent is needed, and
+    /// only it is returned.
     pub(crate) fn agent_of_input(input: &Value) -> Result<EntityId> {
         let Value::Map(fields) = input else {
             return Err(invalid());
         };
-        if fields.len() != 3 {
+        if !matches!(fields.len(), 3 | 4) {
             return Err(invalid());
         }
         let one = |name: &str| -> Result<&Value> {

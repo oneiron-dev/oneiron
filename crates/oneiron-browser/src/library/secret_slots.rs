@@ -97,9 +97,39 @@ pub(super) fn bind(steps: &mut [BatchStep], checks: &mut [ExpectInput]) {
     }
 }
 
+/// A call's typed secret arguments (FIX 10427): each one's value in
+/// place of the same name among its plain arguments, and the names
+/// whose value is their slot's own text. A handle that names no handle
+/// is the caller's input refused.
+#[cfg(feature = "driver")]
+pub(super) fn typed_values(
+    secret_args: &BTreeMap<String, super::SecretArg>,
+) -> Result<(BTreeMap<String, String>, Vec<String>), BrowserError> {
+    let mut values = BTreeMap::new();
+    let mut text = Vec::new();
+    for (name, arg) in secret_args {
+        let value = match arg {
+            super::SecretArg::Handle(handle) if handle_form(handle) => handle.clone(),
+            super::SecretArg::Handle(_) => {
+                return Err(BrowserError::Input(format!(
+                    "the secret argument {name}'s handle names no handle"
+                )));
+            }
+            super::SecretArg::Text(value) => {
+                text.push(name.clone());
+                value.clone()
+            }
+        };
+        values.insert(name.clone(), value);
+    }
+    Ok((values, text))
+}
+
 /// `program` with each secret arm that is the lone slot of a name in
 /// `text` moved to its plain arm (FIX 8346): the run gave that slot its own
-/// text, so it is typed or checked as text even in a handle's form.
+/// text, so it is typed or checked as text even in a handle's form. A
+/// Fill's secret arm stays a secret arm and is marked its own text
+/// instead (FIX 10427), so its secret-field reading is unchanged.
 #[cfg(feature = "driver")]
 pub(super) fn as_text(program: &WorkflowProgram, text: &[String]) -> WorkflowProgram {
     let mut program = program.clone();
@@ -123,6 +153,11 @@ pub(super) fn as_text(program: &WorkflowProgram, text: &[String]) -> WorkflowPro
             } => moved(secret, typed),
             BatchStep::Expect { value, secret, .. } => moved(secret, value),
             BatchStep::Decide(step) => moved(&mut step.secret, &mut step.text),
+            BatchStep::Fill { field, .. } => {
+                if named(&field.secret) {
+                    field.secret_is_text = true;
+                }
+            }
             _ => {}
         }
     }
@@ -206,12 +241,18 @@ impl Targets {
                 _ => {}
             }
             stable_names(step);
+            for target in step.targets_mut() {
+                stable_target(target);
+            }
         }
         for (check, held) in program.postcondition.iter_mut().zip(self.checks) {
             let target = held
                 .or_else(|| checked_kind(rows, check.target.as_ref(), &check.role, &check.name));
             slots.arm(&mut check.secret, &mut check.value, target)?;
             stable_name(&mut check.name);
+            if let Some(target) = &mut check.target {
+                stable_target(target);
+            }
         }
         Ok(())
     }
@@ -439,6 +480,35 @@ fn stable_name(name: &mut Option<String>) {
 /// How a row shows a secret's handle: `[secret sc12]`.
 #[cfg(feature = "driver")]
 const SECRET_DISPLAY: &str = "[secret ";
+
+/// A locator a program keeps, with each `[secret scN]` display it holds
+/// put as `[secret]` (FIX 10428): a real locator is a hash and holds
+/// none, so only a display a caller pasted into one loses its dead
+/// handle, as the proof's scrub keeps it.
+#[cfg(feature = "driver")]
+fn stable_target(target: &mut String) {
+    if !target.contains(SECRET_DISPLAY) {
+        return;
+    }
+    let mut kept = String::with_capacity(target.len());
+    let mut rest = target.as_str();
+    while let Some(open) = rest.find(SECRET_DISPLAY) {
+        kept.push_str(&rest[..open]);
+        let shown = &rest[open..];
+        match shown.find(']') {
+            Some(close) if handle_form(&shown[..=close]) => {
+                kept.push_str(crate::secret_fields::SECRET_MARK);
+                rest = &shown[close + 1..];
+            }
+            _ => {
+                kept.push_str(SECRET_DISPLAY);
+                rest = &shown[SECRET_DISPLAY.len()..];
+            }
+        }
+    }
+    kept.push_str(rest);
+    *target = kept;
+}
 
 /// A step's role/name match texts, as [`stable_name`] keeps them.
 #[cfg(feature = "driver")]

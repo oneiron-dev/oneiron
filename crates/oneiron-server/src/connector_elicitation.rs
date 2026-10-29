@@ -680,6 +680,7 @@ pub(crate) fn answer_connector_question(
                 intent,
                 result: Some(result),
                 result_absence: None,
+                budget_steering: Vec::new(),
             },
         ),
         WorkerEvent::Failed {

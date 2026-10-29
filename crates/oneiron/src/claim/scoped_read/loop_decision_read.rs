@@ -489,13 +489,7 @@ impl<'v> ScopedRead<'v> {
         read: &LoopRead<'v>,
         id: EntityId,
     ) -> Result<Option<Vec<EntityId>>> {
-        if !self.is_entity_retrievable_held_in(
-            txn,
-            &read.policy,
-            &read.filter,
-            &id,
-            &read.held,
-        )? {
+        if !self.is_entity_retrievable_held_in(txn, &read.policy, &read.filter, &id, &read.held)? {
             return Ok(None);
         }
         let Some(record) = self.entity_record_in(txn, &id)? else {

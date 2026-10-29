@@ -193,9 +193,15 @@ impl Vault {
             // Rows came back without a put: each definition pins its id as a
             // put of it would have (H215).
             crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
+            // What the live source erased after the cut, read before the
+            // sweep below writes anything.
+            let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
             crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, erased)?;
+            // And what those erases took that no obligation retired (FIX
+            // 10461, 10533, 10631, 10436).
+            response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;
             // A step claim's response pins go with what the rows no longer
             // hold, now the type index is back: an erased shell's release,
             // an omitted claim's or version's pin goes alone (FIX 6225).

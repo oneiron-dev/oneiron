@@ -206,6 +206,7 @@ pub(super) fn hook_exits(pipe: &Pipe, session: &str, engine: BrowserEngine) {
     {
         return;
     }
+    pipe.note_exit_bound(session, bound);
     let read = stores_read(chars);
     let source = EXIT_PRELOAD
         .replace("__BINDING__", EXIT_BINDING)

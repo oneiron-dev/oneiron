@@ -114,6 +114,14 @@ fn answer(
                     Vec::new()
                 }
             };
+            // The budget messages the wake's charge fired are the engine's
+            // own words, not the inbound's: they lead the turn (FIX 3761).
+            if !job.budget_steering.is_empty() {
+                context.insert(
+                    0,
+                    message(LlmMessageRole::System, job.budget_steering.join("\n")),
+                );
+            }
             context.push(message(
                 LlmMessageRole::User,
                 briefing(&origin, event_id, &text),
