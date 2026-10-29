@@ -380,8 +380,9 @@ impl Vault {
 
 impl KeyRead<'_> {
     /// The id `group` of this read asks under at `now`: its ask's id
-    /// ([`file_ask_id`]), or past each delivered or answered row of it, the
-    /// next in its sequence ([`open_ask_id_in_txn`]).
+    /// ([`file_ask_id`]), or past each delivered or answered row of it and
+    /// each row that asked for another effect, the next in its sequence
+    /// ([`open_ask_id_in_txn`]).
     fn ask_in_txn(
         &self,
         vault: &Vault,
@@ -391,10 +392,12 @@ impl KeyRead<'_> {
     ) -> Result<EntityId> {
         let base = file_ask_id(
             self.asker,
+            self.artifact,
             &self.hash,
             self.per_class.then_some(group.class),
         )?;
-        open_ask_id_in_txn(vault, txn, base, now)
+        let current = self.row(group, now, SecretRevealState::Asked);
+        open_ask_id_in_txn(vault, txn, base, &current, now)
     }
 
     /// The registry ref of the standing grant covering `group` of this read
@@ -521,21 +524,24 @@ fn asked_plan_in_txn(
 }
 
 /// The id a read whose ask's id is `base` asks under at `now` (FIX 6623,
-/// 6737): `base` until its row is kept ([`kept_row`]), then the first id of
-/// its sequence, each hashed from the one before under
-/// [`FILE_REASK_DOMAIN`], whose row is not. A delivered read and an owner's
-/// answer keep their row and their id; the next ask, its answer and its
-/// delivery are another row's.
+/// 6737): `base` until its row is kept ([`kept_row`]) or asked for another
+/// effect than `current`, the read now (FIX 7992), then the first id of its
+/// sequence, each hashed from the one before under [`FILE_REASK_DOMAIN`],
+/// whose row is neither. A delivered read and an owner's answer keep their
+/// row and their id; the next ask, its answer and its delivery are another
+/// row's. An approval once of another reason or provider keeps its row and
+/// its unspent marker, so it is never spent on this read.
 fn open_ask_id_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     base: EntityId,
+    current: &RevealRow,
     now: u64,
 ) -> Result<EntityId> {
     let mut ask = base;
     while REVEALS
         .get(&vault.store, txn, &ask)?
-        .is_some_and(|row| kept_row(&row, now))
+        .is_some_and(|row| kept_row(&row, now) || !row.asks_as(current, &ask))
     {
         ask = crate::codebase::entity_id_from_hash_material(
             FILE_REASK_DOMAIN,
@@ -556,6 +562,17 @@ fn kept_row(row: &RevealRow, now: u64) -> bool {
         SecretRevealState::Delivered | SecretRevealState::ApprovedStanding => true,
         SecretRevealState::ApprovedOnce | SecretRevealState::Denied => now >= row.expires_at,
         SecretRevealState::Asked | SecretRevealState::Covered | SecretRevealState::Expired => false,
+    }
+}
+
+impl RevealRow {
+    /// Whether this row, at `ask`, asked for exactly the effect `current`
+    /// would: every fact its digest binds, the reason and the provider among
+    /// them, read under this row's own window (FIX 7992).
+    fn asks_as(&self, current: &Self, ask: &EntityId) -> bool {
+        let mut current = current.clone();
+        current.expires_at = self.expires_at;
+        self.once_digest == Some(*current.ask_digest(ask).as_bytes())
     }
 }
 
@@ -664,13 +681,15 @@ fn typed_read_hash(
     *hasher.finalize().as_bytes()
 }
 
-/// The one ask an agent's reads of a file file: by the agent, the read's
-/// hash (the stored bytes', or a typed body read's fingerprint), the project
-/// and the run, and the keys' class for a group of a typed body or of a file
-/// whose keys span classes. The one ask of a file of one class names no
-/// class.
+/// The one ask an agent's reads of a file file: by the agent, the artifact
+/// it reads (FIX 7992: two artifacts with the same bytes ask apart), the
+/// read's hash (the stored bytes', or a typed body read's fingerprint), the
+/// project and the run, and the keys' class for a group of a typed body or
+/// of a file whose keys span classes. The one ask of a file of one class
+/// names no class.
 fn file_ask_id(
     asker: &RevealAsker,
+    artifact: &EntityId,
     hash: &[u8; 32],
     class: Option<CustodyClass>,
 ) -> Result<EntityId> {
@@ -679,15 +698,16 @@ fn file_ask_id(
         .map(|project| project.to_hex())
         .unwrap_or_default();
     let class = class.map_or("", CustodyClass::as_str);
-    let parts: [&[u8]; 5] = [
+    let parts: [&[u8]; 6] = [
         asker.agent.as_bytes(),
+        artifact.as_bytes(),
         hash,
         project.as_bytes(),
         asker.run.as_deref().unwrap_or_default().as_bytes(),
         class.as_bytes(),
     ];
     let parts = if class.is_empty() {
-        &parts[..4]
+        &parts[..5]
     } else {
         &parts[..]
     };

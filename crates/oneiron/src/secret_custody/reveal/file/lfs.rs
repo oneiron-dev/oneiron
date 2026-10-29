@@ -73,7 +73,7 @@ impl Vault {
             self.read_sight_in_txn(txn, &read)
         })?;
         (sight == SecretSight::Granted)
-            .then(|| file_ask_id(asker, &hash, None))
+            .then(|| file_ask_id(asker, &artifact, &hash, None))
             .transpose()
     }
 
@@ -92,10 +92,10 @@ impl Vault {
         oid: LfsOid,
         held: &EntityId,
     ) -> Result<bool> {
-        let Some((_, hash)) = lfs_read_fingerprint(self, oid)? else {
+        let Some((artifact, hash)) = lfs_read_fingerprint(self, oid)? else {
             return Ok(false);
         };
-        let base = file_ask_id(asker, &hash, None)?;
+        let base = file_ask_id(asker, &artifact, &hash, None)?;
         if base != *held {
             return Ok(false);
         }
