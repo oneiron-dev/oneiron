@@ -315,6 +315,21 @@ pub(crate) fn withdraw_received_epoch_generation_in_txn(
     withdraw_words_in_txn(store, txn, id, &worlds)?;
     Ok(true)
 }
+/// Marks `id` withdrawn here as the machine that cut it off at a carried
+/// Shell cutoff marked it (FIX 931): stale, and out of every projection of
+/// its words. No world is recorded and no epoch walked: a Shell is no epoch
+/// summary. A row already marked is left as it is.
+#[cfg(feature = "sync")]
+pub(crate) fn mark_received_withdrawn_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if marked_stale_in(store, txn, id)? {
+        return Ok(());
+    }
+    mark_one_stale_in_txn(store, txn, id)
+}
 /// Where the words of `source` sit, read while its row, stamp and edges still
 /// stand, whatever its body holds. A source no one can place is unknown, and
 /// the write goes on.

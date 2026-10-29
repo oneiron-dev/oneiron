@@ -171,8 +171,9 @@ fn bind_health_answer_in_txn(
         },
         created_at: input.now,
         // A one-off health check keeps no authenticated asker: the engine
-        // writes it for its principal.
+        // writes it for its principal, under the principal's own lane.
         asker_class: None,
+        read_lane: crate::claim::FrozenReadLane::principal(),
     };
     record.definition.validate()?;
     let answer = AnswerRecord {

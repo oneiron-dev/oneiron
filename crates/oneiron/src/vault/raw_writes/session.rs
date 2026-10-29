@@ -19,7 +19,8 @@
 //!   caller no longer on its roster, are refused as every session door
 //!   refuses them.
 //! - Reads compose the room's overlay with base while the room is live and
-//!   the caller is in it; otherwise they read base, as before.
+//!   the caller is in it; otherwise they read base, as before. Its searches,
+//!   builder runs, type scans and ChildOf walks do too (`composed_reads`).
 //!
 //! A delete is the owner's own act and runs the `vault.delete` row on base,
 //! as before. Authority and policy always read base.
@@ -42,6 +43,8 @@ use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarge
 use crate::store::SessionStoreView;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+
+mod composed_reads;
 
 /// One raw write as its room stages it.
 pub(super) enum RawOp<'a> {
@@ -69,14 +72,14 @@ impl Memory<'_> {
         session.for_participant(self.actor()).map(Some)
     }
 
-    /// Runs `read` over the composed view of the room this surface's
-    /// session names, while the room is live and the caller is in it.
-    /// `None` when the read belongs on base, as a read did before: no
-    /// session, a ref no room can carry, or a room that is gone, closing or
-    /// closed, or that this caller has left, at bind or during the read.
-    fn raw_composed_read<R>(
+    /// Runs `read` on the room this surface's session names, bound to its
+    /// caller, while the room is live and the caller is in it. `None` when
+    /// the read belongs on base, as a read did before: no session, a ref no
+    /// room can carry, or a room that is gone, closing or closed, or that
+    /// this caller has left, at bind or during the read.
+    fn raw_session_read<R>(
         &self,
-        read: impl FnOnce(&Vault, &SessionStoreView<'_>, &RoTxn<'_>) -> crate::Result<R>,
+        read: impl FnOnce(&OffRecordSession<'_>) -> crate::Result<R>,
     ) -> MemoryResult<Option<R>> {
         let Some((session_ref, _)) = self.off_record_binding() else {
             return Ok(None);
@@ -89,11 +92,21 @@ impl Memory<'_> {
         };
         match session
             .for_participant(self.actor())
-            .and_then(|session| session.read_composed_in_vault(read))
+            .and_then(|session| read(&session))
         {
             Ok(value) => Ok(Some(value)),
             Err(error) => read_on_base(error),
         }
+    }
+
+    /// Runs `read` over the composed view of the room this surface's
+    /// session names, in one snapshot, as [`Self::raw_session_read`] runs
+    /// it.
+    fn raw_composed_read<R>(
+        &self,
+        read: impl FnOnce(&Vault, &SessionStoreView<'_>, &RoTxn<'_>) -> crate::Result<R>,
+    ) -> MemoryResult<Option<R>> {
+        self.raw_session_read(|session| session.read_composed_in_vault(read))
     }
 
     /// Stages `ops` in the room this surface's session names while it is

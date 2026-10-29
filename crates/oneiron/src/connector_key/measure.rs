@@ -19,6 +19,15 @@ impl Vault {
     /// and suggested budget rows, the stamped and the proposed charter's
     /// compiled caps, and the catalog's advertised verbs. Called after the
     /// record's writer commits, so an asking port never runs inside it.
+    /// One count of a connector manifest under admission against its vault
+    /// policy quota, or this vault's engine row when that is lower: past it
+    /// the row asks, and the whole manifest is admitted (FIX 8684, 8758).
+    pub(crate) fn measure_connector_manifest_entries(&self, quota: u64, measured: u64) {
+        let row = EngineLimit::ConnectorManifestEntries;
+        let bound = quota.min(self.limit_watch().bound(row));
+        self.measure_limit_at(row, bound, measured);
+    }
+
     pub(crate) fn measure_connector_key_shape(&self, record: &ConnectorKeyRecord) {
         self.measure_limit(
             EngineLimit::ConnectorBudgetRows,

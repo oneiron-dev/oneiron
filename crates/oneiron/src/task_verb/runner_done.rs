@@ -49,6 +49,9 @@ pub struct RunnerDoneAnswer {
     answer: PortDecision,
     /// The try the question was asked for, at its lease generation.
     attempt: Option<(AttemptId, u32)>,
+    /// The typed pin's NOTE a bound try's typed Done rests on: a world proof
+    /// that anchors its settlement. `None` for an answer anyone gave.
+    world_proof: Option<EntityId>,
 }
 
 /// The report an answer was given for.
@@ -77,6 +80,7 @@ impl RunnerDoneQuestion {
                 self.reversibility,
             ),
             attempt: self.attempt,
+            world_proof: None,
         }
     }
 }
@@ -98,6 +102,12 @@ impl RunnerDoneAnswer {
             principal,
         };
         (judged == self.judged).then(|| self.answer.clone())
+    }
+
+    /// The typed NOTE this answer rests on, when it is a bound try's typed
+    /// Done.
+    pub(super) const fn world_proof(&self) -> Option<EntityId> {
+        self.world_proof
     }
 
     /// Records the model whose answer stands as the judge of the try this
@@ -214,6 +224,7 @@ pub fn runner_workflow_done_answer(
             receipt: None,
         },
         attempt: None,
+        world_proof: Some(*receipt_ref),
     }))
 }
 

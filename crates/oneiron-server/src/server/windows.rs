@@ -102,7 +102,7 @@ impl SyncServer {
         key: &WindowKey,
         update_bytes: &[u8],
         auth: Option<&crate::auth::CoreAuth>,
-    ) -> Result<u32, oneiron::Error> {
+    ) -> Result<u64, oneiron::Error> {
         server_state::persist_admitted_window_update(&self.vault, key, update_bytes, |txn| {
             auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn))
         })

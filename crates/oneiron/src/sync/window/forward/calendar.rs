@@ -30,28 +30,42 @@ pub(super) fn reconcile(ctx: &RematCtx<'_>) -> Result<()> {
             candidates.insert(id, window);
         }
         for (id, window) in &candidates {
-            if crate::calendar::origin::replay_origin_bound(&ctx.vault.store, txn, *id)? {
+            // Conflicting live origin claims on one EVENT are that EVENT's own
+            // refusal (FIX 10164): it stays pending and unreadable while the
+            // other EVENTs reconcile. A local storage fault still stops.
+            let refusal =
+                match crate::calendar::origin::replay_origin_bound(&ctx.vault.store, txn, *id) {
+                    Ok(true) => None,
+                    Ok(false) => Some(Error::InvalidClaimBody(
+                        "calendar origin claim has not been reconciled",
+                    )),
+                    Err(rejected) if quarantine::remote_rejection_reason(&rejected).is_some() => {
+                        Some(rejected)
+                    }
+                    Err(local) => return Err(local),
+                };
+            let Some(refusal) = refusal else {
                 // Never clear someone else's hard-delete retry marker.
                 if CALENDAR_ORIGIN_PENDING.delete(&ctx.vault.store, txn, id)? {
                     quarantine::clear_replay_remat_marker_in_txn(ctx.vault, txn, window, id)?;
                 }
-            } else {
-                let row = ctx
-                    .vault
-                    .store
-                    .port_entity_record(txn, id)?
-                    .ok_or(Error::EntityNotFound)?;
-                CALENDAR_ORIGIN_PENDING.put(&ctx.vault.store, txn, id, window)?;
-                quarantine::quarantine_rejected_op_in_txn(
-                    ctx.vault,
-                    txn,
-                    window,
-                    quarantine::QuarantineContainer::Entities,
-                    &id.to_hex(),
-                    &Error::InvalidClaimBody("calendar origin claim has not been reconciled"),
-                    &row.encode(),
-                )?;
-            }
+                continue;
+            };
+            let row = ctx
+                .vault
+                .store
+                .port_entity_record(txn, id)?
+                .ok_or(Error::EntityNotFound)?;
+            CALENDAR_ORIGIN_PENDING.put(&ctx.vault.store, txn, id, window)?;
+            quarantine::quarantine_rejected_op_in_txn(
+                ctx.vault,
+                txn,
+                window,
+                quarantine::QuarantineContainer::Entities,
+                &id.to_hex(),
+                &refusal,
+                &row.encode(),
+            )?;
         }
         Ok(())
     })

@@ -85,8 +85,10 @@ pub(crate) fn bind_task_answer_in_txn(
         },
         created_at: input.now,
         // A one-off ask keeps no authenticated asker: its principal is the
-        // ask's beneficiary, not the responder who writes its answer.
+        // ask's beneficiary, not the responder who writes its answer, and it
+        // reads under the principal's own lane.
         asker_class: None,
+        read_lane: crate::claim::FrozenReadLane::principal(),
     };
     record.definition.validate()?;
     let answer = AnswerRecord {

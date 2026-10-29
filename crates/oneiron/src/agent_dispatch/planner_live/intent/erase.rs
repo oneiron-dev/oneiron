@@ -25,6 +25,7 @@ use crate::agent_dispatch::AgentDispatcher;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::team::{PlannedIntentView, SpawnErasure};
 
@@ -41,6 +42,12 @@ pub(super) fn asker_erase_key(actor: &EntityId) -> [u8; 32] {
     hasher.update(actor.as_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// Each erased asker's selector (FIX 11094): value-free and permanent, so a
+/// hard erase still reaches, through the fence, a stale copy whose asker a
+/// plain scrub already forgot.
+const ASKER_ERASED: SideTable<[u8; 32], (), Raw> =
+    SideTable::new(&side_table::SPAWN_PLANNED_INTENT_ASKER_ERASED);
 
 /// Who among an intent's asker and its plan's target an erase reached.
 #[derive(Clone, Copy)]
@@ -132,8 +139,10 @@ impl AgentDispatcher<'_> {
     /// intent one of them asked, or whose plan seats one as its target,
     /// takes its erased form in every phase, and an erased asker is
     /// forgotten. An asker a plain scrub forgot is found by its erase
-    /// selector (FIX 9182). One pass over the intents, in the erase's own
-    /// transaction.
+    /// selector (FIX 9182). Each erased id's selector is recorded in the
+    /// erased-asker table, so the fence still reaches a stale copy whose
+    /// asker a plain scrub already forgot. One pass over the intents, in the
+    /// erase's own transaction.
     /// An id stored as anything but a person, a machine or an AGENT_DEF
     /// asks and seats nothing, and is passed over.
     ///
@@ -155,6 +164,9 @@ impl AgentDispatcher<'_> {
         }
         if ids.is_empty() {
             return Ok(());
+        }
+        for selector in &selectors {
+            ASKER_ERASED.put(store, wtxn, selector, &())?;
         }
         let mut rows = Vec::new();
         for row in INTENTS.iter_from(store, wtxn, &[])? {
@@ -278,9 +290,11 @@ impl AgentDispatcher<'_> {
 
 /// Writes `row` at `key` on `wtxn` through the erase's fence: when the
 /// permanent hard-delete marker stands for its asker or its plan's target,
-/// `row` takes its erased form first, so a copy read before an erase writes
-/// the erased form back. An erased row stays erased. A marker that cannot be
-/// read leaves `row` as it is: the fence never fails the write it stands in.
+/// or its asker's erase selector stands in the erased-asker table, `row`
+/// takes its erased form first, so a copy read before an erase writes the
+/// erased form back. An erased row stays erased. A marker or selector that
+/// cannot be read leaves `row` as it is: the fence never fails the write it
+/// stands in.
 ///
 /// # Errors
 ///
@@ -292,7 +306,8 @@ pub(super) fn put_intent_in_txn(
     row: &mut PlannedIntent,
 ) -> Result<()> {
     let reached = Reached {
-        asker: marked_in_txn(store, wtxn, row.actor),
+        asker: marked_in_txn(store, wtxn, row.actor)
+            || asker_erased_in_txn(store, wtxn, row.asker_erase_key),
         target: marked_in_txn(store, wtxn, row.target()),
     };
     if reached.asker || reached.target || row.phase == IntentPhase::Erased {
@@ -316,6 +331,20 @@ fn marked_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: Option<EntityId>) -> 
         tracing::warn!("planned intent fence: a hard-delete marker could not be read");
         false
     })
+}
+
+/// Whether the asker the erase selector `selector` names was hard-erased,
+/// read on `txn` for the fence: `false` for no selector.
+fn asker_erased_in_txn(store: &Store, txn: &heed::RoTxn<'_>, selector: Option<[u8; 32]>) -> bool {
+    let Some(selector) = selector else {
+        return false;
+    };
+    ASKER_ERASED
+        .contains(store, txn, &selector)
+        .unwrap_or_else(|_| {
+            tracing::warn!("planned intent fence: an erased-asker selector could not be read");
+            false
+        })
 }
 
 /// Whether `id` is a stored row of a type no actor has: no person, machine

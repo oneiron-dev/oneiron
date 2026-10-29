@@ -74,7 +74,7 @@ mod verbs;
 
 pub use session::{AbandonedTakeover, DesktopGuest, PersonInput, Takeover};
 
-use crate::capture::{self, Capture, Captures, crop_region, encode_png, png_dimensions};
+use crate::capture::{self, Capture, Captures, Viewport, crop_region, encode_png, png_dimensions};
 use crate::driver::pages::{
     Base, Found, Observations, Read, Search, find_cursor, is_search, is_walk, session_token,
     wait_cursor,
@@ -358,13 +358,18 @@ impl Frame {
     /// The frame of the (`x`, `y`, `width`, `height`) region of an image of
     /// `image` pixels that shows this frame.
     fn region(&self, image: (u32, u32), x: u32, y: u32, width: u32, height: u32) -> Self {
-        let across = self.width / f64::from(image.0.max(1));
-        let down = self.height / f64::from(image.1.max(1));
+        let view = Viewport {
+            left: self.left,
+            top: self.top,
+            width: self.width,
+            height: self.height,
+        }
+        .region(image, x, y, width, height);
         Self {
-            left: self.left + f64::from(x) * across,
-            top: self.top + f64::from(y) * down,
-            width: f64::from(width) * across,
-            height: f64::from(height) * down,
+            left: view.left,
+            top: view.top,
+            width: view.width,
+            height: view.height,
             ..self.clone()
         }
     }

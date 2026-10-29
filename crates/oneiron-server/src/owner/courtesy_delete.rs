@@ -106,7 +106,8 @@ impl<'a> CourtesySender<'a> {
     }
 }
 
-/// Signs (unless the owner brought a signed ask) and queues one ask.
+/// Signs (unless the owner brought a signed ask) and queues the ask: one
+/// per page of a selection longer than a page (FIX 7941).
 pub(crate) fn send(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
@@ -124,7 +125,7 @@ pub(crate) fn send_with(
     let vault = sender.vault;
     let pact = hex_field::<32>("pact", &request.pact)?;
     let destination = peer_url("peer", &request.peer, COOP_DELETION_PEER_PATH)?;
-    let signed = if let Some(signed) = &request.signed {
+    let pages = if let Some(signed) = &request.signed {
         let bytes = STANDARD
             .decode(signed)
             .map_err(|_| OwnerError::Invalid("signed must be base64".to_owned()))?;
@@ -133,7 +134,7 @@ pub(crate) fn send_with(
         if signed.body.pact_id != pact {
             return Err(OwnerError::Invalid("signed names another pact".to_owned()));
         }
-        signed
+        vec![signed]
     } else {
         let worlds = request
             .worlds
@@ -160,8 +161,15 @@ pub(crate) fn send_with(
         })?;
         issuer.sign_cooperative_deletion_request(vault, &pact, worlds, epoch_cutoff, nonce)?
     };
-    let notice =
-        vault.queue_cooperative_deletion_request_as(owner, &signed, &destination, now())?;
+    // Each page of the selection queues as its own ask (FIX 7941); the
+    // reply names the first, and the sent list shows every one.
+    let mut first = None;
+    for signed in &pages {
+        let notice =
+            vault.queue_cooperative_deletion_request_as(owner, signed, &destination, now())?;
+        first = first.or(Some(notice));
+    }
+    let notice = first.ok_or_else(|| OwnerError::Invalid("the ask has no page".to_owned()))?;
     Ok(courtesy_delete_sent_ask(notice))
 }
 

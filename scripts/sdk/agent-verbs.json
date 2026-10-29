@@ -688,6 +688,62 @@
       "section": false
     },
     {
+      "name": "vault.shape.plan.card",
+      "description": "The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read.",
+      "input": "crate::vault_shape::ShapePlanRequest",
+      "output": "crate::memory::ShapePlanCardView",
+      "call": "memory.shape_plan_card_view(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shape.items.receipt",
+      "description": "Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable.",
+      "input": "crate::memory::ShapeItemReceiptRequest",
+      "output": "Option<crate::memory::ShapeItemReceipt>",
+      "call": "memory.shape_item_receipt(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shape.groups",
+      "description": "Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::vault_shape::ShapeInboxGroup>",
+      "call": "memory.shape_inbox_groups(&memory.embedded_owner(\"vault.shape.groups\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.shape.groups.resolve",
+      "description": "The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged.",
+      "input": "crate::memory::ShapeGroupResolveRequest",
+      "output": "crate::vault_shape::ShapeApplyReceipt",
+      "call": "memory.resolve_shape_inbox_group(&memory.embedded_owner(\"vault.shape.groups.resolve\")?, None, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.message",
       "description": "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.",
       "input": "crate::memory::MessagePersonRequest",
@@ -710,6 +766,16 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false
+    },
+    {
+      "name": "self.grants.asked",
+      "description": "Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing.",
+      "input": "crate::memory::GrantAskedRequest",
+      "output": "crate::memory::GrantAskedPage",
+      "call": "memory.grants_asked(&input)?",
+      "scope": "Read",
+      "admission": {},
       "section": false
     },
     {
@@ -2955,6 +3021,19 @@
       "section": false
     },
     {
+      "name": "vault.turn_programs.rebind",
+      "description": "Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes.",
+      "input": "crate::dreamer_runner::TurnProgramRebindRequest",
+      "output": "crate::dreamer_runner::TurnProgramRebindReceipt",
+      "call": "crate::dreamer_runner::rebind_turn_program(memory, &input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "self.saved_query.create",
       "description": "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller.",
       "input": "crate::campaign::surface::SavedQueryCreateRequest",
@@ -3310,10 +3389,10 @@
     },
     {
       "name": "vault.inbox.groups",
-      "description": "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.",
+      "description": "Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it.",
       "input": "crate::agent_inbox_lens::InboxRunGroupsRequest",
-      "output": "crate::inbox::InboxGroupPage",
-      "call": "memory.inbox_run_groups(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
+      "output": "crate::inbox::UnifiedInboxGroupPage",
+      "call": "memory.inbox_groups_page(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
@@ -3326,6 +3405,22 @@
         "cursor": "next",
         "resume": "spec",
         "within": "after"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.inbox.groups.resolve",
+      "description": "The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items.",
+      "input": "crate::inbox::InboxGroupResolveRequest",
+      "output": "crate::inbox::InboxGroupResolution",
+      "call": "memory.resolve_inbox_group_of_kind(&memory.embedded_owner(\"vault.inbox.groups.resolve\")?, None, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
       },
       "section": false,
       "openapi": true
@@ -3679,7 +3774,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false,
       "openapi": true
@@ -6912,6 +7008,21 @@
       "openapi": true
     },
     {
+      "name": "vault.coach.training_offers.sources",
+      "description": "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far.",
+      "input": "crate::task_verb::sdk::ReservoirSourcesRequest",
+      "output": "crate::edit_distance::reservoir::ReservoirSourcePreview",
+      "call": "crate::task_verb::sdk::reservoir_sources_as(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.sources\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.research.bind",
       "description": "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it.",
       "input": "crate::task_verb::sdk::ResearchBindWire",
@@ -8120,7 +8231,8 @@
       "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false,
       "host_door": true,
@@ -8588,7 +8700,7 @@
     },
     {
       "name": "vault.lenses.propose",
-      "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it.",
+      "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it.",
       "input": "crate::lens::LensProposeRequest",
       "output": "crate::receipt::LensProposalReceipt",
       "call": "memory.lenses_propose(input)?",
@@ -8629,7 +8741,7 @@
     },
     {
       "name": "vault.lenses.list",
-      "description": "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees.",
+      "description": "One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree.",
       "input": "crate::lens::LensListRequest",
       "output": "crate::lens::LensListPage",
       "call": "memory.lenses_list(input)?",
@@ -9100,7 +9212,8 @@
       "openapi": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -9115,7 +9228,8 @@
       "openapi": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14342,7 +14456,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14355,7 +14470,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14368,7 +14484,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14394,7 +14511,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false
     },
@@ -14422,7 +14539,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_result": "crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(output)?",
       "mcp_page": true,
@@ -14482,7 +14599,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false,
       "openapi": true
@@ -19883,6 +20000,62 @@
       },
       "section": false,
       "openapi": true
+    },
+    {
+      "name": "vault.custody.members.drain.begin",
+      "description": "The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter.",
+      "input": "crate::task_verb::sdk::CustodyMemberRef",
+      "output": "crate::task_verb::sdk::CustodyDrainTicketView",
+      "call": "crate::task_verb::sdk::custody_member_drain_begin_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.drain.begin\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.custody.members.drain.commit",
+      "description": "The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row.",
+      "input": "crate::task_verb::sdk::CustodyDrainCommitRequest",
+      "output": "crate::task_verb::sdk::CustodySetRevision",
+      "call": "crate::task_verb::sdk::custody_member_drain_commit_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.drain.commit\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.custody.members.drain.folder",
+      "description": "The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision.",
+      "input": "crate::task_verb::sdk::CustodyMemberRef",
+      "output": "crate::task_verb::sdk::CustodySetRevision",
+      "call": "crate::task_verb::sdk::custody_folder_member_drain_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.drain.folder\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.custody.members.reenrol",
+      "description": "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision.",
+      "input": "crate::task_verb::sdk::CustodyMemberReenrolRequest",
+      "output": "crate::task_verb::sdk::CustodySetRevision",
+      "call": "crate::task_verb::sdk::custody_member_reenrol_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.reenrol\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
     }
   ]
 }
