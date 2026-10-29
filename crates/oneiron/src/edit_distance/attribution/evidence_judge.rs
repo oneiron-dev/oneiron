@@ -41,11 +41,11 @@ use crate::skill_attribution::{
 /// receipt, bound to this actor, whose pack loaded the named skill. That join
 /// is what lets a `skill_defect` share replace the attempt's own outcome in
 /// `skill.reliability`, so an attempt it cannot vouch for is refused here.
-/// The attempt also names who drafted the proposal: its executor stamp and
-/// task type are recorded over any the host gave (FIX 9812). With no attempt
-/// stamp, the amended proposal's birth receipt names the model that concluded
-/// it. A stamp that does not read as one is recorded as unknown, never
-/// refused.
+/// The attempt also names who drafted the proposal: its executor stamp, task
+/// type and the project its run counted in are recorded over any the host
+/// gave (FIX 9812, 6038). With no attempt stamp, the amended proposal's birth
+/// receipt names the model that concluded it. A stamp that does not read as
+/// one is recorded as unknown, never refused.
 ///
 /// The actor check is the DOWNSTREAM door's own (`require_actor_entity`, the
 /// D13 matrix), asked here rather than three passes later: an
@@ -71,20 +71,22 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
     if let Some(attempt) = evidence.attempt_receipt.as_deref() {
         ground_attempt_receipt(vault, attempt, &evidence.actor, evidence.skill)?;
     }
-    let (executor, type_ref) = evidence_origin(
+    let origin = evidence_origin(
         vault,
         evidence.attempt_receipt.as_deref(),
         delta.proposed_ref.proposal_artifact(),
         evidence.executor.as_deref(),
         evidence.type_ref.as_ref(),
+        evidence.project,
     )?;
     let row = StoredEvidence {
         v: ROW_VERSION,
         actor: evidence.actor.to_hex(),
         skill: evidence.skill.map(|id| id.to_hex()),
         attempt: evidence.attempt_receipt.clone(),
-        executor,
-        type_ref,
+        executor: origin.executor,
+        type_ref: origin.type_ref,
+        project: origin.project.map(|id| id.to_hex()),
         scope,
         cause: evidence.cause.map(|cause| cause.as_str().to_owned()),
         followed_skill: evidence.followed_skill,
@@ -128,6 +130,11 @@ pub(in crate::edit_distance) fn amendment_evidence_in_txn(
         attempt_receipt: row.attempt,
         executor: row.executor,
         type_ref: row.type_ref,
+        project: row
+            .project
+            .as_deref()
+            .map(|hex| hex_entity(hex, EVIDENCE_ROW_LABEL))
+            .transpose()?,
         scope: row.scope,
         cause: row
             .cause
@@ -305,9 +312,9 @@ pub fn judge_amendment_verdicts(
 ///
 /// Each of `hunks` keeps its own label beside its substitution's identity, so
 /// the miner can take a clear hunk and leave an unclear one held (FIX 9808).
-/// The evidence's executor stamp and task type, and the revision and
-/// answering model of `judge`, the trace that answered, freeze on the
-/// judgment (FIX 9812).
+/// The evidence's executor stamp, task type and project, and the revision
+/// and answering model of `judge`, the trace that answered, freeze on the
+/// judgment (FIX 9812, 6038).
 fn persist_amendment_split(
     vault: &Vault,
     receipt_id: &str,
@@ -355,6 +362,7 @@ fn persist_amendment_split(
             .collect(),
         executor: evidence.executor.clone(),
         type_ref: evidence.type_ref.clone(),
+        project: evidence.project,
         attempt_receipt: evidence.attempt_receipt.clone(),
         judge: judge.and_then(|trace| trace.revision.clone()),
         judge_model: judge.and_then(|trace| trace.model.clone()),
@@ -450,6 +458,7 @@ pub(super) fn judgment_row(judgment: &AmendmentJudgment) -> StoredJudgment {
             .collect(),
         executor: judgment.executor.clone(),
         type_ref: judgment.type_ref.clone(),
+        project: judgment.project.map(|id| id.to_hex()),
         judge: judgment.judge.clone(),
         judge_model: judgment.judge_model.clone(),
         actor: judgment.actor.map(|id| id.to_hex()),
@@ -615,6 +624,7 @@ fn judgment_from_row(
         hunks,
         executor: row.executor,
         type_ref: row.type_ref,
+        project: optional_entity(row.project.as_deref())?,
         attempt_receipt: row.attempt.map(|join| join.receipt),
         judge: row.judge,
         judge_model: row.judge_model,

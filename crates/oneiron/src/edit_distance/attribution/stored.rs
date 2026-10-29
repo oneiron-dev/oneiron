@@ -117,6 +117,9 @@ pub(super) struct StoredEvidence {
     /// The drafting run's task type; absent when no task placed it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) type_ref: Option<TypeRef>,
+    /// The drafting run's project (hex); absent, the vault's (FIX 6038).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
     pub(super) scope: String,
     pub(super) cause: Option<String>,
     pub(super) followed_skill: Option<bool>,
@@ -161,6 +164,10 @@ pub(super) struct StoredJudgment {
     /// The drafting run's task type the evidence carried when judged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) type_ref: Option<TypeRef>,
+    /// The project (hex) whose edit-cost cells the judgment lands in; absent,
+    /// the vault's (FIX 6038).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
     /// The judge revision whose answers the judgment stands on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) judge: Option<String>,

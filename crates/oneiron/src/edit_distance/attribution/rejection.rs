@@ -39,6 +39,8 @@ pub(in crate::edit_distance) struct Rejection<'a> {
     /// The skill the proposal rode, when it rode one.
     pub(in crate::edit_distance) skill: Option<EntityId>,
     pub(in crate::edit_distance) scope: &'a str,
+    /// The reviewed claim's project; `None` is the vault's (FIX 6038).
+    pub(in crate::edit_distance) project: Option<EntityId>,
     pub(in crate::edit_distance) at: u64,
 }
 
@@ -101,6 +103,7 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
         hunks: Vec::new(),
         executor: None,
         type_ref: None,
+        project: rejection.project,
         attempt_receipt: None,
         judge: trace.revision,
         judge_model: trace.model,

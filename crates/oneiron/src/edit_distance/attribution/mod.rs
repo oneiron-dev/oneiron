@@ -61,7 +61,8 @@
 //! the guard. A `d_norm` reaches a cell only after a class named who owns it,
 //! as one evidence row per receipt, weighted by its share, in the shared
 //! `learning.edit_cost` cell qualified by executor, consent scope and task
-//! type (FIX 9797). The learning projector recomputes the estimate from the
+//! type (FIX 9797), in the project scope of the run or the reviewed claim
+//! (FIX 6038). The learning projector recomputes the estimate from the
 //! cell's rows, so a replay overwrites rather than double-counts, and
 //! [`edit_cost_for`] reads it back. No parallel scalar head is kept.
 //!
@@ -82,6 +83,7 @@ mod evidence_judge;
 mod origin;
 mod projector;
 mod rejection;
+mod scope_erase;
 mod stored;
 mod taxonomy;
 mod triage;
@@ -115,6 +117,7 @@ pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
 pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
 pub(in crate::edit_distance) use self::rejection::{Rejection, judge_rejection_in_txn};
+pub(crate) use self::scope_erase::erase_amendment_project_in_txn;
 
 /// The recorded, grounded attempt→amendment joins, judged or not: every
 /// evidence row that names the attempt its amended proposal came from, keyed
