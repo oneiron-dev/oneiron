@@ -24,7 +24,7 @@
 //! it (FIX 3462).
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::time::Duration;
@@ -45,16 +45,18 @@ const LIVENESS_POLL: Duration = Duration::from_secs(1);
 /// `false` leaves the marks for that window's next open.
 const ROOM_FACT_COLD_FLUSH: bool = true;
 
-/// Whether a window opened only for a room fact flush stays loaded once its
-/// repair is durable (FIX 3095; a call, canon is silent). `false` unloads
-/// it, unless another holder still has it.
-const ROOM_FACT_KEEP_FLUSH_WINDOW: bool = false;
+/// The windows a room fact or quote pin flush opened stay loaded, the most
+/// recently used this many of them; the least recently used beyond it
+/// unloads, unless another holder still has it. `0` unloads each one right
+/// after its flush, as before (FIX 3095, FIX 11601; a call, canon is silent).
+const ROOM_FACT_FLUSH_WINDOWS_KEPT: usize = 4;
 
 /// Whether a MESSAGE a local write queued, holding quote pins, has its window
 /// opened for them where no loaded window carries it (FIX 3462; a call, canon
 /// is silent). Only the window of the message's learned month opens, and it
-/// unloads after as a room fact flush's does. `false` leaves the pins for
-/// that window's next open.
+/// stays loaded as a room fact flush's does
+/// ([`ROOM_FACT_FLUSH_WINDOWS_KEPT`]). `false` leaves the pins for that
+/// window's next open.
 const MESSAGE_PIN_COLD_FLUSH: bool = true;
 
 thread_local! {
@@ -97,6 +99,8 @@ pub(super) struct LiveMirror {
     pending: Mutex<Pending>,
     wake: Condvar,
     started: AtomicBool,
+    /// The windows flushes opened and keep loaded, least recently used first.
+    flush_kept: Mutex<VecDeque<WindowKey>>,
 }
 
 impl WindowManager {
@@ -181,6 +185,7 @@ impl WindowManager {
             ) {
                 Ok(0) => {}
                 Ok(mirrored) => {
+                    self.touch_flush_window(&key);
                     tracing::debug!(window = %key, mirrored, "committed rows mirrored into the live window");
                 }
                 Err(error) => {
@@ -215,7 +220,8 @@ impl WindowManager {
     /// among `edited` marked first (FIX 3786), and the window of each MESSAGE
     /// among `edited` with quote pins (FIX 3462). The open mirrors them and
     /// routes the repair ([`Self::open_window_for_room_fact_flush`]); a window
-    /// it opened is unloaded after ([`ROOM_FACT_KEEP_FLUSH_WINDOW`]).
+    /// it opened stays loaded, among [`ROOM_FACT_FLUSH_WINDOWS_KEPT`] most
+    /// recently used ([`Self::keep_flush_window`]).
     fn flush_cold_windows(
         self: &Arc<Self>,
         rows: &BTreeSet<EntityId>,
@@ -247,12 +253,46 @@ impl WindowManager {
                     continue;
                 }
             };
-            if opened
-                && !ROOM_FACT_KEEP_FLUSH_WINDOW
-                && let Err(error) = self.unload_window(&key)
-            {
+            if opened {
+                self.keep_flush_window(&key);
+            }
+        }
+    }
+
+    /// Keeps `key`, just opened for a flush, loaded: most recently used
+    /// among [`ROOM_FACT_FLUSH_WINDOWS_KEPT`]; unloads the least recently
+    /// used beyond it.
+    fn keep_flush_window(&self, key: &WindowKey) {
+        let evicted = {
+            let mut kept = self
+                .live_mirror
+                .flush_kept
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(pos) = kept.iter().position(|kept| kept == key) {
+                kept.remove(pos);
+            }
+            kept.push_back(key.clone());
+            let over = kept.len().saturating_sub(ROOM_FACT_FLUSH_WINDOWS_KEPT);
+            kept.drain(..over).collect::<Vec<_>>()
+        };
+        for key in evicted {
+            if let Err(error) = self.unload_window(&key) {
                 tracing::debug!(window = %key, %error, "window opened for a flush stays loaded");
             }
+        }
+    }
+
+    /// Marks `key` most recently used among the flush-kept windows, if kept.
+    fn touch_flush_window(&self, key: &WindowKey) {
+        let mut kept = self
+            .live_mirror
+            .flush_kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(pos) = kept.iter().position(|kept| kept == key) {
+            kept.remove(pos);
+            kept.push_back(key.clone());
         }
     }
 

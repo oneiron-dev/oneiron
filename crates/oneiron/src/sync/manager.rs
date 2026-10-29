@@ -31,12 +31,14 @@
 //!
 //! # Lock semantics
 //!
-//! - The registry mutex is held across the ENTIRE open (recovery included).
-//!   Concurrent opens of the same key serialize; the loser observes the
-//!   winner's instance. Opens are rare (startup + on-demand month faults),
-//!   so the coarse critical section is deliberate.
-//! - Lock order: **registry lock → materializer lock** (open holds the
-//!   registry lock while step-5 forward remat takes the materializer lock).
+//! - A cold open loads and recovers its window outside the registry mutex,
+//!   under a per-window opening mark. A second open of the same window, and
+//!   `window`/`unload_window`/`discard_window`/replacement of it, wait for the
+//!   mark and then see the winner's instance; `loaded_keys` and opens of other
+//!   windows never wait on it. The registry mutex covers only lookups, the fast
+//!   path, registration and unload.
+//! - Lock order: **registry lock → materializer lock** (a cold open takes the
+//!   materializer lock for step-5 forward remat without the registry lock).
 //!   Observer callbacks take ONLY the materializer lock and never the
 //!   registry lock, so observer traffic cannot deadlock against
 //!   open/unload. Code built on the manager must never acquire the registry
@@ -85,6 +87,9 @@ pub struct WindowManager {
     issued_handles: Mutex<HashMap<WindowKey, Vec<Weak<LoadedWindow>>>>,
     /// Windows a sweep holds closed while it compacts them.
     sweep_fence: super::sweep_fence::SweepFence,
+    /// Windows a cold open is loading and recovering outside the registry
+    /// lock: the same per-window mark a sweep uses.
+    opening: super::sweep_fence::SweepFence,
     /// Shared Observer A outbound sink: every window this manager opens
     /// routes its persisted local updates here (every attached channel,
     /// durable `SyncQueue` when none is).
@@ -137,6 +142,7 @@ impl WindowManager {
             windows: Mutex::new(HashMap::new()),
             issued_handles: Mutex::new(HashMap::new()),
             sweep_fence: super::sweep_fence::SweepFence::default(),
+            opening: super::sweep_fence::SweepFence::default(),
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
             live_mirror: Arc::default(),
@@ -242,12 +248,12 @@ impl WindowManager {
         // as the vault's delete router. Idempotent; takes only the vault's
         // attach mutex, never the registry lock.
         self.attach_to_vault();
-        let mut registry = self.lock_registry();
+        let mut registry = self.lock_registry_opened(key);
         // A window a sweep holds closed opens once the sweep is done.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);
-            registry = self.lock_registry();
+            registry = self.lock_registry_opened(key);
         }
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
@@ -263,6 +269,11 @@ impl WindowManager {
             drop(registry);
             return Ok((existing, false));
         }
+        let opening = self
+            .opening
+            .close(key)
+            .expect("no open of the window is under way under the registry lock");
+        drop(registry);
 
         // Startup steps 1-2 (per-window slice): persisted snapshot + pending
         // updates, or a fresh bare doc. A fresh doc still goes through full
@@ -329,10 +340,12 @@ impl WindowManager {
             &self.materializer,
             Some(Arc::clone(&self.outbound)),
         ));
+        let mut registry = self.lock_registry();
         registry.insert(key.clone(), Arc::clone(&window));
         #[cfg(test)]
         self.maybe_pause_handle_issue();
         self.track_issued_handle(key, &window);
+        drop(opening);
         drop(registry);
         Ok((window, true))
     }
@@ -374,7 +387,7 @@ impl WindowManager {
     /// never opens. This is the lookup seam M4-10 delete routing uses to
     /// commit tombstones through the live doc when the window is loaded.
     pub fn window(&self, key: &WindowKey) -> Option<Arc<LoadedWindow>> {
-        let registry = self.lock_registry();
+        let registry = self.lock_registry_opened(key);
         let window = registry.get(key).map(Arc::clone)?;
         #[cfg(test)]
         self.maybe_pause_handle_issue();
@@ -403,7 +416,7 @@ impl WindowManager {
         f: impl FnOnce() -> T,
     ) -> Option<T> {
         let registry = self.windows.lock().ok()?;
-        if registry.contains_key(key) {
+        if registry.contains_key(key) || self.opening.holds(key) {
             return None;
         }
         let retained = {
@@ -456,7 +469,7 @@ impl WindowManager {
     /// minting a new handle requires `open_window`/`window`, which both
     /// need the registry lock this method holds.
     pub fn unload_window(&self, key: &WindowKey) -> Result<bool> {
-        let mut registry = self.lock_registry();
+        let mut registry = self.lock_registry_opened(key);
         let Some(window) = registry.get(key) else {
             return Ok(false);
         };
@@ -507,7 +520,7 @@ impl WindowManager {
     /// (and its observer subscriptions) alive until they drop; this is
     /// logged because their writes are orphaned by design.
     pub fn discard_window(&self, key: &WindowKey) -> bool {
-        let mut registry = self.lock_registry();
+        let mut registry = self.lock_registry_opened(key);
         let Some(window) = registry.remove(key) else {
             return false;
         };
@@ -602,6 +615,22 @@ impl WindowManager {
         self.windows
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The registry lock, taken once no cold open of `key` is loading it: a
+    /// per-window step then sees the window that open registered, and opens
+    /// of other windows never wait on it.
+    fn lock_registry_opened(
+        &self,
+        key: &WindowKey,
+    ) -> MutexGuard<'_, HashMap<WindowKey, Arc<LoadedWindow>>> {
+        let mut registry = self.lock_registry();
+        while self.opening.holds(key) {
+            drop(registry);
+            self.opening.wait_until_open(key);
+            registry = self.lock_registry();
+        }
+        registry
     }
 
     fn track_issued_handle(&self, key: &WindowKey, window: &Arc<LoadedWindow>) {

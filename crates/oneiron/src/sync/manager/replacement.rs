@@ -61,12 +61,12 @@ impl WindowManager {
         bound: ReplacementByteBound,
     ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         self.attach_to_vault();
-        let mut registry = self.lock_registry();
+        let mut registry = self.lock_registry_opened(key);
         // A window a sweep holds closed is replaced once the sweep is done.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);
-            registry = self.lock_registry();
+            registry = self.lock_registry_opened(key);
         }
         if !admitted() {
             return Err(Error::Sync(SyncError::SyncProtocolError {
