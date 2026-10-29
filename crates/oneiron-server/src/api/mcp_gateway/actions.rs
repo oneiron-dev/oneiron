@@ -81,8 +81,7 @@ pub(crate) async fn execute_mcp_invoke_action(
     // A step's type feedback leaves on its own release (FIX 10390), as on
     // the generated verb path: the row's output rides string-encoded in its
     // outcome.
-    let feedback =
-        super::type_feedback_release::hold_action_feedback(&args.verb, &mut output);
+    let feedback = super::type_feedback_release::hold_action_feedback(&args.verb, &mut output);
     let mut structured = json!({
         "tool": MCP_INVOKE_ACTION_TOOL,
         "verb": args.verb,

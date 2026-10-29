@@ -28,11 +28,11 @@ use crate::dto::{
     HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
     MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
-    ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope,
-    RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
-    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint,
-    TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor, WitnessMessage,
-    WitnessReceipt, WitnessTurn,
+    ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
+    RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
+    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput,
+    TemporalHint, TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
