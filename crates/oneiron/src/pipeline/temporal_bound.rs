@@ -19,7 +19,7 @@ use super::channels::{
     score_temporal_candidate, sort_temporal_candidate_scores, temporal_window,
 };
 use super::types::{
-    CandidateFilter, EntityMetadataCache, ScoredEntity, TEMPORAL_WIDENING_FLOOR,
+    EntityMetadataCache, ScoredEntity, SnapshotCandidateFilter, TEMPORAL_WIDENING_FLOOR,
     TEMPORAL_WIDENING_MULTIPLE, TemporalSearchConfig,
 };
 
@@ -136,14 +136,14 @@ impl TemporalCandidates {
 /// such a row exists cannot move what the reader gets back (DEC-0005: no
 /// name, no count).
 pub(super) struct ReadableRows<'p, 'f> {
-    predicate: &'p CandidateFilter<'f>,
+    predicate: &'p SnapshotCandidateFilter<'f>,
     deadline: Option<&'p RetrievalDeadline>,
     answers: Mutex<HashMap<EntityId, bool>>,
 }
 
 impl<'p, 'f> ReadableRows<'p, 'f> {
     pub(super) fn new(
-        predicate: &'p CandidateFilter<'f>,
+        predicate: &'p SnapshotCandidateFilter<'f>,
         deadline: Option<&'p RetrievalDeadline>,
     ) -> Self {
         Self {
