@@ -360,6 +360,38 @@ pub(crate) fn roll_back_summary_in_txn(
     Ok((None, header))
 }
 
+thread_local! {
+    /// Set while this thread's writes skip the write door's rederive.
+    static REDERIVE_DEFERRED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While it lives, the writes this thread makes skip the scope-summary
+/// rederive the write door runs after each write. A window's cold open
+/// recovers through one write per row, and re-deriving every summary after
+/// each of them made a big window's first open take minutes; the open
+/// re-derives once when its recovery ends (FIX 11607).
+pub(crate) struct RederiveDeferral {
+    was: bool,
+}
+
+/// Starts a [`RederiveDeferral`] on this thread.
+pub(crate) fn defer_rederive() -> RederiveDeferral {
+    RederiveDeferral {
+        was: REDERIVE_DEFERRED.with(|deferred| deferred.replace(true)),
+    }
+}
+
+impl Drop for RederiveDeferral {
+    fn drop(&mut self) {
+        REDERIVE_DEFERRED.with(|deferred| deferred.set(self.was));
+    }
+}
+
+/// Whether this thread's writes skip the write door's rederive now.
+pub(crate) fn rederive_deferred() -> bool {
+    REDERIVE_DEFERRED.with(std::cell::Cell::get)
+}
+
 /// Called once at the commit boundary, after all source/HEAD/document edits.
 /// An exact unchanged input is the impact gate: it queues and spends nothing.
 /// A changed scope queues an ordinary Dreamer attempt, never writes prose.

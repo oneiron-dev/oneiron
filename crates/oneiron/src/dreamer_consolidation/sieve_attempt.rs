@@ -209,16 +209,24 @@ impl ConsolidationExecutor<'_> {
             reading = match pack.reading(&decisions) {
                 Some(reading) => reading,
                 // A question left unanswered, or a confidence outside the
-                // integer percent, is a refused reading: its memos go, so the
-                // retry asks the model again (FIX 7218, 7431); the paid
-                // receipts stay.
+                // integer percent, is a refused reading: its memos and charge
+                // marks go together in one write, so the retry asks the model
+                // again and its paid answers are tallied once as fresh steps
+                // (FIX 7218, 7431, 7489); the refused calls' units stay in
+                // this park's spend.
                 None => {
-                    for (hash, _) in &read.steps {
-                        if let Err(error) =
-                            crate::llm::forget_step_memo(ctx.vault, attempt_id, hash)
-                        {
-                            return super::residency::spent_or_deferred(error, ctx, &charges);
+                    let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
+                    if let Err(error) = ctx.vault.with_write_txn_grouped(|wtxn| {
+                        for (hash, _) in &read.steps {
+                            store.forget_step_charge_in_txn(wtxn, attempt_id, hash)?;
+                            crate::llm::forget_step_memo_in_txn(ctx.vault, wtxn, attempt_id, hash)?;
                         }
+                        Ok(())
+                    }) {
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
+                    for (hash, _) in &read.steps {
+                        charges.step_hashes.retain(|kept| *kept != *hash);
                     }
                     return Ok(charges.park_for(SIEVE_UNREAD, DreamerParkCause::Retry));
                 }

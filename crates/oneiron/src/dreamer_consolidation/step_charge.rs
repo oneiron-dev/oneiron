@@ -64,9 +64,8 @@ impl StepChargeTally {
     /// The step's paid receipt goes with its memo, and this park pins none
     /// for it, so the call the resumed attempt asks again charges its own
     /// usage to the wake ledger's settlement (FIX 2851); the fallback's units
-    /// stay in this park's spend. The receipt goes first: a crash between the
-    /// two writes replays the fallback's memo and charges it again, never
-    /// leaves the re-asked call unpaid.
+    /// stay in this park's spend. The receipt and the memo go in one write,
+    /// so a crash leaves either both or neither (FIX 7489).
     pub(super) fn park_on_fallback(
         &self,
         vault: &Vault,
@@ -82,10 +81,7 @@ impl StepChargeTally {
         ) {
             return Ok(self.park_for(reason, cause));
         }
-        vault.with_write_txn(|wtxn| {
-            DreamerRunnerStore::new(vault).forget_step_charge_in_txn(wtxn, attempt_id, &step_hash)
-        })?;
-        crate::llm::forget_step_memo(vault, attempt_id, &step_hash)?;
+        forget_charged_step(vault, attempt_id, &step_hash)?;
         Ok(DreamerAttemptExecution::ParkWithSpend {
             reason: reason.to_owned(),
             cause,
@@ -101,8 +97,11 @@ impl StepChargeTally {
 
     /// Parks Retry on a memoized reply to the step `step_hash` that its site
     /// refuses for `reason` (FIX 7431, Engine 10-21): one stored before the
-    /// site's check refused such replies inside the step. The memo goes, so
-    /// the next try asks the model again; the paid receipt stays.
+    /// site's check refused such replies inside the step. The memo and the
+    /// charge mark go together in one write, so the next try asks the model
+    /// again and its paid answer is tallied once as a fresh step (FIX 7489);
+    /// this park pins none for it, while the refused call's units stay in its
+    /// spend (that call was paid).
     pub(super) fn park_refused_reply(
         &self,
         vault: &Vault,
@@ -110,8 +109,18 @@ impl StepChargeTally {
         step_hash: [u8; 32],
         reason: &str,
     ) -> Result<DreamerAttemptExecution> {
-        crate::llm::forget_step_memo(vault, attempt_id, &step_hash)?;
-        Ok(self.park_for(reason, DreamerParkCause::Retry))
+        forget_charged_step(vault, attempt_id, &step_hash)?;
+        Ok(DreamerAttemptExecution::ParkWithSpend {
+            reason: reason.to_owned(),
+            cause: DreamerParkCause::Retry,
+            completed_units: self.units,
+            step_hashes: self
+                .step_hashes
+                .iter()
+                .copied()
+                .filter(|hash| *hash != step_hash)
+                .collect(),
+        })
     }
 
     pub(super) fn record_terminal(
@@ -161,6 +170,16 @@ impl StepChargeTally {
     pub(super) fn record_units(&mut self, units: u64) {
         self.units = self.units.saturating_add(units);
     }
+}
+
+/// Forgets `step_hash`'s durable charge mark and its memo in ONE write, so
+/// the next try's paid answer is tallied once as a fresh step and a crash
+/// leaves either both or neither (FIX 7489).
+fn forget_charged_step(vault: &Vault, attempt_id: AttemptId, step_hash: &[u8; 32]) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| {
+        DreamerRunnerStore::new(vault).forget_step_charge_in_txn(wtxn, attempt_id, step_hash)?;
+        crate::llm::forget_step_memo_in_txn(vault, wtxn, attempt_id, step_hash)
+    })
 }
 
 /// The units one call's `usage` charges.
