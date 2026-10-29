@@ -8,8 +8,8 @@
 //! anchor of its own, so the attempt-lane projection cannot apply the share
 //! there. This leaf finds the native observation through that context and
 //! states its one effective form: the amendment's loss at its defect share
-//! while the amendment stands, the sealed credit's own observation once it
-//! is withdrawn. The receipt key, the cell, the anchor and the
+//! while the amendment stands, the credit's standing observation (its
+//! latest adjustment included) once it is withdrawn. The receipt key, the cell, the anchor and the
 //! judge/goal/context provenance never move, and no attempt-keyed row is
 //! added beside it.
 
