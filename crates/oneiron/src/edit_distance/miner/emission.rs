@@ -16,6 +16,7 @@ use super::model::{
     MinedOutcome, MinedSkillEditVerdict, MinerRun, StoredMinedEvidence, StoredMintMark,
     StoredSkillEdit, SubstitutionClass, SubstitutionCluster,
 };
+use super::observed::observed_support_in_txn;
 use super::store::{SKILL_EDIT, decode_row, encode_row, mined_skill_edit_in_txn};
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
@@ -281,7 +282,6 @@ pub(super) fn emit_preference_value(
     };
     let claim_id = vault.store.clock.entity_id()?;
     let class = classify_substitution(&cluster.from, &cluster.to);
-    let envelope = miner_envelope(run, handle, cluster.unattributed)?;
     let evidence_id = mined_evidence_record_id(handle)?;
     let evidence_record = encode_row(
         &StoredMinedEvidence::new(cluster, class),
@@ -320,7 +320,16 @@ pub(super) fn emit_preference_value(
                 &evidence_record,
             )
             .apply(wtxn)?;
-        let mut envelope = envelope.clone();
+        // Observed only on ARCH-0003's bar, joined in this writer; below it
+        // the claim keeps its Generated stamp (FIX 3083).
+        let observed = crate::claim::is_observed_preference(Some(ClaimSource::Observed), predicate)
+            && observed_support_in_txn(vault, wtxn, cluster)?;
+        let source = if observed {
+            ClaimSource::Observed
+        } else {
+            ClaimSource::Generated
+        };
+        let mut envelope = miner_envelope(run, handle, cluster.unattributed, source)?;
         vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
         vault
             .batch_in()
@@ -428,11 +437,14 @@ fn emit_skill_edit(
     })
 }
 
-/// The miner's write envelope: the caller's Agent actor, `Generated` source,
-/// `Proposed` ceiling.
+/// The miner's write envelope: the caller's Agent actor, `source`, `Proposed`
+/// ceiling.
 ///
-/// `Generated` because a mined preference is derived, never stated — which is
-/// also what makes GATE-007 refuse to let it supersede anything the owner said.
+/// `source` is `Generated` because a mined preference is derived, never
+/// stated — which is also what makes GATE-007 refuse to let it supersede
+/// anything the owner said — unless the cluster cleared `observed.rs`'s bar:
+/// then it is `Observed`, held beside a stated preference and never over it
+/// (ARCH-0003).
 /// The provenance is the shape `gate.rs::dreamer_run_id_from_provenance` parses
 /// (`dreamer_promotion`'s precedent, verbatim on the two keys that matter), so
 /// the pending row lands in the run's INBOX GROUP and the decider can answer it.
@@ -449,6 +461,7 @@ pub(super) fn miner_envelope(
     run: &MinerRun,
     handle: &[u8; 32],
     unattributed: bool,
+    source: ClaimSource,
 ) -> Result<WriteEnvelope> {
     let provenance = WriteProvenance::new(Value::Map(vec![
         (
@@ -474,7 +487,7 @@ pub(super) fn miner_envelope(
     ]))?;
     Ok(WriteEnvelope::new(
         run.agent,
-        ClaimSource::Generated,
+        source,
         provenance,
         ClaimApprovalStatus::Proposed,
     ))
