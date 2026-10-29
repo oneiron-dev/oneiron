@@ -45,6 +45,7 @@ mod driven;
 mod fallback_tests;
 mod family;
 mod forward;
+mod gemini_chat;
 mod gemini_media;
 mod host_budgets;
 mod hosted_speech;
@@ -303,6 +304,9 @@ fn build_provider(
                 },
             ))
         }
+        // A gemini provider's chat rungs send the Gemini API's own wire
+        // (FIX 1816); one that serves media seats only gets none.
+        ProviderKind::Gemini => return gemini_chat::chat_backend(provider, catalog),
         // The tagger slot's worker is the consumer of this kind; it never
         // answers generate calls, so no LLM backend is built for it. A
         // media-only provider's only client is its media rung's.
@@ -310,7 +314,6 @@ fn build_provider(
         | ProviderKind::Cartesia
         | ProviderKind::Elevenlabs
         | ProviderKind::Voxcpm2
-        | ProviderKind::Gemini
         | ProviderKind::Soniox => {
             return Ok(None);
         }

@@ -32,6 +32,18 @@ impl<T: GeminiTransport> GeminiBackend<T> {
                 .collect(),
         })
     }
+
+    /// The backend over a host's own `catalog`, the rows its config names
+    /// on this provider, rather than the vault's registry.
+    pub fn from_catalog(catalog: Vec<LlmCatalogEntry>, transport: T) -> Self {
+        Self {
+            transport,
+            models: catalog
+                .into_iter()
+                .map(|e| (e.model.clone(), e))
+                .collect(),
+        }
+    }
 }
 /// One request to the configured endpoint per call, when the host's transport
 /// sends once; retries stay with the host, above a run's gate.

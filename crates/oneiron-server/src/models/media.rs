@@ -61,10 +61,13 @@ mod jobs;
 mod options;
 // FIX 465, 2248, 2962: a submit kept before it is sent, and keyed replays.
 mod replay;
+// FIX 1816: a video job charged by its length.
+mod video_length;
 // FIX 9517: every reference upload under the bank's current reference.
 mod voice_reference;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
+pub(in crate::models) use video_length::requested_video_ms;
 pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
 
 /// The run every media call is admitted under, one run per call.
@@ -103,6 +106,9 @@ pub(super) struct HeldJob {
     /// Its end was paid already, by a permit a restart ended before the
     /// vault kept that end (FIX 2963): its end settles with no charge.
     pub(super) paid: bool,
+    /// The clip length its call asked for, charged when its clips state
+    /// none (FIX 1816).
+    pub(super) requested_video_ms: Option<u64>,
 }
 
 impl HeldJob {
@@ -121,6 +127,7 @@ impl HeldJob {
             .await?;
         match &mut state {
             MediaJobState::Done { response } => {
+                self.charge_requested_length(response);
                 let units = response.usage.token_units(self.operation, &self.caps);
                 if self.paid {
                     self.hand_off();
@@ -493,6 +500,7 @@ impl MediaRuntime {
             operation: row.operation,
             caps: media.caps.clone(),
             paid: row.paid,
+            requested_video_ms: requested_video_ms(&row.request),
         })
     }
 

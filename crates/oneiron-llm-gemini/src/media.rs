@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::{future::Future, pin::Pin};
 
+mod clip_length;
 mod prepare;
 
 use prepare::{
@@ -257,6 +258,8 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
             });
         }
         let mut parts = Vec::with_capacity(uris.len());
+        // Every clip's length as it states it; none when one states none.
+        let mut video_ms = Some(0_u64);
         for uri in uris {
             let clip = self
                 .send(
@@ -274,18 +277,23 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
                 .filter(|kind| kind.starts_with("video/"))
                 .unwrap_or("video/mp4")
                 .to_owned();
+            video_ms = video_ms
+                .zip(clip_length::mp4_duration_ms(&clip.body))
+                .map(|(sum, ms)| sum.saturating_add(ms));
             parts.push(MediaPart::Video {
                 media_type,
                 bytes: clip.body,
                 uri: None,
             });
         }
-        // The operation names no clip length; the run charges the call's
-        // reservation.
+        // The operation names no clip length: each clip is charged the
+        // length its MP4 states (FIX 1816). When one states none, the host
+        // charges the length the call asked for, else its reservation.
         Ok(MediaJobState::Done {
             response: MediaResponse {
                 parts,
                 usage: MediaUsage {
+                    video_ms: video_ms.unwrap_or(0),
                     raw_provider: json!({ "job": job, "metadata": status.get("metadata") }),
                     ..MediaUsage::default()
                 },

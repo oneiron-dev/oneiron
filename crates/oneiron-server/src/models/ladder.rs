@@ -1449,6 +1449,7 @@ impl OfferLadder {
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
         let operation = request.operation;
         if operation.is_job() {
+            let requested_video_ms = super::media::requested_video_ms(&bound);
             // The caller's deadline ends the send too (FIX 8134).
             let Some(submitted) = call
                 .deadline
@@ -1469,6 +1470,7 @@ impl OfferLadder {
                     operation,
                     caps: media.caps.clone(),
                     paid: false,
+                    requested_video_ms,
                 }))),
                 Err(error) => {
                     let sent = settle_failed(permit);
