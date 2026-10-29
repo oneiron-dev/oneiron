@@ -17,7 +17,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::LENS_LIST_NARROWED_CARRIES_COMPILED;
 use super::artifact::lens_tree_in;
 use super::proposal::{PROPOSALS, reads_narrowed};
 use crate::claim::ClaimReadStatus;
@@ -100,8 +99,9 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// A `lens_ref` that is not 32 hex; no lens by it; a reader narrowed to
-    /// some worlds or facets ([`LENS_LIST_NARROWED_CARRIES_COMPILED`]); a
-    /// share receipt that does not write while born-with text travels.
+    /// some worlds or facets whose read does not admit the lens's scope, its
+    /// intent NOTE where the proposal placed it (FIX 2136); a share receipt
+    /// that does not write while born-with text travels.
     pub fn lenses_export_pack(
         &self,
         input: &LensPackExportRequest,
@@ -109,25 +109,36 @@ impl Memory<'_> {
         let lens_ref = EntityId::from_hex(&input.lens_ref)
             .map_err(|_| MemoryError::bad_request("lens_ref is a 32-hex lens ref"))?;
         let read = self.read_lane(ClaimReadStatus::Recorded)?;
-        if reads_narrowed(read.actor_key()) && !LENS_LIST_NARROWED_CARRIES_COMPILED {
-            return Err(MemoryError::new(
+        // A narrowed reader is given the tree where its read admits the
+        // lens's scope: its intent NOTE where the proposal placed it. It
+        // learns of no lens outside that scope, a missing one included.
+        let narrowed = reads_narrowed(read.actor_key());
+        let outside = || {
+            MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
-                "a reader narrowed to some worlds or facets is given no lens's frozen tree",
-                &["Export the lens on a credential that reads the whole vault."],
-            ));
-        }
+                "a reader narrowed to some worlds or facets is given a lens's frozen tree only within the lens's scope",
+                &["Export the lens on a credential that reads its scope or the whole vault."],
+            )
+        };
         let vault = self.vault();
         let (record, tree, prompt_ref, prompt_readable) = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            let record = PROPOSALS
-                .get(&vault.store, &txn, &lens_ref)?
-                .ok_or_else(|| MemoryError::not_found(format!("no lens {}", input.lens_ref)))?;
+            let record = PROPOSALS.get(&vault.store, &txn, &lens_ref)?.ok_or_else(|| {
+                if narrowed {
+                    outside()
+                } else {
+                    MemoryError::not_found(format!("no lens {}", input.lens_ref))
+                }
+            })?;
             let tree = lens_tree_in(vault, &txn, &lens_ref, &record.compiled_hash)?;
             let prompt_ref = EntityId::from_hex(&record.prompt_ref)
                 .map_err(|_| Error::CorruptedIndex("lens proposal record"))?;
             let prompt_readable = read.is_entity_readable_in(&txn, &prompt_ref)?;
             (record, tree, prompt_ref, prompt_readable)
         };
+        if narrowed && !prompt_readable {
+            return Err(outside());
+        }
         let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::LensPack);
         let text = if self.secret_sight()? == SecretSight::Owner {
             vault.born_with_text(&lens_ref, None)?
