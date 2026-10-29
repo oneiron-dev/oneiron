@@ -127,8 +127,16 @@ pub(super) fn admitted_pairs_in(
     };
     let mut admitted = Vec::with_capacity(pairs.len());
     let mut excluded = BTreeMap::<String, u64>::new();
+    let mut imported_owner_side = BTreeMap::<EntityId, bool>::new();
     for pair in pairs {
-        let code = match refusal_in(vault, rtxn, &readable, run.as_ref(), pair.receipt_ref) {
+        let code = match refusal_in(
+            vault,
+            rtxn,
+            &readable,
+            run.as_ref(),
+            pair.receipt_ref,
+            &mut imported_owner_side,
+        ) {
             Ok(None) => {
                 admitted.push(pair);
                 continue;
@@ -164,6 +172,7 @@ fn refusal_in(
     readable: &dyn Fn(&EntityId) -> Result<bool>,
     run: Option<&RunTerms>,
     artifact: EntityId,
+    imported_owner_side: &mut BTreeMap<EntityId, bool>,
 ) -> Result<Option<&'static str>> {
     match row_check_in(vault, rtxn, readable, artifact)? {
         RowCheck::Absent | RowCheck::Passes(_) => {}
@@ -185,7 +194,7 @@ fn refusal_in(
         return Ok(None);
     };
     Ok(
-        match source_people_in(vault, rtxn, run, source, entity_type)? {
+        match source_people_in(vault, rtxn, run, source, entity_type, imported_owner_side)? {
             SourcePeople::Owner => None,
             SourcePeople::Others(key) | SourcePeople::Unknown(key)
                 if run.consented.contains(&key) =>
@@ -224,13 +233,15 @@ fn row_check_in(
 /// and its people are the authors its `AuthoredBy` edges name. The acting
 /// owner and the vault's own agents (`bound_room_party_in`) are the owner's
 /// side. A room or ledger that cannot be read, or no one to class, is
-/// unknown.
+/// unknown. A never-joined imported conversation's recorded speakers decide
+/// (FIX 11353).
 fn source_people_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     run: &RunTerms,
     source: EntityId,
     entity_type: u8,
+    imported_owner_side: &mut BTreeMap<EntityId, bool>,
 ) -> Result<SourcePeople> {
     let (key, people) = if entity_type == ENTITY_TYPE_TURN {
         let room = match crate::conversation_dag::conversation_of(&vault.store, rtxn, &source) {
@@ -257,6 +268,29 @@ fn source_people_in(
         (source, authors)
     };
     if people.is_empty() {
+        // FIX 11353: a never-joined imported conversation's speakers are side
+        // strings, not members. An owner-side import needs no tick.
+        if entity_type == ENTITY_TYPE_TURN {
+            let owner_side = match imported_owner_side.get(&key) {
+                Some(cached) => *cached,
+                None => {
+                    let verdict =
+                        match crate::ingest::history::imported_speakers_in(vault, rtxn, key) {
+                            Ok(crate::ingest::history::ImportedConversationSpeakers::OwnerSide) => {
+                                true
+                            }
+                            Ok(_) => false,
+                            Err(error) if fails_export(&error) => return Err(error),
+                            Err(_) => false,
+                        };
+                    imported_owner_side.insert(key, verdict);
+                    verdict
+                }
+            };
+            if owner_side {
+                return Ok(SourcePeople::Owner);
+            }
+        }
         return Ok(SourcePeople::Unknown(key));
     }
     for person in people {
@@ -364,8 +398,16 @@ fn ticked_sources_in(
         fold: vault.authority_view_readonly_in_txn(rtxn)?,
     };
     let mut sources = BTreeMap::<EntityId, ReservoirSourceRow>::new();
+    let mut imported_owner_side = BTreeMap::<EntityId, bool>::new();
     for pair in pairs {
-        let people = match ticked_source_in(vault, rtxn, &readable, &run, pair.receipt_ref) {
+        let people = match ticked_source_in(
+            vault,
+            rtxn,
+            &readable,
+            &run,
+            pair.receipt_ref,
+            &mut imported_owner_side,
+        ) {
             Ok(people) => people,
             Err(error) if fails_export(&error) => return Err(error),
             Err(_) => None,
@@ -397,6 +439,7 @@ fn ticked_source_in(
     readable: &dyn Fn(&EntityId) -> Result<bool>,
     run: &RunTerms,
     artifact: EntityId,
+    imported_owner_side: &mut BTreeMap<EntityId, bool>,
 ) -> Result<Option<SourcePeople>> {
     match row_check_in(vault, rtxn, readable, artifact)? {
         RowCheck::Absent | RowCheck::Passes(_) => {}
@@ -411,7 +454,7 @@ fn ticked_source_in(
     let RowCheck::Passes(entity_type) = row_check_in(vault, rtxn, readable, source)? else {
         return Ok(None);
     };
-    source_people_in(vault, rtxn, run, source, entity_type).map(Some)
+    source_people_in(vault, rtxn, run, source, entity_type, imported_owner_side).map(Some)
 }
 
 /// The export receipt's exclusion fields: the count always, and each reason
