@@ -41,12 +41,12 @@ use crate::api::owner_routes::connector_subscription_routes::{
 use crate::api::owner_routes::conversation_learning_routes::{
     learning_reply_schema, own_reply_schema, set_learning_body_schema, set_own_body_schema,
 };
-use crate::api::owner_routes::craft_candidate_routes::{
-    craft_answer_body_schema, craft_verdict_schema,
-};
 use crate::api::owner_routes::courtesy_delete_routes::{
     courtesy_answer_body_schema, courtesy_incoming_schema, courtesy_send_body_schema,
     courtesy_sent_schema,
+};
+use crate::api::owner_routes::craft_candidate_routes::{
+    craft_answer_body_schema, craft_verdict_schema,
 };
 use crate::api::owner_routes::desktop_takeover_routes::{
     desktop_input_body_schema, desktop_input_reply_schema, desktop_return_reply_schema,
