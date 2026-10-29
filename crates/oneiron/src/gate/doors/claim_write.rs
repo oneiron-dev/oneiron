@@ -4,6 +4,8 @@ mod closer;
 mod decision_context;
 mod reference_read;
 
+pub(crate) use reference_read::unresolved_claim_reference;
+
 use super::burst_inputs::claim_burst_inputs;
 use super::consent::{
     GateConsentBinding, claim_gate_input, enforce_claim_gate_decision_with_consent,

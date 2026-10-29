@@ -4,7 +4,9 @@ use crate::{EntityId, error::Result};
 use serde::{Deserialize, Serialize};
 
 /// Opaque singular reference to one retained document frontier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct RevisionRef(pub [u8; 16]);
 
 /// A published view of an entity's revision state after a change.

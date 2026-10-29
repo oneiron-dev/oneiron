@@ -113,6 +113,9 @@ pub struct ResultCard {
     pub name: Option<String>,
     pub taint: ResultTaint,
     pub more: Vec<ResultFacet>,
+    /// The shape its head shows, when it is clean; none when tainted or withheld.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

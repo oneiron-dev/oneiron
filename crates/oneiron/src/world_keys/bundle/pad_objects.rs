@@ -71,6 +71,15 @@ impl OpenedKeyPads {
         self.entries.iter().map(|(key, _, _)| key)
     }
 
+    /// Keeps, of the pads opened here, only those of the keys `keep` keeps:
+    /// a kit restore's view of what current retirement admits (PAD-1). The
+    /// sealed object is untouched; a view cut so is never rewritten, since
+    /// a rewrite seals the pads the view holds.
+    #[cfg(feature = "sync")]
+    pub(crate) fn retain_keys(&mut self, mut keep: impl FnMut(&WorldKeyId) -> bool) {
+        self.entries.retain(|(key, _, _)| keep(key));
+    }
+
     /// Erase's rewrite of one object: the same generation, capsules, outer key and
     /// length, sealed afresh without `world`'s pads. It replaces the old object,
     /// which the holder deletes.

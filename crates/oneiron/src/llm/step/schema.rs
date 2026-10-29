@@ -55,12 +55,20 @@ pub(super) fn validate_fallback(
         })
 }
 
+/// `request` through the backend, its schema met natively or by corrective
+/// calls. `capture` keeps each corrective call's wire under its own call index
+/// before it is sent (FIX 6145), best effort, as the step's own call is kept.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the step's call, its budget, observation and capture join the reply check"
+)]
 pub(super) async fn generate(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &BudgetLease,
     guard: &BudgetGuard,
     calls: StepCalls<'_>,
+    capture: &(dyn Fn(&LlmRequest, u32) + Sync),
     check: Option<&ReplyCheck>,
     max_retries: usize,
 ) -> DurableStepResult<LlmResponse> {
@@ -151,8 +159,11 @@ pub(super) async fn generate(
                     .lease,
             };
             // Its own call under the same logical step, bound as the step's
-            // first call is (DOOR-144); transport retries reuse it.
-            _correction_call = calls.admitted(guard, &correction.lease, u32::from(attempt - 1));
+            // first call is (DOOR-144); transport retries reuse it. Its wire
+            // is kept under that call before it goes (FIX 6145).
+            let call = u32::from(attempt - 1);
+            _correction_call = calls.admitted(guard, &correction.lease, call);
+            capture(&wire, call);
             &correction.lease
         };
         let mut response = match super::retry::generate_with_retry(
