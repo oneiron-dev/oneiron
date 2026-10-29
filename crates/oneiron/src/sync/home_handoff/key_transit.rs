@@ -246,7 +246,11 @@ pub(crate) fn transit_keys(
     };
     let mut sent = Vec::with_capacity(frozen.keys.len());
     for key in &frozen.keys {
-        match export(&vault.store, KeyRef::from_hex(key)?, &target) {
+        let Ok(reference) = KeyRef::from_hex(key) else {
+            tracing::debug!("a home handoff key ref does not parse; it was not sent");
+            continue;
+        };
+        match export(&vault.store, reference, &target) {
             Ok(sealed) => sent.push(SentKey {
                 key: key.clone(),
                 sealed,

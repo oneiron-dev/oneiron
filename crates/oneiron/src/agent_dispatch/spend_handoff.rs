@@ -137,8 +137,8 @@ fn partition(scopes: Vec<SpendScope>) -> Result<Partitioned<FreeTimeSpendRows, S
 
 /// Each carried scope rebuilt from its skeleton and the compartments that
 /// opened here. An agent or a payer whose compartment did not open takes the
-/// one the scope here holds, if any, else none: a scope or a tree never
-/// stops for it.
+/// one the scope here holds, if any and not erased here, else none: a scope
+/// or a tree never stops for it.
 fn rejoin_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -169,9 +169,13 @@ fn rejoin_in_txn(
         } else {
             None
         };
+        let erased = |id: &EntityId| crate::ports::removed_in_txn(&vault.store, txn, id);
         let agent = match opened_agent {
             Some(agent) => Some(agent),
-            None if skeleton.calibrates => here.as_ref().and_then(|here| here.agent),
+            None if skeleton.calibrates => match here.as_ref().and_then(|here| here.agent) {
+                Some(agent) if !erased(&agent)? => Some(agent),
+                _ => None,
+            },
             None => None,
         };
         let payer = match (skeleton.payer_at_ms, opened_payer) {
@@ -180,7 +184,10 @@ fn rejoin_in_txn(
                 granted_by,
                 at_ms,
             }),
-            (Some(_), None) => here.and_then(|here| here.payer),
+            (Some(_), None) => match here.and_then(|here| here.payer) {
+                Some(payer) if !erased(&payer.party)? && !erased(&payer.granted_by)? => Some(payer),
+                _ => None,
+            },
             (None, _) => None,
         };
         scopes.push(SpendScope {
