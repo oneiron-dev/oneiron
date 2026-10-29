@@ -78,7 +78,8 @@ impl Vault {
     /// transaction's local write changed (FIX 7957): the window that holds
     /// the row owes its carrier until the change is durable there. A sync
     /// import's rows leave none, as the window already holds what it brought;
-    /// nor does a row gone by now, whose delete publishes its own tombstone.
+    /// nor does a row gone by now, whose delete publishes its own tombstone,
+    /// nor a live off-record overlay member, which stays on this device.
     pub(crate) fn mark_pending_mirrors_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -92,7 +93,7 @@ impl Vault {
             let Some(raw) = self.get_raw_in(wtxn, id)? else {
                 continue;
             };
-            if !rides_window(&raw) {
+            if !rides_window(&raw) || self.store.off_record_sessions.contains_entity(id)? {
                 continue;
             }
             if let Ok(window) = residence_window_for_blob(&raw) {
