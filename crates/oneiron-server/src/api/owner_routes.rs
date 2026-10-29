@@ -423,11 +423,14 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
     }
 }
 
-/// Runs blocking vault work (snapshots, restores) off the runtime.
+/// Runs blocking vault work (snapshots, restores) off the runtime. Inside
+/// an owner's restriction-only act the closure reads that clock on its own
+/// thread (FIX 11523), as a facade door's does; anywhere else it runs as it
+/// is.
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
+    super::clock_ingress::run_blocking(work)
         .await
         .map_err(|_| ApiError::internal_server_error("owner action task failed"))?
         .map_err(owner_error)
