@@ -653,6 +653,7 @@ fn backfill_answer(
                     person_row: None,
                     rule: input.rule,
                     asked: None,
+                    state_cut: None,
                 },
                 human_ask: None,
             },

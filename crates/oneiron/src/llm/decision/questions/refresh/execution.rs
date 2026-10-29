@@ -227,6 +227,7 @@ pub(super) fn refresh_with(
                         person_row: None,
                         rule: proposal.rule.clone(),
                         asked: None,
+                        state_cut: None,
                     },
                     human_ask: None,
                 },

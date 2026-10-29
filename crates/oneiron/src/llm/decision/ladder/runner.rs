@@ -587,6 +587,7 @@ impl DecisionLadder<'_> {
                     .rule
                     .filter(|_| answered == Some(DecisionRung::Rule)),
                 asked,
+                state_cut: None,
             },
         })
     }

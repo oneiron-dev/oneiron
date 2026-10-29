@@ -28765,6 +28765,22 @@ pub struct ReceiptAsk {
     pub answered: Option<ReceiptAnswerer>,
 }
 
+/// `oneiron::llm::decision::types::StateCut`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StateCut {
+    #[serde(rename = "kept")]
+    pub kept: u64,
+    #[serde(rename = "of")]
+    pub of: u64,
+    #[serde(
+        rename = "text_cut_at_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub text_cut_at_bytes: Option<u64>,
+}
+
 /// `oneiron::llm::decision::types::DecisionReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -28817,6 +28833,8 @@ pub struct DecisionReceipt {
     pub rule: Option<HostRuleRef>,
     #[serde(rename = "asked", default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<ReceiptAsk>,
+    #[serde(rename = "state_cut", default, skip_serializing_if = "Option::is_none")]
+    pub state_cut: Option<StateCut>,
 }
 
 /// `oneiron::llm::decision::types::HumanAskReason`.

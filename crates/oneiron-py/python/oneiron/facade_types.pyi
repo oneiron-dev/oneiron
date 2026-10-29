@@ -9418,6 +9418,10 @@ class ReceiptAsk(TypedDict):
     ceiling: RoleRank
     act: AskAct
     answered: NotRequired[ReceiptAnswerer | None]
+class StateCut(TypedDict):
+    kept: int
+    of: int
+    text_cut_at_bytes: NotRequired[int | None]
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -9435,6 +9439,7 @@ class DecisionReceipt(TypedDict):
     person_row: NotRequired[int | None]
     rule: NotRequired[HostRuleRef | None]
     asked: NotRequired[ReceiptAsk | None]
+    state_cut: NotRequired[StateCut | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer

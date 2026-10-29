@@ -751,6 +751,7 @@ fn predicted(
             person_row: None,
             rule: None,
             asked: None,
+            state_cut: None,
         },
         human_ask: None,
     }

@@ -1889,7 +1889,8 @@ declare namespace Sdk {
   type HolderKind = "person" | "agent";
   type ReceiptAnswerer = { role: RoleRank; project?: string | null; kind: HolderKind };
   type ReceiptAsk = { seq?: number | null; role: RoleRank; project?: string | null; ceiling: RoleRank; act: AskAct; answered?: ReceiptAnswerer | null };
-  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null; asked?: ReceiptAsk | null };
+  type StateCut = { kept: number; of: number; text_cut_at_bytes?: number | null };
+  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null; asked?: ReceiptAsk | null; state_cut?: StateCut | null };
   type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
   type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type PolicyReadError = "settlement_invariant";

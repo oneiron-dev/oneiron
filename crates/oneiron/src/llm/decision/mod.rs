@@ -15,7 +15,7 @@ pub use generated::{
 };
 mod held;
 pub use held::HeldLadder;
-pub use held::{cut_text, fit_state};
+pub use held::{cut_text, fit_reserve_state, fit_state};
 mod ladder;
 mod local;
 mod locate;

@@ -114,6 +114,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 person_row: None,
                 rule: None,
                 asked: None,
+                state_cut: None,
             },
             human_ask: None,
         },
