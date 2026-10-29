@@ -57,7 +57,7 @@ pub(crate) async fn execute_mcp_execute_code(
         Err(error) => {
             super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
             let rows = match server.vault.get_code_run_replay_record(&run_id) {
-                Ok(Some(record)) => record.result_rows(),
+                Ok(Some(record)) => record.agent_verb_rows(),
                 Ok(None) => Some(Vec::new()),
                 Err(_) => None,
             }
@@ -158,7 +158,7 @@ pub(crate) async fn execute_mcp_execute_code(
     let held =
         type_feedback_release::hold_run_feedback(&mut structured, record, outcome.program_steps);
     let named = super::device_release::mcp_run_named_rows(server, actor, &structured, record)
-        .zip(record.result_rows())
+        .zip(record.agent_verb_rows())
         .map(|(mut named, recorded)| {
             named.extend(recorded);
             named.extend(verbs.served());
