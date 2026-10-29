@@ -143,6 +143,9 @@ const KIT_TARGET_ELSEWHERE: &str = "kit_target_elsewhere";
 const KIT_TARGET_UNPROVED: &str = "kit_target_unproved";
 const KIT_TARGET_NOT_ALLOWED: &str = "kit_target_not_allowed";
 const KIT_REQUIRES_OWNER_DEVICE: &str = "kit_requires_owner_device";
+/// The named refusals of a kit this install cannot verify ([`kit_root_refusal`]).
+const KIT_UNVERIFIED: &str = "kit_unverified";
+const KIT_CONFIRMATION_STALE: &str = "kit_confirmation_stale";
 
 /// Canon (DEC-0005, FIX 6028): the console never receives the recovery seed.
 /// While this holds, a hosted or managed install is no kit target: both
@@ -193,6 +196,40 @@ fn kit_target_refused(state: &str, message: &str, suggestion: &str) -> ApiError 
         },
         [suggestion],
     )
+}
+
+/// A kit seed refused for want of a confirmation, answered with the root its
+/// pieces rebuild, a public id (FIX 4533, 4955), as the stopped vault's
+/// commands word it: the owner checks it on one of his machines and gives it
+/// back as `fingerprint`, or goes ahead with `confirm_root`, which holds for
+/// that root alone. `None` for any other error.
+pub(super) fn kit_root_refusal(error: &oneiron::Error) -> Option<ApiError> {
+    use oneiron::error::SecretError;
+    match error {
+        oneiron::Error::Secret(SecretError::UnverifiedKitRestore { root, .. }) => {
+            let root = hex(root);
+            Some(kit_target_refused(
+                KIT_UNVERIFIED,
+                &format!("{error}: these pieces rebuild root {root}"),
+                &format!(
+                    "Give `fingerprint` with the root one of your machines pins, or go ahead \
+                     with `confirm_root` {root}."
+                ),
+            ))
+        }
+        oneiron::Error::Secret(SecretError::KitConfirmationStale { root, confirmed }) => {
+            let (root, confirmed) = (hex(root), hex(confirmed));
+            Some(kit_target_refused(
+                KIT_CONFIRMATION_STALE,
+                &format!(
+                    "`confirm_root` {confirmed} is not this kit's root: these pieces rebuild \
+                     root {root}"
+                ),
+                &format!("To go ahead with this kit, send `confirm_root` {root}."),
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// The recipient rule for kit material (CALLS "owneract kit transport"):
