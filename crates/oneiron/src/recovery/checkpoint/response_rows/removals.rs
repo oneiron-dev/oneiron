@@ -66,7 +66,7 @@ pub(in crate::recovery::checkpoint) fn halt_erased_pack_routes(
     vault.with_write_txn_grouped(|txn| {
         erased
             .iter()
-            .try_for_each(|id| vault.halt_erased_pack_source_routes_in_txn(txn, id))
+            .try_for_each(|id| vault.halt_deleted_pack_source_routes_in_txn(txn, id))
     })
 }
 
