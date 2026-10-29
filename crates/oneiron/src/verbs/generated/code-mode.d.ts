@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4249 declarations.
+// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4256 declarations.
 // Replies: 1090 fully typed, 126 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: none.
@@ -260,7 +260,8 @@ declare namespace Sdk {
   type PersonaSnapshotCopyRequest = { subject: EntityId; stamp: string; strike?: string[]; unstrike?: string[]; travel?: CopyTravelChoice | null };
   type PersonaSnapshotMemoryPackRow = { row_id: string; kind: string; text: string; subject_ref?: EntityId | null; provenance_refs?: string[] | null; salience?: number | null; attribution?: string | null };
   type PersonaSnapshotMemoryPack = { schema: string; kind: string; subject_ref?: EntityId | null; identity_line?: string | null; audience_ref?: string | null; takes_included: boolean; compiled_at_secs: number; stale_after_secs: number; persona_compile_stamp: string; rows: PersonaSnapshotMemoryPackRow[] };
-  type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number };
+  type PersonaSnapshotCopyReceipt = { refs: CopyRefs; artifact_fingerprint: string; omitted_refs: string[] };
+  type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number; receipt: PersonaSnapshotCopyReceipt };
   type PersonaSnapshotTextEdit = { row_id: string; text: string };
   type PersonaSnapshotCopyEditRequest = { export_id: EntityId; stamp: string; edits: PersonaSnapshotTextEdit[]; strike?: string[]; unstrike?: string[]; travel?: CopyTravelChoice | null };
   type DiaryQueryRequest = { agent: string; reason: string };
@@ -1527,11 +1528,17 @@ declare namespace Sdk {
   type OffRecordRoomShortIdPair = { room: string; vault: string };
   type OffRecordRoomSavedTurn = { turn: string; replayed: string[]; short_ids: OffRecordRoomShortIdPair[] };
   type OffRecordRoomSaved = { saved: OffRecordRoomSavedTurn[] };
+  type OffRecordRoomExportRequest = { room: string; session_ref: string; travel?: CopyTravelChoice | null };
   type MessageResultSource = { run_id: EntityId; occurrence: EntityId; path: string };
   type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] };
-  type OffRecordTalkMessage = { author: string; message_type: string; content: string; order: number; result?: MessageResultAttachment | null };
-  type OffRecordRoomExportTurn = { turn: string; speaker?: string | null; occurred_at: string; saved: boolean; messages: OffRecordTalkMessage[] };
-  type OffRecordRoomExport = { session_ref: string; room?: string | null; exported_at: string; turns: OffRecordRoomExportTurn[] };
+  type OffRecordRoomCopyResult = { label: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean };
+  type OffRecordRoomExportResult = MessageResultAttachment | OffRecordRoomCopyResult;
+  type OffRecordRoomExportMessage = { author: string; message_type: string; content: string; order: number; result?: OffRecordRoomExportResult | null };
+  type OffRecordRoomExportTurn = { turn: string; speaker?: string | null; occurred_at: string; saved: boolean; messages: OffRecordRoomExportMessage[] };
+  type OffRecordRoomCopySlotHandling = "dropped" | "labelled";
+  type OffRecordRoomCopySlot = { slot: string; handling: OffRecordRoomCopySlotHandling; count: number };
+  type OffRecordRoomCopyLoss = { refs: CopyRefs; slots: OffRecordRoomCopySlot[] };
+  type OffRecordRoomExport = { session_ref?: string | null; room?: string | null; exported_at: string; turns: OffRecordRoomExportTurn[]; copy?: OffRecordRoomCopyLoss | null };
   type RecordEraseRequest = { record: EntityId };
   type EraseShare = { grant: string; recipient: string };
   type EraseHeldBytes = { content_hash: string; other_holders: string[] };
@@ -6271,8 +6278,8 @@ declare const vault: Sdk.VaultHost & {
       confirm_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits. */
       decline_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
-      /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
-      export(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomExport | StoredResult>;
+      /** A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
+      export(input: Sdk.OffRecordRoomExportRequest): Promise<Sdk.OffRecordRoomExport | StoredResult>;
       /** A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential. */
       save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
@@ -6382,9 +6389,9 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.PeopleListRequest): Promise<Sdk.PeoplePage | StoredResult>;
   };
   personas: {
-    /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version. */
+    /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out. */
     edit(input: Sdk.PersonaSnapshotCopyEditRequest): Promise<Sdk.PersonaSnapshotExportedCopy | StoredResult>;
-    /** Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent. */
+    /** Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent. */
     export(input: Sdk.PersonaSnapshotCopyRequest): Promise<Sdk.PersonaSnapshotExportedCopy | StoredResult>;
     /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
     preview(input: Sdk.PersonaSnapshotPreviewRequest): Promise<Sdk.PersonaSnapshotPreview | StoredResult>;

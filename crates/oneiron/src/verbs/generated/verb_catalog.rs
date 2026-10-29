@@ -10576,10 +10576,10 @@ impl AgentVerb {
                 "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."
             }
             Self::VaultPersonasExport => {
-                "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."
+                "Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent."
             }
             Self::VaultPersonasEdit => {
-                "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."
+                "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out."
             }
             Self::SelfMemoryDiaryQuery => {
                 "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."
@@ -11608,7 +11608,7 @@ impl AgentVerb {
                 "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."
             }
             Self::VaultOffRecordRoomsExport => {
-                "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in."
+                "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."
             }
             Self::VaultOffRecordRoomsSuggestSave => {
                 "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."

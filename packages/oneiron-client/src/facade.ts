@@ -403,7 +403,7 @@ export interface FacadeInputs {
   "vault.off_record.rooms.witness": Facade.OffRecordRoomWitnessRequest;
   "vault.off_record.rooms.save": Facade.OffRecordRoomRequest;
   "vault.off_record.rooms.save_from_here": Facade.OffRecordRoomRequest;
-  "vault.off_record.rooms.export": Facade.OffRecordRoomRequest;
+  "vault.off_record.rooms.export": Facade.OffRecordRoomExportRequest;
   "vault.off_record.rooms.suggest_save": Facade.OffRecordRoomRequest;
   "vault.off_record.rooms.confirm_save": Facade.OffRecordRoomRequest;
   "vault.off_record.rooms.decline_save": Facade.OffRecordRoomRequest;
@@ -2409,8 +2409,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.companions.access_requests.answer": { description: "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.grants.answer": { description: "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.personas.preview": { description: "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.personas.export": { description: "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.personas.edit": { description: "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.personas.export": { description: "Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.personas.edit": { description: "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.memory.diary.query": { description: "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "cancel": { description: "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "steer": { description: "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -2757,7 +2757,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.off_record.rooms.witness": { description: "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.save": { description: "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.save_from_here": { description: "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.rooms.export": { description: "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.rooms.export": { description: "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.suggest_save": { description: "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms.", scope: "Write", proposes: true, hostDoor: true, section: false },
   "vault.off_record.rooms.confirm_save": { description: "A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.decline_save": { description: "A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -3721,9 +3721,9 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       personas: {
         /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
         preview: (input: Facade.PersonaSnapshotPreviewRequest, options?: O): FacadeReturns<"vault.personas.preview">[K] => invoke("vault.personas.preview", input, options, newInvocation()),
-        /** Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent. */
+        /** Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent. */
         export: (input: Facade.PersonaSnapshotCopyRequest, options?: O): FacadeReturns<"vault.personas.export">[K] => invoke("vault.personas.export", input, options, newInvocation()),
-        /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version. */
+        /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out. */
         edit: (input: Facade.PersonaSnapshotCopyEditRequest, options?: O): FacadeReturns<"vault.personas.edit">[K] => invoke("vault.personas.edit", input, options, newInvocation()),
       },
       fanout: {
@@ -4677,8 +4677,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           save: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.save">[K] => invoke("vault.off_record.rooms.save", input, options, newInvocation()),
           /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
           save_from_here: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.save_from_here">[K] => invoke("vault.off_record.rooms.save_from_here", input, options, newInvocation()),
-          /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
-          export: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.export">[K] => invoke("vault.off_record.rooms.export", input, options, newInvocation()),
+          /** A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
+          export: (input: Facade.OffRecordRoomExportRequest, options?: O): FacadeReturns<"vault.off_record.rooms.export">[K] => invoke("vault.off_record.rooms.export", input, options, newInvocation()),
           /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
           suggest_save: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.suggest_save">[K] => invoke("vault.off_record.rooms.suggest_save", input, options, newInvocation()),
           /** A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits. */

@@ -11116,7 +11116,7 @@ async fn execute_agent_verb_row(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.export", &input)
                 .map_err(mcp_facade_error)?;
-            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+            let input: oneiron::task_verb::sdk::OffRecordRoomExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 crate::api::facade::host_doors::vault_off_record_rooms_export(server, auth, input)

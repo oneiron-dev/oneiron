@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1166 facade rows, 4189 declarations.
+Census: 1166 facade rows, 4196 declarations.
 Inputs: 1099 of 1166 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1166 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -1301,6 +1301,10 @@ class PersonaSnapshotMemoryPack(TypedDict):
     stale_after_secs: int
     persona_compile_stamp: str
     rows: list[PersonaSnapshotMemoryPackRow]
+class PersonaSnapshotCopyReceipt(TypedDict):
+    refs: CopyRefs
+    artifact_fingerprint: str
+    omitted_refs: list[str]
 class PersonaSnapshotExportedCopy(TypedDict):
     export_id: EntityId
     subject: EntityId
@@ -1312,6 +1316,7 @@ class PersonaSnapshotExportedCopy(TypedDict):
     struck_row_ids: list[str]
     compiled_at: str
     stale_after_secs: int
+    receipt: PersonaSnapshotCopyReceipt
 class PersonaSnapshotTextEdit(TypedDict):
     row_id: str
     text: str
@@ -7593,6 +7598,10 @@ class OffRecordRoomSavedTurn(TypedDict):
     short_ids: list[OffRecordRoomShortIdPair]
 class OffRecordRoomSaved(TypedDict):
     saved: list[OffRecordRoomSavedTurn]
+class OffRecordRoomExportRequest(TypedDict):
+    room: str
+    session_ref: str
+    travel: NotRequired[CopyTravelChoice | None]
 class MessageResultSource(TypedDict):
     run_id: EntityId
     occurrence: EntityId
@@ -7607,23 +7616,41 @@ class MessageResultAttachment(TypedDict):
     preview: str
     preview_truncated: bool
     more: list[ResultFacet]
-class OffRecordTalkMessage(TypedDict):
+class OffRecordRoomCopyResult(TypedDict):
+    label: str
+    bytes: int
+    kind: str
+    lines: int
+    complete: bool
+    preview: str
+    preview_truncated: bool
+OffRecordRoomExportResult = MessageResultAttachment | OffRecordRoomCopyResult
+class OffRecordRoomExportMessage(TypedDict):
     author: str
     message_type: str
     content: str
     order: int
-    result: NotRequired[MessageResultAttachment | None]
+    result: NotRequired[OffRecordRoomExportResult | None]
 class OffRecordRoomExportTurn(TypedDict):
     turn: str
     speaker: NotRequired[str | None]
     occurred_at: str
     saved: bool
-    messages: list[OffRecordTalkMessage]
+    messages: list[OffRecordRoomExportMessage]
+OffRecordRoomCopySlotHandling = Literal["dropped", "labelled"]
+class OffRecordRoomCopySlot(TypedDict):
+    slot: str
+    handling: OffRecordRoomCopySlotHandling
+    count: int
+class OffRecordRoomCopyLoss(TypedDict):
+    refs: CopyRefs
+    slots: list[OffRecordRoomCopySlot]
 class OffRecordRoomExport(TypedDict):
-    session_ref: str
+    session_ref: NotRequired[str | None]
     room: NotRequired[str | None]
     exported_at: str
     turns: list[OffRecordRoomExportTurn]
+    copy: NotRequired[OffRecordRoomCopyLoss | None]
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):

@@ -541,9 +541,9 @@ export class Oneiron {
     personas: {
       /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
       preview: (input: Facade.PersonaSnapshotPreviewRequest): Facade.PersonaSnapshotPreview => this.#call(() => this.#client.vaultPersonasPreview(input) as Facade.PersonaSnapshotPreview),
-      /** Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent. */
+      /** Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent. */
       export: (input: Facade.PersonaSnapshotCopyRequest): Facade.PersonaSnapshotExportedCopy => this.#call(() => this.#client.vaultPersonasExport(input) as Facade.PersonaSnapshotExportedCopy),
-      /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version. */
+      /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out. */
       edit: (input: Facade.PersonaSnapshotCopyEditRequest): Facade.PersonaSnapshotExportedCopy => this.#call(() => this.#client.vaultPersonasEdit(input) as Facade.PersonaSnapshotExportedCopy),
     },
     fanout: {
@@ -1521,8 +1521,8 @@ export class Oneiron {
         save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
         /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
         save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
-        /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
-        export: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
+        /** A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
+        export: (input: Facade.OffRecordRoomExportRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
         /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
         suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
         /** A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits. */

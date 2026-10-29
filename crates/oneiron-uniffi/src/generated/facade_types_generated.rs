@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1166 facade rows, 4173 generated types.
+// UniFFI census: 1166 facade rows, 4180 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1118.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -4161,6 +4161,17 @@ pub struct PersonaSnapshotMemoryPack {
     pub rows: Vec<PersonaSnapshotMemoryPackRow>,
 }
 
+/// `oneiron::verbs::persona::PersonaSnapshotCopyReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PersonaSnapshotCopyReceipt {
+    #[serde(rename = "refs")]
+    pub refs: CopyRefs,
+    #[serde(rename = "artifact_fingerprint")]
+    pub artifact_fingerprint: String,
+    #[serde(rename = "omitted_refs")]
+    pub omitted_refs: Vec<String>,
+}
+
 /// `oneiron::verbs::persona::PersonaSnapshotExportedCopy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PersonaSnapshotExportedCopy {
@@ -4188,6 +4199,8 @@ pub struct PersonaSnapshotExportedCopy {
     pub compiled_at: String,
     #[serde(rename = "stale_after_secs")]
     pub stale_after_secs: u64,
+    #[serde(rename = "receipt")]
+    pub receipt: PersonaSnapshotCopyReceipt,
 }
 
 /// `oneiron::persona_snapshot::copy::PersonaSnapshotTextEdit`.
@@ -22995,6 +23008,18 @@ pub struct OffRecordRoomSaved {
     pub saved: Vec<OffRecordRoomSavedTurn>,
 }
 
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordRoomExportRequest {
+    #[serde(rename = "room")]
+    pub room: String,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "travel", default, skip_serializing_if = "Option::is_none")]
+    pub travel: Option<CopyTravelChoice>,
+}
+
 /// `oneiron::memory::result_attachment::MessageResultSource`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -23031,9 +23056,37 @@ pub struct MessageResultAttachment {
     pub more: Vec<ResultFacet>,
 }
 
-/// `oneiron::off_record::lifecycle::types::OffRecordTalkMessage`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomCopyResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct OffRecordTalkMessage {
+#[serde(deny_unknown_fields)]
+pub struct OffRecordRoomCopyResult {
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "lines")]
+    pub lines: u64,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "preview")]
+    pub preview: String,
+    #[serde(rename = "preview_truncated")]
+    pub preview_truncated: bool,
+}
+
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomExportResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum OffRecordRoomExportResult {
+    Attached(MessageResultAttachment),
+    Labelled(OffRecordRoomCopyResult),
+}
+
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomExportMessage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordRoomExportMessage {
     #[serde(rename = "author")]
     pub author: String,
     #[serde(rename = "message_type")]
@@ -23043,7 +23096,7 @@ pub struct OffRecordTalkMessage {
     #[serde(rename = "order")]
     pub order: u64,
     #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<MessageResultAttachment>,
+    pub result: Option<OffRecordRoomExportResult>,
 }
 
 /// `oneiron::verbs::off_record_rooms::OffRecordRoomExportTurn`.
@@ -23058,20 +23111,55 @@ pub struct OffRecordRoomExportTurn {
     #[serde(rename = "saved")]
     pub saved: bool,
     #[serde(rename = "messages")]
-    pub messages: Vec<OffRecordTalkMessage>,
+    pub messages: Vec<OffRecordRoomExportMessage>,
+}
+
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomCopySlotHandling`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OffRecordRoomCopySlotHandling {
+    #[serde(rename = "dropped")]
+    Dropped,
+    #[serde(rename = "labelled")]
+    Labelled,
+}
+
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomCopySlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordRoomCopySlot {
+    #[serde(rename = "slot")]
+    pub slot: String,
+    #[serde(rename = "handling")]
+    pub handling: OffRecordRoomCopySlotHandling,
+    #[serde(rename = "count")]
+    pub count: u64,
+}
+
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomCopyLoss`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordRoomCopyLoss {
+    #[serde(rename = "refs")]
+    pub refs: CopyRefs,
+    #[serde(rename = "slots")]
+    pub slots: Vec<OffRecordRoomCopySlot>,
 }
 
 /// `oneiron::verbs::off_record_rooms::OffRecordRoomExport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomExport {
-    #[serde(rename = "session_ref")]
-    pub session_ref: String,
+    #[serde(
+        rename = "session_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_ref: Option<String>,
     #[serde(rename = "room", default, skip_serializing_if = "Option::is_none")]
     pub room: Option<String>,
     #[serde(rename = "exported_at")]
     pub exported_at: String,
     #[serde(rename = "turns")]
     pub turns: Vec<OffRecordRoomExportTurn>,
+    #[serde(rename = "copy", default, skip_serializing_if = "Option::is_none")]
+    pub copy: Option<OffRecordRoomCopyLoss>,
 }
 
 /// `oneiron::verbs::record_erase::RecordEraseRequest`.

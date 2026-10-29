@@ -2086,7 +2086,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.off_record.rooms.export",
                 crate::code_run::vault_read::request_schema::<
-                    crate::task_verb::sdk::OffRecordRoomRequest,
+                    crate::task_verb::sdk::OffRecordRoomExportRequest,
                 >(),
             ),
             (
@@ -19481,7 +19481,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
         }
         "vault.off_record.rooms.export" => {
-            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::OffRecordRoomExportRequest = decode(value.clone())?;
         }
         "vault.off_record.rooms.suggest_save" => {
             let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
@@ -28023,7 +28023,7 @@ pub fn vault_off_record_rooms_save_from_here(
 }
 pub fn vault_off_record_rooms_export(
     memory: &Memory<'_>,
-    input: crate::task_verb::sdk::OffRecordRoomRequest,
+    input: crate::task_verb::sdk::OffRecordRoomExportRequest,
 ) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomExport> {
     crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.rooms.export", &input)
 }
