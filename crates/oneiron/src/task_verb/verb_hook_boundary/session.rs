@@ -54,6 +54,7 @@ pub(crate) fn session_row_call(
             .room_turn()
             .map(|turn| format!("room:{}", turn.room.to_hex())),
         board_epoch: None,
+        turn: None,
         domain: row_domain(verb),
         reader: Some(key),
     }

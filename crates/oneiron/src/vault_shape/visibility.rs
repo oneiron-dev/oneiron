@@ -141,10 +141,11 @@ impl Vault {
             }
             None => None,
         };
+        let pins = self.approval_pins_visible(withheld, visible)?;
         let txn = self.store.env.read_txn()?;
         let mut applies = Vec::new();
         for journal in self.open_shape_applies()? {
-            applies.extend(self.visible_journal(&txn, journal, withheld, visible)?);
+            applies.extend(self.visible_journal(&txn, journal, withheld, pins, visible)?);
         }
         Ok((seed, applies))
     }
@@ -154,12 +155,15 @@ impl Vault {
     /// from the caller left out (a hidden target, or a declaration or
     /// receipt naming an entity the caller cannot see), with their run rows
     /// and approvals, its done read off the items left, and none when
-    /// nothing is left. Item ids stay the durable ones.
+    /// nothing is left. Item ids stay the durable ones. The items left keep
+    /// their approval pins only when `pins` says the caller reads all that
+    /// the pins digest ([`Self::approval_pins_visible`], FIX 11151).
     fn visible_journal(
         &self,
         txn: &heed::RoTxn<'_>,
         mut journal: ShapeApplyReceipt,
         withheld: &BTreeSet<ShapeTarget>,
+        pins: bool,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<Option<ShapeApplyReceipt>> {
         if self.positively_hidden(txn, &journal.author, visible)
@@ -181,6 +185,11 @@ impl Vault {
         if items.is_empty() {
             return Ok(None);
         }
+        if !pins {
+            for entry in &mut items {
+                entry.approval = None;
+            }
+        }
         journal.done = !items.iter().any(|entry| open(&entry.state));
         journal.items = items;
         journal.run.items = runs;
@@ -188,7 +197,8 @@ impl Vault {
     }
 
     /// Whether a journal item's declaration or receipt names a live entity
-    /// `visible` hides. A body that cannot be read names none.
+    /// `visible` hides: an id their text carries, or one its door kept for
+    /// the receipt (FIX 11175). A body that cannot be read names none.
     fn item_names_hidden(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -207,6 +217,48 @@ impl Vault {
             || receipt.is_some_and(|text| {
                 self.names_hidden(txn, &serde_json::Value::String(text.clone()), visible)
             })
+            || entry
+                .receipt_refs
+                .iter()
+                .flatten()
+                .any(|id| self.positively_hidden(txn, id, visible))
+    }
+
+    /// Whether the caller reads the approval pins: each pin is a digest
+    /// over the whole vault's reach (`approval_dependencies`), so only a
+    /// caller from whom no setup row is withheld and who sees every entity
+    /// that reach names reads one; any other caller could watch a hidden
+    /// row move it (FIX 11151).
+    fn approval_pins_visible(
+        &self,
+        withheld: &BTreeSet<ShapeTarget>,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<bool> {
+        if !withheld.is_empty() {
+            return Ok(false);
+        }
+        let reach = self.read_live_shape(&mut |_| Ok(true))?.reach;
+        let txn = self.store.env.read_txn()?;
+        let named = reach
+            .actors
+            .iter()
+            .map(|actor| actor.entity)
+            .chain(
+                reach
+                    .senders
+                    .iter()
+                    .flat_map(|sender| [sender.entity, sender.actor]),
+            )
+            .chain(reach.connectors.iter().flat_map(|tool| {
+                std::iter::once(tool.key)
+                    .chain(tool.actor)
+                    .chain(tool.except.iter().copied())
+            }))
+            .chain(reach.outbound.iter().map(|grant| grant.grant))
+            .collect::<Vec<_>>();
+        Ok(!named
+            .iter()
+            .any(|id| self.positively_hidden(&txn, &id.to_hex(), visible)))
     }
 
     /// Whether any entity id `value` carries in its text is a live entity
@@ -239,8 +291,9 @@ impl Vault {
             return Ok(None);
         };
         let withheld = self.read_live_shape(visible)?.withheld;
+        let pins = self.approval_pins_visible(&withheld, visible)?;
         let txn = self.store.env.read_txn()?;
-        self.visible_journal(&txn, journal, &withheld, visible)
+        self.visible_journal(&txn, journal, &withheld, pins, visible)
     }
 
     /// The stored seed's id as a plan may name it to the caller (FIX

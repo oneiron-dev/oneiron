@@ -37,6 +37,23 @@ impl HostSelfDispatcher<'_> {
         Ok(admitted)
     }
 
+    /// The actual read key for a host turn. Only an unbound door derives one
+    /// from the real WriteActor class; a bound door's no-read answer becomes
+    /// an explicit read-nothing key and never falls back to that actor.
+    pub(crate) fn host_turn_read_key(&self) -> ScopedReadActorKey {
+        let actor = self.actor();
+        let actor_ref = actor.entity_ref().to_hex();
+        let class = actor.actor_class().gate_actor_class();
+        match &self.agent_verbs {
+            Some(door) => door
+                .host_turn_read_key()
+                .or_else(|| ScopedReadActorKey::read_nothing(actor_ref.clone(), class)),
+            None => ScopedReadActorKey::with_actor_class(actor_ref.clone(), class)
+                .or_else(|| ScopedReadActorKey::read_nothing(actor_ref.clone(), class)),
+        }
+        .expect("a host-stamped actor yields a turn read key")
+    }
+
     /// Asks the bound door whether a result the run retained, produced from
     /// `rows`, stays on this device for its caller now. A run whose host
     /// binds no door withholds nothing.

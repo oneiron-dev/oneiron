@@ -76,6 +76,14 @@ pub struct HookSandbox {
 }
 
 impl HookBodyRuntime for HookSandbox {
+    fn runtime_identity(&self) -> Option<String> {
+        Some(
+            blake3::Hash::from(HOOK_COMPONENT_BLAKE3)
+                .to_hex()
+                .to_string(),
+        )
+    }
+
     fn run_hook(
         &self,
         body: &str,
