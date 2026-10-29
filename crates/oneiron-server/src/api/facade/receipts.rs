@@ -31,10 +31,9 @@ pub(super) async fn facade_call_receipt(
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
     // The handler reads these same bytes. A body past the facade's limit
     // reaches it empty and is refused there as malformed, as it was before.
-    let bytes = axum::body::to_bytes(body, FACADE_MAX_BODY_BYTES)
-        .await
-        .unwrap_or_default();
-    let request = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+    // A custody value's body is wiped and redacted here (FIX 11442).
+    let (bytes, request) =
+        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
     // FIX 4280: a call serving a room NOTE to a caller verified in its room
     // keeps none either, judged on arrival, before a close drops its hold.
     let anonymous = anonymous
