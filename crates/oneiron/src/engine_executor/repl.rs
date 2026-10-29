@@ -368,6 +368,14 @@ impl EngineNativeExecutor<'_> {
             // bodies; the calls' rows and the step's bindings carry their
             // handles.
             record.outputs.extend(host.captured);
+            // The board frames its answers carried, for the model's view of
+            // the step (FIX 2135).
+            super::board_frames::record_step_board_frames(
+                &self.storage,
+                &mut record,
+                completed_steps,
+                bridge_start,
+            )?;
             // The names the step bound join the record in this same
             // checkpointed append; a rebound name keeps its place.
             let bindings: Vec<_> = host

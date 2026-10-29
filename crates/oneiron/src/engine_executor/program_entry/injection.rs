@@ -97,6 +97,7 @@ impl ProgramInjection {
             outcome: Box::new(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
                 output: reply,
                 rows: None,
+                observations: Vec::new(),
             })),
         }
     }

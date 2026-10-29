@@ -104,7 +104,9 @@ pub use self::replay::{
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
     ResultOccurrence, code_run_replay_abi_layout_checks,
 };
-pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
+pub(crate) use self::replay::{
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_observations_of, agent_verb_rows_of,
+};
 pub use self::replay_capsule::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
     ExposureKind, ExposureSlot, ReplayRoutePin, StepReplayCapsule, StoredSpan, TaskExposure,
@@ -255,9 +257,9 @@ pub use run_verbs::{
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, SelfAgentVerbCall, SessionHookDisposition,
-    SessionHookNotKept, SessionHookPhase, SessionHookReceipt, SessionHookState,
-    SessionWriteAdmission, SessionWriteCeiling,
+    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, SelfAgentVerbCall,
+    SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt,
+    SessionHookState, SessionWriteAdmission, SessionWriteCeiling,
 };
 
 // The flat code_run.rs module used to provide these names to the test module
