@@ -41,6 +41,7 @@ mod reconcile;
 mod runner;
 mod step_connector;
 mod storage;
+mod target;
 
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
 pub(crate) use self::reconcile::{
