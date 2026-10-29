@@ -7757,6 +7757,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_settings_web_connector(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.web_connector")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.web_connector", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_web_connector_replace(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.web_connector.replace")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.web_connector.replace", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_web_usage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.web.usage")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.connectors.web.usage", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_models_oneironer_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.models.oneironer.bind")?;
         let output = py

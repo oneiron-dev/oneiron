@@ -92,6 +92,15 @@ impl FoldIssues {
                 .or_default()
                 .push("refused_conversation_training");
         }
+        // A setting act without effect: its carrier or owner did not stand,
+        // or this install holds its agent's Grant refused (FIX 11426).
+        for entry in &fold.policy_settings.refused {
+            issues
+                .by_entry
+                .entry(*entry)
+                .or_default()
+                .push("refused_policy_setting");
+        }
         for entry in fold.held_back_entries() {
             issues
                 .by_entry
@@ -130,6 +139,15 @@ impl FoldIssues {
             && self.conflicted_confirms.contains(&action.confirm_id)
         {
             codes.push("critical_write_confirm_conflict".to_owned());
+        }
+        // An export act held back here is one without effect: its carrier or
+        // owner did not stand, or its agent's Grant is refused (FIX 11426).
+        if matches!(op, AuthorityOp::ExportAct(_))
+            && codes
+                .iter()
+                .any(|code| code == AUTHORITY_AUDIT_HELD_BACK_CODE)
+        {
+            codes.push("refused_export_act".to_owned());
         }
         if self.memory_floor {
             codes.push("fold_memory_floor".to_owned());

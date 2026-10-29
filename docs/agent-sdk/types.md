@@ -2083,6 +2083,8 @@ class Oneiron:
         def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs": ...
         @property
         def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs": ...
+        @property
+        def web(self) -> "Oneiron._VaultConnectorsWebVerbs": ...
     class _VaultConnectorsProxyVerbs:
         def admit(self, spec: Facade.ProxyConnectorAdmitRequest) -> Facade.ProxyConnectorRegistration:
             """The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."""
@@ -2118,6 +2120,9 @@ class Oneiron:
             """The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."""
         def revoke(self, spec: Facade.ConnectorWitnessReadGrantRevokeRequest) -> Facade.ConnectorWitnessReadGrantRevoked:
             """The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."""
+    class _VaultConnectorsWebVerbs:
+        def usage(self, spec: Facade.WebConnectorUsageRead) -> Facade.WebConnectorUsagePage:
+            """Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
@@ -2742,6 +2747,8 @@ class Oneiron:
         def wake_policy(self) -> "Oneiron._VaultSettingsWakePolicyVerbs": ...
         @property
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs": ...
+        @property
+        def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs": ...
     class _VaultSettingsLearningVerbs:
         def __call__(self, spec: Facade.LearningSettingsRequest) -> Facade.LearningSettingsView:
             """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
@@ -2757,6 +2764,11 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultSettingsWebConnectorVerbs:
+        def __call__(self, spec: Facade.EmptyRequest) -> Facade.WebConnectorSetting:
+            """Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."""
+        def replace(self, spec: Facade.WebConnectorSetting) -> Facade.WebConnectorSetting:
+            """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
     class _VaultSecretsVerbs:
         def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""

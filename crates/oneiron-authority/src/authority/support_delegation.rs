@@ -49,6 +49,76 @@ const SUPPORT_NEVER_GRANTABLE: [&str; 20] = [
     "bypass", "export", "send", "outbound", "secret", "member", "org:", "inject", "lease", "owner",
 ];
 
+/// A repair the customer may let support run (FIX 4407). Each brings
+/// forward upkeep the engine's own schedule also runs: none erases or
+/// deletes, prunes a hold, lifts a secret, ends a secret lease, touches key
+/// material, a policy or the clock. A delegation names each one it allows by
+/// its id; none implies another, and one that names them all still runs
+/// each alone.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SupportRepair {
+    /// Demotes critical-write confirms still Auto past their window.
+    CriticalConfirmExpiry,
+    /// Clears symbol-lease holds past their expiry.
+    SymbolLeaseExpiry,
+    /// Expires signing documents and recipients past their signing window.
+    EsignExpiry,
+    /// Re-queues the seal of a signing request whose trigger was missed.
+    EsignSealBackstop,
+    /// Lapses overdue open commitments and repairs missed close hooks.
+    CommitmentLapse,
+    /// Evicts cached graph walks past the longest serve window.
+    PprCacheEviction,
+    /// Tells the live Owners of each shared act whose window has passed.
+    SharedActMaturity,
+}
+
+impl SupportRepair {
+    /// Every repair a delegation can name, in wire order.
+    pub const ALL: [Self; 7] = [
+        Self::CriticalConfirmExpiry,
+        Self::SymbolLeaseExpiry,
+        Self::EsignExpiry,
+        Self::EsignSealBackstop,
+        Self::CommitmentLapse,
+        Self::PprCacheEviction,
+        Self::SharedActMaturity,
+    ];
+
+    /// The repair's wire id.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CriticalConfirmExpiry => "critical_confirm_expiry",
+            Self::SymbolLeaseExpiry => "symbol_lease_expiry",
+            Self::EsignExpiry => "esign_expiry",
+            Self::EsignSealBackstop => "esign_seal_backstop",
+            Self::CommitmentLapse => "commitment_lapse",
+            Self::PprCacheEviction => "ppr_cache_eviction",
+            Self::SharedActMaturity => "shared_act_maturity",
+        }
+    }
+
+    /// The repair a wire id names; `None` for any other text.
+    #[must_use]
+    pub fn from_wire(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|repair| repair.as_str() == id)
+    }
+}
+
 /// The signed support delegation of one support slip (OF-606).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +134,10 @@ pub struct SupportDelegation {
     /// The wall-time deadline (Unix seconds, recording clock): the slip
     /// stands only while recording time is before it, and ends at equality.
     pub wall_expires_at: u64,
+    /// The repairs the customer selected for support to run (FIX 4407),
+    /// each by its own id; empty when it selected none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub repairs: BTreeSet<SupportRepair>,
 }
 
 impl SupportDelegation {

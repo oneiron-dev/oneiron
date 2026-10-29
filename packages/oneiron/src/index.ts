@@ -1254,6 +1254,10 @@ export class Oneiron {
         /** The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing. */
         revoke: (input: Facade.ConnectorWitnessReadGrantRevokeRequest): Facade.ConnectorWitnessReadGrantRevoked => this.#call(() => this.#client.vaultConnectorsReadGrantsRevoke(input) as Facade.ConnectorWitnessReadGrantRevoked),
       },
+      web: {
+        /** Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text. */
+        usage: (input: Facade.WebConnectorUsageRead): Facade.WebConnectorUsagePage => this.#call(() => this.#client.vaultConnectorsWebUsage(input) as Facade.WebConnectorUsagePage),
+      },
     },
     authority: {
       /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
@@ -1872,6 +1876,11 @@ export class Oneiron {
       inference_defaults: Object.assign((input: Facade.EmptyRequest = {}): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaults(input) as Facade.PolicyActionOutcome), {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
+      }),
+      /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
+      web_connector: Object.assign((input: Facade.EmptyRequest): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnector(input) as Facade.WebConnectorSetting), {
+        /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
+        replace: (input: Facade.WebConnectorSetting): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnectorReplace(input) as Facade.WebConnectorSetting),
       }),
     },
     secrets: {

@@ -100,6 +100,7 @@ mod skill_judge_routes;
 mod space_posting_routes;
 mod steer_routes;
 mod support_grant_routes;
+mod support_repair_routes;
 mod training_swap_routes;
 mod usage_repair_routes;
 mod vault_key_routes;
@@ -181,6 +182,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(legal_hold_routes::routes())
         .merge(guest_routes::routes())
         .merge(support_grant_routes::routes())
+        .merge(support_repair_routes::routes())
         .merge(agent_grant_routes::routes())
         .merge(proactivity_routes::routes())
         .merge(weave_routes::routes())
