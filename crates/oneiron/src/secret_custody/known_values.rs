@@ -307,7 +307,9 @@ impl KnownValues {
     /// Each known value in `data`, leftmost first, never overlapping: at
     /// each place the longest value there wins. A value spelled in base64,
     /// in percent escapes or in JSON escapes is found where its spelling
-    /// sits, under its own record's handle (FIX 2725).
+    /// sits, under its own record's handle (FIX 2725); one inside a longer
+    /// base64 run, over folds, or with `+` for a space is found there too
+    /// (FIX 6671).
     pub(crate) fn spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
         let mut spans = self.raw_spans(data);
         let mut spelled = Vec::new();
@@ -321,6 +323,15 @@ impl KnownValues {
                 }
             }
         }
+        // FIX 6671: a form-encoded spelling reads `+` as a space; every hit
+        // maps back, since `+` reads as one byte from one.
+        if let Some(view) = forms::form_view(data) {
+            for hit in self.raw_spans(&view.bytes) {
+                if let Some(span) = view.source_mapped(hit.span) {
+                    spelled.push(KnownSpan { span, ..hit });
+                }
+            }
+        }
         let fits = |len: usize| self.lengths.binary_search(&len).is_ok();
         for (run, decoded) in forms::base64_runs(data, self.reach(), fits) {
             if let Some(known) = self.whole(&decoded) {
@@ -329,6 +340,15 @@ impl KnownValues {
                     custody: known.custody,
                     handle: &known.handle,
                 });
+            }
+        }
+        // FIX 6671: a value spelled inside a longer run, at any offset, over
+        // folds, maps back through the run's own source map.
+        for (_, view) in forms::base64_views(data, self.reach()) {
+            for hit in self.raw_spans(&view.bytes) {
+                if let Some(span) = view.source(hit.span) {
+                    spelled.push(KnownSpan { span, ..hit });
+                }
             }
         }
         if spelled.is_empty() {
@@ -357,13 +377,54 @@ impl KnownValues {
     /// (FIX 2722): the earliest window of its last bytes, short of the
     /// longest value, whose keyed tag opens a value longer than what
     /// follows; and the last bytes no window can test yet
-    /// ([`KNOWN_GROWING_HOLD`]). No value is minted for either; the text
-    /// that goes past them, or the stream's end, reads them whole.
+    /// ([`KNOWN_GROWING_HOLD`]). A value arriving in an encoded form is held
+    /// back from the point its encoded prefix starts (FIX 6672): the tail
+    /// reads through the same views [`spans`](Self::spans) uses, and `held`
+    /// holds back what either answer holds. No value is minted for either;
+    /// the text that goes past them, or the stream's end, reads them whole.
     pub(crate) fn growing(&self, text: &[u8]) -> Growing {
+        let (mut opens, mut held) = self.growing_in(text);
+        // The tail covers any encoded prefix still arriving; back to its
+        // run's start, so a base64 run reads aligned.
+        // A run longer than the reach reads as none, so the walk back stops
+        // within twice the reach.
+        let mut tail = text.len().saturating_sub(self.reach());
+        let floor = text.len().saturating_sub(2 * self.reach());
+        while tail > floor && forms::base64_run_byte(text[tail - 1]) {
+            tail -= 1;
+        }
+        let tail_bytes = &text[tail..];
+        for view in [
+            forms::percent_view(tail_bytes),
+            forms::form_view(tail_bytes),
+            forms::json_view(tail_bytes),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.merge_growing(&mut opens, &mut held, &view, tail);
+        }
+        for (run, view) in forms::base64_views(tail_bytes, self.reach()) {
+            // A run that ended is read whole, never grown: only one reaching
+            // the end may still be writing.
+            if run.end != tail_bytes.len() {
+                continue;
+            }
+            self.merge_growing(&mut opens, &mut held, &view, tail);
+        }
+        Growing { opens, held }
+    }
+
+    /// Where `bytes` may still be writing a known value (FIX 2722): the
+    /// earliest window short of the longest value whose keyed tag opens a
+    /// value longer than what follows, and where the last bytes no window
+    /// can test yet start ([`KNOWN_GROWING_HOLD`]). Positions are in
+    /// `bytes`: raw text, or one encoded view's decoded bytes (FIX 6672).
+    fn growing_in(&self, bytes: &[u8]) -> (Option<usize>, usize) {
         let hold = self.longest.saturating_sub(1);
-        let from = text.len().saturating_sub(hold);
-        let opens = (from..text.len()).find(|&at| {
-            let rest = &text[at..];
+        let from = bytes.len().saturating_sub(hold);
+        let opens = (from..bytes.len()).find(|&at| {
+            let rest = &bytes[at..];
             rest.len() >= TAG_WINDOW
                 && self
                     .bucket(&self.keys.tag(&rest[..TAG_WINDOW]))
@@ -373,9 +434,32 @@ impl KnownValues {
                             .any(|known| known.len >= TAG_WINDOW && known.len > rest.len())
                     })
         });
-        Growing {
+        (
             opens,
-            held: text.len() - hold.min(KNOWN_GROWING_HOLD).min(text.len()),
+            bytes.len() - hold.min(KNOWN_GROWING_HOLD).min(bytes.len()),
+        )
+    }
+
+    /// Merges one decoded tail's growing answer into `opens` and `held`
+    /// (FIX 6672): positions map back through `view` to the text whose tail
+    /// starts at `tail`. The earliest opening and the most held back win.
+    fn merge_growing(
+        &self,
+        opens: &mut Option<usize>,
+        held: &mut usize,
+        view: &forms::View,
+        tail: usize,
+    ) {
+        let (at, held_at) = self.growing_in(&view.bytes);
+        if let Some(at) = at.and_then(|at| view.source_pos(at)) {
+            let at = tail + at;
+            *opens = Some(match *opens {
+                Some(open) => open.min(at),
+                None => at,
+            });
+        }
+        if let Some(held_at) = view.source_pos(held_at) {
+            *held = (*held).min(tail + held_at);
         }
     }
 
