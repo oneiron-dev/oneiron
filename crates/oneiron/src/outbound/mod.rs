@@ -29,6 +29,7 @@ mod tests;
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
 pub use self::ambient_alternative::{OutboundAmbientAlternative, OutboundScheduleContinuation};
+pub(crate) use self::capability::OutboundReplaySafety;
 pub(crate) use self::capability::is_canonical_outbound_verb;
 pub use self::capability::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,

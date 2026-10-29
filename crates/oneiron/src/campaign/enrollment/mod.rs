@@ -39,6 +39,7 @@ mod outbound_leg;
 mod program;
 mod reconcile;
 mod runner;
+mod step_connector;
 mod storage;
 
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
