@@ -37,7 +37,7 @@ pub(super) fn record_family(record: &GateDecisionRecord) -> Option<LoopDecisionF
     })
 }
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// What `record`'s kept read context admits, when the reader is admitted
     /// to every read context it kept (a bundle's every member): `None` when
     /// it kept none or one does not admit. A decision on a claim `claim`
@@ -47,7 +47,7 @@ impl ScopedRead<'_> {
     pub(super) fn loop_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead,
+        read: &LoopRead<'v>,
         record: &GateDecisionRecord,
         claim: Option<EntityId>,
     ) -> Result<Option<KeptAdmission>> {
@@ -85,25 +85,32 @@ impl ScopedRead<'_> {
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead,
+        read: &LoopRead<'v>,
         context: &GateDecisionReadContext,
     ) -> Result<bool> {
         if context.about.is_empty() && context.position.is_none() {
             return Ok(false);
         }
         for row in &context.about {
-            if !self.is_entity_retrievable_with_policy_in(txn, &read.policy, &read.filter, row)? {
+            if !self.is_entity_retrievable_held_in(
+                txn,
+                &read.policy,
+                &read.filter,
+                row,
+                &read.held,
+            )? {
                 return Ok(false);
             }
         }
         if let Some(record) = context.record
             && self.entity_record_in(txn, &record)?.is_some()
         {
-            return self.is_entity_retrievable_with_policy_in(
+            return self.is_entity_retrievable_held_in(
                 txn,
                 &read.policy,
                 &read.filter,
                 &record,
+                &read.held,
             );
         }
         match &context.position {
@@ -123,7 +130,7 @@ impl ScopedRead<'_> {
     fn loop_position_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead,
+        read: &LoopRead<'v>,
         record: Option<&EntityId>,
         position: &GateReadPosition,
     ) -> Result<bool> {

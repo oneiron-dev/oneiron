@@ -84,7 +84,7 @@ pub struct RunnerSeatQuota {
 }
 
 /// The id a seat's quota record lives under.
-fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
+pub(super) fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
     let auth: &[u8] = match seat.auth {
         SeatAuth::VendorLogin => b"vendor_login",
         SeatAuth::ApiKey => b"api_key",
