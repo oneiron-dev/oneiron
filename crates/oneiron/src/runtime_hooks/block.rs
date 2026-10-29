@@ -2,6 +2,8 @@
 //! a recipient's next board deliveries. The board renders the rows a block
 //! names in their own sections, tagged with the hook (OI-1 = A).
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
@@ -150,6 +152,38 @@ pub(super) fn expire_for_predicate(vault: &Vault, predicate: &str, at: u64) -> R
         }
         Ok(matched.len())
     })
+}
+
+/// Expires and clears source-dependent blocks left by affected runs. Their
+/// identity and expired status stay; refs, routing text and predicate globs do
+/// not survive the source's erasure.
+pub(in crate::runtime_hooks) fn scrub_blocks_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    affected_runs: &BTreeSet<super::store::RunKey>,
+    at: u64,
+) -> Result<()> {
+    let run_keys: BTreeSet<String> = affected_runs
+        .iter()
+        .map(|key| crate::receipt::hex_lower(key))
+        .collect();
+    let mut matched = Vec::new();
+    for row in BLOCKS.iter_from(&vault.store, txn, &[])? {
+        let (block_id, block) = row?;
+        if block.refs.contains(id) || run_keys.contains(&block.run_key) {
+            matched.push((block_id, block));
+        }
+    }
+    for (block_id, mut block) in matched {
+        block.refs.clear();
+        block.session = None;
+        block.branch = None;
+        block.lifetime = HookBlockLifetime::Deliveries(1);
+        block.expired_at = Some(at);
+        BLOCKS.put(vault, txn, &block_id, &block)?;
+    }
+    Ok(())
 }
 
 impl Vault {

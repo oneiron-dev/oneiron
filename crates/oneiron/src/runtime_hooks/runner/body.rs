@@ -81,6 +81,8 @@ pub(super) struct VerdictPins {
     /// Verdicts heard so far, pinned or not.
     heard: u32,
     calls: Vec<HookSettledCallRef>,
+    /// Every evidence id, including one whose request/reply pin did not fit.
+    evidence: Vec<EntityId>,
 }
 
 impl VerdictPins {
@@ -91,6 +93,7 @@ impl VerdictPins {
             complete: true,
             heard: 0,
             calls: Vec::new(),
+            evidence: Vec::new(),
         }
     }
 
@@ -107,6 +110,8 @@ impl VerdictPins {
         } = answer;
         self.heard = self.heard.saturating_add(1);
         self.calls.extend(calls);
+        self.evidence
+            .extend(evidence.as_deref().unwrap_or_default().iter().copied());
         let (Ok(text) | Err(text)) = &reply;
         // Each evidence row pins as its 32-hex id.
         let rows = evidence.as_ref().map_or(0, Vec::len).saturating_mul(32);
@@ -246,7 +251,7 @@ pub(super) fn record(
         run.grant,
         run.entry,
         &reads,
-        &verdicts.pins,
+        &verdicts.evidence,
         runtime_identity,
     )?;
     let mut memo = HookRunRecord {

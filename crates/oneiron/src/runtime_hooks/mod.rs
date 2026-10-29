@@ -67,6 +67,8 @@ pub use source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettledFact,
     SettledOutcome, SettlementKind, SettlementPosition,
 };
-pub(crate) use store::{hook_receipts, hook_run_read_rows, sync_binding_cursor_in_txn};
+pub(crate) use store::{
+    hook_receipts, hook_run_read_rows, scrub_hook_source_in_txn, sync_binding_cursor_in_txn,
+};
 pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};
 pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};
