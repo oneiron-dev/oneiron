@@ -167,6 +167,9 @@ struct Registered {
     status: &'static str,
     protocol_revision: Option<String>,
     slate: SlateView,
+    /// What registration took on the connector's word and could not check
+    /// (TP4, FIX 2607); empty when it took nothing.
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -375,6 +378,9 @@ fn register_connector(
         status: record.status.as_str(),
         protocol_revision: record.protocol_revision,
         slate: SlateView::new(vault, slate_id, &slate)?,
+        warnings: host::self_declared_hints_warning(&discovery.tools)
+            .into_iter()
+            .collect(),
     })
 }
 

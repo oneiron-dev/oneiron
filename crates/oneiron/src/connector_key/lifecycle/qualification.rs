@@ -11,17 +11,21 @@ use super::super::record::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeyRecord, ConnectorKeyStatus, invalid_body,
 };
 use super::super::slate::{
-    bind_connector_slate_in_txn, read_connector_slate_in_txn, slate_expands,
+    ConnectorGrantSlate, SlatePackSource, bind_connector_slate_in_txn, put_slate_in_txn,
+    read_connector_slate_in_txn, slate_expands,
 };
 use super::super::txn::{
     CATALOG_NAME_INDEX, append_connector_key_op_record, read_connector_key_in_txn,
     rewrite_connector_key_in_txn,
 };
+use crate::skill_hub::pack_catalog::PackInstallReceipt;
 
 /// FIX 5941, Ask-first: a pack update (another source of the pack installed
 /// over the one a catalog connector's slate names) halts that connector's
 /// route as the pack's removal does. False keeps today's update: the key
-/// stays Active and routes until the owner revises and requalifies it.
+/// stays Active and routes until the owner revises and requalifies it. An
+/// update whose qualified declaration did not move carries the key to the
+/// new install either way (FIX 6041).
 const PACK_UPDATE_HALTS_CONNECTOR_ROUTES: bool = false;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,8 +52,11 @@ impl Vault {
 
     /// A capability change at the same protocol revision: the connector's
     /// tools or schemas changed, so `next_slate_ref` (a delta slate) replaces
-    /// its slate. Like a revision change, it halts the route until the owner
-    /// stamps the new slate (when it expands) and a fresh suite passes.
+    /// its slate. One that expands halts the route, like a revision change,
+    /// until the owner stamps the new slate and a fresh suite passes. One
+    /// that reaches no further (unchanged and narrowed rows only) keeps an
+    /// admitted key routing on it, under his stamp and the suite that
+    /// qualified those rows (FIX 8681).
     pub fn revise_connector_slate(
         &self,
         id: &EntityId,
@@ -71,6 +78,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        let same_revision = revision.is_none();
         let (unchanged, op) = match revision {
             Some(revision) => (
                 record.protocol_revision.as_deref() == Some(revision),
@@ -110,6 +118,21 @@ impl Vault {
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         let expanded = record.consent_required
             || slate_expands(&old_slate, &next_slate, &policy.connector_class_carry());
+        if same_revision && !expanded && next_slate_ref != old_slate_id {
+            let receipt = record.qualification_receipt.clone();
+            if let Some(carried) = self.carry_connector_slate_in_txn(
+                &mut wtxn,
+                id,
+                &record,
+                (&old_slate, next_slate, next_slate_ref),
+                receipt,
+                op,
+                at,
+            )? {
+                wtxn.commit()?;
+                return Ok(carried);
+            }
+        }
         if next_slate_ref != old_slate_id {
             bind_connector_slate_in_txn(self, &mut wtxn, next_slate_ref, id)?;
         }
@@ -214,19 +237,7 @@ impl Vault {
         {
             return Err(invalid_body("connector slate changed during qualification").into());
         }
-        // A scoped-MCP catalog advertises the tools its qualified slate
-        // lists, so a refresh's new tools reach search, describe and routing.
-        let catalog = record.catalog.clone().map(|entry| match entry.call_class {
-            ConnectorCallClass::ScopedMcp => ConnectorCatalogEntry {
-                verbs: slate
-                    .manifest()
-                    .iter()
-                    .map(|tool| tool.name.clone())
-                    .collect(),
-                ..entry
-            },
-            _ => entry,
-        });
+        let catalog = slate_catalog(record.catalog.clone(), &slate);
         let active = ConnectorKeyRecord {
             catalog,
             qualification_receipt: Some(ConnectorQualificationReceipt::new(
@@ -325,20 +336,124 @@ impl Vault {
         Ok(adopted)
     }
 
-    /// A pack update superseded the install a catalog connector's slate
-    /// names: its route halts as on removal only while
-    /// [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds.
-    pub(crate) fn halt_updated_pack_connector_routes_in_txn(
+    /// An admitted catalog key `id` routes on `next` (its slate `prior`
+    /// revised, stored as `next_id`) without a new suite, under the owner's
+    /// stamp on `prior` carried to it, with `receipt` as its qualification.
+    /// `None`, with nothing written, when the key is not admitted or the
+    /// stamp does not carry: the caller's own path then runs.
+    #[allow(clippy::too_many_arguments)]
+    fn carry_connector_slate_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &ConnectorKeyRecord,
+        (prior, mut next, next_id): (&ConnectorGrantSlate, ConnectorGrantSlate, EntityId),
+        receipt: Option<ConnectorQualificationReceipt>,
+        op: &str,
+        at: u64,
+    ) -> Result<Option<ConnectorKeyRecord>> {
+        let admitted = matches!(
+            record.status,
+            ConnectorKeyStatus::Active | ConnectorKeyStatus::Suspended
+        ) && record.catalog.is_some()
+            && !record.consent_required
+            && record.qualification_receipt.is_some();
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        let Some(receipt) = receipt.filter(|_| admitted) else {
+            return Ok(None);
+        };
+        if !next.carry_owner_stamp(prior, &policy.connector_class_carry()) {
+            return Ok(None);
+        }
+        put_slate_in_txn(&self.store, wtxn, next_id, &next)?;
+        bind_connector_slate_in_txn(self, wtxn, next_id, id)?;
+        let admission_epoch = record
+            .admission_epoch
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("connector admission epoch"))?;
+        let carried = ConnectorKeyRecord {
+            catalog: slate_catalog(record.catalog.clone(), &next),
+            slate_ref: Some(next_id),
+            slate_revision: Some(next.revision()),
+            admission_epoch,
+            qualification_receipt: Some(receipt),
+            ..record.clone()
+        };
+        carried.validate()?;
+        rewrite_connector_key_in_txn(&self.store, wtxn, id, &carried)?;
+        append_connector_key_op_record(
+            &self.store,
+            wtxn,
+            id,
+            op,
+            &carried,
+            policy.read_frontier_hash()?,
+            at,
+        )?;
+        self.sync_derived_keys_in_txn(wtxn, &carried, at)?;
+        Ok(Some(carried))
+    }
+
+    /// A pack update installed `next` over the install (`source_ref` at
+    /// `content_hash`) a catalog connector's slate names. A key whose
+    /// declaration `next`'s own suite qualified unchanged (same revision,
+    /// same resolved manifest) moves to `next` and keeps routing: its slate
+    /// is rebound to `next` under the carried owner stamp, and `next`'s
+    /// suite is its qualification (FIX 6041). Any other bound key halts as
+    /// on removal only while [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds.
+    pub(crate) fn follow_updated_pack_connector_routes_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         source_ref: &str,
         content_hash: &str,
+        next: &PackInstallReceipt,
         at: u64,
     ) -> Result<()> {
-        if !PACK_UPDATE_HALTS_CONNECTOR_ROUTES {
-            return Ok(());
+        for (id, record, slate_id, slate) in
+            self.pack_bound_keys_in_txn(wtxn, source_ref, content_hash)?
+        {
+            let qualified = next.connector_qualification.as_ref().filter(|pack| {
+                pack.source_hash == next.content_hash
+                    && record.pending_manifest.is_none()
+                    && record.protocol_revision.as_deref()
+                        == Some(pack.qualification.protocol_revision.as_str())
+                    && pack.qualification.qualified_at >= record.registered_at
+                    && record
+                        .retained_manifest
+                        .as_ref()
+                        .and_then(|manifest| manifest.hash().ok())
+                        == Some(pack.qualification.manifest_hash)
+            });
+            if let Some(pack) = qualified {
+                let next_slate = slate.rebound_to_pack(
+                    slate_id,
+                    SlatePackSource {
+                        source_ref: next.source_id.clone(),
+                        content_hash: next.content_hash.clone(),
+                    },
+                )?;
+                let receipt = ConnectorQualificationReceipt {
+                    manifest_hash: next_slate.manifest_hash(),
+                    ..pack.qualification.clone()
+                };
+                let carried = self.carry_connector_slate_in_txn(
+                    wtxn,
+                    &id,
+                    &record,
+                    (&slate, next_slate, EntityId::now()),
+                    Some(receipt),
+                    "gate.connector_key.pack_update_carried",
+                    at,
+                )?;
+                if carried.is_some() {
+                    continue;
+                }
+            }
+            if PACK_UPDATE_HALTS_CONNECTOR_ROUTES {
+                self.halt_connector_key_route_in_txn(wtxn, &id, record, at)?;
+            }
         }
-        self.halt_pack_connector_routes_in_txn(wtxn, source_ref, content_hash, at)
+        Ok(())
     }
 
     /// The install a catalog connector's slate is bound to left the install
@@ -358,6 +473,21 @@ impl Vault {
         content_hash: &str,
         at: u64,
     ) -> Result<()> {
+        for (id, record, _, _) in self.pack_bound_keys_in_txn(wtxn, source_ref, content_hash)? {
+            self.halt_connector_key_route_in_txn(wtxn, &id, record, at)?;
+        }
+        Ok(())
+    }
+
+    /// Every Active or Suspended catalog key whose slate names the pack
+    /// install `source_ref` at `content_hash`, with its slate.
+    fn pack_bound_keys_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        source_ref: &str,
+        content_hash: &str,
+    ) -> Result<Vec<(EntityId, ConnectorKeyRecord, EntityId, ConnectorGrantSlate)>> {
+        let mut bound = Vec::new();
         for (_, id) in CATALOG_NAME_INDEX.scan(&self.store, wtxn)? {
             let Some(record) = read_connector_key_in_txn(&self.store, wtxn, &id)? else {
                 continue;
@@ -372,46 +502,77 @@ impl Vault {
             let Some(slate_id) = record.slate_ref else {
                 continue;
             };
-            let bound = read_connector_slate_in_txn(self, wtxn, slate_id)?.is_some_and(|slate| {
-                slate
-                    .slate_manifest()
-                    .pack_source
-                    .as_ref()
-                    .is_some_and(|binding| {
-                        binding.source_ref == source_ref && binding.content_hash == content_hash
-                    })
-            });
-            if !bound {
+            let Some(slate) = read_connector_slate_in_txn(self, wtxn, slate_id)? else {
                 continue;
-            }
-            let admission_epoch = record
-                .admission_epoch
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("connector admission epoch"))?;
-            let pending = ConnectorKeyRecord {
-                status: ConnectorKeyStatus::Pending,
-                status_changed_at: Some(at),
-                suspended_reason: None,
-                admission_epoch,
-                qualification_receipt: None,
-                ..record
             };
-            pending.validate()?;
-            rewrite_connector_key_in_txn(&self.store, wtxn, &id, &pending)?;
-            let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
-            append_connector_key_op_record(
-                &self.store,
-                wtxn,
-                &id,
-                "gate.connector_key.pack_uninstalled",
-                &pending,
-                policy.read_frontier_hash()?,
-                at,
-            )?;
-            self.sync_derived_keys_in_txn(wtxn, &pending, at)?;
+            let names = slate
+                .slate_manifest()
+                .pack_source
+                .as_ref()
+                .is_some_and(|binding| {
+                    binding.source_ref == source_ref && binding.content_hash == content_hash
+                });
+            if names {
+                bound.push((id, record, slate_id, slate));
+            }
         }
-        Ok(())
+        Ok(bound)
     }
+
+    /// Key `id` back to Pending, as a revision change leaves it: its route
+    /// stops and its per-grant keys are held until it qualifies again.
+    fn halt_connector_key_route_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: ConnectorKeyRecord,
+        at: u64,
+    ) -> Result<()> {
+        let admission_epoch = record
+            .admission_epoch
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("connector admission epoch"))?;
+        let pending = ConnectorKeyRecord {
+            status: ConnectorKeyStatus::Pending,
+            status_changed_at: Some(at),
+            suspended_reason: None,
+            admission_epoch,
+            qualification_receipt: None,
+            ..record
+        };
+        pending.validate()?;
+        rewrite_connector_key_in_txn(&self.store, wtxn, id, &pending)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            wtxn,
+            id,
+            "gate.connector_key.pack_uninstalled",
+            &pending,
+            policy.read_frontier_hash()?,
+            at,
+        )?;
+        self.sync_derived_keys_in_txn(wtxn, &pending, at)
+    }
+}
+
+/// A scoped-MCP catalog advertises the tools its qualified slate lists, so
+/// a refresh's new tools reach search, describe and routing.
+fn slate_catalog(
+    catalog: Option<ConnectorCatalogEntry>,
+    slate: &ConnectorGrantSlate,
+) -> Option<ConnectorCatalogEntry> {
+    catalog.map(|entry| match entry.call_class {
+        ConnectorCallClass::ScopedMcp => ConnectorCatalogEntry {
+            verbs: slate
+                .manifest()
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect(),
+            ..entry
+        },
+        _ => entry,
+    })
 }
 
 /// A pack's catalog route cannot activate on another source's qualification.
