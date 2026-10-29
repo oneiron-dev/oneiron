@@ -834,6 +834,7 @@ vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
+vaultConversationsTurnRebind(input: unknown): unknown
 vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown

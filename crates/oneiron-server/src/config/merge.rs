@@ -341,6 +341,7 @@ struct FileServeConfig {
     failure_signals: Option<FailureSignalsConfigOverride>,
     self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    policy: Option<super::PolicyConfig>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
@@ -410,6 +411,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             failure_signals: value.failure_signals,
             self_heal: value.self_heal,
             recall: value.recall,
+            policy: value.policy,
             skills: value.skills,
             keystore: value.keystore,
             limits: value.limits,
@@ -485,6 +487,7 @@ struct PartialServeConfig {
     failure_signals: Option<FailureSignalsConfigOverride>,
     self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    policy: Option<super::PolicyConfig>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
@@ -591,6 +594,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("failure_signals", &self.failure_signals)
             .field("self_heal", &self.self_heal)
             .field("recall", &self.recall)
+            .field("policy", &self.policy)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
             .field("limits", &self.limits)
@@ -683,6 +687,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             failure_signals: None,
             self_heal: None,
             recall: None,
+            policy: None,
             skills: None,
             keystore: value
                 .keystore_dir

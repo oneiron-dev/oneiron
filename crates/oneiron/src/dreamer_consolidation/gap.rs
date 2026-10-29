@@ -349,10 +349,13 @@ pub(super) fn run_gap_scan(
         Ok((delta, texts)) => {
             intent::ask_stated_intents(vault, &delta.escalations, &texts);
             intent::land_answered_intents(vault);
-            Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 })
+            Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            })
         }
         Err(error) if super::residency::waits_on_residency(&error) => {
-            Ok(super::residency::residency_deferral(now_ms, 0))
+            Ok(super::residency::residency_deferral(now_ms, 0, Vec::new()))
         }
         Err(error) => Err(error),
     }

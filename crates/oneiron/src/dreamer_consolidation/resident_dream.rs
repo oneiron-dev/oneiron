@@ -510,7 +510,10 @@ pub async fn run_resident_dream(
     {
         let txn = ctx.vault.store.env.read_txn()?;
         if LANDED.contains(&ctx.vault.store, &txn, &attempt_id)? {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
     }
     // A free-time cycle's own-time item (FIX 4453) dreams only while its
@@ -519,16 +522,25 @@ pub async fn run_resident_dream(
     let free_time =
         match crate::dreamer_runner::free_time_item_to_run(ctx.vault, attempt_id, resident_id)? {
             crate::dreamer_runner::FreeTimeItemRun::Done => {
-                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
             }
             crate::dreamer_runner::FreeTimeItemRun::Unbound => None,
             crate::dreamer_runner::FreeTimeItemRun::Run(binding) => Some(binding),
         };
     let Some(definition) = ctx.vault.get_agent_definition(&resident_id)? else {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     if !definition.enabled || definition.dreaming_mode() == DreamingMode::Off {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     let progress = ctx.vault.resident_dream_progress(resident_id)?;
     let cut = cut_for(
@@ -540,7 +552,10 @@ pub async fn run_resident_dream(
             .unwrap_or(RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS),
     )?;
     if cut.is_empty() {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     let (request, step_hash, craft) = dream_request(ctx, attempt_id, resident_id, &model, &cut)?;
     // The call sends under the rows its cut and craft were read from.
@@ -645,5 +660,6 @@ pub async fn run_resident_dream(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }

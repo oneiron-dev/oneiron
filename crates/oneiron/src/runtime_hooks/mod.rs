@@ -18,6 +18,7 @@ mod host;
 pub mod host_doors;
 mod lineage;
 mod outcome;
+mod pack_line;
 mod read;
 mod regen;
 mod replay;
@@ -31,8 +32,9 @@ pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime};
 pub use body::{
-    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookRunContext, HookVerdict,
-    HookVerdictCall,
+    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookPreparation,
+    HookRunContext, HookSettledCallRef, HookVerdict, HookVerdictCall, HookVerdictContext,
+    HookVerdictReply,
 };
 pub use grant::HookGrant;
 pub use host::{BudgetHit, HOST_BUDGET_HIT};
@@ -41,6 +43,7 @@ pub use outcome::{
     BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge,
     ProposedNote,
 };
+pub use read::grant_view::hook_evidence_views;
 pub(crate) use regen::note_bound_hook_in_txn;
 pub use regen::{
     HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
@@ -59,6 +62,7 @@ pub(crate) use scope::HookScope;
     reason = "the gate's settlement doors call it once their seam lands"
 )]
 pub(crate) use source::record_settlement_in_txn;
+pub(crate) use source::record_timeout_demotion_in_txn;
 pub use source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettledFact,
     SettledOutcome, SettlementKind, SettlementPosition,

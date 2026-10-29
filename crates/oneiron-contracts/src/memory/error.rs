@@ -41,6 +41,9 @@ pub const MEMORY_CODE_BUDGET_SPENT: &str = "BUDGET_SPENT";
 /// in for it.
 pub const MEMORY_CODE_MODEL_UNAVAILABLE: &str = "MODEL_UNAVAILABLE";
 
+/// The owner pinned a spawn's model and no offered seat serves it (FIX 10011).
+pub const MEMORY_CODE_MODEL_PIN_UNAVAILABLE: &str = "MODEL_PIN_UNAVAILABLE";
+
 /// The canonical door was asked to witness into a conversation owned by a live
 /// off-record session (ARCH-0052 D2 backstop (a), ONE-1728 K7). Distinct from
 /// `FORBIDDEN`: the write was not refused on policy grounds — the room is only
@@ -714,6 +717,11 @@ impl From<Error> for MemoryError {
                 message,
                 &["Restore the revision's package (re-import it), or edit the skill by hand."],
             ),
+            ErrorKind::ModelPinUnavailable => Self::new(
+                MEMORY_CODE_MODEL_PIN_UNAVAILABLE,
+                message,
+                &["Offer a seat for the pinned model, or clear or change the owner's model pin."],
+            ),
             // The request was sound; the refusal names the bound that has to
             // change first (a scope to fund, a seat to bind), and is the
             // whole answer.
@@ -740,6 +748,7 @@ impl From<Error> for MemoryError {
                     "An erase took this reply: what the call did stands, and no call sends it again.",
                 ],
             ),
+            ErrorKind::HoldTargetErased => Self::hold_target_erased(message),
             // A credential's custody key does not open, or custody could not
             // take a new one (KS-6): the vault's state, never the request's
             // shape, and the message names the credential and its way out.

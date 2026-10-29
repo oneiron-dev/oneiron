@@ -120,6 +120,12 @@ pub struct LocalRunnerBudgetCounter {
     /// `total_units - remaining_units - reserved_units`, plus spend settled
     /// beyond the total: what settled.
     pub spent_units: u64,
+    /// Spend settled beyond what was left: incurred, never refused.
+    /// Nonzero only while `remaining_units` is 0.
+    pub overdraft_units: u64,
+    /// Admitted calls whose terminal usage is still owed to this line:
+    /// each is charged when it settles.
+    pub owed_calls: u64,
     pub updated_at: u64,
 }
 
@@ -160,6 +166,9 @@ pub struct RunnerBudgetReservation {
     /// 32-hex id of the reserving child attempt.
     pub job_ref: String,
     pub reserved_units: u64,
+    /// Measured spend this child owes that no settlement has charged yet;
+    /// its settlement or abort charges it.
+    pub owed_units: u64,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -362,6 +371,7 @@ pub fn runner_budget_reservations_as_owner(
         .map(|row| RunnerBudgetReservation {
             job_ref: crate::entity_id::bytes_to_hex_lower(row.attempt_id.as_bytes()),
             reserved_units: row.reserved_units,
+            owed_units: row.owed_units,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -390,6 +400,8 @@ fn runner_counter(row: &DreamerBudgetRecord) -> Result<LocalRunnerBudgetCounter>
         remaining_units: row.remaining_units,
         reserved_units: row.reserved_units,
         spent_units,
+        overdraft_units: row.overdraft_units,
+        owed_calls: row.owed_calls,
         updated_at: row.updated_at,
     })
 }

@@ -637,9 +637,7 @@ impl OneironClient {
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
                 "vault.inbox.groups" => {
-                    remote_agent_verb_output::<Vec<oneiron::inbox::InboxGroup>>(
-                        client, verb, &input,
-                    )
+                    remote_agent_verb_output::<oneiron::inbox::InboxGroupPage>(client, verb, &input)
                 }
                 "vault.weave.digest.render" => remote_agent_verb_output::<
                     Option<oneiron::claim::WeaveDigestRendered>,
@@ -2484,6 +2482,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.conversations.turn.retry" => remote_agent_verb_output::<
                     oneiron::conversation::TurnActionReceipt,
+                >(client, verb, &input),
+                "vault.conversations.turn.rebind" => remote_agent_verb_output::<
+                    oneiron::conversation::TurnActionRebindReceipt,
                 >(client, verb, &input),
                 "vault.messages.react" => remote_agent_verb_output::<
                     oneiron::reaction::MessageReactionReceipt,
@@ -6120,7 +6121,7 @@ impl OneironClient {
     pub fn vault_inbox_groups(
         &self,
         input: &oneiron::agent_inbox_lens::InboxRunGroupsRequest,
-    ) -> Result<Vec<oneiron::inbox::InboxGroup>, MemoryError> {
+    ) -> Result<oneiron::inbox::InboxGroupPage, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -13453,6 +13454,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.conversations.turn.retry", value)
+    }
+    pub fn vault_conversations_turn_rebind(
+        &self,
+        input: &oneiron::conversation::TurnActionRebindRequest,
+    ) -> Result<oneiron::conversation::TurnActionRebindReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.conversations.turn.rebind", value)
     }
     pub fn vault_messages_react(
         &self,

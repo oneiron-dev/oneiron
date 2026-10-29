@@ -470,6 +470,7 @@ impl ConsolidationExecutor<'_> {
                     call,
                     people: &people,
                 },
+                &slice.sources,
             )?;
             parsed.extend(taken);
         }

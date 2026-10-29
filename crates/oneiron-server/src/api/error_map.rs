@@ -167,6 +167,15 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Restart policy review from the current diff and read frontier."],
         ),
+        // FIX 10011: the owner's model pin stands and no offered seat
+        // serves it; no other model is put in its place.
+        ErrorKind::ModelPinUnavailable => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("model_pin_unavailable".to_owned()),
+            },
+            ["Offer a seat for the pinned model, or clear or change the owner's model pin."],
+        ),
         // A refusal that names its bound answers as the facade does (FIX
         // 4618): the message is the whole answer.
         ErrorKind::Refused => ApiError::new(
@@ -203,6 +212,24 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                     state: Some(state.to_owned()),
                 },
                 ["Do what the message names: retry, or re-enter or reissue that credential."],
+            )
+        }
+        // A hold named a gate-decision partition an erase or a key
+        // retirement took (FIX 2923): its typed state, as the facade answers
+        // it, never a bad request.
+        ErrorKind::HoldTargetErased => {
+            let state = match &error {
+                oneiron::Error::Record(oneiron::error::RecordError::HoldTargetErased(target)) => {
+                    target.as_str()
+                }
+                _ => oneiron::error::ErasedHoldTarget::Erased.as_str(),
+            };
+            ApiError::new(
+                error.to_string(),
+                ApiErrorDetails::InvalidState {
+                    state: Some(state.to_owned()),
+                },
+                [oneiron::error::HOLD_TARGET_ERASED_SUGGESTION],
             )
         }
         // An erase took the reply this read names (FIX 5718): the record's

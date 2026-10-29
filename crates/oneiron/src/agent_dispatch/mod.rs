@@ -124,6 +124,7 @@ pub use self::codec::{
 pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
 pub use self::dispatch::AgentDispatcher;
 pub use self::leader_planner::VaultLeaderTeamPlanner;
+pub(crate) use self::planner::resolved_budget_ask;
 pub use self::planner::{
     AvailableModel, CostEnvelope, MeasuredRate, PatternCandidate, PlanBudget, PlannerDecisions,
     PlannerEvidence, PlannerQuestionContext, PlannerRung, PlannerThresholds, ShapeQuote,

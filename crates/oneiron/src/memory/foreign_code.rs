@@ -1,12 +1,21 @@
 //! Typed foreign code admission. The credential supplies WHO and the read
 //! frontier; the sandbox supplies inert deltas, never a vault write.
+//!
+//! The program is type-checked as its author wrote it, beside its run, as
+//! a run's step is (FIX 10389): its feedback is kept on the vault's own rows
+//! under the run's identity, answered beside the result or beside the
+//! refusal, and read late by its `check_ref` as the owner. Nothing waits on
+//! the check and nothing is refused for it.
 use serde::{Deserialize, Serialize};
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
 use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
+use crate::code_sandbox::source::{PreparedSource, prepare_source};
 use crate::code_sandbox::{
     SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
 };
+use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{
     ClaimApprovalStatus, ClaimSource, EntityId, WriteActor, WriteEnvelope, WriteProvenance,
 };
@@ -121,7 +130,41 @@ pub struct ForeignCodeRunResult {
     pub proposals: Vec<ForeignCodeProposal>,
     pub isolation: ForeignCodeIsolation,
     pub receipt_ref: String,
+    /// The program's type feedback, beside the answer and never inside it
+    /// (FIX 10389): its check as it stood when the run answered, released
+    /// whole, or withheld with none of its text when its own release check
+    /// holds it for the destination. Its late result is read by its
+    /// `check_ref` with `vault.code.type_diagnostics`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub program_steps: Vec<ProgramStepFeedbackRelease>,
 }
+
+/// A foreign run that failed (FIX 10389): its refusal as it is, its code,
+/// message and retry unchanged, and, once its source was admitted, its
+/// program's type feedback as it stood, beside the refusal and never inside
+/// it. A refusal before the source is admitted carries none.
+#[derive(Debug)]
+pub struct ForeignCodeFailure {
+    pub error: MemoryError,
+    pub program_steps: Vec<ProgramStepFeedback>,
+}
+
+impl From<MemoryError> for ForeignCodeFailure {
+    fn from(error: MemoryError) -> Self {
+        Self {
+            error,
+            program_steps: Vec::new(),
+        }
+    }
+}
+
+/// What a foreign program launches with: its interpreter, its budget and
+/// the disk floor its proposed files spool on.
+type ForeignLaunch<'a> = (
+    ForeignCodeArtifact<'a>,
+    crate::code_sandbox::microvm::ExecutionBudget,
+    std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,20 +182,75 @@ impl Memory<'_> {
     /// proposed files spool on `spool`, the host's measured disk floor; one
     /// that would cross it fails the run as `SANDBOX_PROPOSAL_DISK_FLOOR`
     /// before any receipt (FIX 7650).
+    ///
+    /// Once its credential and its source are admitted, the run has its
+    /// identity and its program its one check on `type_feedback`, the host's
+    /// service, as this caller runs it (FIX 10389): before any read,
+    /// preparation or launch, so every way out of the run after it keeps
+    /// the program's feedback on the vault's rows and answers it, beside the
+    /// result or beside the refusal. A host that lends no service answers
+    /// that no checker is attached.
+    ///
+    /// # Errors
+    ///
+    /// The run's refusal, as it was, with the program's feedback once its
+    /// source was admitted.
     pub fn execute_foreign_code(
         &self,
         input: ForeignCodeRunRequest,
         artifact: ForeignCodeArtifact<'_>,
         budget: crate::code_sandbox::microvm::ExecutionBudget,
         spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
-    ) -> MemoryResult<ForeignCodeRunResult> {
+        type_feedback: Option<&TypeFeedback>,
+    ) -> Result<ForeignCodeRunResult, ForeignCodeFailure> {
         let proof = self.foreign_code_credential()?;
         if input.source.trim().is_empty() {
-            return Err(MemoryError::bad_request("foreign source is empty"));
+            return Err(MemoryError::bad_request("foreign source is empty").into());
         }
+        let run_id = EntityId::now();
+        // Prepared once, here: the launch runs what this preparation gives,
+        // and the check reads the original it keeps (FIX 8276, FIX 10389).
+        let prepared = prepare_source(&input.source);
+        let admitted = (run_id, self.actor, CheckedDoor::Foreign);
+        let mut check = RowsCheck::start(
+            type_feedback,
+            self.vault,
+            admitted,
+            &input.source,
+            &prepared,
+        );
+        let launch = (artifact, budget, spool);
+        let ran = self.run_foreign_program(input.reads, &prepared, run_id, proof, launch);
+        let program_steps = vec![check.feedback()];
+        match ran {
+            Ok(mut result) => {
+                check.completed();
+                result.program_steps = program_steps
+                    .into_iter()
+                    .map(ProgramStepFeedbackRelease::Released)
+                    .collect();
+                Ok(result)
+            }
+            Err(error) => Err(ForeignCodeFailure {
+                error,
+                program_steps,
+            }),
+        }
+    }
+
+    /// Runs `prepared`, the admitted program of run `run_id`, under the
+    /// foreign contract with `references` frozen into its workspace.
+    fn run_foreign_program(
+        &self,
+        references: Vec<String>,
+        prepared: &PreparedSource<'_>,
+        run_id: EntityId,
+        proof: &crate::authority::VerifiedSlip,
+        (artifact, budget, spool): ForeignLaunch<'_>,
+    ) -> MemoryResult<ForeignCodeRunResult> {
         let workspace = tempfile::tempdir().map_err(crate::Error::from)?;
         let mut reads = Vec::new();
-        for (index, reference) in input.reads.into_iter().enumerate() {
+        for (index, reference) in references.into_iter().enumerate() {
             let view = self.get_entity(&reference)?.value.ok_or_else(refused)?;
             let name = format!("record-{index}.json");
             let bytes = serde_json::to_vec(&view)
@@ -170,8 +268,7 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
-        let run_id = EntityId::now();
-        let outcome = execute_foreign_code(&input.source, mounts, artifact, budget, spool)?;
+        let outcome = execute_foreign_code(prepared, mounts, artifact, budget, spool)?;
         let output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
         for file in &output.outputs {
@@ -338,6 +435,7 @@ impl Memory<'_> {
             proposals,
             isolation,
             receipt_ref,
+            program_steps: Vec::new(),
         })
     }
 

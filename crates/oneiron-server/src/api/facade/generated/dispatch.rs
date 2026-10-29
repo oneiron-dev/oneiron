@@ -19676,7 +19676,17 @@ async fn execute_code(
             facade_door_input(&mut hooks)?,
         )
         .await;
-        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+        Ok::<_, FacadeApiError>((
+            facade_output(output.map_err(|failure| {
+                super::host_doors::source_run_refusal(
+                    server,
+                    auth,
+                    Some(listed.as_slice()),
+                    failure,
+                )
+            })?)?,
+            listed,
+        ))
     }
     .await;
     let (output, listed) = match ran {
@@ -25309,6 +25319,28 @@ async fn vault_conversations_turn_retry(
         actor,
         class,
         "vault.conversations.turn.retry",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_conversations_turn_rebind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.conversations.turn.rebind",
         value,
         &producers,
     )?;
@@ -38037,6 +38069,9 @@ pub(crate) async fn call_verb(
         }
         "vault.conversations.turn.retry" => {
             vault_conversations_turn_retry(server, call, input).await
+        }
+        "vault.conversations.turn.rebind" => {
+            vault_conversations_turn_rebind(server, call, input).await
         }
         "vault.messages.react" => vault_messages_react(server, call, input).await,
         "vault.rooms.host" => vault_rooms_host(server, call, input).await,

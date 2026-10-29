@@ -11,6 +11,7 @@
 //! A CLAIM write about a person hides its lines at once, in the write's own
 //! transaction, until the next pass reads the facts again.
 
+use super::request_sources::{CallBackend, SourcedBackend};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_PERSON_ABOUT_ATTEMPT_TYPE, invalid_consolidation};
@@ -471,6 +472,9 @@ impl Vault {
 pub struct PersonAboutExecutor<'a, E> {
     inner: E,
     backend: &'a dyn LlmBackend,
+    /// `backend` bound per call to the rows its input was read from, when
+    /// the host lends that (FIX 6998).
+    sourced: Option<&'a dyn SourcedBackend>,
     guard: &'a BudgetGuard,
     actor: WriteActor,
     model: ModelId,
@@ -483,6 +487,7 @@ impl<'a, E> PersonAboutExecutor<'a, E> {
     pub fn new(
         inner: E,
         backend: &'a dyn LlmBackend,
+        sourced: Option<&'a dyn SourcedBackend>,
         guard: &'a BudgetGuard,
         actor: WriteActor,
         model: ModelId,
@@ -492,6 +497,7 @@ impl<'a, E> PersonAboutExecutor<'a, E> {
         Self {
             inner,
             backend,
+            sourced,
             guard,
             actor,
             model,
@@ -537,7 +543,10 @@ impl<E> PersonAboutExecutor<'_, E> {
         let digest = facts_digest(&facts, TOP_BAND);
         // An earlier attempt already wrote from these facts.
         if written == Some(digest) || facts.is_empty() {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let locality = self
             .inference
@@ -565,6 +574,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                 });
                 continue;
             }
+            let fact_claim_ids = admitted.iter().map(|fact| fact.claim).collect::<Vec<_>>();
             let request = LlmRequest {
                 model: self.model.clone(),
                 envelope: CallEnvelope {
@@ -623,9 +633,11 @@ impl<E> PersonAboutExecutor<'_, E> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
+            let backend =
+                CallBackend::new(self.backend, self.sourced, Some(fact_claim_ids.clone()));
             let response = match call_as_step_checked(
                 &step_ctx,
-                self.backend,
+                backend.get(),
                 self.guard,
                 request,
                 &check_about_reply,
@@ -684,7 +696,7 @@ impl<E> PersonAboutExecutor<'_, E> {
             lines.push(AboutLine {
                 band,
                 text,
-                fact_claim_ids: admitted.iter().map(|fact| fact.claim).collect(),
+                fact_claim_ids,
             });
             below = Some(band_digest);
             if ctx.deadline.expired() {
@@ -704,6 +716,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(FACTS_DRIFT_RETRY_SECS),
+                step_hashes: charges.step_hashes.clone(),
             });
         }
         let at = ctx.now_ms.div_ceil(1_000);
@@ -743,6 +756,7 @@ impl<E> PersonAboutExecutor<'_, E> {
         }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: charges.units,
+            step_hashes: charges.step_hashes.clone(),
         })
     }
 }

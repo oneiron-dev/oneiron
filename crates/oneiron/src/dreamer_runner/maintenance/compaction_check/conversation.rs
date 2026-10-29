@@ -188,7 +188,10 @@ pub(super) async fn run_conversation_check(
         Reading::Ready { summary, evidence } => (summary, evidence),
         Reading::Settled(settled) => {
             record(ctx.vault, attempt_id, &declaration, &settled, now)?;
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         Reading::Deferred => {
             return Ok(DreamerAttemptExecution::Park {
@@ -246,6 +249,7 @@ pub(super) async fn run_conversation_check(
     record(ctx.vault, attempt_id, &declaration, &settled, now)?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: verdict.spend.units,
+        step_hashes: Vec::new(),
     })
 }
 

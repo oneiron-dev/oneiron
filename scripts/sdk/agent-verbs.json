@@ -3248,9 +3248,9 @@
     },
     {
       "name": "vault.inbox.groups",
-      "description": "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.",
+      "description": "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.",
       "input": "crate::agent_inbox_lens::InboxRunGroupsRequest",
-      "output": "Vec<crate::inbox::InboxGroup>",
+      "output": "crate::inbox::InboxGroupPage",
       "call": "memory.inbox_run_groups(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -3258,6 +3258,12 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
+      },
+      "page": {
+        "rows": "groups",
+        "cursor": "next",
+        "resume": "spec",
+        "within": "after"
       },
       "section": false,
       "openapi": true
@@ -6087,7 +6093,7 @@
     },
     {
       "name": "self.off_record.execute",
-      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer.",
       "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
       "output": "crate::task_verb::sdk::OffRecordExecuted",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
@@ -7285,7 +7291,7 @@
     },
     {
       "name": "vault.embedding_spaces.list",
-      "description": "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.",
+      "description": "Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move.",
       "input": "EmptyRequest",
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::read_embedding_spaces(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.list\")?)?",
@@ -9503,7 +9509,7 @@
     },
     {
       "name": "execute_code",
-      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.",
+      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
       "output": "crate::memory::foreign_code::ForeignCodeRunResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
@@ -9535,7 +9541,7 @@
     },
     {
       "name": "vault.code.type_diagnostics",
-      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.",
+      "description": "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref.",
       "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
       "output": "Option<crate::code_run::ProgramStepFeedbackRelease>",
       "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
@@ -12642,6 +12648,19 @@
       "section": false
     },
     {
+      "name": "vault.conversations.turn.rebind",
+      "description": "Rebinds the caller's queued turn action whose credential no longer stands to the live credential this request was admitted on; the action keeps its scope.",
+      "input": "crate::conversation::TurnActionRebindRequest",
+      "output": "crate::conversation::TurnActionRebindReceipt",
+      "call": "memory.conversations_turn_rebind(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.messages.react",
       "description": "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress.",
       "input": "crate::reaction::MessageReactionRequest",
@@ -13006,7 +13025,7 @@
     },
     {
       "name": "vault.skills.attribution.settle",
-      "description": "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.",
+      "description": "The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer.",
       "input": "ProposalDeltaSettleRequest",
       "output": "crate::task_verb::sdk::ProposalDeltaSettlement",
       "call": "crate::task_verb::sdk::skill_attribution_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.settle\")?, &input)?",
