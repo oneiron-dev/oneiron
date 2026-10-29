@@ -105,7 +105,6 @@ pub(crate) struct ReadAt {
 struct Snapshot {
     seq: u64,
     scope: String,
-    url: String,
     rows: Vec<Row>,
     partial: bool,
     at: Option<ReadAt>,
@@ -241,7 +240,6 @@ impl Observations {
         let snapshot = Snapshot {
             seq: read.seq,
             scope: read.scope,
-            url: whole.url.clone(),
             rows: read.rows,
             partial,
             at: read.at,
