@@ -28,7 +28,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 /// The folder `POST /v1/owner/packs` would take, and the world the owner
 /// would pick for an agent held for its world.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PreviewPack {
     /// An absolute folder on this host.
@@ -40,6 +40,18 @@ struct PreviewPack {
     /// The picked live local world, as 32 hex.
     #[serde(default)]
     world: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/preview`'s body (FIX 11611):
+/// [`PreviewPack`].
+pub(crate) fn preview_pack_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PreviewPack>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/preview`'s answer (FIX 11611):
+/// [`PackImportPreview`].
+pub(crate) fn pack_import_preview_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PackImportPreview>()
 }
 
 /// `POST /v1/owner/packs/preview`: what installing the folder would land,

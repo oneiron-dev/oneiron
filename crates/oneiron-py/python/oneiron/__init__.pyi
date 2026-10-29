@@ -444,6 +444,15 @@ class Oneiron:
         self, path: str | os.PathLike[str], format: str | None = None
     ) -> ExportReceipt:
         """Exports the whole vault into the file at ``path``; answers its receipt."""
+    @staticmethod
+    def vault_secrets_custody_seal(
+        view: Facade.SecretCustodyViewReply,
+        change: str,
+        holder: str | None,
+        recipients: list[str],
+        body: bytes,
+    ) -> Facade.SecretCustodySubmitRequest:
+        """Seals a custody register or rotate on the caller's own side; answers the custody.submit input."""
 # BEGIN GENERATED FACADE VERBS
     @property
     def vault(self) -> "Oneiron._VaultVerbs": ...
@@ -2220,6 +2229,8 @@ class Oneiron:
             """The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call."""
         def rewrap(self, spec: Facade.SecretRewrapRequest) -> Facade.SecretCustodyReply:
             """The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown."""
+        def revoke(self, spec: Facade.SecretRevokeRequest) -> Facade.SecretRevokeReply:
+            """The owner revokes a secret: the record goes terminal and every lease over it is revoked; the reply reads as a rotation's, with kind revoked, beside the custody request carried for his other machines."""
         @property
         def custody(self) -> "Oneiron._VaultSecretsCustodyVerbs": ...
     class _VaultSecretsCustodyVerbs:

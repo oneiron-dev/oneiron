@@ -39,7 +39,7 @@ const REPLAY_BATCH: usize = 256;
 const MAX_REPLAY_BATCHES: usize = 64;
 
 /// One past entry the hook takes, and what its body returns for it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct HookReplayEntry {
     pub case: HookReplayCase,
     pub result: HookReplayResult,
@@ -81,7 +81,7 @@ pub enum HookReplayCompare {
     Incomplete,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum HookReplayResult {
     /// The body ran on this entry. Nothing landed.
