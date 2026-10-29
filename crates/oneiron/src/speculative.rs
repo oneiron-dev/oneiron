@@ -434,7 +434,7 @@ impl RunningPass {
         vault: &Arc<crate::Vault>,
         key: [u8; 32],
         remaining: Duration,
-    ) -> Result<Self, WaitTimedOut> {
+    ) -> std::result::Result<Self, WaitTimedOut> {
         // The table LMDB gave, which another process may have kept smaller
         // than the config asked for.
         let cap = usize::try_from((vault.reader_slots() / READER_SLOT_SHARE).max(1))
