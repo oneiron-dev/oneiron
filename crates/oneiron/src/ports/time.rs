@@ -210,8 +210,17 @@ impl crate::store::Store {
         // Persist ONLY clock authority here: a read must not also commit the
         // floor of IDs allocated in RAM but not yet used by a mutation.
         let mut txn = self.env.write_txn()?;
+        let persisted = authorization_floor_in_txn(self, &txn)?;
         let now = observe_clock_floor_in_txn(self, &mut txn)?;
+        let id = self.env.info().last_txn_id + 1;
         txn.commit()?;
+        // A floor-only commit changes no Dreamer input (FIX 11568); an empty
+        // one moves no txn id and is never noted.
+        if now != persisted {
+            crate::store::ManifestDbs::diagnostics(self)
+                .replay_only_commits
+                .note(id);
+        }
         Ok(now)
     }
 }
