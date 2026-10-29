@@ -42,15 +42,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use oneiron::llm::{WorkerKind, WorkerMode, WorkerStatus};
+use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::{
+    CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
+    WorkerStatus,
+};
 use oneiron_driver::{
-    DeclaredEnvelope, DeviceLedger, InferenceWorker, WorkerPolicy, WorkerProbe, WorkerSpec,
+    AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
+    ExecutorRegistration, InferenceWorker, WorkRequest, WorkTicket, WorkerPolicy, WorkerProbe,
+    WorkerSpec,
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
 use launch_manifest::LaunchSlot;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
+use serde_json::Value as JsonValue;
 
 #[cfg(unix)]
 pub(super) use session::open_turn;
@@ -70,6 +77,7 @@ struct WorkerHost {
     workers: Mutex<BTreeMap<String, Hosted>>,
     stores: Arc<Stores>,
     ledgers: Mutex<BTreeMap<String, Arc<DeviceLedger>>>,
+    admissions: Mutex<BTreeMap<String, Arc<DeviceAdmission>>>,
     /// The sessions on its managed EXL3 workers (DESIGN-V2 R2).
     #[cfg(unix)]
     sessions: session::Registry,
@@ -114,6 +122,71 @@ impl NativeRoute {
             record.native_socket.clone()?,
             record.manifest_sha256.clone(),
         ))
+    }
+
+    /// The scheduling capability the qualifying hello proved for this launch.
+    pub(super) fn scheduling_capability(&self) -> Option<SchedulingCapability> {
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|record| record.scheduling.clone())
+    }
+}
+
+/// One native call's ticket and eventual grant. An early exit cancels an
+/// unused ticket; once granted, `Call` owns the release/reap custody.
+pub(super) struct BoundWork {
+    ticket: Option<WorkTicket>,
+    context: WorkContext,
+    armed: bool,
+}
+
+impl BoundWork {
+    #[must_use]
+    pub(super) fn device(&self) -> Option<&str> {
+        self.ticket.as_ref().map(|ticket| ticket.device.as_str())
+    }
+
+    #[must_use]
+    pub(super) fn is_foreground(&self) -> bool {
+        self.context.class == WorkClass::Foreground
+    }
+
+    pub(super) async fn wait_runnable(&self) -> Result<(), AdmissionStop> {
+        match &self.ticket {
+            Some(ticket) => ticket.wait_runnable().await,
+            None => Ok(()),
+        }
+    }
+
+    pub(super) async fn execution_grant(&mut self) -> Result<Option<DeviceGrant>, AdmissionStop> {
+        let grant = match &self.ticket {
+            Some(ticket) => Some(ticket.wait_execution_grant().await?),
+            None => None,
+        };
+        self.armed = false;
+        Ok(grant)
+    }
+
+    #[must_use]
+    pub(super) fn schedule(&self, grant: Option<&DeviceGrant>) -> CallSchedule {
+        CallSchedule {
+            work_class: self.context.class,
+            priority: self.context.priority,
+            deadline: self.context.deadline,
+            admission: grant.map(DeviceGrant::admission),
+        }
+    }
+}
+
+impl Drop for BoundWork {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Some(ticket) = &self.ticket {
+                ticket.cancel();
+            }
+        }
     }
 }
 
@@ -177,6 +250,83 @@ fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
         .unwrap_or_else(PoisonError::into_inner)
         .get(&device)
         .cloned()
+}
+
+/// Takes a device ticket for one bound call before its worker acquire. No
+/// device means the route keeps its existing unmediated path.
+pub(super) fn admit_bound_work(worker: &InferenceWorker, context: WorkContext) -> BoundWork {
+    let ticket = HOST.get().and_then(|host| {
+        let hosted = host.lock();
+        let hosted = hosted.get(&worker.spec().worker_id)?;
+        let device = hosted.row.launch.as_ref()?.device.as_deref()?;
+        let admission = host.admission(device);
+        let mut request = WorkRequest::new(
+            hosted.row.id.clone(),
+            worker.resource_class(),
+            hosted.row.id.clone(),
+        );
+        request.class = context.class;
+        request.priority = context.priority;
+        request.deadline = context.deadline;
+        request.parent = context.parent;
+        request.cancel = context.cancel.shared();
+        Some(admission.enqueue(request))
+    });
+    BoundWork {
+        ticket,
+        context,
+        armed: true,
+    }
+}
+
+/// Retains a sanitized physical receipt on the worker that made it.
+pub(super) fn report_receipt(worker_id: &str, epoch: &str, receipt: InferenceCallReceipt) {
+    if let Some(host) = HOST.get() {
+        if let Some(hosted) = host.lock().get(worker_id) {
+            hosted.worker.record_receipt(epoch, receipt);
+        }
+    }
+}
+
+/// Cross-checks a worker's own device capacity report with the pre-load
+/// query. The first valid report fills an unknown; a mismatch keeps the
+/// device query and logs rather than silently rewriting capacity.
+pub(super) fn report_device_stats(worker_id: &str, stats: &JsonValue) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Some(device) = host
+        .lock()
+        .get(worker_id)
+        .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone())
+    else {
+        return;
+    };
+    let ledger = host.ledger(&device);
+    let rows = stats.get("devices").and_then(JsonValue::as_array);
+    let row = rows.and_then(|rows| {
+        rows.iter()
+            .find(|row| {
+                row.get("device")
+                    .and_then(JsonValue::as_str)
+                    .is_some_and(|name| name == device || name == format!("cuda:{device}"))
+            })
+            .or_else(|| (rows.len() == 1).then(|| rows.first()).flatten())
+    });
+    let Some(bytes) = row
+        .and_then(|row| row.get("capacity_bytes"))
+        .and_then(JsonValue::as_u64)
+    else {
+        return;
+    };
+    let capacity = bytes.saturating_add((1_u64 << 20) - 1) / (1_u64 << 20);
+    match ledger.capacity() {
+        None => ledger.set_capacity(Some(capacity)),
+        Some(existing) if existing != capacity => {
+            tracing::warn!(worker = worker_id, device = %device, existing, reported = capacity, "worker and host device capacities differ");
+        }
+        Some(_) => {}
+    }
 }
 
 /// Sealed snapshot parking as this process stands; `None` off Unix.
@@ -256,6 +406,25 @@ pub(super) fn refresh(statuses: &mut [WorkerStatus]) {
             *status = hosted.worker.status();
         }
     }
+}
+
+/// Copies every device queue and ledger into owner-facing status. No probe.
+pub(super) fn refresh_devices(statuses: &mut Vec<super::status::DeviceStatus>) {
+    let Some(host) = HOST.get() else {
+        statuses.clear();
+        return;
+    };
+    let admissions = host
+        .admissions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    *statuses = admissions
+        .into_iter()
+        .map(|admission| super::status::DeviceStatus::from_snapshot(admission.snapshot()))
+        .collect();
 }
 
 /// The managed worker a rung on `provider` calling `wire_model` is bound
@@ -340,10 +509,24 @@ impl WorkerHost {
     /// The device ledger for `device`, shared by every worker on it.
     fn ledger(&self, device: &str) -> Arc<DeviceLedger> {
         let mut ledgers = self.ledgers.lock().unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(ledgers.entry(device.to_owned()).or_insert_with(|| {
+            Arc::new(DeviceLedger::new(
+                format!("cuda:{device}"),
+                query_capacity(device),
+            ))
+        }))
+    }
+
+    /// The one admission queue for `device`, sharing its memory ledger.
+    fn admission(&self, device: &str) -> Arc<DeviceAdmission> {
+        let mut admissions = self
+            .admissions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         Arc::clone(
-            ledgers
+            admissions
                 .entry(device.to_owned())
-                .or_insert_with(|| Arc::new(DeviceLedger::new(format!("cuda:{device}"), None))),
+                .or_insert_with(|| Arc::new(DeviceAdmission::new(device, self.ledger(device)))),
         )
     }
 
@@ -384,10 +567,21 @@ impl WorkerHost {
                     .device
                     .as_deref()
                     .map(|device| (self.ledger(device), declared(launch.envelope)));
-                (
-                    InferenceWorker::managed(spec, launcher, probe, policy, device),
-                    Some(slot),
-                )
+                let worker = InferenceWorker::managed(spec, launcher, probe, policy, device);
+                if let Some(device) = launch.device.as_deref() {
+                    let admission = self.admission(device);
+                    worker.with_admission(Arc::clone(&admission));
+                    let managed_here = self.launch_permitted.load(Ordering::SeqCst);
+                    if !managed_here {
+                        self.ledger(device).note_unmediated(&row.id, None);
+                    }
+                    admission.register_executor(ExecutorRegistration {
+                        worker_id: row.id.clone(),
+                        external: !managed_here,
+                        idle: true,
+                    });
+                }
+                (worker, Some(slot))
             }
             _ => {
                 let probe = Arc::new(HouseProbe::new(
@@ -400,6 +594,34 @@ impl WorkerHost {
             }
         }
     }
+}
+
+/// Total MiB for the configured CUDA device, without pooling or remapping
+/// cards. Any unavailable query leaves capacity unknown, which admits today.
+fn query_capacity(device: &str) -> Option<u64> {
+    let device = device.trim();
+    if device.is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=memory.total",
+            "--format=csv,noheader,nounits",
+            "--id",
+            device,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()?
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn declared(envelope: WorkerEnvelope) -> DeclaredEnvelope {

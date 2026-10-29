@@ -26,6 +26,7 @@
 mod buffer;
 mod session_ops;
 mod transport;
+mod updates;
 mod wire;
 
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
@@ -41,8 +42,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
+use oneiron::llm::run_admission::WorkContext;
 use oneiron::llm::{
-    CallSchedule, INFERENCE_CALLS_KEY, SegmentManifest, WorkerBuildEvidence, WorkerFailure,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, SegmentManifest, WorkerBuildEvidence, WorkerFailure,
 };
 use oneiron_driver::WorkerActivity;
 use oneiron_llm_openai::{
@@ -192,6 +194,11 @@ impl Tie {
 struct Sent {
     call: Call,
     tie: Tie,
+    #[expect(
+        dead_code,
+        reason = "its Drop unregisters the call's device update row"
+    )]
+    registration: Option<updates::Registration>,
 }
 
 /// How a call's start ended.
@@ -211,7 +218,20 @@ async fn begin(
     body: &JsonValue,
     stream: bool,
     segments: Option<&SegmentManifest>,
+    context: WorkContext,
 ) -> Result<Begun, OpenAiCompatTransportError> {
+    // The ticket precedes demand; an early exit cancels it without touching
+    // the worker. Foreground arrival yields only update-capable background
+    // calls on the same device.
+    let mut work = worker_host::admit_bound_work(&route.worker, context);
+    if work.is_foreground() {
+        if let Some(device) = work.device() {
+            updates::foreground_arrival(device).await;
+        }
+    }
+    work.wait_runnable()
+        .await
+        .map_err(|_| OpenAiCompatTransportError::Connection)?;
     let lease = route
         .worker
         .acquire()
@@ -228,6 +248,13 @@ async fn begin(
     if lease.revoked() {
         return Err(OpenAiCompatTransportError::Connection);
     }
+    // Readiness is now proved, so take the execution grant before any
+    // session op or generate. It and the worker lease share release custody.
+    let grant = work
+        .execution_grant()
+        .await
+        .map_err(|_| OpenAiCompatTransportError::Connection)?;
+    let schedule = work.schedule(grant.as_ref());
     let (conversation, params) = wire::split_request(body);
     let session = match segments {
         Some(manifest) => {
@@ -245,10 +272,8 @@ async fn begin(
         None => None,
     };
     let plain = session.is_some().then(|| params.clone());
-    // The call's scheduling (codec v1.3): none is named until the host's
-    // device admission grants one, and the worker runs it at the defaults.
-    // A plain retry after a refused session carries the same.
-    let schedule: Option<&CallSchedule> = None;
+    // A plain retry after a refused session is the same call: it reuses the
+    // ticket, grant, class, priority and deadline.
     let mut started = Call::start(
         &socket,
         &epoch,
@@ -257,7 +282,7 @@ async fn begin(
         stream,
         Some(lease),
         session,
-        schedule,
+        Some(&schedule),
     )
     .await;
     let refused = matches!(
@@ -265,8 +290,6 @@ async fn begin(
         Err(Start::Refused(refusal)) if !wire::refusal_is_request(wire::refusal_code(refusal))
     );
     if let (true, Some(params)) = (refused, plain) {
-        // Nothing ran on the working branch: the turn goes as it always
-        // did, on a lease of its own.
         let lease = route
             .worker
             .acquire()
@@ -280,18 +303,35 @@ async fn begin(
             stream,
             Some(lease),
             None,
-            schedule,
+            Some(&schedule),
         )
         .await;
     }
     match started {
-        Ok(call) => Ok(Begun::Sent(Sent {
-            call,
-            tie: Tie {
-                manifest_sha256,
-                epoch,
-            },
-        })),
+        Ok(call) => {
+            let mut call = call;
+            let registration = grant.as_ref().and_then(|grant| {
+                work.device().and_then(|device| {
+                    updates::register(
+                        device.to_owned(),
+                        grant.grant_id(),
+                        grant.revision(),
+                        schedule.work_class,
+                        route.scheduling_capability(),
+                        call.updates(),
+                    )
+                })
+            });
+            call.set_grant(grant);
+            Ok(Begun::Sent(Sent {
+                call,
+                tie: Tie {
+                    manifest_sha256,
+                    epoch,
+                },
+                registration,
+            }))
+        }
         Err(Start::Refused(refusal)) => {
             let code = wire::refusal_code(&refusal);
             if wire::refusal_is_request(code) {
@@ -316,7 +356,15 @@ async fn execute(
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
-    let mut sent = match begin(&route, &body, false, segments.as_deref()).await? {
+    let mut sent = match begin(
+        &route,
+        &body,
+        false,
+        segments.as_deref(),
+        WorkContext::default(),
+    )
+    .await?
+    {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
@@ -330,6 +378,7 @@ async fn execute(
         }
     };
     report(&route, &last);
+    record_receipt(&route, &sent, &last);
     Ok(buffered_reply(last, target.as_deref(), Some(&sent.tie)))
 }
 
@@ -427,6 +476,22 @@ fn activity_of(stats: &JsonValue) -> Option<WorkerActivity> {
     })
 }
 
+/// Retains the physical receipt a terminal carried, with its launch epoch.
+fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
+    let receipt = last
+        .get("usage")
+        .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
+        .and_then(JsonValue::as_array)
+        .and_then(|calls| {
+            calls
+                .iter()
+                .find_map(|call| serde_json::from_value::<InferenceCallReceipt>(call.clone()).ok())
+        });
+    if let Some(receipt) = receipt {
+        worker_host::report_receipt(&route.worker.spec().worker_id, &sent.tie.epoch, receipt);
+    }
+}
+
 /// Feeds the cheap stats of a `final`, or of an `admitted`, to the worker's
 /// supervisor.
 fn report(route: &NativeRoute, last: &JsonValue) {
@@ -437,6 +502,9 @@ fn report(route: &NativeRoute, last: &JsonValue) {
 /// `schedule` applied, a terminal) to its supervisor: reports between its
 /// polls.
 fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
+    if let Some(stats) = stats {
+        worker_host::report_device_stats(&route.worker.spec().worker_id, stats);
+    }
     if let Some(activity) = stats.and_then(activity_of) {
         route.worker.report(activity);
     }
@@ -562,7 +630,15 @@ impl Streaming {
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
-                match begin(&route, &body, true, segments.as_deref()).await {
+                match begin(
+                    &route,
+                    &body,
+                    true,
+                    segments.as_deref(),
+                    WorkContext::default(),
+                )
+                .await
+                {
                     Ok(Begun::Sent(sent)) => Box::new(Live::over(route, sent, target)).next().await,
                     Ok(Begun::Answered(reply)) => {
                         Some((Ok(OpenAiCompatStreamFrame::Status(reply)), Self::Done))
@@ -636,6 +712,7 @@ impl Live {
                 Ok(Event::Final(last)) => {
                     self.finished = true;
                     report(&self.route, &last);
+                    record_receipt(&self.route, &self.sent, &last);
                     self.finish(last);
                 }
                 Err(Cut(error)) => {

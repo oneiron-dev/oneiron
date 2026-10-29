@@ -112,8 +112,9 @@ pub use router::ModelRouter;
 pub use run_backend::RunBackend;
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
-    DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
-    SnapshotReceipt, SnapshotSkips, SnapshotStatus,
+    DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
+    DeviceStatus, DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState,
+    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus,
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};

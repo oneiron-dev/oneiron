@@ -429,6 +429,12 @@ impl InferenceWorker {
         &self.inner.spec
     }
 
+    /// The device-budget class this worker's kind serves.
+    #[must_use]
+    pub fn resource_class(&self) -> ResourceClass {
+        self.inner.resource_class()
+    }
+
     /// Starts a stopped managed worker now, as an always-on worker starts at
     /// boot. Nothing for an external worker, one already running, or outside
     /// a Tokio runtime.
