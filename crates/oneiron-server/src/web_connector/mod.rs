@@ -11,12 +11,14 @@
 //! request id, never the query, the URL or the results. A provider failure
 //! answers as a tool error, as an MCP tool's would; a call that cannot start
 //! (no key, bad arguments, an unknown tool) is refused with its reason code.
+mod charge;
 mod keys;
 mod providers;
 
 use std::time::Instant;
 
 use oneiron::EntityId;
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryResult};
 use oneiron::outbound_consent::{ConnectorCallOutcome, ConnectorCallRequest, UntrustedToolResult};
 use oneiron::task_verb::sdk::ConnectorCallReply;
@@ -32,11 +34,14 @@ use providers::{ProviderAnswer, ProviderBody, ProviderError};
 
 /// One `connector.call` of the `web` connector, beside the rows its passes
 /// picked: the hub connector's, when the switch forwards to one, else none.
-/// Blocking: it sends, so call it on a blocking worker.
+/// A call on the deploy's backend key is charged on `line`, the calling run's
+/// own, else on a meter of its own (FIX 11604). Blocking: it sends, so call it
+/// on a blocking worker.
 pub(crate) fn call_listing(
     server: &SyncServer,
     memory: &Memory<'_>,
     input: ConnectorCallRequest,
+    line: Option<&RunAdmission>,
 ) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
     let Some(tool) = WebTool::parse(&input.tool) else {
         return Ok((refused("connector_tool_unknown"), None));
@@ -65,6 +70,16 @@ pub(crate) fn call_listing(
             Err(reason) => return Ok((refused(reason), None)),
         }
     };
+    // Our backend key's calls are our cash: each is admitted and settled as a
+    // paid connector call (FIX 11604).
+    let charge = if key_source == WebKeySource::Backend && key.is_some() {
+        match charge::admit(server, line, provider, tool) {
+            Ok(permit) => Some(permit),
+            Err(reason) => return Ok((refused(reason), None)),
+        }
+    } else {
+        None
+    };
     let at_ms = now_ms();
     let started = Instant::now();
     let answer = match (&call, &key) {
@@ -76,6 +91,9 @@ pub(crate) fn call_listing(
         (WebCall::Search(_), None) => Err(ProviderError::message("no provider key")),
     };
     drop(key);
+    if let Some(permit) = charge {
+        charge::settle(permit, answer.is_ok());
+    }
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let (reply, usage) = match answer {
         Ok(answer) => {
