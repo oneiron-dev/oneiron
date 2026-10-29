@@ -59,6 +59,13 @@ pub(crate) trait SeatGuest: Send + Sized + 'static {
     /// Who has the guest now.
     fn takeover(&self) -> &Takeover;
 
+    /// Whether the guest's agent waits on its owner's answer about an act
+    /// the guest held (FIX 10423), as an open ask does; none for a guest
+    /// that holds none.
+    fn awaits_owner(&self) -> bool {
+        false
+    }
+
     /// Ends a takeover still asked or held as the guest goes away.
     fn abandon_takeover(&mut self) -> Option<AbandonedTakeover>;
 
@@ -119,13 +126,16 @@ const REAP_TICK: Duration = Duration::from_secs(30);
 
 /// How long a parked run guest waits, with no door of its run bound and no
 /// act of the owner on it, before it ends (CALLS, open): 30 minutes while
-/// its agent has it, 24 hours while the agent's ask waits or the owner holds
-/// it. The owner watching its frames is no act. A desktop and a browser
+/// its agent has it, 24 hours while the agent's ask waits, the owner holds
+/// it, or an act it held waits on the owner's answer (`awaits_owner`, FIX
+/// 10423). The owner watching its frames is no act. A desktop and a browser
 /// wait alike.
-fn idle_limit(takeover: &Takeover) -> Duration {
+fn idle_limit(takeover: &Takeover, awaits_owner: bool) -> Duration {
     match takeover {
-        Takeover::Agent => Duration::from_secs(30 * 60),
-        Takeover::Waiting { .. } | Takeover::Held { .. } => Duration::from_secs(24 * 60 * 60),
+        Takeover::Agent if !awaits_owner => Duration::from_secs(30 * 60),
+        Takeover::Agent | Takeover::Waiting { .. } | Takeover::Held { .. } => {
+            Duration::from_secs(24 * 60 * 60)
+        }
     }
 }
 
@@ -367,7 +377,7 @@ fn reap_loop<S: SeatGuest>(seats: &Weak<RunSeats<S>>) {
 /// to keep.
 fn idle_past<S: SeatGuest>(entry: &RunSeat<S>, now: Instant) -> bool {
     match RunSeats::<S>::peek(&entry.seat, |session| {
-        session.map(|s| idle_limit(s.takeover()))
+        session.map(|s| idle_limit(s.takeover(), s.awaits_owner()))
     }) {
         None => false,
         Some(None) => true,

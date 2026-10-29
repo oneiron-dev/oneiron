@@ -444,6 +444,20 @@ impl RunBrowser {
             .as_mut()?
             .take_held_press()
     }
+
+    /// Records whether the run's browser holds an act whose bound wait its
+    /// owner has not answered: its parked seat then idles as an open ask
+    /// does (FIX 10423).
+    pub(super) fn await_press_answer(&self, awaiting: bool) {
+        if let Some(session) = self
+            .session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+        {
+            session.await_press_answer(awaiting);
+        }
+    }
 }
 
 impl RunDesktop {
@@ -607,8 +621,10 @@ impl RunGuests {
             verb: call.verb,
             input: hooks.args.clone(),
         };
-        // Only this call's held press binds a wait (FIX 10423).
+        // Only this call's held press binds a wait, and a run that calls
+        // again waits on no earlier one (FIX 10423).
         drop(self.take_held_press());
+        self.await_press_answer(false);
         let answer =
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
@@ -617,6 +633,7 @@ impl RunGuests {
                         && refused.code == BrowserError::NeedsPress(String::new()).code()
                         && let Some(wait) = hold_press(call.verb, origin, memory, held, None)
                     {
+                        self.await_press_answer(true);
                         refused = browser_guest::bound_words(refused, wait);
                     }
                     self.refused.keep(Some(&refused));
@@ -633,8 +650,10 @@ impl RunGuests {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
                 // A batch a press stopped keeps its answer at the stop on
                 // the wait its held step binds; the run parks on it.
-                if let Some(held) = held {
-                    hold_press(call.verb, origin, memory, held, Some(&output));
+                if let Some(held) = held
+                    && hold_press(call.verb, origin, memory, held, Some(&output)).is_some()
+                {
+                    self.await_press_answer(true);
                 }
                 Ok(Ok(AgentVerbAnswer {
                     output,
@@ -649,6 +668,14 @@ impl RunGuests {
     /// 10423).
     fn take_held_press(&self) -> Option<HeldPress> {
         self.browser.as_ref()?.take_held_press()
+    }
+
+    /// Records whether the run's browser waits on its owner's answer to a
+    /// held act (FIX 10423).
+    fn await_press_answer(&self, awaiting: bool) {
+        if let Some(browser) = &self.browser {
+            browser.await_press_answer(awaiting);
+        }
     }
 
     /// The facade and MCP host doors already crossed the row's hooks. They

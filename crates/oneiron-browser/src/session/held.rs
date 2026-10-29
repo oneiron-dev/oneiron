@@ -73,6 +73,8 @@ pub(super) struct Holds {
     last: Option<HeldPress>,
     /// The one press an owner's answer armed, for its exact act.
     armed: Option<HeldPress>,
+    /// The host bound a held act to a wait its owner has not answered.
+    awaiting: bool,
 }
 
 impl BrowserSession {
@@ -89,8 +91,22 @@ impl BrowserSession {
         if SendPolicy::person_only(&held.class) {
             return false;
         }
+        self.held.awaiting = false;
         self.held.armed = Some(held);
         true
+    }
+
+    /// Records whether an act this session held waits on its owner's
+    /// answer: the host sets it once it bound the act to a wait, and clears
+    /// it when its run calls again. An armed press clears it too.
+    pub fn await_press_answer(&mut self, awaiting: bool) {
+        self.held.awaiting = awaiting;
+    }
+
+    /// Whether an act this session held waits on its owner's answer.
+    #[must_use]
+    pub const fn awaits_press_answer(&self) -> bool {
+        self.held.awaiting
     }
 
     /// Drops an armed press no press check took. `true` when one was armed.

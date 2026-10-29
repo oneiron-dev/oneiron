@@ -45,6 +45,10 @@ impl SeatGuest for BrowserSession {
         Self::takeover(self)
     }
 
+    fn awaits_owner(&self) -> bool {
+        self.awaits_press_answer()
+    }
+
     fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
         Self::abandon_takeover(self)
     }
