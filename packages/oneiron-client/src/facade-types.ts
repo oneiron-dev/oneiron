@@ -827,13 +827,13 @@ export type BudgetHoldRequest = { run: string }
 /** `oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetRequest` */
 export type LocalRunnerBudgetRequest = { budget_id: string }
 /** `oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetCounter` */
-export type LocalRunnerBudgetCounter = { total_units: number; remaining_units: number; reserved_units: number; spent_units: number; updated_at: number }
+export type LocalRunnerBudgetCounter = { total_units: number; remaining_units: number; reserved_units: number; spent_units: number; overdraft_units: number; owed_calls: number; updated_at: number }
 /** `oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetView` */
 export type LocalRunnerBudgetView = { budget_id: string; counter?: LocalRunnerBudgetCounter | null }
 /** `oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest` */
 export type RunnerBudgetReservationsRequest = { budget_id: string; after?: string | null; limit?: number | null }
 /** `oneiron::agent_dispatch::budget_doors::RunnerBudgetReservation` */
-export type RunnerBudgetReservation = { job_ref: string; reserved_units: number; created_at: number; updated_at: number }
+export type RunnerBudgetReservation = { job_ref: string; reserved_units: number; owed_units: number; created_at: number; updated_at: number }
 /** `oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsView` */
 export type RunnerBudgetReservationsView = { budget_id: string; counter?: LocalRunnerBudgetCounter | null; reservations: RunnerBudgetReservation[]; next?: string | null; local_only: boolean }
 /** `oneiron::agent_dispatch::budget_doors::RunSettlementsRequest` */
