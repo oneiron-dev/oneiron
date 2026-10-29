@@ -26,7 +26,6 @@ const RESERVED_HEADERS: [&str; 13] = [
     "cookie",
 ];
 
-const MAX_HEADERS: usize = 32;
 const MAX_HEADER_VALUE: usize = 1024;
 
 /// What the daemon asks the broker to send. The body and the key travel as
@@ -143,9 +142,8 @@ fn exact_url(origin: &str, path: &str) -> Result<Url, Refusal> {
 }
 
 fn check_headers(headers: &[(String, String)]) -> Result<(), Refusal> {
-    if headers.len() > MAX_HEADERS {
-        return Err(Refusal::Header);
-    }
+    // FIX 8558: no header-count refusal; the grammar, repeat, credential
+    // and reserved-header checks below still refuse.
     for (index, (name, value)) in headers.iter().enumerate() {
         let token = !name.is_empty()
             && name
