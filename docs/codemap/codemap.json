@@ -98380,7 +98380,7 @@
      "path": "src/api/ai/options.rs",
      "purpose": "`ai.options` (OF-131, OF-140; FIX 2942): the model rows a caller could call now",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -100478,7 +100478,7 @@
      "path": "src/api/facade/host_doors/media.rs",
      "purpose": "The `ai.*` media doors past text: options, image, speech, transcription, embedding and video",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 27
      }
     },
     {
@@ -110185,7 +110185,7 @@
      "path": "src/models/media/calls.rs",
      "purpose": "Media calls, public job operations and runtime cleanup",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -110248,6 +110248,17 @@
      "surface": {
       "crate-vis": 3,
       "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/run_line.rs",
+     "purpose": "A program's media jobs on its run's line (FIX 780, FIX 6083)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
      }
     },
     {
@@ -113999,7 +114010,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 92,
+     "files": 93,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114148,7 +114159,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1385,
+   "source_files": 1386,
    "test_files": 182
   },
   "oneiron-spawn": {
