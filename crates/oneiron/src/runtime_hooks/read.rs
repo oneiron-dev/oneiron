@@ -105,7 +105,10 @@ pub(super) fn fact_row(
         return Ok(None);
     };
     let body_hash = *blake3::hash(body).as_bytes();
-    if entry.body_hash.is_some_and(|expected| expected != body_hash) {
+    if entry
+        .body_hash
+        .is_some_and(|expected| expected != body_hash)
+    {
         return Ok(None);
     }
     if row.entity_type != ENTITY_TYPE_CLAIM {
