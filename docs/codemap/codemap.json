@@ -13814,7 +13814,7 @@
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 18,
       "fn": 7
      }
     },
@@ -21579,7 +21579,7 @@
      "path": "src/context_pack/builder/scoped.rs",
      "purpose": "Candidate narrowing passthrough to the existing retrieval pipeline",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -52577,7 +52577,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 43,
       "struct": 1
      }
@@ -52641,7 +52641,7 @@
      "path": "src/pipeline/corpus_filter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -53156,7 +53156,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 36,
+      "crate-vis": 38,
       "enum": 5,
       "fn": 15,
       "re-export": 1,
