@@ -145,10 +145,11 @@ fn preview_view(preview: &DeleteEntityPreview) -> MemoryResult<RecordErasePrevie
     Ok(view)
 }
 
-const fn hold_code(hold: SameBytesHold) -> &'static str {
+/// The held row's reason code, as [`SameBytesHold`] logs it.
+fn hold_code(hold: SameBytesHold) -> &'static str {
     match hold {
         SameBytesHold::AnotherOwnersRecord => "another_owners_record",
-        SameBytesHold::LegalHold => "privacy_erase_kept",
+        SameBytesHold::LegalHold { .. } => "privacy_erase_kept",
         SameBytesHold::CompletionPending => "completion_pending",
         SameBytesHold::VetoWindow => "veto_window",
     }

@@ -65,7 +65,8 @@ pub(super) struct SupervisorEventInputs<'a, T> {
     pub(super) wave_events: &'a mut tokio::sync::broadcast::Receiver<()>,
     pub(super) wave_enabled: bool,
     /// The source may be read: it has not run dry, and it is not resting
-    /// behind an owed retry of the tick it keeps redelivering.
+    /// whole behind an owed retry of the deadline it keeps redelivering. A
+    /// source that rests only its deadline lane stays open (FIX 11403).
     pub(super) source_open: bool,
     pub(super) retry_ready: bool,
     pub(super) wave_ready: bool,

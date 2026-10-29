@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1162 facade rows, 4181 generated types.
+// UniFFI census: 1162 facade rows, 4183 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1114.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -31445,6 +31445,28 @@ pub enum LearningChoiceValue {
     Budget(u64),
 }
 
+/// `oneiron::learning_setting_doors::LearnedChoiceValueView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearnedChoiceValueView {
+    #[serde(rename = "choice")]
+    pub choice: LearningChoiceValue,
+    #[serde(rename = "runs")]
+    pub runs: f64,
+    #[serde(rename = "share")]
+    pub share: f64,
+}
+
+/// `oneiron::learning_setting_doors::LearnedChoiceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearnedChoiceView {
+    #[serde(rename = "values")]
+    pub values: Vec<LearnedChoiceValueView>,
+    #[serde(rename = "own_runs")]
+    pub own_runs: f64,
+    #[serde(rename = "origin")]
+    pub origin: PriorOrigin,
+}
+
 /// `oneiron::learning_setting_doors::LearningSettingRowView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LearningSettingRowView {
@@ -31476,6 +31498,8 @@ pub struct LearningSettingRowView {
     pub at: u64,
     #[serde(rename = "why")]
     pub why: String,
+    #[serde(rename = "learned", default, skip_serializing_if = "Option::is_none")]
+    pub learned: Option<LearnedChoiceView>,
 }
 
 /// `oneiron::learning_setting_doors::LearningSettingsView`.
@@ -47769,11 +47793,11 @@ pub struct ProposalDeltaSettleRequest {
     )]
     pub attempt_receipt: Option<String>,
     #[serde(
-        rename = "source_turn_ref",
+        rename = "artifact_ref",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub source_turn_ref: Option<String>,
+    pub artifact_ref: Option<String>,
     #[serde(rename = "scope")]
     pub scope: String,
     #[serde(rename = "cause", default, skip_serializing_if = "Option::is_none")]
@@ -47873,6 +47897,8 @@ pub struct AmendmentJudgmentView {
     pub evidence_receipts: Vec<String>,
     #[serde(rename = "d_norm")]
     pub d_norm: f64,
+    #[serde(rename = "engine_ver")]
+    pub engine_ver: String,
     #[serde(rename = "at")]
     pub at: u64,
 }
@@ -47882,14 +47908,18 @@ pub struct AmendmentJudgmentView {
 pub struct ProposalDeltaSettlement {
     #[serde(rename = "receipt_id")]
     pub receipt_id: String,
-    #[serde(rename = "artifact_ref")]
-    pub artifact_ref: String,
+    #[serde(
+        rename = "artifact_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub artifact_ref: Option<String>,
     #[serde(rename = "proposed_text")]
     pub proposed_text: String,
     #[serde(rename = "final_text")]
     pub final_text: String,
-    #[serde(rename = "delta")]
-    pub delta: AmendmentDeltaView,
+    #[serde(rename = "delta", default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<AmendmentDeltaView>,
     #[serde(rename = "hunks")]
     pub hunks: Vec<SettledHunkView>,
     #[serde(rename = "judgment", default, skip_serializing_if = "Option::is_none")]
@@ -47923,10 +47953,18 @@ pub struct ProposalOpSpanView {
     pub actor: Option<String>,
     #[serde(rename = "trust")]
     pub trust: String,
-    #[serde(rename = "before_text")]
-    pub before_text: String,
-    #[serde(rename = "after_text")]
-    pub after_text: String,
+    #[serde(
+        rename = "before_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub before_text: Option<String>,
+    #[serde(
+        rename = "after_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_text: Option<String>,
     #[serde(rename = "lamport")]
     pub lamport: u32,
     #[serde(rename = "timestamp")]
@@ -47938,10 +47976,18 @@ pub struct ProposalOpSpanView {
 pub struct ProposalArtifactView {
     #[serde(rename = "artifact_ref")]
     pub artifact_ref: String,
-    #[serde(rename = "proposed_text")]
-    pub proposed_text: String,
-    #[serde(rename = "final_text")]
-    pub final_text: String,
+    #[serde(
+        rename = "proposed_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposed_text: Option<String>,
+    #[serde(
+        rename = "final_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub final_text: Option<String>,
     #[serde(
         rename = "source_turn_ref",
         default,

@@ -4,11 +4,11 @@
 //!
 //! # The pair
 //!
-//! ED-00 retains both ends of a proposal's edit window
-//! ([`FinalizedProposalText`](super::FinalizedProposalText): `proposed_text` as
-//! drafted, `final_text` as the decider left it). Those two strings ARE the
-//! preference pair — `rejected` and `chosen` — and they exist nowhere else,
-//! which is why ED-00's retention is a contract rather than a convenience.
+//! ED-00 retains the proposal document, and its record's refs name both ends
+//! of the edit window: the text as drafted and as the decider left it, read
+//! through [`RetainedProposal`](super::RetainedProposal). Those two texts ARE
+//! the preference pair — `rejected` and `chosen` — and an end the document no
+//! longer holds is no pair, never a guessed one.
 //!
 //! Retention is NOT eligibility. `finalize` persists every artifact it closes,
 //! including the ones nobody has ruled on yet and the ones a decider rejected,
@@ -18,9 +18,8 @@
 //! durably recorded an AMENDMENT — an approved-and-changed outcome — against
 //! the artifact, which is `amendment_recorded_in_txn`'s question and the
 //! same one [`record_amendment_evidence`](super::attribution::record_amendment_evidence)
-//! asks before it will record anything. Texts that are equal are dropped too,
-//! and that filter is exact rather than heuristic: an untouched approval
-//! amended nothing.
+//! asks before it will record anything. Equal texts are dropped too: an
+//! untouched approval amended nothing.
 //!
 //! SFT and DPO are two views of one pair — `chosen` alone is the supervised
 //! target, the pair is the preference sample — so this module ships ONE schema
@@ -112,7 +111,7 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use super::PROPOSAL_ARTIFACT;
+use super::{PROPOSAL_ARTIFACT, RetainedProposal};
 use crate::Vault;
 use crate::consent::{
     AudienceBound, AuthenticatedOwner, ComposedEffect, ConsentDecision, DisclosureClass,
@@ -441,14 +440,12 @@ fn resolve_candidates(
 ) -> Result<Vec<TrainingPair>> {
     let mut pairs = Vec::new();
     for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, rtxn, &[])? {
-        let (_key, record) = entry?;
-
+        let retained = RetainedProposal::open(entry?.1);
         // THE TRIPWIRE, at the enumeration source and ahead of every filter.
         // Probing before the eligibility, pair and scope filters is deliberate:
         // a filter that ran first could hide an inertness bug behind a narrow
-        // scope, and an inertness violation is not a row to skip — it is an
-        // export to refuse.
-        if let Some(turn) = record.source_turn_ref
+        // scope, and an inertness violation is an export to refuse.
+        if let Some(turn) = retained.record.source_turn_ref
             && vault.store.off_record_sessions.contains_entity(&turn)?
         {
             return Err(Error::InvariantViolation(
@@ -457,32 +454,35 @@ fn resolve_candidates(
             ));
         }
 
-        // An untouched approval leaves the two ends equal: nothing was changed,
-        // so there is no preference to learn.
-        if record.proposed_text == record.final_text {
+        // An untouched approval leaves the two ends equal: no preference.
+        let (Some(rejected), Some(chosen)) = (
+            retained.proposed_text().into_text(),
+            retained.final_text().into_text(),
+        ) else {
+            continue;
+        };
+        if rejected == chosen {
             continue;
         }
         // ELIGIBILITY. Differing texts alone say an artifact was EDITED, not
         // that the edit was kept — a rejected proposal is edited and discarded,
         // and one still awaiting a ruling has been edited and decided nothing.
-        // Only a recorded amendment says a decider approved what is in
-        // `final_text`, and that is what makes `chosen` an honest label.
-        let receipt_id = amendment_receipt_id(record.artifact_ref.entity_id());
+        // Only a recorded amendment makes `chosen` an honest label.
+        let receipt_id = amendment_receipt_id(retained.record.artifact_ref.entity_id());
         if !amendment_recorded_in_txn(vault, rtxn, &receipt_id)? {
             continue;
         }
 
-        // The tag ledgers, all under the amendment's one receipt id. A miss is
-        // not a failure — it leaves that tag `None`, which is the Notes
-        // contract (absence explicit, never guessed).
+        // The tag ledgers, all under the amendment's one receipt id. A miss
+        // leaves that tag `None` (the Notes contract: absence explicit).
         let evidence = amendment_evidence_in_txn(vault, rtxn, &receipt_id)?;
         let pair = TrainingPair {
-            rejected: record.proposed_text,
-            chosen: record.final_text,
+            rejected,
+            chosen,
             task_class: evidence.as_ref().map(|row| row.scope.clone()),
             skill: evidence.as_ref().and_then(|row| row.skill),
             model_id: folded_model_version_in_txn(vault, rtxn, &receipt_id)?,
-            receipt_ref: record.artifact_ref.entity_id(),
+            receipt_ref: retained.record.artifact_ref.entity_id(),
         };
         // `observed_at` is the `since` axis: a tag fact rather than a pair
         // fact, so it filters here and never rides [`TrainingPair`].

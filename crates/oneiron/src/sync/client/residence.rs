@@ -14,8 +14,11 @@ mod promoted_pads;
 mod rpc;
 mod search;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
-pub(crate) use bundle::relay_sealed_bundle;
-pub use bundle::{PadAdmissionReport, SealedBundleRelay};
+pub(crate) use bundle::{observe_sealed_bundle_relay, relay_sealed_bundle};
+pub use bundle::{
+    PadAdmissionReport, SealedBundleRelay, SealedBundleRelayObservation,
+    sealed_bundle_relay_observation,
+};
 pub(crate) use checkpoint_roots::exchange_checkpoint_roots;
 pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};

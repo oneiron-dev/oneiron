@@ -1,15 +1,14 @@
 //! The three delta capture lanes plus the precedence chooser; pure over inputs.
 
-use std::ops::Range;
-
 use rmpv::Value;
 
-use crate::edit_distance::FinalizedProposalText;
-use crate::edit_distance::myers::{collapse_whitespace, myers_line_diff};
-use crate::entity_id::bytes_to_hex_lower;
+use crate::edit_distance::RetainedProposal;
+use crate::edit_distance::myers::myers_line_diff;
 use crate::error::{Error, Result};
 
-use super::schema::{AmendmentDelta, DeltaSource, OpsSummary, engine_ver, u32_saturating};
+use super::endpoint::{EndpointRef, MeasuredEnd};
+use super::op_stream::read_window;
+use super::schema::{AmendmentDelta, DeltaSource, OpsSummary, engine_ver};
 use crate::error::ArtifactError;
 
 /// Traversal depth cap for [`delta_from_field_diff`]. Past it, a subtree is
@@ -21,194 +20,51 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 // Lane 1 — recorded ops
 // ---------------------------------------------------------------------------
 
-/// Measures a Δ by replaying ED-00's finalized op window.
+/// Measures a Δ from the authored op stream of ED-00's finalized window, read
+/// out of the proposal's retained document (FIX 7820).
 ///
-/// `ins`/`del` sum the changed region of EVERY recorded change, so text the
-/// decider typed and then replaced is counted twice — deliberately. That
-/// churn is the recorded-ops lane's whole advantage over comparing the two
-/// endpoints, and it is what the miner reads as effort.
+/// `ins`/`del` sum the insert and delete runs of EVERY recorded change, so
+/// text the decider typed and then replaced is counted twice — deliberately.
+/// That churn is the recorded-ops lane's whole advantage over comparing the
+/// two endpoints, and it is what the miner reads as effort. Runs scattered
+/// through one change stay separate runs.
 ///
-/// `kept` is measured at the ENDPOINTS instead (the proposal text still
-/// standing at finalize), because summing per-change survivals would count
-/// the untouched remainder once per change.
+/// `kept` is the proposal text still standing at finalize. Moves are paired
+/// from the runs themselves: a deleted run of proposal text and an inserted
+/// run that survived with the same collapsed content left `del` and `ins`
+/// once each and are charged in `moved` at the move discount. Every count is
+/// exact, so `approx` is never set.
 ///
-/// Every text is measured in its whitespace-collapsed form, and a change
-/// that touches only whitespace (its texts hold the same non-whitespace
-/// characters in the same order) is layout and records nothing, however the
-/// log grouped it.
+/// Both refs name the artifact's document at the window's two versions.
 ///
-/// Moves are paired at the endpoints by the reconstructed lane's own
-/// instrument ([`myers_line_diff`]): a line that left one place and arrived
-/// at another must have been removed and added somewhere in the op log, so
-/// its characters come out of `del` and `ins` once each and are charged in
-/// `moved` at the move discount instead. The replay tracks which characters
-/// the log itself typed, so a pair is capped at what the log added and
-/// removed less its churn: text typed and then deleted again. Churn is in
-/// neither cap, so it keeps its full price however the log split it. The
-/// caps are totals, not positions: when the log shows less than the moved
-/// line (its characters repeat around it, or the swap was made by editing
-/// words in place), a proposal character deleted and retyped can still raise
-/// the move toward the line's weight.
+/// # Errors
 ///
-/// The per-change region is the span between the common prefix and the
-/// common suffix — one contiguous edit. A change that scatters edits across
-/// a line reads as one wider region, which under-counts `kept` and never
-/// under-counts `ins`/`del`.
-#[must_use]
-pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDelta {
-    let log = LoggedMass::replay(finalized);
-    let window = CharAffix::between(
-        &collapse_whitespace(&finalized.proposed_text),
-        &collapse_whitespace(&finalized.final_text),
-    );
-    let endpoints = myers_line_diff(&finalized.proposed_text, &finalized.final_text).ops;
-    let moved = endpoints
-        .moved
-        .min(log.ins - log.churn)
-        .min(log.del - log.churn);
+/// [`ArtifactError::DeltaCaptureUnavailable`] when the retained document, or
+/// a version the window names in it, no longer reads. There is no fallback
+/// measurement under this lane's name.
+pub fn delta_from_recorded_ops(retained: &RetainedProposal) -> Result<AmendmentDelta> {
+    let document = retained.document().map_err(|_| {
+        Error::Artifact(ArtifactError::DeltaCaptureUnavailable(
+            "the proposal's retained document does not read",
+        ))
+    })?;
+    let record = &retained.record;
+    let runs = read_window(document, record)?;
     let ops_summary = OpsSummary {
-        ins: log.ins - moved,
-        del: log.del - moved,
-        kept: window.common(),
-        moved,
-        approx: endpoints.approx && moved > 0,
+        ins: runs.ins,
+        del: runs.del,
+        kept: runs.kept,
+        moved: runs.moved,
+        approx: false,
     };
-    AmendmentDelta {
-        proposed_ref: bytes_to_hex_lower(finalized.proposed_ref.as_bytes()),
-        final_ref: bytes_to_hex_lower(finalized.final_ref.as_bytes()),
+    Ok(AmendmentDelta {
+        proposed_ref: EndpointRef::proposal(record.artifact_ref, &record.proposed_ref),
+        final_ref: EndpointRef::proposal(record.artifact_ref, &record.final_ref),
         source: DeltaSource::RecordedOps,
-        d_norm: ops_summary.d_norm(window.before_len, window.after_len),
+        d_norm: ops_summary.d_norm(runs.before_len, runs.after_len),
         ops_summary,
         engine_ver: engine_ver(),
-    }
-}
-
-/// What the op log removed and added, and how much of it was churn: text
-/// the log typed and then removed again, counted on both sides.
-struct LoggedMass {
-    ins: u32,
-    del: u32,
-    /// Typed characters that a later content change removed. Each was added
-    /// once and removed once, so it is churn in `ins` and in `del`. A space a
-    /// layout-only change laid down is layout, not typed text.
-    churn: u32,
-}
-
-impl LoggedMass {
-    fn replay(finalized: &FinalizedProposalText) -> Self {
-        let mut mass = Self {
-            ins: 0,
-            del: 0,
-            churn: 0,
-        };
-        // `typed[i]`: whether character `i` of the current collapsed text was
-        // typed by a recorded change rather than proposed.
-        let mut typed: Vec<bool> = Vec::new();
-        for (_, span) in &finalized.ops_by_actor {
-            let before = collapse_whitespace(&span.before_text);
-            let after = collapse_whitespace(&span.after_text);
-            let affix = CharAffix::between(&before, &after);
-            // The replay seam chains each change onto the last; a log that
-            // does not chain restarts provenance at this change.
-            if typed.len() != affix.before_len as usize {
-                typed = vec![false; affix.before_len as usize];
-            }
-            let layout_only = before
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .eq(after.chars().filter(|c| !c.is_whitespace()));
-            let region = affix.prefix as usize..(affix.before_len - affix.suffix) as usize;
-            let added = affix.added() as usize;
-            let arrived: Vec<bool> = if layout_only {
-                carry_typed(&before, &after, &typed, region.clone(), added)
-            } else {
-                vec![true; added]
-            };
-            let removed_typed = typed[region.clone()].iter().filter(|flag| **flag).count();
-            typed.splice(region, arrived).for_each(drop);
-            if layout_only {
-                continue;
-            }
-            mass.del = mass.del.saturating_add(affix.removed());
-            mass.ins = mass.ins.saturating_add(affix.added());
-            mass.churn = mass.churn.saturating_add(u32_saturating(removed_typed));
-        }
-        mass
-    }
-}
-
-/// The typed flags of a layout-only change's arrived region: it moves no
-/// character, so each non-whitespace character keeps its flag, and the
-/// spaces it lays down are layout, never typed text.
-fn carry_typed(
-    before: &str,
-    after: &str,
-    typed: &[bool],
-    region: Range<usize>,
-    added: usize,
-) -> Vec<bool> {
-    let start = region.start;
-    let mut carried = before
-        .chars()
-        .skip(start)
-        .zip(&typed[region])
-        .filter(|(c, _)| !c.is_whitespace())
-        .map(|(_, flag)| *flag);
-    after
-        .chars()
-        .skip(start)
-        .take(added)
-        .map(|c| !c.is_whitespace() && carried.next().unwrap_or(false))
-        .collect()
-}
-
-/// Two strings split at their common prefix and suffix, in CHARACTERS —
-/// bytes would let a multi-byte edit report a fractional change.
-struct CharAffix {
-    prefix: u32,
-    suffix: u32,
-    before_len: u32,
-    after_len: u32,
-}
-
-impl CharAffix {
-    fn between(before: &str, after: &str) -> Self {
-        let before: Vec<char> = before.chars().collect();
-        let after: Vec<char> = after.chars().collect();
-        let prefix = before
-            .iter()
-            .zip(&after)
-            .take_while(|(left, right)| left == right)
-            .count();
-        // The prefix and suffix must not overlap on the shorter side, or a
-        // repeated run ("aaa" -> "aaaaa") would report negative change.
-        let overlap_budget = before.len().min(after.len()) - prefix;
-        let suffix = before
-            .iter()
-            .rev()
-            .zip(after.iter().rev())
-            .take(overlap_budget)
-            .take_while(|(left, right)| left == right)
-            .count();
-        Self {
-            prefix: u32_saturating(prefix),
-            suffix: u32_saturating(suffix),
-            before_len: u32_saturating(before.len()),
-            after_len: u32_saturating(after.len()),
-        }
-    }
-
-    const fn common(&self) -> u32 {
-        self.prefix.saturating_add(self.suffix)
-    }
-
-    const fn removed(&self) -> u32 {
-        self.before_len.saturating_sub(self.common())
-    }
-
-    const fn added(&self) -> u32 {
-        self.after_len.saturating_sub(self.common())
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -228,12 +84,18 @@ impl CharAffix {
 /// bodies canonicalize their arrays at the encode door, so their order is
 /// meaning, not accident.
 ///
+/// Each ref names the retained source its body was read from, with the
+/// body's blake3 beside it as a check value.
+///
 /// # Errors
 ///
 /// [`Error::CorruptedIndex`] when either side is not decodable MessagePack.
-pub fn delta_from_field_diff(proposed: &[u8], finalized: &[u8]) -> Result<AmendmentDelta> {
-    let before = decode_body(proposed)?;
-    let after = decode_body(finalized)?;
+pub fn delta_from_field_diff(
+    proposed: MeasuredEnd<'_, [u8]>,
+    finalized: MeasuredEnd<'_, [u8]>,
+) -> Result<AmendmentDelta> {
+    let before = decode_body(proposed.content)?;
+    let after = decode_body(finalized.content)?;
     let mut counts = LeafCounts::default();
     diff_values(&before, &after, 0, &mut counts);
     let ops_summary = OpsSummary {
@@ -244,8 +106,8 @@ pub fn delta_from_field_diff(proposed: &[u8], finalized: &[u8]) -> Result<Amendm
         approx: false,
     };
     Ok(AmendmentDelta {
-        proposed_ref: bytes_to_hex_lower(blake3::hash(proposed).as_bytes()),
-        final_ref: bytes_to_hex_lower(blake3::hash(finalized).as_bytes()),
+        proposed_ref: proposed.at.with_content(proposed.content),
+        final_ref: finalized.at.with_content(finalized.content),
         source: DeltaSource::FieldDiff,
         d_norm: ops_summary.d_norm(counts.before, counts.after),
         ops_summary,
@@ -376,14 +238,18 @@ fn leaf_count(value: &Value) -> u32 {
 /// being charged twice as a deletion and an insertion; layout-only changes
 /// (whitespace, re-wrapping) are not changes.
 ///
-/// The refs are the two texts' own blake3 hashes, so a consumer can verify
-/// the pair it was handed — the same contract the field-diff lane keeps.
+/// Each ref names the retained source its text was read from, with the
+/// text's blake3 beside it as a check value — the same contract the
+/// field-diff lane keeps.
 #[must_use]
-pub fn delta_from_reconstructed(before: &str, after: &str) -> AmendmentDelta {
-    let diff = myers_line_diff(before, after);
+pub fn delta_from_reconstructed(
+    before: MeasuredEnd<'_, str>,
+    after: MeasuredEnd<'_, str>,
+) -> AmendmentDelta {
+    let diff = myers_line_diff(before.content, after.content);
     AmendmentDelta {
-        proposed_ref: bytes_to_hex_lower(blake3::hash(before.as_bytes()).as_bytes()),
-        final_ref: bytes_to_hex_lower(blake3::hash(after.as_bytes()).as_bytes()),
+        proposed_ref: before.at.with_content(before.content.as_bytes()),
+        final_ref: after.at.with_content(after.content.as_bytes()),
         source: DeltaSource::Reconstructed,
         d_norm: diff.d_norm,
         ops_summary: diff.ops,
@@ -399,18 +265,22 @@ pub fn delta_from_reconstructed(before: &str, after: &str) -> AmendmentDelta {
 /// one it wants. Picking is [`capture_delta_best`]'s job, and keeping that
 /// choice out of the caller is the whole point of the type.
 pub struct DeltaCaptureContext<'a> {
-    /// ED-00's finalized op window, when the artifact rode one.
-    pub recorded: Option<&'a FinalizedProposalText>,
+    /// ED-00's finalized op window with its retained document, when the
+    /// artifact rode one.
+    pub recorded: Option<&'a RetainedProposal>,
     /// `(proposed, finalized)` canonical-MessagePack bodies.
-    pub bodies: Option<(&'a [u8], &'a [u8])>,
+    pub bodies: Option<(MeasuredEnd<'a, [u8]>, MeasuredEnd<'a, [u8]>)>,
     /// `(before, after)` endpoint texts, for an edit that rode neither.
-    pub texts: Option<(&'a str, &'a str)>,
+    pub texts: Option<(MeasuredEnd<'a, str>, MeasuredEnd<'a, str>)>,
 }
 
 impl<'a> DeltaCaptureContext<'a> {
     /// Context for two structured bodies.
     #[must_use]
-    pub const fn from_bodies(proposed: &'a [u8], finalized: &'a [u8]) -> Self {
+    pub const fn from_bodies(
+        proposed: MeasuredEnd<'a, [u8]>,
+        finalized: MeasuredEnd<'a, [u8]>,
+    ) -> Self {
         Self {
             recorded: None,
             bodies: Some((proposed, finalized)),
@@ -420,7 +290,7 @@ impl<'a> DeltaCaptureContext<'a> {
 
     /// Context for two endpoint texts — the out-of-band edit.
     #[must_use]
-    pub const fn from_texts(before: &'a str, after: &'a str) -> Self {
+    pub const fn from_texts(before: MeasuredEnd<'a, str>, after: MeasuredEnd<'a, str>) -> Self {
         Self {
             recorded: None,
             bodies: None,
@@ -430,15 +300,19 @@ impl<'a> DeltaCaptureContext<'a> {
 }
 
 /// Captures the best Δ the context supports: `recorded_ops > field_diff >
-/// reconstructed` (ruling r2 — Myers is never preferred when ops exist).
+/// reconstructed` (ruling r2 — Myers is never preferred when ops exist). A
+/// recorded window whose document no longer reads yields to the next lane
+/// offered, under that lane's own name.
 ///
 /// # Errors
 ///
-/// [`ArtifactError::DeltaCaptureUnavailable`](crate::error::ArtifactError::DeltaCaptureUnavailable) when the context offers no lane at all.
+/// [`ArtifactError::DeltaCaptureUnavailable`](crate::error::ArtifactError::DeltaCaptureUnavailable) when the context offers no lane that measures.
 /// Callers treat it as telemetry loss, never as a failed approval.
-pub fn capture_delta_best(ctx: &DeltaCaptureContext<'_>) -> Result<AmendmentDelta> {
-    if let Some(recorded) = ctx.recorded {
-        return Ok(delta_from_recorded_ops(recorded));
+pub fn capture_delta_best(ctx: DeltaCaptureContext<'_>) -> Result<AmendmentDelta> {
+    if let Some(recorded) = ctx.recorded
+        && let Ok(delta) = delta_from_recorded_ops(recorded)
+    {
+        return Ok(delta);
     }
     if let Some((proposed, finalized)) = ctx.bodies {
         return delta_from_field_diff(proposed, finalized);

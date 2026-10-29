@@ -188,6 +188,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::tagging::tear_in_txn(store, wtxn, id)?;
     crate::store::turn_missing::tear_in_txn(store, wtxn, id)?;
     crate::dreamer_wake::erase_in_txn(store, wtxn, id)?;
+    // Every hard tear takes the requests kept for the entity (FIX 6711);
+    // the actor scrub stays with erase.
+    crate::self_heal::blocked_reports::drop_blocked_source_steps_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache
         .lock()
