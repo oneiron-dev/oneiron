@@ -13,16 +13,11 @@ use heed::RoTxn;
 use crate::disclosure::DisclosureContext;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::store::StoreRead;
 
 use super::validation::disclosure_admits_target;
 use super::world_partition::record_world_by_id;
-
-#[cfg(not(test))]
-pub(super) const MAX_EDGE_SCAN_RESULTS: usize = 100_000;
-#[cfg(test)]
-pub(super) const MAX_EDGE_SCAN_RESULTS: usize = 64;
 
 #[cfg(test)]
 thread_local! {
@@ -85,16 +80,19 @@ pub(super) fn scan_edges_for_entity(
     #[cfg(test)]
     EDGE_SCAN_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
+    let scope = [&[crate::ports::EdgeDirection::Out as u8][..], id.as_bytes()].concat();
+    let mut count = crate::scan_check::ScanCount::start(
+        store,
+        rtxn,
+        crate::scan_check::EngineScan::EdgePeerRows,
+        &scope,
+    )?;
     let mut edges = Vec::new();
-
     for entry in store.port_edges(rtxn, id, crate::ports::EdgeDirection::Out, None, None)? {
-        let edge_row = entry?;
-        if edges.len() >= MAX_EDGE_SCAN_RESULTS {
-            return Err(Error::CorruptedIndex("edge scan exceeded bound"));
-        }
-        edges.push(edge_row);
+        count.row();
+        edges.push(entry?);
     }
-
+    count.defer(store);
     Ok(edges)
 }
 

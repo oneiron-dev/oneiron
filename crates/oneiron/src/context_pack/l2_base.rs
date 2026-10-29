@@ -16,7 +16,6 @@ mod tests;
 
 const MAX_CACHE_ENTRIES: usize = 32;
 const MAX_CACHE_BYTES: usize = 2 * 1024 * 1024;
-const MAX_EVIDENCE_BYTES: usize = 256 * 1024;
 
 /// A score-free JSON prefix, ordered by full claim id, with its evidence digest.
 /// The shared body allocation is reused on a cache hit. It never contains query
@@ -127,7 +126,7 @@ pub(super) fn default_l2_subjects(
     if subjects.len() > 8 {
         // An automatically discovered optional prefix must not turn an
         // otherwise valid context pack into a failed read. Explicit selections
-        // retain the producer's strict eight-subject error.
+        // read every deduplicated subject.
         return Ok(Vec::new());
     }
     Ok(subjects.into_iter().collect())
@@ -143,11 +142,6 @@ pub(super) fn produce_l2_base(
 ) -> Result<Option<L2BaseSummary>> {
     if subjects.is_empty() {
         return Ok(None);
-    }
-    if subjects.len() > 8 {
-        return Err(Error::InvalidConfig(
-            "L2 summaries allow at most eight explicit subjects".into(),
-        ));
     }
     if reader.is_some_and(|reader| reader.vault().vault_id() != vault.vault_id()) {
         return Err(Error::InvalidConfig(
@@ -307,13 +301,8 @@ fn evidence_hash(
     for subject in subjects {
         digest.update(subject.as_bytes());
     }
-    let mut evidence_bytes = 0usize;
     for (id, body) in admitted {
         let raw = crate::claim::encode_claim_body(body)?;
-        evidence_bytes = evidence_bytes.saturating_add(raw.len());
-        if evidence_bytes > MAX_EVIDENCE_BYTES {
-            return Err(Error::IndexOverflow("L2 evidence bytes"));
-        }
         digest.update(id.as_bytes());
         digest.update(&(raw.len() as u64).to_be_bytes());
         digest.update(&raw);
