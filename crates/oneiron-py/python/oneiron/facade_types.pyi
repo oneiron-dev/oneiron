@@ -5573,6 +5573,9 @@ class HookSelector(TypedDict):
     render_class: NotRequired[HookRenderClass]
 class HookAuthorOwner(TypedDict):
     kind: Literal["owner"]
+class HookAuthorAgent(TypedDict):
+    kind: Literal["agent"]
+    agent: str
 class HookAuthorForeignActor(TypedDict):
     kind: Literal["foreign_actor"]
     actor_kind: str
@@ -5580,7 +5583,7 @@ class HookAuthorForeignActor(TypedDict):
     hub: str
     grant: str
     actor: str
-HookAuthor = HookAuthorOwner | HookAuthorForeignActor
+HookAuthor = HookAuthorOwner | HookAuthorAgent | HookAuthorForeignActor
 class PackHookBinding(TypedDict):
     version: int
     code: str

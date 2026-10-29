@@ -17292,6 +17292,11 @@ pub struct HookSelector {
 pub enum HookAuthor {
     #[serde(rename = "owner")]
     Owner,
+    #[serde(rename = "agent")]
+    Agent {
+        #[serde(rename = "agent")]
+        agent: String,
+    },
     #[serde(rename = "foreign_actor")]
     ForeignActor {
         #[serde(rename = "actor_kind")]

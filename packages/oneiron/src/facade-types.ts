@@ -2183,7 +2183,7 @@ export type HookRenderClass = "deterministic_eager" | "generative"
 /** `oneiron::skill_hub::pack_catalog::hooks::HookSelector` */
 export type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass }
 /** `oneiron::skill_hub::pack_catalog::hooks::author::HookAuthor` */
-export type HookAuthor = { kind: "owner" } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string }
+export type HookAuthor = { kind: "owner" } | { kind: "agent"; agent: string } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string }
 /** `oneiron::skill_hub::pack_catalog::hooks::bindings::PackHookBinding` */
 export type PackHookBinding = { version: number; code: string; owner: string; source: string; pack: string; hook: string; hook_version: string; body_hash: string; selector: HookSelector; enabled: boolean; author: HookAuthor }
 /** `oneiron::runtime_hooks::grant::HookGrant` */
