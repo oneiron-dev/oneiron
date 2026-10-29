@@ -87,6 +87,10 @@ pub enum ShapeItemState {
         proposal_ref: String,
         expires_at: u64,
     },
+    /// A new grant an actor's apply tried to file, but the widen inbox
+    /// refused, with the reason it gave. It waits as [`Self::Proposed`]
+    /// does, and an owner's apply may land it.
+    FileRefused { reason: String },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
@@ -149,7 +153,10 @@ pub enum ShapeApplier<'a> {
 pub(super) const fn open(state: &ShapeItemState) -> bool {
     matches!(
         state,
-        ShapeItemState::Pending | ShapeItemState::Proposed | ShapeItemState::Filed { .. }
+        ShapeItemState::Pending
+            | ShapeItemState::Proposed
+            | ShapeItemState::Filed { .. }
+            | ShapeItemState::FileRefused { .. }
     )
 }
 
@@ -457,8 +464,10 @@ impl Vault {
                     if item.class == ShapeItemClass::Widening && !approve.contains(&item.seq) =>
                 {
                     match &journal.items[index].state {
-                        // A filing keeps its inbox reference while it waits.
-                        filed @ ShapeItemState::Filed { .. } => filed.clone(),
+                        // A filing keeps its inbox reference while it waits,
+                        // as a refused one keeps its reason.
+                        waiting @ (ShapeItemState::Filed { .. }
+                        | ShapeItemState::FileRefused { .. }) => waiting.clone(),
                         _ => ShapeItemState::Proposed,
                     }
                 }
@@ -512,8 +521,8 @@ impl Vault {
     /// Where an actor's apply leaves `item`: a new grant it carries the bound
     /// of is filed to the owner's widen inbox under `credential`, as an
     /// action or a disclosure widening, for the vault's embedded owner to
-    /// answer. Anything else, or a filing the inbox refuses, rests where any
-    /// actor's item rests, waiting for the owner.
+    /// answer. Anything else rests where any actor's item rests, waiting for
+    /// the owner; a filing the inbox refuses waits there with its reason.
     fn file_shape_grant(
         &self,
         credential: Option<&VerifiedSlip>,
@@ -545,7 +554,9 @@ impl Vault {
                 proposal_ref: proposal.proposal_ref,
                 expires_at: proposal.expires_at,
             },
-            Err(_) => resting,
+            Err(error) => ShapeItemState::FileRefused {
+                reason: error.to_string(),
+            },
         }
     }
 

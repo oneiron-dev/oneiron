@@ -189,7 +189,9 @@ impl Vault {
     ) -> bool {
         let receipt = match &entry.state {
             ShapeItemState::Landed { receipt, .. } => Some(receipt),
-            ShapeItemState::Refused { reason } => Some(reason),
+            ShapeItemState::Refused { reason } | ShapeItemState::FileRefused { reason } => {
+                Some(reason)
+            }
             _ => None,
         };
         serde_json::to_value(&entry.item.after)
