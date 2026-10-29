@@ -129,14 +129,14 @@ pub(in crate::dreamer_consolidation) fn recheck_in_txn(
     Ok(())
 }
 
-/// What a nightly attempt that already landed completes with: its own units,
-/// or none once every step it paid for is charged. None when it has not
-/// landed.
+/// What a nightly attempt that already landed completes with: its own units
+/// with the steps they paid for, or nothing once every step it paid for is
+/// charged. None when it has not landed.
 pub(in crate::dreamer_consolidation) fn landed_units_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
-) -> Result<Option<u64>> {
+) -> Result<Option<(u64, Vec<[u8; 32]>)>> {
     let Some(result) = MERGED.get(&vault.store, txn, &attempt)? else {
         return Ok(None);
     };
@@ -144,7 +144,11 @@ pub(in crate::dreamer_consolidation) fn landed_units_in_txn(
     for hash in &result.step_hashes {
         paid &= DreamerRunnerStore::new(vault).checkpoint_step_charged(attempt, hash)?;
     }
-    Ok(Some(if paid { 0 } else { result.completed_units }))
+    Ok(Some(if paid {
+        (0, Vec::new())
+    } else {
+        (result.completed_units, result.step_hashes.clone())
+    }))
 }
 
 /// `candidate` with the exposure of `body`, its proposal group's, the refs

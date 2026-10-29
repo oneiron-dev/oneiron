@@ -1,9 +1,10 @@
-//! The served agent's generation count (FIX 7508, 9015): what its calls
-//! spent on its parent's guard, handed to the parent once, at its close. A
-//! call admitted before the close that settles after it is neither lost nor
-//! cancelled: the close marks it owed on the attempt's line, and its
-//! terminal usage is charged there when it settles. One that never settles
-//! stays owed.
+//! The served agent's generation count (FIX 7508, 9015, 11449): what its
+//! calls spent on its parent's guard, handed to the parent once, at its
+//! close. A call admitted before the close that settles after it is neither
+//! lost nor cancelled: the close marks it owed on the attempt's line, and
+//! its terminal usage is charged there when it settles. One that never
+//! settles stays owed. A session dropped without its close charges what its
+//! count still holds there at once.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -104,6 +105,29 @@ impl GenerationCount {
             );
         }
         std::mem::take(&mut state.units)
+    }
+
+    /// Closes a count whose session dropped without its close (FIX 11449):
+    /// what the close holds is charged to the attempt's own line at once,
+    /// never handed to a parent. A count closed normally charges nothing
+    /// more: the second close returns 0.
+    pub(super) fn close_dropped(&self) {
+        let units = self.close();
+        if units == 0 {
+            return;
+        }
+        if let Err(error) = DreamerRunnerStore::new(&self.vault).charge_dropped_usage(
+            &self.budget_id,
+            self.attempt,
+            units,
+        ) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                parent_run = %self.parent_run.to_hex(),
+                units,
+                "a thing child's dropped count was not charged; its units are lost"
+            );
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, CountState> {

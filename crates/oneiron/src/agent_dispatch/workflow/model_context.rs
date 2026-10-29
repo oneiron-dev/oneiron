@@ -53,6 +53,7 @@ pub struct RenderedWorkflowStepContext {
     chat: Vec<String>,
     omitted_memory: usize,
     omitted_chat: usize,
+    rows: Vec<EntityId>,
 }
 
 impl std::fmt::Debug for RenderedWorkflowStepContext {
@@ -63,6 +64,7 @@ impl std::fmt::Debug for RenderedWorkflowStepContext {
             .field("chat", &self.chat.len())
             .field("omitted_memory", &self.omitted_memory)
             .field("omitted_chat", &self.omitted_chat)
+            .field("rows", &self.rows.len())
             .finish()
     }
 }
@@ -109,6 +111,13 @@ impl RenderedWorkflowStepContext {
              they could not be read for this run now, or they hold no text of their own.",
             self.omitted_memory, self.omitted_chat
         ))
+    }
+
+    /// The ids of the rows `memory_text` and `chat_text` were read from, in
+    /// the order they render; empty when none read (FIX 6934).
+    #[must_use]
+    pub fn source_rows(&self) -> &[EntityId] {
+        &self.rows
     }
 }
 
@@ -327,14 +336,24 @@ fn hydrate(
     for row in &memory_rows {
         let body = row.and_then(|_| bodies.next().flatten());
         match body.and_then(|(entity_type, _, body)| claim_line(entity_type, &body)) {
-            Some(line) => rendered.memory.push(line),
+            Some(line) => {
+                rendered.memory.push(line);
+                if let Some(id) = row {
+                    rendered.rows.push(*id);
+                }
+            }
             None => rendered.omitted_memory += 1,
         }
     }
     for row in &chat_rows {
         let body = row.and_then(|_| bodies.next().flatten());
         match body.and_then(|(entity_type, _, body)| turn_line(entity_type, &body)) {
-            Some(line) => rendered.chat.push(line),
+            Some(line) => {
+                rendered.chat.push(line);
+                if let Some(id) = row {
+                    rendered.rows.push(*id);
+                }
+            }
             None => rendered.omitted_chat += 1,
         }
     }

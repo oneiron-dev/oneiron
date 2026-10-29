@@ -684,9 +684,10 @@ where
             )
         };
         match routed {
-            Ok(SeatRoute::Settled(_)) => {
-                Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
-            }
+            Ok(SeatRoute::Settled(_)) => Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            }),
             Ok(SeatRoute::Park { receipt, until, .. }) => Ok(DreamerAttemptExecution::Park {
                 reason: match until {
                     Some(until) => format!("runner seat spent; work parked until {until}"),
