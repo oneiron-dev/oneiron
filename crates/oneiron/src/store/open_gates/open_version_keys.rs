@@ -452,7 +452,6 @@ impl PersistedHnswCompatibility {
 
 pub(crate) enum HnswCompatibilityState {
     Missing,
-    Legacy(PersistedHnswCompatibility),
     Current(PersistedHnswCompatibility),
 }
 

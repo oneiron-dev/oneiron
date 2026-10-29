@@ -33,6 +33,7 @@ pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_text_in_txn,
     mark_carrier_texts_in_txn,
 };
+pub(super) use self::mask::MaskedFiles;
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::mask_origin_in_txn;
 pub(crate) use self::mask::retained_repo::read::project_marked_retained_repo_blob;
