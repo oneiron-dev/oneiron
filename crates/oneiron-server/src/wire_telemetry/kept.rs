@@ -70,6 +70,25 @@ impl WireTelemetry {
         }
     }
 
+    /// The last key kept under `prefix`, if any. Pages the family whole
+    /// (FIX 11013), so no count bounds it.
+    pub(crate) fn last_kept_key(&self, prefix: &str) -> Result<Option<String>> {
+        let mut last = None;
+        let mut after: Option<String> = None;
+        loop {
+            let next =
+                self.vault
+                    .sync_state_prefix_page(prefix, after.as_deref(), KEPT_PAGE, |key, _| {
+                        last = Some(key.to_owned());
+                        Ok(())
+                    })?;
+            match next {
+                Some(next) => after = Some(next),
+                None => return Ok(last),
+            }
+        }
+    }
+
     /// Every limit question kept, by key: each row's windows, oldest first.
     /// Pages the family (FIX 11013) as `kept_questions_after` does, so no
     /// count bounds it.

@@ -725,7 +725,7 @@ impl WireTelemetry {
     /// that the window's index names.
     pub fn question(&self, start: u64, end: u64) -> Result<Option<WireQuestion>> {
         let named = format!("{QUESTION_WINDOW}{start:020}:{end:020}:");
-        let Some(latest) = self.vault.sync_state_keys_with_prefix(&named)?.pop() else {
+        let Some(latest) = self.last_kept_key(&named)? else {
             return Ok(None);
         };
         let seq: u64 = latest
