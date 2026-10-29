@@ -2412,6 +2412,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/engine/enqueue_claim/claim_scan.rs",
+     "purpose": "The read-only half of the generic claim scan (FIX 11664): what a claim would lease, repair and hold, read…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/engine/enqueue_record.rs",
      "purpose": "The one storage write every enqueue door ends in: a fresh row, its readiness, run and dedupe entries, in the…",
      "surface": {
@@ -52634,7 +52644,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 43,
       "struct": 1
      }
@@ -52777,6 +52787,26 @@
      "purpose": "The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/ppr_visibility.rs",
+     "purpose": "Caller-visible PPR walks for narrowed retrieval attempts",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/ppr_work.rs",
+     "purpose": "One fair task-work admission for PPR's snapshot",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -54553,7 +54583,17 @@
      "path": "src/ppr/cache_store.rs",
      "purpose": "PPR cache constants, TTL policy, cache IO, and binary codec",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ppr/cache_store/purge.rs",
+     "purpose": "Destructive PPR-cache purge for hard erase",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -54583,7 +54623,7 @@
      "path": "src/ppr/policy.rs",
      "purpose": "PPR alphas, seed weighting, specificity counts, and recency policy",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -54593,7 +54633,7 @@
      "path": "src/ppr/query.rs",
      "purpose": "PPR query dispatch: cache-read context, deferred writes, and VAD evidence scope",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -59125,7 +59165,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3,
       "re-export": 1,
       "struct": 1
@@ -59253,7 +59293,7 @@
      "path": "src/scope_summary/derivation.rs",
      "purpose": "Scope-summary derivation envelopes and change-driven re-derivation",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1,
       "struct": 5
      }
@@ -59712,7 +59752,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 2,
       "re-export": 2,
@@ -66846,7 +66886,7 @@
      "path": "src/store/ppr_community.rs",
      "purpose": "Bounded, local community snapshots in the existing `vault_meta` database",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -74481,7 +74521,8 @@
      "path": "src/vault/transactions/write_door.rs",
      "purpose": "The vault's classed write door: one logical write in the single writer's group commit, and the work its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -77149,7 +77190,7 @@
      "path": "src/voice_cascade.rs",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
-      "mod": 6,
+      "mod": 7,
       "re-export": 7
      }
     },
@@ -77414,6 +77455,21 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AudioSpool",
+      "SpilledAudio",
+      "SpilledFrame"
+     ],
+     "path": "src/voice_cascade/spilled_audio.rs",
+     "purpose": "Voice bytes that outgrow memory, spilled (FIX 3728): a live hearing's queued, held and replayed audio, and…",
+     "surface": {
+      "fn": 15,
+      "struct": 3
      }
     },
     {
@@ -81386,7 +81442,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82289,7 +82345,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 66,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82324,7 +82380,7 @@
      "purpose": "Shared Beta posterior bandit seam"
     },
     "ppr": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82800,7 +82856,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch"
     },
     "voice_cascade": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -82872,7 +82928,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5537,
+   "source_files": 5542,
    "test_files": 902
   },
   "oneiron-android": {
@@ -111763,6 +111819,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/soniox/queues.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/soniox/quota.rs",
      "purpose": "A live hearing's rate and quota refusals (FIX 9515)",
      "surface": {
@@ -111855,7 +111921,7 @@
      "path": "src/models/voice.rs",
      "purpose": "The voice cascade's routes on the media seats (OF-410)",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -113527,7 +113593,7 @@
      "path": "src/server/media_door.rs",
      "purpose": "The vault-bound media door (FIX-LIST 467): the one door engine code makes a media call through",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "struct": 1
      }
     },
@@ -115377,7 +115443,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 104,
+     "files": 105,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115533,7 +115599,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1430,
+   "source_files": 1431,
    "test_files": 182
   },
   "oneiron-spawn": {
