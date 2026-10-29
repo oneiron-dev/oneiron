@@ -19,7 +19,7 @@ use crate::{Error, Result};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedUiRender {
     pub protocol_version: u16,
@@ -340,7 +340,7 @@ impl<'de> Deserialize<'de> for GeneratedUiRender {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiNode {
     pub id: LensAtomId,

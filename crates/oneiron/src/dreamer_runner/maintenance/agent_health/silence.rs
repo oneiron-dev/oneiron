@@ -47,7 +47,7 @@ use crate::{EntityId, Error, Result, Vault};
 /// each part the newest of its kind since the attempt's claim. A card holds
 /// its newest finding's; none of it is evidence, so it never reopens a
 /// settled card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthSilenceActivity {
     /// Its own newest call: a receipt that names it at its current lease
@@ -74,7 +74,7 @@ pub struct HealthSilenceActivity {
 
 /// Another session of the same agent that made a call since the attempt's
 /// claim (OF-568 L5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthOtherSession {
     /// The attempt the call's receipt names.

@@ -19,9 +19,9 @@ use crate::api::owner_routes::vault_key_routes::{
     vault_key_report_schema, vault_key_wrap_info_schema, wrap_removed_schema,
 };
 use crate::api::owner_routes::weave_routes::{
-    clear_weave_schedule_body_schema, set_weave_schedule_body_schema,
-    weave_link_correction_schema, weave_schedule_cleared_schema, weave_schedule_schema,
-    weave_wrong_link_body_schema,
+    clear_weave_schedule_body_schema, set_weave_schedule_body_schema, weave_lens_schema,
+    weave_link_correction_schema, weave_report_body_schema, weave_report_schema,
+    weave_schedule_cleared_schema, weave_schedule_schema, weave_wrong_link_body_schema,
 };
 use crate::api::owner_routes::widen_proposal_routes::{
     widen_answer_body_schema, widen_proposal_schema,
@@ -131,6 +131,22 @@ pub(super) fn merge(spec: &mut Value) {
         "post",
         weave_wrong_link_body_schema(),
         weave_link_correction_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/weave/report",
+        "post",
+        weave_report_body_schema(),
+        weave_report_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/weave/lens",
+        "post",
+        weave_report_body_schema(),
+        weave_lens_schema(),
         &[],
     );
     super::bind(
