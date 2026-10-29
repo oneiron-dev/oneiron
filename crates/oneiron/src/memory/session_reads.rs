@@ -500,7 +500,8 @@ pub(crate) fn scoped_session_text(
     let scores = {
         let txn = vault.store.env.read_txn()?;
         admit(&txn)?;
-        let mut admits = |id: &EntityId| lane.recall_candidate_in(&txn, &policy, &filter, id);
+        let admit = lane.recall_candidates_in(&txn, &policy, &filter);
+        let mut admits = |id: &EntityId| admit(id);
         vault.text_scoped_in_txn(
             view,
             &txn,
