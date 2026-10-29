@@ -1324,6 +1324,8 @@ export class Oneiron {
         answer: (input: Facade.SharedActPolicyAnswerRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyAnswer(input) as Facade.SharedActPolicyChange),
         /** A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on. */
         change: (input: Facade.SharedActPolicyChangeRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyChange(input) as Facade.SharedActPolicyChange),
+        /** A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale. */
+        changes: (input: Facade.SharedVaultRequest): Facade.SharedActPolicyChange[] => this.#call(() => this.#client.vaultSharedPolicyChanges(input) as Facade.SharedActPolicyChange[]),
       },
     },
     org_admin: {
@@ -1635,7 +1637,15 @@ export class Oneiron {
       requests: {
         /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
         cancel: (input: Facade.RootRequestCancelRequest): Facade.OwnerWorkReceipt => this.#call(() => this.#client.vaultRootsRequestsCancel(input) as Facade.OwnerWorkReceipt),
+        /** The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was. */
+        create: (input: Facade.RootRequestCreateRequest): Facade.OwnerWorkReceipt => this.#call(() => this.#client.vaultRootsRequestsCreate(input) as Facade.OwnerWorkReceipt),
+        /** The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only. */
+        list: (input: Facade.EmptyRequest): Facade.PendingRootRequestView[] => this.#call(() => this.#client.vaultRootsRequestsList(input) as Facade.PendingRootRequestView[]),
       },
+    },
+    owner_work: {
+      /** The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it. */
+      get: (input: Facade.OwnerWorkGetRequest): Facade.OwnerWorkReceipt => this.#call(() => this.#client.vaultOwnerWorkGet(input) as Facade.OwnerWorkReceipt),
     },
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
@@ -1659,6 +1669,10 @@ export class Oneiron {
         undecodable: (input: Facade.UsageRepairListRequest): Facade.UndecodableUsageList => this.#call(() => this.#client.vaultUsageEventsUndecodable(input) as Facade.UndecodableUsageList),
         /** Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb. */
         remove_undecodable: (input: Facade.UsageRepairRemoveRequest): Facade.UsageRepairReceipt => this.#call(() => this.#client.vaultUsageEventsRemoveUndecodable(input) as Facade.UsageRepairReceipt),
+      },
+      repair: {
+        /** Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted. */
+        receipts: (input: Facade.UsageRepairReceiptsRequest): Facade.UsageRepairReceiptList => this.#call(() => this.#client.vaultUsageRepairReceipts(input) as Facade.UsageRepairReceiptList),
       },
     },
     legal_holds: {
@@ -2371,9 +2385,11 @@ export class Oneiron {
       get: (input: Facade.TaskTypeTreeRead): Facade.TaskTypeTreeReadReply => this.#call(() => this.#client.vaultTaskTypesGet(input) as Facade.TaskTypeTreeReadReply),
     },
     tasks: {
-      cancel: {
-        /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
-        force: (input: Facade.CancelForceRequest): Facade.CancelForceReceipt => this.#call(() => this.#client.vaultTasksCancelForce(input) as Facade.CancelForceReceipt),
+      /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+      cancel_force: (input: Facade.CancelForceRequest): Facade.CancelForceReceipt => this.#call(() => this.#client.vaultTasksCancelForce(input) as Facade.CancelForceReceipt),
+      comm_widen: {
+        /** The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended. */
+        revoke: (input: Facade.CommWidenRevokeRequest): Facade.CommWidenRevokeReceipt => this.#call(() => this.#client.vaultTasksCommWidenRevoke(input) as Facade.CommWidenRevokeReceipt),
       },
       linear: {
         /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
@@ -2602,7 +2618,7 @@ export class Oneiron {
         /** A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay. */
         evict: (input: Facade.VoiceTargetEvictRequest): Facade.VoiceTargetEvictReceipt => this.#call(() => this.#client.vaultVoicesTargetsEvict(input) as Facade.VoiceTargetEvictReceipt),
       },
-      /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone. */
+      /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target. */
       inspect: (input: Facade.VoiceBankInspectRequest): Facade.VoiceBankInspection => this.#call(() => this.#client.vaultVoicesInspect(input) as Facade.VoiceBankInspection),
       /** A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call. */
       lineage: (input: Facade.VoiceRenderLineageRequest): Facade.VoiceRenderEventView[] => this.#call(() => this.#client.vaultVoicesLineage(input) as Facade.VoiceRenderEventView[]),

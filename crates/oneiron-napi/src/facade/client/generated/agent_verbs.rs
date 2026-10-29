@@ -2829,6 +2829,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shared_policy_changes(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.policy.changes", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_federation_coreference_link(
         &self,
         input: serde_json::Value,
@@ -3942,6 +3951,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_roots_requests_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.roots.requests.create", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_roots_requests_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.roots.requests.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_owner_work_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.owner_work.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_cleanup_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.cleanup.run", js_json(input))
@@ -3999,6 +4035,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.usage.events.remove_undecodable", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_usage_repair_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.usage.repair.receipts", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -6351,6 +6396,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.tasks.cancel.force", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_tasks_comm_widen_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.comm_widen.revoke", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

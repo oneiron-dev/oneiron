@@ -332,6 +332,7 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultSharedPolicyChanges,
     VaultFederationCoreferenceLink,
     VaultFederationCoreferenceConfirm,
     VaultFederationCoreferenceShareConsent,
@@ -457,6 +458,9 @@ pub enum AgentVerb {
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultRootsRequestsCancel,
+    VaultRootsRequestsCreate,
+    VaultRootsRequestsList,
+    VaultOwnerWorkGet,
     VaultCleanupRun,
     VaultCleanupReview,
     VaultCleanupDecide,
@@ -464,6 +468,7 @@ pub enum AgentVerb {
     VaultArchiveDeleteConfirm,
     VaultUsageEventsUndecodable,
     VaultUsageEventsRemoveUndecodable,
+    VaultUsageRepairReceipts,
     VaultEntitiesMention,
     VaultLegalHoldsPlace,
     VaultLegalHoldsWiden,
@@ -732,6 +737,7 @@ pub enum AgentVerb {
     VaultAgentsSpawnGet,
     VaultAgentsSpawn,
     VaultTasksCancelForce,
+    VaultTasksCommWidenRevoke,
     VaultRunsBranchesGet,
     VaultRunsPause,
     VaultRunsResume,
@@ -1519,6 +1525,7 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultSharedPolicyChanges,
         Self::VaultFederationCoreferenceLink,
         Self::VaultFederationCoreferenceConfirm,
         Self::VaultFederationCoreferenceShareConsent,
@@ -1644,6 +1651,9 @@ impl AgentVerb {
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultRootsRequestsCancel,
+        Self::VaultRootsRequestsCreate,
+        Self::VaultRootsRequestsList,
+        Self::VaultOwnerWorkGet,
         Self::VaultCleanupRun,
         Self::VaultCleanupReview,
         Self::VaultCleanupDecide,
@@ -1651,6 +1661,7 @@ impl AgentVerb {
         Self::VaultArchiveDeleteConfirm,
         Self::VaultUsageEventsUndecodable,
         Self::VaultUsageEventsRemoveUndecodable,
+        Self::VaultUsageRepairReceipts,
         Self::VaultEntitiesMention,
         Self::VaultLegalHoldsPlace,
         Self::VaultLegalHoldsWiden,
@@ -1919,6 +1930,7 @@ impl AgentVerb {
         Self::VaultAgentsSpawnGet,
         Self::VaultAgentsSpawn,
         Self::VaultTasksCancelForce,
+        Self::VaultTasksCommWidenRevoke,
         Self::VaultRunsBranchesGet,
         Self::VaultRunsPause,
         Self::VaultRunsResume,
@@ -2709,6 +2721,7 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultSharedPolicyChanges => "vault.shared.policy.changes",
             Self::VaultFederationCoreferenceLink => "vault.federation.coreference.link",
             Self::VaultFederationCoreferenceConfirm => "vault.federation.coreference.confirm",
             Self::VaultFederationCoreferenceShareConsent => {
@@ -2846,6 +2859,9 @@ impl AgentVerb {
                 "vault.authority.handoff_alarms.acknowledge"
             }
             Self::VaultRootsRequestsCancel => "vault.roots.requests.cancel",
+            Self::VaultRootsRequestsCreate => "vault.roots.requests.create",
+            Self::VaultRootsRequestsList => "vault.roots.requests.list",
+            Self::VaultOwnerWorkGet => "vault.owner_work.get",
             Self::VaultCleanupRun => "vault.cleanup.run",
             Self::VaultCleanupReview => "vault.cleanup.review",
             Self::VaultCleanupDecide => "vault.cleanup.decide",
@@ -2853,6 +2869,7 @@ impl AgentVerb {
             Self::VaultArchiveDeleteConfirm => "vault.archive.delete.confirm",
             Self::VaultUsageEventsUndecodable => "vault.usage.events.undecodable",
             Self::VaultUsageEventsRemoveUndecodable => "vault.usage.events.remove_undecodable",
+            Self::VaultUsageRepairReceipts => "vault.usage.repair.receipts",
             Self::VaultEntitiesMention => "vault.entities.mention",
             Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
             Self::VaultLegalHoldsWiden => "vault.legal_holds.widen",
@@ -3126,7 +3143,8 @@ impl AgentVerb {
             Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
             Self::VaultAgentsSpawn => "vault.agents.spawn",
-            Self::VaultTasksCancelForce => "vault.tasks.cancel.force",
+            Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
+            Self::VaultTasksCommWidenRevoke => "vault.tasks.comm_widen.revoke",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultRunsPause => "vault.runs.pause",
             Self::VaultRunsResume => "vault.runs.resume",
@@ -3926,6 +3944,7 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -4051,6 +4070,9 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
+                | Self::VaultRootsRequestsList
+                | Self::VaultOwnerWorkGet
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupReview
                 | Self::VaultCleanupDecide
@@ -4058,6 +4080,7 @@ impl AgentVerb {
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
+                | Self::VaultUsageRepairReceipts
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -4326,6 +4349,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsBranchesGet
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
@@ -5142,6 +5166,7 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -5267,6 +5292,9 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
+                | Self::VaultRootsRequestsList
+                | Self::VaultOwnerWorkGet
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupReview
                 | Self::VaultCleanupDecide
@@ -5274,6 +5302,7 @@ impl AgentVerb {
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
+                | Self::VaultUsageRepairReceipts
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -5542,6 +5571,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsBranchesGet
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
@@ -6026,6 +6056,7 @@ impl AgentVerb {
                 | Self::VaultSharedStarted
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationBurstReview
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
@@ -6037,6 +6068,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersCandidates
                 | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultRootsRequestsList
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
@@ -6484,6 +6516,7 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -6608,6 +6641,9 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
+                | Self::VaultRootsRequestsList
+                | Self::VaultOwnerWorkGet
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupReview
                 | Self::VaultCleanupDecide
@@ -6615,6 +6651,7 @@ impl AgentVerb {
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
+                | Self::VaultUsageRepairReceipts
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -6852,6 +6889,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsBranchesGet
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
@@ -7557,6 +7595,7 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeleteConfirm
@@ -7718,6 +7757,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
                 | Self::VaultWorkspaceEstablish
@@ -8355,6 +8395,7 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultSharedPolicyChanges => &["spec"],
             Self::VaultFederationCoreferenceLink => &["spec"],
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
@@ -8480,6 +8521,9 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
+            Self::VaultRootsRequestsCreate => &["spec"],
+            Self::VaultRootsRequestsList => &["spec"],
+            Self::VaultOwnerWorkGet => &["spec"],
             Self::VaultCleanupRun => &["spec"],
             Self::VaultCleanupReview => &["spec"],
             Self::VaultCleanupDecide => &["spec"],
@@ -8487,6 +8531,7 @@ impl AgentVerb {
             Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
+            Self::VaultUsageRepairReceipts => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
@@ -8755,6 +8800,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultTasksCommWidenRevoke => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultRunsPause => &["spec"],
             Self::VaultRunsResume => &["spec"],
@@ -9543,6 +9589,7 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultSharedPolicyChanges => &["spec"],
             Self::VaultFederationCoreferenceLink => &["spec"],
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
@@ -9668,6 +9715,9 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
+            Self::VaultRootsRequestsCreate => &["spec"],
+            Self::VaultRootsRequestsList => &["spec"],
+            Self::VaultOwnerWorkGet => &["spec"],
             Self::VaultCleanupRun => &["spec"],
             Self::VaultCleanupReview => &["spec"],
             Self::VaultCleanupDecide => &["spec"],
@@ -9675,6 +9725,7 @@ impl AgentVerb {
             Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
+            Self::VaultUsageRepairReceipts => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
@@ -9943,6 +9994,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultTasksCommWidenRevoke => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultRunsPause => &["spec"],
             Self::VaultRunsResume => &["spec"],
@@ -11372,6 +11424,9 @@ impl AgentVerb {
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
             }
+            Self::VaultSharedPolicyChanges => {
+                "A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."
+            }
             Self::VaultFederationCoreferenceLink => {
                 "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."
             }
@@ -11741,6 +11796,15 @@ impl AgentVerb {
             Self::VaultRootsRequestsCancel => {
                 "The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."
             }
+            Self::VaultRootsRequestsCreate => {
+                "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was."
+            }
+            Self::VaultRootsRequestsList => {
+                "The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only."
+            }
+            Self::VaultOwnerWorkGet => {
+                "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it."
+            }
             Self::VaultCleanupRun => {
                 "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."
             }
@@ -11761,6 +11825,9 @@ impl AgentVerb {
             }
             Self::VaultUsageEventsRemoveUndecodable => {
                 "Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."
+            }
+            Self::VaultUsageRepairReceipts => {
+                "Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted."
             }
             Self::VaultEntitiesMention => {
                 "The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."
@@ -12550,6 +12617,9 @@ impl AgentVerb {
             Self::VaultTasksCancelForce => {
                 "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."
             }
+            Self::VaultTasksCommWidenRevoke => {
+                "The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended."
+            }
             Self::VaultRunsBranchesGet => {
                 "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."
             }
@@ -12978,7 +13048,7 @@ impl AgentVerb {
                 "A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay."
             }
             Self::VaultVoicesInspect => {
-                "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."
+                "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target."
             }
             Self::VaultVoicesLineage => {
                 "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4240 declarations.
-// Replies: 1088 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4240 declarations.
+// Replies: 1096 fully typed, 121 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
 declare namespace Sdk {
@@ -1754,6 +1754,10 @@ declare namespace Sdk {
   type OwnerWorkCancelState = "cancelled" | "already_enacted" | "already_refused";
   type OwnerWorkCancelNote = { entries: string[]; state: OwnerWorkCancelState };
   type OwnerWorkReceipt = { request?: string | null; kind: OwnerWorkKind; target: EntityId; executor?: EntityId | null; status: OwnerWorkStatus; unassigned?: OwnerWorkUnassigned | null; manifest_check?: CustodyRegisterCheck | null; home_warning?: BundleHomeWarning | null; cancel?: OwnerWorkCancelNote | null };
+  type RootRequestCreateRequest = { target: string; change: string; root?: string | null; machine?: string | null };
+  type RootChangeView = { change: string; root?: string | null; machine?: string | null };
+  type PendingRootRequestView = { change: RootChangeView; receipt: OwnerWorkReceipt };
+  type OwnerWorkGetRequest = { request: string };
   type CleanupRunRequest = Record<string, never>;
   type CleanupPosture = "propose_first" | "auto_with_digest";
   type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
@@ -1795,6 +1799,8 @@ declare namespace Sdk {
   type UsageRepairAuthority = { kind: "owner"; ref: string } | { kind: "grant"; ref: string };
   type UsageRepairSurface = { kind: "this_install" } | { kind: "linked_device"; machine: string } | { kind: "hosted_console" };
   type UsageRepairReceipt = { receiptId: string; owner: string; vaultId: string; rowRef: string; hash: string; byteLength: number; reason: UsageRepairReason; actorRef: string; actorClass: string; authority: UsageRepairAuthority; surface: UsageRepairSurface; recordedAt: number };
+  type UsageRepairReceiptsRequest = Record<string, never>;
+  type UsageRepairReceiptList = { receipts: UsageRepairReceipt[]; undecodable: number };
   type EntityMentionRequest = { candidates: EntityResolutionCandidate[]; high_collision_mention?: boolean };
   type LegalHoldTarget = { record: EntityId } | { gate_partition: EntityId | null };
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
@@ -2641,7 +2647,7 @@ declare namespace Sdk {
   type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null; project?: EntityId | null };
   type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number };
   type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
-  type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
+  type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string } | { kind: "no_executor"; attempt_ref: EntityId; state: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; erasure?: SpawnErasure | null; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type SpawnAskKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null; balance_free_prompt?: boolean };
@@ -2660,6 +2666,8 @@ declare namespace Sdk {
   type AttemptCancelState = { landing?: AttemptLanding | null; resume_point?: AttemptResumePoint | null; cancellation?: AttemptCancellation | null; pressure?: AttemptCancelPressure; receipts?: AttemptCancelReceipt[]; reserve?: AttemptLandingReserve };
   type RunBranchView = { branch: string; run_id?: string | null; state: AttemptState; agent_status: AgentRunStatus; attempt_count: number; result_ref?: string | null; last_error?: string | null; asks: RunAsk[]; signals: RunBranchSignal[]; cancel_state: AttemptCancelState };
   type CancelForceReceipt = { task_ref: EntityId; effected: boolean; forced: number; branches: RunBranchView[] };
+  type CommWidenRevokeRequest = { attempt: EntityId };
+  type CommWidenRevokeReceipt = { attempt: string; reach: CommReach; revoked_at: number; revoked: boolean };
   type RunBranchesRequest = { task_ref: EntityId };
   type RunBranchesView = { task_ref: EntityId; branches: RunBranchView[] };
   type RunControlRequest = { branch: string; note?: string | null };
@@ -3202,8 +3210,10 @@ declare namespace Sdk {
   type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
   type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[]; crossed: string[] };
   type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: VoiceRefSubjectKind; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: VoiceConsentBasis | null; state: VoiceConsentState; revision: string; sequence: number };
+  type VoiceTargetRender = { kind: "hosted_clone"; locality: ModelLocality } | { kind: "reference"; locality: ModelLocality } | { kind: "unconfigured" };
   type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
-  type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
+  type VoiceReferenceFenceView = { source_packs: string[]; ref_digest: string; incarnation?: string | null; consent_revision: string; revision: string };
+  type VoiceTargetInspection = { target: string; render: VoiceTargetRender; include_generated: boolean; current?: VoiceTargetCloneView | null; reference?: VoiceReferenceFenceView | null };
   type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection };
   type VoiceRenderLineageRequest = { voice_id: string };
   type VoiceDroppedTargetView = { target: string; held: VoiceTargetCloneView };
@@ -6278,6 +6288,10 @@ declare const vault: Sdk.VaultHost & {
     /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
     powers(input: Sdk.OrgAdminPowersRequest): Promise<Sdk.OrgAdminPowers | StoredResult>;
   };
+  owner_work: {
+    /** The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it. */
+    get(input: Sdk.OwnerWorkGetRequest): Promise<Sdk.OwnerWorkReceipt | StoredResult>;
+  };
   packs: {
     connector: {
       /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
@@ -6749,6 +6763,10 @@ declare const vault: Sdk.VaultHost & {
     requests: {
       /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
       cancel(input: Sdk.RootRequestCancelRequest): Promise<Sdk.OwnerWorkReceipt | StoredResult>;
+      /** The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was. */
+      create(input: Sdk.RootRequestCreateRequest): Promise<Sdk.OwnerWorkReceipt | StoredResult>;
+      /** The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.PendingRootRequestView[] | StoredResult>;
     };
   };
   runners: {
@@ -6874,6 +6892,8 @@ declare const vault: Sdk.VaultHost & {
       answer(input: Sdk.SharedActPolicyAnswerRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
       /** A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on. */
       change(input: Sdk.SharedActPolicyChangeRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
+      /** A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale. */
+      changes(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActPolicyChange[] | StoredResult>;
       /** A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds. */
       get(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActPoliciesView | StoredResult>;
       /** A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it. */
@@ -7133,9 +7153,11 @@ declare const vault: Sdk.VaultHost & {
     pin(input: Sdk.TaskTypeTreePin): Promise<Sdk.TaskTypeTreePinReceipt | StoredResult>;
   };
   tasks: {
-    cancel: {
-      /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
-      force(input: Sdk.CancelForceRequest): Promise<Sdk.CancelForceReceipt | StoredResult>;
+    /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+    cancel_force(input: Sdk.CancelForceRequest): Promise<Sdk.CancelForceReceipt | StoredResult>;
+    comm_widen: {
+      /** The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended. */
+      revoke(input: Sdk.CommWidenRevokeRequest): Promise<Sdk.CommWidenRevokeReceipt | StoredResult>;
     };
     linear: {
       /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
@@ -7190,13 +7212,17 @@ declare const vault: Sdk.VaultHost & {
       /** Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb. */
       undecodable(input: Sdk.UsageRepairListRequest): Promise<Sdk.UndecodableUsageList | StoredResult>;
     };
+    repair: {
+      /** Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted. */
+      receipts(input: Sdk.UsageRepairReceiptsRequest): Promise<Sdk.UsageRepairReceiptList | StoredResult>;
+    };
   };
   vectors: {
     /** Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically. */
     put(input: Sdk.VectorPutRequest): Promise<Sdk.VectorPutReceipt | StoredResult>;
   };
   voices: {
-    /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone. */
+    /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target. */
     inspect(input: Sdk.VoiceBankInspectRequest): Promise<Sdk.VoiceBankInspection | StoredResult>;
     /** A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call. */
     lineage(input: Sdk.VoiceRenderLineageRequest): Promise<Sdk.VoiceRenderEventView[] | StoredResult>;

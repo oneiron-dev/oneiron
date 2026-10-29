@@ -586,6 +586,8 @@ class Oneiron:
         @property
         def roots(self) -> "Oneiron._VaultRootsVerbs": ...
         @property
+        def owner_work(self) -> "Oneiron._VaultOwnerWorkVerbs": ...
+        @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
         @property
         def archive(self) -> "Oneiron._VaultArchiveVerbs": ...
@@ -1619,6 +1621,8 @@ class Oneiron:
             """A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."""
         def change(self, spec: Facade.SharedActPolicyChangeRequest) -> Facade.SharedActPolicyChange:
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
+        def changes(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedActPolicyChange]:
+            """A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."""
     class _VaultOrgAdminVerbs:
         def configure(self, spec: Facade.OrgAdminConfigureRequest) -> Facade.OrgAdminConfigured:
             """The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."""
@@ -1944,6 +1948,13 @@ class Oneiron:
     class _VaultRootsRequestsVerbs:
         def cancel(self, spec: Facade.RootRequestCancelRequest) -> Facade.OwnerWorkReceipt:
             """The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."""
+        def create(self, spec: Facade.RootRequestCreateRequest) -> Facade.OwnerWorkReceipt:
+            """The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was."""
+        def list(self, spec: Facade.EmptyRequest) -> list[Facade.PendingRootRequestView]:
+            """The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only."""
+    class _VaultOwnerWorkVerbs:
+        def get(self, spec: Facade.OwnerWorkGetRequest) -> Facade.OwnerWorkReceipt:
+            """The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it."""
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
@@ -1962,11 +1973,16 @@ class Oneiron:
     class _VaultUsageVerbs:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...
+        @property
+        def repair(self) -> "Oneiron._VaultUsageRepairVerbs": ...
     class _VaultUsageEventsVerbs:
         def undecodable(self, spec: Facade.UsageRepairListRequest) -> Facade.UndecodableUsageList:
             """Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."""
         def remove_undecodable(self, spec: Facade.UsageRepairRemoveRequest) -> Facade.UsageRepairReceipt:
             """Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."""
+    class _VaultUsageRepairVerbs:
+        def receipts(self, spec: Facade.UsageRepairReceiptsRequest) -> Facade.UsageRepairReceiptList:
+            """Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -2682,10 +2698,12 @@ class Oneiron:
         @property
         def cancel(self) -> "Oneiron._VaultTasksCancelVerbs": ...
         @property
+        def comm_widen(self) -> "Oneiron._VaultTasksCommWidenVerbs": ...
+        @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
-    class _VaultTasksCancelVerbs:
-        def force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
-            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+    class _VaultTasksCommWidenVerbs:
+        def revoke(self, spec: Facade.CommWidenRevokeRequest) -> Facade.CommWidenRevokeReceipt:
+            """The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended."""
     class _VaultTasksLinearVerbs:
         @property
         def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...
@@ -2922,7 +2940,7 @@ class Oneiron:
         @property
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs": ...
         def inspect(self, spec: Facade.VoiceBankInspectRequest) -> Facade.VoiceBankInspection:
-            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target."""
         def lineage(self, spec: Facade.VoiceRenderLineageRequest) -> list[Facade.VoiceRenderEventView]:
             """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""
     class _VaultVoicesPacksVerbs:

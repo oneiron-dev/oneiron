@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4180 declarations.
-Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 107; unread shapes: 0.
+Census: 1167 facade rows, 4180 declarations.
+Inputs: 1102 of 1167 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1048 of 1167 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 105; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -8776,6 +8776,20 @@ class OwnerWorkReceipt(TypedDict):
     manifest_check: NotRequired[CustodyRegisterCheck | None]
     home_warning: NotRequired[BundleHomeWarning | None]
     cancel: NotRequired[OwnerWorkCancelNote | None]
+class RootRequestCreateRequest(TypedDict):
+    target: str
+    change: str
+    root: NotRequired[str | None]
+    machine: NotRequired[str | None]
+class RootChangeView(TypedDict):
+    change: str
+    root: NotRequired[str | None]
+    machine: NotRequired[str | None]
+class PendingRootRequestView(TypedDict):
+    change: RootChangeView
+    receipt: OwnerWorkReceipt
+class OwnerWorkGetRequest(TypedDict):
+    request: str
 class CleanupRunRequest(TypedDict):
     ...
 CleanupPosture = Literal["propose_first", "auto_with_digest"]
@@ -8940,6 +8954,11 @@ class UsageRepairReceipt(TypedDict):
     authority: UsageRepairAuthority
     surface: UsageRepairSurface
     recordedAt: int
+class UsageRepairReceiptsRequest(TypedDict):
+    ...
+class UsageRepairReceiptList(TypedDict):
+    receipts: list[UsageRepairReceipt]
+    undecodable: int
 class EntityMentionRequest(TypedDict):
     candidates: list[EntityResolutionCandidate]
     high_collision_mention: NotRequired[bool]
@@ -12961,7 +12980,11 @@ class ObservationIssueUnavailable(TypedDict):
     kind: Literal["unavailable"]
     consumer: str
     reason: str
-ObservationIssue = ObservationIssueStampMismatch | ObservationIssueMissingBinding | ObservationIssueSeveralTeams | ObservationIssueTeamMismatch | ObservationIssueUnavailable
+class ObservationIssueNoExecutor(TypedDict):
+    kind: Literal["no_executor"]
+    attempt_ref: EntityId
+    state: str
+ObservationIssue = ObservationIssueStampMismatch | ObservationIssueMissingBinding | ObservationIssueSeveralTeams | ObservationIssueTeamMismatch | ObservationIssueUnavailable | ObservationIssueNoExecutor
 class PlannedSpawnObservation(TypedDict):
     spawn_ref: EntityId
     phase: SpawnPhase
@@ -13089,6 +13112,13 @@ class CancelForceReceipt(TypedDict):
     effected: bool
     forced: int
     branches: list[RunBranchView]
+class CommWidenRevokeRequest(TypedDict):
+    attempt: EntityId
+class CommWidenRevokeReceipt(TypedDict):
+    attempt: str
+    reach: CommReach
+    revoked_at: int
+    revoked: bool
 class RunBranchesRequest(TypedDict):
     task_ref: EntityId
 class RunBranchesView(TypedDict):
@@ -16162,17 +16192,33 @@ class VoiceRenderConsentView(TypedDict):
     state: VoiceConsentState
     revision: str
     sequence: int
+class VoiceTargetRenderHostedClone(TypedDict):
+    kind: Literal["hosted_clone"]
+    locality: ModelLocality
+class VoiceTargetRenderReference(TypedDict):
+    kind: Literal["reference"]
+    locality: ModelLocality
+class VoiceTargetRenderUnconfigured(TypedDict):
+    kind: Literal["unconfigured"]
+VoiceTargetRender = VoiceTargetRenderHostedClone | VoiceTargetRenderReference | VoiceTargetRenderUnconfigured
 class VoiceTargetCloneView(TypedDict):
     vendor_voice_id: str
     source_packs: list[str]
     ref_digest: str
     cloned_at: int
     revision: str
+class VoiceReferenceFenceView(TypedDict):
+    source_packs: list[str]
+    ref_digest: str
+    incarnation: NotRequired[str | None]
+    consent_revision: str
+    revision: str
 class VoiceTargetInspection(TypedDict):
     target: str
-    locality: ModelLocality
+    render: VoiceTargetRender
     include_generated: bool
     current: NotRequired[VoiceTargetCloneView | None]
+    reference: NotRequired[VoiceReferenceFenceView | None]
 class VoiceBankInspection(TypedDict):
     voice_id: str
     identity: NotRequired[VoiceIdentityView | None]

@@ -5209,6 +5209,21 @@
       "openapi": true
     },
     {
+      "name": "vault.shared.policy.changes",
+      "description": "A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::SharedActPolicyChange>",
+      "call": "crate::task_verb::sdk::read_shared_act_policy_changes(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.changes\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.coreference.link",
       "description": "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads.",
       "input": "crate::task_verb::sdk::CoreferenceLinkRequest",
@@ -7030,6 +7045,52 @@
       "section": false
     },
     {
+      "name": "vault.roots.requests.create",
+      "description": "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was.",
+      "input": "crate::task_verb::sdk::RootRequestCreateRequest",
+      "output": "crate::world_keys::OwnerWorkReceipt",
+      "call": "crate::task_verb::sdk::create_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.create\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.roots.requests.list",
+      "description": "The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::PendingRootRequestView>",
+      "call": "crate::task_verb::sdk::list_root_requests_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.list\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.owner_work.get",
+      "description": "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it.",
+      "input": "crate::task_verb::sdk::OwnerWorkGetRequest",
+      "output": "crate::world_keys::OwnerWorkReceipt",
+      "call": "crate::task_verb::sdk::owner_work_receipt_as(memory.vault(), &memory.embedded_owner(\"vault.owner_work.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.cleanup.run",
       "description": "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing.",
       "input": "crate::vault_cleanup::surface::CleanupRunRequest",
@@ -7132,6 +7193,21 @@
       "host_door_lists": true,
       "host_door_surface": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.usage.repair.receipts",
+      "description": "Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted.",
+      "input": "crate::memory::usage_repair::UsageRepairReceiptsRequest",
+      "output": "crate::memory::usage_repair::UsageRepairReceiptList",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.usage.repair.receipts\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -11274,6 +11350,22 @@
       "openapi": true
     },
     {
+      "name": "vault.tasks.comm_widen.revoke",
+      "description": "The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended.",
+      "input": "crate::task_verb::sdk::CommWidenRevokeRequest",
+      "output": "crate::task_verb::CommWidenRevokeReceipt",
+      "call": "crate::task_verb::sdk::revoke_comm_widen_as(memory, &memory.embedded_owner(\"vault.tasks.comm_widen.revoke\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.runs.branches.get",
       "description": "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts.",
       "input": "crate::task_verb::run_doors::RunBranchesRequest",
@@ -13752,7 +13844,7 @@
     },
     {
       "name": "vault.voices.inspect",
-      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone.",
+      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target.",
       "input": "crate::task_verb::sdk::VoiceBankInspectRequest",
       "output": "crate::task_verb::sdk::VoiceBankInspection",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.inspect\", &input)?",
@@ -17510,9 +17602,10 @@
       "description": "The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming.",
       "input": "crate::dreamer_runner::FreeTimePolicySetRequest",
       "output": "crate::dreamer_runner::FreeTimePolicyView",
-      "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, crate::authority::ActSurface::ThisInstall, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

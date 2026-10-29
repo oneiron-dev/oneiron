@@ -1641,6 +1641,11 @@ export_facade! {
     let output = client.vault_shared_policy_change(&input)?;
     crate::codec::lift_record("vault.shared.policy.change", &output)
 };
+"vault.shared.policy.changes" => fn vault_shared_policy_changes(&self, input: SharedVaultRequest) -> Vec<SharedActPolicyChange> = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.policy.changes", input)?;
+    let output = client.vault_shared_policy_changes(&input)?;
+    crate::codec::lift_record("vault.shared.policy.changes", &output)
+};
 "vault.federation.coreference.link" => fn vault_federation_coreference_link(&self, input: CoreferenceLinkRequest) -> CoreferenceLinkReceipt = |client| {
     let input: oneiron::task_verb::sdk::CoreferenceLinkRequest = crate::codec::lower_record("vault.federation.coreference.link", input)?;
     let output = client.vault_federation_coreference_link(&input)?;
@@ -2266,6 +2271,21 @@ export_facade! {
     let output = client.vault_roots_requests_cancel(&input)?;
     crate::codec::lift_record("vault.roots.requests.cancel", &output)
 };
+"vault.roots.requests.create" => fn vault_roots_requests_create(&self, input: RootRequestCreateRequest) -> OwnerWorkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::RootRequestCreateRequest = crate::codec::lower_record("vault.roots.requests.create", input)?;
+    let output = client.vault_roots_requests_create(&input)?;
+    crate::codec::lift_record("vault.roots.requests.create", &output)
+};
+"vault.roots.requests.list" => fn vault_roots_requests_list(&self) -> Vec<PendingRootRequestView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.roots.requests.list")?;
+    let output = client.vault_roots_requests_list(&input)?;
+    crate::codec::lift_record("vault.roots.requests.list", &output)
+};
+"vault.owner_work.get" => fn vault_owner_work_get(&self, input: OwnerWorkGetRequest) -> OwnerWorkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OwnerWorkGetRequest = crate::codec::lower_record("vault.owner_work.get", input)?;
+    let output = client.vault_owner_work_get(&input)?;
+    crate::codec::lift_record("vault.owner_work.get", &output)
+};
 "vault.cleanup.run" => fn vault_cleanup_run(&self) -> CleanupRunView = |client| {
     let input: oneiron::vault_cleanup::surface::CleanupRunRequest = crate::codec::lower_empty("vault.cleanup.run")?;
     let output = client.vault_cleanup_run(&input)?;
@@ -2300,6 +2320,11 @@ export_facade! {
     let input: oneiron::memory::usage_repair::UsageRepairRemoveRequest = crate::codec::lower_record("vault.usage.events.remove_undecodable", input)?;
     let output = client.vault_usage_events_remove_undecodable(&input)?;
     crate::codec::lift_record("vault.usage.events.remove_undecodable", &output)
+};
+"vault.usage.repair.receipts" => fn vault_usage_repair_receipts(&self) -> UsageRepairReceiptList = |client| {
+    let input: oneiron::memory::usage_repair::UsageRepairReceiptsRequest = crate::codec::lower_empty("vault.usage.repair.receipts")?;
+    let output = client.vault_usage_repair_receipts(&input)?;
+    crate::codec::lift_record("vault.usage.repair.receipts", &output)
 };
 "vault.entities.mention" => fn vault_entities_mention(&self, input: EntityMentionRequest) -> EntityResolutionWaterfallDecision = |client| {
     let input: oneiron::ingest::EntityMentionRequest = crate::codec::lower_record("vault.entities.mention", input)?;
@@ -3640,6 +3665,11 @@ export_facade! {
     let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel.force", input)?;
     let output = client.vault_tasks_cancel_force(&input)?;
     crate::codec::lift_record("vault.tasks.cancel.force", &output)
+};
+"vault.tasks.comm_widen.revoke" => fn vault_tasks_comm_widen_revoke(&self, input: CommWidenRevokeRequest) -> CommWidenRevokeReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CommWidenRevokeRequest = crate::codec::lower_record("vault.tasks.comm_widen.revoke", input)?;
+    let output = client.vault_tasks_comm_widen_revoke(&input)?;
+    crate::codec::lift_record("vault.tasks.comm_widen.revoke", &output)
 };
 "vault.runs.branches.get" => fn vault_runs_branches_get(&self, input: RunBranchesRequest) -> RunBranchesView = |client| {
     let input: oneiron::task_verb::run_doors::RunBranchesRequest = crate::codec::lower_record("vault.runs.branches.get", input)?;

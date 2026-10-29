@@ -644,6 +644,9 @@ class Oneiron:
         def roots(self) -> "Oneiron._VaultRootsVerbs":
             return Oneiron._VaultRootsVerbs(self._client)
         @property
+        def owner_work(self) -> "Oneiron._VaultOwnerWorkVerbs":
+            return Oneiron._VaultOwnerWorkVerbs(self._client)
+        @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
         @property
@@ -2377,6 +2380,9 @@ class Oneiron:
         def change(self, spec):
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
             return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
+        def changes(self, spec):
+            """A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_changes(json.dumps(spec))))
     class _VaultOrgAdminVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2916,6 +2922,18 @@ class Oneiron:
         def cancel(self, spec):
             """The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."""
             return json.loads(_translate(lambda: self._client.vault_roots_requests_cancel(json.dumps(spec))))
+        def create(self, spec):
+            """The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was."""
+            return json.loads(_translate(lambda: self._client.vault_roots_requests_create(json.dumps(spec))))
+        def list(self, spec):
+            """The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only."""
+            return json.loads(_translate(lambda: self._client.vault_roots_requests_list(json.dumps(spec))))
+    class _VaultOwnerWorkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it."""
+            return json.loads(_translate(lambda: self._client.vault_owner_work_get(json.dumps(spec))))
     class _VaultCleanupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2949,6 +2967,9 @@ class Oneiron:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs":
             return Oneiron._VaultUsageEventsVerbs(self._client)
+        @property
+        def repair(self) -> "Oneiron._VaultUsageRepairVerbs":
+            return Oneiron._VaultUsageRepairVerbs(self._client)
     class _VaultUsageEventsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2958,6 +2979,12 @@ class Oneiron:
         def remove_undecodable(self, spec):
             """Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."""
             return json.loads(_translate(lambda: self._client.vault_usage_events_remove_undecodable(json.dumps(spec))))
+    class _VaultUsageRepairVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def receipts(self, spec):
+            """Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted."""
+            return json.loads(_translate(lambda: self._client.vault_usage_repair_receipts(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4205,14 +4232,17 @@ class Oneiron:
         def cancel(self) -> "Oneiron._VaultTasksCancelVerbs":
             return Oneiron._VaultTasksCancelVerbs(self._client)
         @property
+        def comm_widen(self) -> "Oneiron._VaultTasksCommWidenVerbs":
+            return Oneiron._VaultTasksCommWidenVerbs(self._client)
+        @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
             return Oneiron._VaultTasksLinearVerbs(self._client)
-    class _VaultTasksCancelVerbs:
+    class _VaultTasksCommWidenVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def force(self, spec):
-            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_comm_widen_revoke(json.dumps(spec))))
     class _VaultTasksLinearVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4610,7 +4640,7 @@ class Oneiron:
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs":
             return Oneiron._VaultVoicesTargetsVerbs(self._client)
         def inspect(self, spec):
-            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target."""
             return json.loads(_translate(lambda: self._client.vault_voices_inspect(json.dumps(spec))))
         def lineage(self, spec):
             """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""

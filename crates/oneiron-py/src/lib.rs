@@ -3110,6 +3110,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_policy_changes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.changes")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.changes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_federation_coreference_link(
         &self,
         py: Python<'_>,
@@ -4366,6 +4373,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_roots_requests_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.roots.requests.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.roots.requests.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_roots_requests_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.roots.requests.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.roots.requests.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_owner_work_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.owner_work.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.owner_work.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_cleanup_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.cleanup.run")?;
         let output = py
@@ -4422,6 +4450,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.usage.events.remove_undecodable", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_usage_repair_receipts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.usage.repair.receipts")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.usage.repair.receipts", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -6792,6 +6827,16 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.tasks.cancel.force")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.tasks.cancel.force", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_tasks_comm_widen_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.tasks.comm_widen.revoke")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.tasks.comm_widen.revoke", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
