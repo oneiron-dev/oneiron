@@ -846,9 +846,9 @@ class Oneiron:
         def preview(self, spec: Facade.PersonaSnapshotPreviewRequest) -> Facade.PersonaSnapshotPreview:
             """Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."""
         def export(self, spec: Facade.PersonaSnapshotCopyRequest) -> Facade.PersonaSnapshotExportedCopy:
-            """Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."""
+            """Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent."""
         def edit(self, spec: Facade.PersonaSnapshotCopyEditRequest) -> Facade.PersonaSnapshotExportedCopy:
-            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."""
+            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out."""
     class _VaultFanoutVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.FanoutBatchInput]) -> Facade.FanoutBatchView:
             """Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."""
@@ -1830,8 +1830,8 @@ class Oneiron:
             """A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."""
         def save_from_here(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
-        def export(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomExport:
-            """A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in."""
+        def export(self, spec: Facade.OffRecordRoomExportRequest) -> Facade.OffRecordRoomExport:
+            """A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."""
         def suggest_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
         def confirm_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
@@ -2203,6 +2203,8 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
+        def export_pack(self, spec: Facade.LensPackExportRequest) -> Facade.LensPackExport:
+            """Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."""
         def select(self, spec: Facade.LensSelectRequest) -> Facade.LensSelection:
             """Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."""
         def resolve(self, spec: Facade.LensSelectionResolveRequest) -> Facade.LensSelectionResolved:
@@ -3508,6 +3510,20 @@ class Oneiron:
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+        @property
+        def results(self) -> "Oneiron._SelfOffRecordResultsVerbs": ...
+        @property
+        def waits(self) -> "Oneiron._SelfOffRecordWaitsVerbs": ...
+    class _SelfOffRecordResultsVerbs:
+        def list(self, spec: Facade.OffRecordResultsRequest) -> Facade.OffRecordResultCards:
+            """The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not."""
+        def read(self, spec: Facade.OffRecordResultReadRequest) -> Facade.OffRecordResultRead:
+            """The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint."""
+    class _SelfOffRecordWaitsVerbs:
+        def get(self, spec: Facade.OffRecordWaitRequest) -> Facade.OffRecordWaitView:
+            """The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered."""
+        def answer(self, spec: Facade.OffRecordWaitAnswerRequest) -> Facade.OffRecordWaitAnswered:
+            """The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on."""
     class _SelfConsentVerbs:
         @property
         def graduation(self) -> "Oneiron._SelfConsentGraduationVerbs": ...

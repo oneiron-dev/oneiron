@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4256 declarations.
-// Replies: 1093 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4259 declarations.
+// Replies: 1091 fully typed, 126 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 107; unread shapes: none.
+// Opaque serde_json::Value leaves: 110; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -260,7 +260,8 @@ declare namespace Sdk {
   type PersonaSnapshotCopyRequest = { subject: EntityId; stamp: string; strike?: string[]; unstrike?: string[]; travel?: CopyTravelChoice | null };
   type PersonaSnapshotMemoryPackRow = { row_id: string; kind: string; text: string; subject_ref?: EntityId | null; provenance_refs?: string[] | null; salience?: number | null; attribution?: string | null };
   type PersonaSnapshotMemoryPack = { schema: string; kind: string; subject_ref?: EntityId | null; identity_line?: string | null; audience_ref?: string | null; takes_included: boolean; compiled_at_secs: number; stale_after_secs: number; persona_compile_stamp: string; rows: PersonaSnapshotMemoryPackRow[] };
-  type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number };
+  type PersonaSnapshotCopyReceipt = { refs: CopyRefs; artifact_fingerprint: string; omitted_refs: string[] };
+  type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; memory_pack_json: string; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number; receipt: PersonaSnapshotCopyReceipt };
   type PersonaSnapshotTextEdit = { row_id: string; text: string };
   type PersonaSnapshotCopyEditRequest = { export_id: EntityId; stamp: string; edits: PersonaSnapshotTextEdit[]; strike?: string[]; unstrike?: string[]; travel?: CopyTravelChoice | null };
   type DiaryQueryRequest = { agent: string; reason: string };
@@ -1509,6 +1510,21 @@ declare namespace Sdk {
   type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
   type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";
   type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number };
+  type OffRecordResultsRequest = { session_ref: string; run_ref: string; offset?: number | null; limit?: number | null };
+  type ResultBodyKind = "text" | "binary";
+  type ResultTaintState = "clean" | "tainted_live" | "tainted_stale";
+  type ResultTaint = { state: ResultTaintState; secret?: string | null };
+  type ResultFacet = "slice" | "search" | "query" | "chunks";
+  type ResultCard = { handle: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; preview: string; name?: string | null; taint: ResultTaint; more: ResultFacet[]; shape?: unknown | null };
+  type OffRecordResultCards = { run_ref: string; run_id: string; count: number; cards: ResultCard[]; next_offset?: number | null; withheld: boolean };
+  type OffRecordResultReadRequest = { session_ref: string; run_ref: string; ref: string; facet?: ResultFacet | null; input?: unknown | null };
+  type ResultReadRefusal = { denied: string; reasonCodes: string[]; error?: string | null; bytes?: number | null };
+  type OffRecordResultRead = { status: "card"; card: ResultCard } | { status: "page"; facet: ResultFacet; page: unknown } | { status: "denied"; refusal: ResultReadRefusal };
+  type OffRecordWaitRequest = { session_ref: string; run_ref: string };
+  type OffRecordRunWait = { wait_id: string; generation: number; effect: string; reason: string; prompt?: string | null; answerable: boolean; delivered_at_ms?: number | null };
+  type OffRecordWaitView = { run_ref: string; run_id: string; wait?: OffRecordRunWait | null };
+  type OffRecordWaitAnswerRequest = { session_ref: string; run_ref: string; reply: unknown; wait_id?: EntityId | null; generation?: number | null };
+  type OffRecordWaitAnswered = { run_ref: string; run_id: string; wait_id: string; generation: number; already_answered: boolean; delivered_at_ms: number };
   type OffRecordRoomRequest = { room: string; session_ref: string };
   type OffRecordNoticeAct = "saved_talk" | "saved_turn" | "saving_from_here" | "saving_stopped" | "exported" | "save_suggested" | "save_declined";
   type OffRecordRoomNotice = { act: OffRecordNoticeAct; by: string; at: string };
@@ -1519,12 +1535,17 @@ declare namespace Sdk {
   type OffRecordRoomShortIdPair = { room: string; vault: string };
   type OffRecordRoomSavedTurn = { turn: string; replayed: string[]; short_ids: OffRecordRoomShortIdPair[] };
   type OffRecordRoomSaved = { saved: OffRecordRoomSavedTurn[] };
+  type OffRecordRoomExportRequest = { room: string; session_ref: string; travel?: CopyTravelChoice | null };
   type MessageResultSource = { run_id: EntityId; occurrence: EntityId; path: string };
-  type ResultFacet = "slice" | "search" | "query" | "chunks";
   type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] };
-  type OffRecordTalkMessage = { author: string; message_type: string; content: string; order: number; result?: MessageResultAttachment | null };
-  type OffRecordRoomExportTurn = { turn: string; speaker?: string | null; occurred_at: string; saved: boolean; messages: OffRecordTalkMessage[] };
-  type OffRecordRoomExport = { session_ref: string; room?: string | null; exported_at: string; turns: OffRecordRoomExportTurn[] };
+  type OffRecordRoomCopyResult = { label: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean };
+  type OffRecordRoomExportResult = MessageResultAttachment | OffRecordRoomCopyResult;
+  type OffRecordRoomExportMessage = { author: string; message_type: string; content: string; order: number; result?: OffRecordRoomExportResult | null };
+  type OffRecordRoomExportTurn = { turn: string; speaker?: string | null; occurred_at: string; saved: boolean; messages: OffRecordRoomExportMessage[] };
+  type OffRecordRoomCopySlotHandling = "dropped" | "labelled";
+  type OffRecordRoomCopySlot = { slot: string; handling: OffRecordRoomCopySlotHandling; count: number };
+  type OffRecordRoomCopyLoss = { refs: CopyRefs; slots: OffRecordRoomCopySlot[] };
+  type OffRecordRoomExport = { session_ref?: string | null; room?: string | null; exported_at: string; turns: OffRecordRoomExportTurn[]; copy?: OffRecordRoomCopyLoss | null };
   type RecordEraseRequest = { record: EntityId };
   type EraseShare = { grant: string; recipient: string };
   type EraseHeldBytes = { content_hash: string; other_holders: string[] };
@@ -2114,6 +2135,11 @@ declare namespace Sdk {
   type LensProposalState = "proposed" | "active";
   type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null };
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
+  type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
+  type TravelChoice = { born_with?: BornWithField[] };
+  type LensPackExportRequest = { lens_ref: string; travel?: TravelChoice | null };
+  type LensPackExportReceipt = { lens_ref: string; prompt_ref: string; skill_id: string; content_hash: string; travelled: BornWithField[] };
+  type LensPackExport = { pack_json: string; receipt: LensPackExportReceipt };
   type LensSelectionRange = { start: number; end: number; version?: number[] | null };
   type LensSelectRequest = { cardId: string; atomId: string; handle: string; span?: LensSelectionRange | null };
   type LensReadReach = "claim_set" | "entity_set" | "timeline" | "query_result";
@@ -2163,8 +2189,6 @@ declare namespace Sdk {
   type SecretGrantRenewRequest = { grant: string; ttl_secs?: number | null };
   type SecretGrantTeardownRequest = { grant: string };
   type SecretGrantUseRequest = { grant: string; operation: string; arguments?: unknown };
-  type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
-  type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
   type ShareCreated = { share_id: string; recipient: string; brief_ref: string; created_at: number; expires_at?: number | null; travel: TravelChoice };
   type ShareRevokeRequest = { share_ref: string };
@@ -2345,15 +2369,10 @@ declare namespace Sdk {
   type ResultEffectRecord = { seq: number; effect: string; action_digest?: string | null; started_at_ms: number; finished_at_ms: number };
   type ResultRetainedBody = { blake3: string; bytes: number };
   type ResultBodyStatus = { occurrence: EntityId; complete: boolean; retained?: ResultRetainedBody | null };
-  type ResultBodyKind = "text" | "binary";
-  type ResultTaintState = "clean" | "tainted_live" | "tainted_stale";
-  type ResultTaint = { state: ResultTaintState; secret?: string | null };
   type ResultTaintReference = { secret_ref: string; generation: number };
   type ResultOccurrenceManifest = { run_id: EntityId; occurrence: EntityId; path: string; handle: string; blake3: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; taint: ResultTaint; taint_refs: ResultTaintReference[]; source_rows?: EntityId[] | null };
   type ResultRunStatus = { run_id: EntityId; replay_present: boolean; checkpoint_count: number; effects: ResultEffectRecord[]; bodies: ResultBodyStatus[]; occurrences: ResultOccurrenceManifest[] };
   type ResultOccurrenceRequest = { run_id: EntityId; occurrence: EntityId };
-  type ResultCard = { handle: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; preview: string; name?: string | null; taint: ResultTaint; more: ResultFacet[]; shape?: unknown | null };
-  type ResultReadRefusal = { denied: string; reasonCodes: string[]; error?: string | null; bytes?: number | null };
   type ResultReadView = { status: "available"; manifest: ResultOccurrenceManifest; card: ResultCard } | { status: "denied"; refusal: ResultReadRefusal };
   type ResultByteSelection = { bytes: number[] };
   type ResultLineCursor = { offset: number; line: number };
@@ -4711,6 +4730,18 @@ declare namespace self {
   const off_record: {
     /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
     execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
+    results: {
+      /** The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not. */
+      list(input: Sdk.OffRecordResultsRequest): Promise<Sdk.OffRecordResultCards | StoredResult>;
+      /** The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint. */
+      read(input: Sdk.OffRecordResultReadRequest): Promise<Sdk.OffRecordResultRead | StoredResult>;
+    };
+    waits: {
+      /** The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on. */
+      answer(input: Sdk.OffRecordWaitAnswerRequest): Promise<Sdk.OffRecordWaitAnswered | StoredResult>;
+      /** The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered. */
+      get(input: Sdk.OffRecordWaitRequest): Promise<Sdk.OffRecordWaitView | StoredResult>;
+    };
   };
   const report_blocked: (input: Sdk.ReportBlockedInput) => Promise<Sdk.ReportBlockedOutput | StoredResult>;
   const run: {
@@ -6079,6 +6110,8 @@ declare const vault: Sdk.VaultHost & {
     deactivate(input: Sdk.LensDeactivateRequest): Promise<Sdk.LensActivationReceipt | StoredResult>;
     /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
     default(input: Sdk.LensDefaultRequest): Promise<Sdk.ScopedReadResult<Sdk.LensFrameCard> | StoredResult>;
+    /** Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt. */
+    export_pack(input: Sdk.LensPackExportRequest): Promise<Sdk.LensPackExport | StoredResult>;
     /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
@@ -6283,8 +6316,8 @@ declare const vault: Sdk.VaultHost & {
       confirm_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits. */
       decline_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
-      /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
-      export(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomExport | StoredResult>;
+      /** A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
+      export(input: Sdk.OffRecordRoomExportRequest): Promise<Sdk.OffRecordRoomExport | StoredResult>;
       /** A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential. */
       save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
@@ -6398,9 +6431,9 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.PeopleListRequest): Promise<Sdk.PeoplePage | StoredResult>;
   };
   personas: {
-    /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version. */
+    /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out. */
     edit(input: Sdk.PersonaSnapshotCopyEditRequest): Promise<Sdk.PersonaSnapshotExportedCopy | StoredResult>;
-    /** Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent. */
+    /** Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent. */
     export(input: Sdk.PersonaSnapshotCopyRequest): Promise<Sdk.PersonaSnapshotExportedCopy | StoredResult>;
     /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
     preview(input: Sdk.PersonaSnapshotPreviewRequest): Promise<Sdk.PersonaSnapshotPreview | StoredResult>;

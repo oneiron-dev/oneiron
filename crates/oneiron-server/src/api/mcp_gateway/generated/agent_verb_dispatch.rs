@@ -526,6 +526,10 @@ fn mcp_agent_verb_input(
         "vault.off_record.notes.create" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "self.off_record.execute" => a.spec.clone().ok_or_else(invalid),
+        "self.off_record.results.list" => a.spec.clone().ok_or_else(invalid),
+        "self.off_record.results.read" => a.spec.clone().ok_or_else(invalid),
+        "self.off_record.waits.get" => a.spec.clone().ok_or_else(invalid),
+        "self.off_record.waits.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.rooms.status" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.rooms.start" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.rooms.witness" => a.spec.clone().ok_or_else(invalid),
@@ -689,6 +693,7 @@ fn mcp_agent_verb_input(
         "vault.lenses.activate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.export_pack" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.select" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.result_set.action" => a.spec.clone().ok_or_else(invalid),
@@ -2660,6 +2665,18 @@ pub(crate) fn mcp_agent_verb_arguments(
         "self.off_record.execute" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "self.off_record.results.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.off_record.results.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.off_record.waits.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.off_record.waits.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.off_record.rooms.status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3131,6 +3148,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.export_pack" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.select" => {
@@ -11032,6 +11052,66 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "self.off_record.results.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.off_record.results.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordResultsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::self_off_record_results_list(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.off_record.results.read" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.off_record.results.read", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordResultReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::self_off_record_results_read(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.off_record.waits.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.off_record.waits.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordWaitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::self_off_record_waits_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.off_record.waits.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.off_record.waits.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordWaitAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::self_off_record_waits_answer(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.off_record.rooms.status" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.status", &input)
@@ -11105,7 +11185,7 @@ async fn execute_agent_verb_row(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.export", &input)
                 .map_err(mcp_facade_error)?;
-            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+            let input: oneiron::task_verb::sdk::OffRecordRoomExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 crate::api::facade::host_doors::vault_off_record_rooms_export(server, auth, input)
@@ -13399,6 +13479,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::lens::LensListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_lenses_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.export_pack" => {
+            let input: oneiron::lens::LensPackExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_lenses_export_pack(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -422,6 +422,10 @@ vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
+selfOffRecordResultsList(input: unknown): unknown
+selfOffRecordResultsRead(input: unknown): unknown
+selfOffRecordWaitsGet(input: unknown): unknown
+selfOffRecordWaitsAnswer(input: unknown): unknown
 vaultOffRecordRoomsStatus(input: unknown): unknown
 vaultOffRecordRoomsStart(input: unknown): unknown
 vaultOffRecordRoomsWitness(input: unknown): unknown
@@ -585,6 +589,7 @@ vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
+vaultLensesExportPack(input: unknown): unknown
 vaultLensesSelect(input: unknown): unknown
 vaultLensesResolve(input: unknown): unknown
 vaultLensesResultSetAction(input: unknown): unknown

@@ -541,9 +541,9 @@ export class Oneiron {
     personas: {
       /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
       preview: (input: Facade.PersonaSnapshotPreviewRequest): Facade.PersonaSnapshotPreview => this.#call(() => this.#client.vaultPersonasPreview(input) as Facade.PersonaSnapshotPreview),
-      /** Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent. */
+      /** Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent. */
       export: (input: Facade.PersonaSnapshotCopyRequest): Facade.PersonaSnapshotExportedCopy => this.#call(() => this.#client.vaultPersonasExport(input) as Facade.PersonaSnapshotExportedCopy),
-      /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version. */
+      /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out. */
       edit: (input: Facade.PersonaSnapshotCopyEditRequest): Facade.PersonaSnapshotExportedCopy => this.#call(() => this.#client.vaultPersonasEdit(input) as Facade.PersonaSnapshotExportedCopy),
     },
     fanout: {
@@ -1523,8 +1523,8 @@ export class Oneiron {
         save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
         /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
         save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
-        /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
-        export: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
+        /** A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
+        export: (input: Facade.OffRecordRoomExportRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
         /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
         suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
         /** A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits. */
@@ -1885,6 +1885,8 @@ export class Oneiron {
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
       /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
+      /** Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt. */
+      export_pack: (input: Facade.LensPackExportRequest): Facade.LensPackExport => this.#call(() => this.#client.vaultLensesExportPack(input) as Facade.LensPackExport),
       /** Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card. */
       select: (input: Facade.LensSelectRequest): Facade.LensSelection => this.#call(() => this.#client.vaultLensesSelect(input) as Facade.LensSelection),
       /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
@@ -3141,6 +3143,18 @@ export class Oneiron {
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
+      results: {
+        /** The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not. */
+        list: (input: Facade.OffRecordResultsRequest): Facade.OffRecordResultCards => this.#call(() => this.#client.selfOffRecordResultsList(input) as Facade.OffRecordResultCards),
+        /** The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint. */
+        read: (input: Facade.OffRecordResultReadRequest): Facade.OffRecordResultRead => this.#call(() => this.#client.selfOffRecordResultsRead(input) as Facade.OffRecordResultRead),
+      },
+      waits: {
+        /** The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered. */
+        get: (input: Facade.OffRecordWaitRequest): Facade.OffRecordWaitView => this.#call(() => this.#client.selfOffRecordWaitsGet(input) as Facade.OffRecordWaitView),
+        /** The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on. */
+        answer: (input: Facade.OffRecordWaitAnswerRequest): Facade.OffRecordWaitAnswered => this.#call(() => this.#client.selfOffRecordWaitsAnswer(input) as Facade.OffRecordWaitAnswered),
+      },
     },
     consent: {
       graduation: {

@@ -392,6 +392,10 @@ pub enum AgentVerb {
     VaultOffRecordNotesCreate,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
+    SelfOffRecordResultsList,
+    SelfOffRecordResultsRead,
+    SelfOffRecordWaitsGet,
+    SelfOffRecordWaitsAnswer,
     VaultOffRecordRoomsStatus,
     VaultOffRecordRoomsStart,
     VaultOffRecordRoomsWitness,
@@ -555,6 +559,7 @@ pub enum AgentVerb {
     VaultLensesActivate,
     VaultLensesDeactivate,
     VaultLensesList,
+    VaultLensesExportPack,
     VaultLensesSelect,
     VaultLensesResolve,
     VaultLensesResultSetAction,
@@ -1590,6 +1595,10 @@ impl AgentVerb {
         Self::VaultOffRecordNotesCreate,
         Self::VaultOffRecordClaimsUpsert,
         Self::SelfOffRecordExecute,
+        Self::SelfOffRecordResultsList,
+        Self::SelfOffRecordResultsRead,
+        Self::SelfOffRecordWaitsGet,
+        Self::SelfOffRecordWaitsAnswer,
         Self::VaultOffRecordRoomsStatus,
         Self::VaultOffRecordRoomsStart,
         Self::VaultOffRecordRoomsWitness,
@@ -1753,6 +1762,7 @@ impl AgentVerb {
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
+        Self::VaultLensesExportPack,
         Self::VaultLensesSelect,
         Self::VaultLensesResolve,
         Self::VaultLensesResultSetAction,
@@ -2795,6 +2805,10 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
             Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
             Self::SelfOffRecordExecute => "self.off_record.execute",
+            Self::SelfOffRecordResultsList => "self.off_record.results.list",
+            Self::SelfOffRecordResultsRead => "self.off_record.results.read",
+            Self::SelfOffRecordWaitsGet => "self.off_record.waits.get",
+            Self::SelfOffRecordWaitsAnswer => "self.off_record.waits.answer",
             Self::VaultOffRecordRoomsStatus => "vault.off_record.rooms.status",
             Self::VaultOffRecordRoomsStart => "vault.off_record.rooms.start",
             Self::VaultOffRecordRoomsWitness => "vault.off_record.rooms.witness",
@@ -2968,6 +2982,7 @@ impl AgentVerb {
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesExportPack => "vault.lenses.export_pack",
             Self::VaultLensesSelect => "vault.lenses.select",
             Self::VaultLensesResolve => "vault.lenses.resolve",
             Self::VaultLensesResultSetAction => "vault.lenses.result_set.action",
@@ -4019,6 +4034,10 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordResultsList
+                | Self::SelfOffRecordResultsRead
+                | Self::SelfOffRecordWaitsGet
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStatus
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
@@ -4182,6 +4201,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesExportPack
                 | Self::VaultLensesSelect
                 | Self::VaultLensesResolve
                 | Self::VaultLensesResultSetAction
@@ -5246,6 +5266,10 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordResultsList
+                | Self::SelfOffRecordResultsRead
+                | Self::SelfOffRecordWaitsGet
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStatus
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
@@ -5409,6 +5433,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesExportPack
                 | Self::VaultLensesSelect
                 | Self::VaultLensesResolve
                 | Self::VaultLensesResultSetAction
@@ -6601,6 +6626,10 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordResultsList
+                | Self::SelfOffRecordResultsRead
+                | Self::SelfOffRecordWaitsGet
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStatus
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
@@ -6763,6 +6792,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesExportPack
                 | Self::VaultLensesSelect
                 | Self::VaultLensesResolve
                 | Self::VaultLensesResultSetAction
@@ -7581,6 +7611,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
                 | Self::VaultOffRecordRoomsSave
@@ -8489,6 +8520,10 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::SelfOffRecordResultsList => &["spec"],
+            Self::SelfOffRecordResultsRead => &["spec"],
+            Self::SelfOffRecordWaitsGet => &["spec"],
+            Self::SelfOffRecordWaitsAnswer => &["spec"],
             Self::VaultOffRecordRoomsStatus => &["spec"],
             Self::VaultOffRecordRoomsStart => &["spec"],
             Self::VaultOffRecordRoomsWitness => &["spec"],
@@ -8652,6 +8687,7 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesExportPack => &["spec"],
             Self::VaultLensesSelect => &["spec"],
             Self::VaultLensesResolve => &["spec"],
             Self::VaultLensesResultSetAction => &["spec"],
@@ -9688,6 +9724,10 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::SelfOffRecordResultsList => &["spec"],
+            Self::SelfOffRecordResultsRead => &["spec"],
+            Self::SelfOffRecordWaitsGet => &["spec"],
+            Self::SelfOffRecordWaitsAnswer => &["spec"],
             Self::VaultOffRecordRoomsStatus => &["spec"],
             Self::VaultOffRecordRoomsStart => &["spec"],
             Self::VaultOffRecordRoomsWitness => &["spec"],
@@ -9851,6 +9891,7 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesExportPack => &["spec"],
             Self::VaultLensesSelect => &["spec"],
             Self::VaultLensesResolve => &["spec"],
             Self::VaultLensesResultSetAction => &["spec"],
@@ -10639,10 +10680,10 @@ impl AgentVerb {
                 "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."
             }
             Self::VaultPersonasExport => {
-                "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."
+                "Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent."
             }
             Self::VaultPersonasEdit => {
-                "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."
+                "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out."
             }
             Self::SelfMemoryDiaryQuery => {
                 "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."
@@ -11646,6 +11687,18 @@ impl AgentVerb {
             Self::SelfOffRecordExecute => {
                 "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
             }
+            Self::SelfOffRecordResultsList => {
+                "The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not."
+            }
+            Self::SelfOffRecordResultsRead => {
+                "The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint."
+            }
+            Self::SelfOffRecordWaitsGet => {
+                "The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered."
+            }
+            Self::SelfOffRecordWaitsAnswer => {
+                "The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on."
+            }
             Self::VaultOffRecordRoomsStatus => {
                 "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."
             }
@@ -11662,7 +11715,7 @@ impl AgentVerb {
                 "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."
             }
             Self::VaultOffRecordRoomsExport => {
-                "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in."
+                "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."
             }
             Self::VaultOffRecordRoomsSuggestSave => {
                 "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."
@@ -12124,6 +12177,9 @@ impl AgentVerb {
             }
             Self::VaultLensesList => {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
+            }
+            Self::VaultLensesExportPack => {
+                "Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."
             }
             Self::VaultLensesSelect => {
                 "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."

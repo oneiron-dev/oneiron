@@ -1941,6 +1941,26 @@ export_facade! {
     let output = client.self_off_record_execute(&input)?;
     crate::codec::lift_record("self.off_record.execute", &output)
 };
+"self.off_record.results.list" => fn self_off_record_results_list(&self, input: OffRecordResultsRequest) -> OffRecordResultCards = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordResultsRequest = crate::codec::lower_record("self.off_record.results.list", input)?;
+    let output = client.self_off_record_results_list(&input)?;
+    crate::codec::lift_record("self.off_record.results.list", &output)
+};
+"self.off_record.results.read" => fn self_off_record_results_read(&self, input: OffRecordResultReadRequest) -> OffRecordResultRead = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordResultReadRequest = crate::codec::lower_record("self.off_record.results.read", input)?;
+    let output = client.self_off_record_results_read(&input)?;
+    crate::codec::lift_record("self.off_record.results.read", &output)
+};
+"self.off_record.waits.get" => fn self_off_record_waits_get(&self, input: OffRecordWaitRequest) -> OffRecordWaitView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordWaitRequest = crate::codec::lower_record("self.off_record.waits.get", input)?;
+    let output = client.self_off_record_waits_get(&input)?;
+    crate::codec::lift_record("self.off_record.waits.get", &output)
+};
+"self.off_record.waits.answer" => fn self_off_record_waits_answer(&self, input: OffRecordWaitAnswerRequest) -> OffRecordWaitAnswered = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordWaitAnswerRequest = crate::codec::lower_record("self.off_record.waits.answer", input)?;
+    let output = client.self_off_record_waits_answer(&input)?;
+    crate::codec::lift_record("self.off_record.waits.answer", &output)
+};
 "vault.off_record.rooms.status" => fn vault_off_record_rooms_status(&self, input: OffRecordRoomRequest) -> OffRecordRoomView = |client| {
     let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.status", input)?;
     let output = client.vault_off_record_rooms_status(&input)?;
@@ -1966,8 +1986,8 @@ export_facade! {
     let output = client.vault_off_record_rooms_save_from_here(&input)?;
     crate::codec::lift_record("vault.off_record.rooms.save_from_here", &output)
 };
-"vault.off_record.rooms.export" => fn vault_off_record_rooms_export(&self, input: OffRecordRoomRequest) -> OffRecordRoomExport = |client| {
-    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.export", input)?;
+"vault.off_record.rooms.export" => fn vault_off_record_rooms_export(&self, input: OffRecordRoomExportRequest) -> OffRecordRoomExport = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomExportRequest = crate::codec::lower_record("vault.off_record.rooms.export", input)?;
     let output = client.vault_off_record_rooms_export(&input)?;
     crate::codec::lift_record("vault.off_record.rooms.export", &output)
 };
@@ -2755,6 +2775,11 @@ export_facade! {
     let input: oneiron::lens::LensListRequest = crate::codec::lower_record("vault.lenses.list", input)?;
     let output = client.vault_lenses_list(&input)?;
     crate::codec::lift_record("vault.lenses.list", &output)
+};
+"vault.lenses.export_pack" => fn vault_lenses_export_pack(&self, input: LensPackExportRequest) -> LensPackExport = |client| {
+    let input: oneiron::lens::LensPackExportRequest = crate::codec::lower_record("vault.lenses.export_pack", input)?;
+    let output = client.vault_lenses_export_pack(&input)?;
+    crate::codec::lift_record("vault.lenses.export_pack", &output)
 };
 "vault.lenses.select" => fn vault_lenses_select(&self, input: LensSelectRequest) -> LensSelection = |client| {
     let input: oneiron::lens::LensSelectRequest = crate::codec::lower_record("vault.lenses.select", input)?;

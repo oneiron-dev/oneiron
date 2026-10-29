@@ -1223,6 +1223,18 @@ impl OneironClient {
                 "self.off_record.execute" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::OffRecordExecuted,
                 >(client, verb, &input),
+                "self.off_record.results.list" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordResultCards,
+                >(client, verb, &input),
+                "self.off_record.results.read" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordResultRead,
+                >(client, verb, &input),
+                "self.off_record.waits.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordWaitView,
+                >(client, verb, &input),
+                "self.off_record.waits.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordWaitAnswered,
+                >(client, verb, &input),
                 "vault.off_record.rooms.status" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::OffRecordRoomView,
                 >(client, verb, &input),
@@ -1723,6 +1735,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.lenses.list" => {
                     remote_agent_verb_output::<oneiron::lens::LensListPage>(client, verb, &input)
+                }
+                "vault.lenses.export_pack" => {
+                    remote_agent_verb_output::<oneiron::lens::LensPackExport>(client, verb, &input)
                 }
                 "vault.lenses.select" => {
                     remote_agent_verb_output::<oneiron::lens::LensSelection>(client, verb, &input)
@@ -8472,6 +8487,54 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("self.off_record.execute", value)
     }
+    pub fn self_off_record_results_list(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordResultsRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordResultCards, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.off_record.results.list", value)
+    }
+    pub fn self_off_record_results_read(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordResultReadRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordResultRead, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.off_record.results.read", value)
+    }
+    pub fn self_off_record_waits_get(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordWaitRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordWaitView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.off_record.waits.get", value)
+    }
+    pub fn self_off_record_waits_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordWaitAnswerRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordWaitAnswered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.off_record.waits.answer", value)
+    }
     pub fn vault_off_record_rooms_status(
         &self,
         input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
@@ -8534,7 +8597,7 @@ impl OneironClient {
     }
     pub fn vault_off_record_rooms_export(
         &self,
-        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+        input: &oneiron::task_verb::sdk::OffRecordRoomExportRequest,
     ) -> Result<oneiron::task_verb::sdk::OffRecordRoomExport, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -10430,6 +10493,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.lenses.list", value)
+    }
+    pub fn vault_lenses_export_pack(
+        &self,
+        input: &oneiron::lens::LensPackExportRequest,
+    ) -> Result<oneiron::lens::LensPackExport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.export_pack", value)
     }
     pub fn vault_lenses_select(
         &self,

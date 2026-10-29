@@ -1072,10 +1072,10 @@ class Oneiron:
             """Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."""
             return json.loads(_translate(lambda: self._client.vault_personas_preview(json.dumps(spec))))
         def export(self, spec):
-            """Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."""
+            """Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent."""
             return json.loads(_translate(lambda: self._client.vault_personas_export(json.dumps(spec))))
         def edit(self, spec):
-            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."""
+            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out."""
             return json.loads(_translate(lambda: self._client.vault_personas_edit(json.dumps(spec))))
     class _VaultFanoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -2742,7 +2742,7 @@ class Oneiron:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save_from_here(json.dumps(spec))))
         def export(self, spec):
-            """A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in."""
+            """A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_export(json.dumps(spec))))
         def suggest_save(self, spec):
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
@@ -3368,6 +3368,9 @@ class Oneiron:
         def list(self, spec):
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
+        def export_pack(self, spec):
+            """Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_export_pack(json.dumps(spec))))
         def select(self, spec):
             """Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."""
             return json.loads(_translate(lambda: self._client.vault_lenses_select(json.dumps(spec))))
@@ -5620,6 +5623,30 @@ class Oneiron:
         def execute(self, spec):
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
+        @property
+        def results(self) -> "Oneiron._SelfOffRecordResultsVerbs":
+            return Oneiron._SelfOffRecordResultsVerbs(self._client)
+        @property
+        def waits(self) -> "Oneiron._SelfOffRecordWaitsVerbs":
+            return Oneiron._SelfOffRecordWaitsVerbs(self._client)
+    class _SelfOffRecordResultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not."""
+            return json.loads(_translate(lambda: self._client.self_off_record_results_list(json.dumps(spec))))
+        def read(self, spec):
+            """The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint."""
+            return json.loads(_translate(lambda: self._client.self_off_record_results_read(json.dumps(spec))))
+    class _SelfOffRecordWaitsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered."""
+            return json.loads(_translate(lambda: self._client.self_off_record_waits_get(json.dumps(spec))))
+        def answer(self, spec):
+            """The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on."""
+            return json.loads(_translate(lambda: self._client.self_off_record_waits_answer(json.dumps(spec))))
     class _SelfConsentVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

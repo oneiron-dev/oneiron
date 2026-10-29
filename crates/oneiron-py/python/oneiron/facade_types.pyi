@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1167 facade rows, 4196 declarations.
-Inputs: 1102 of 1167 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1045 of 1167 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 107; unread shapes: 0.
+Census: 1167 facade rows, 4199 declarations.
+Inputs: 1100 of 1167 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1043 of 1167 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1301,17 +1301,23 @@ class PersonaSnapshotMemoryPack(TypedDict):
     stale_after_secs: int
     persona_compile_stamp: str
     rows: list[PersonaSnapshotMemoryPackRow]
+class PersonaSnapshotCopyReceipt(TypedDict):
+    refs: CopyRefs
+    artifact_fingerprint: str
+    omitted_refs: list[str]
 class PersonaSnapshotExportedCopy(TypedDict):
     export_id: EntityId
     subject: EntityId
     stamp: str
     previous_export_id: NotRequired[EntityId | None]
     memory_pack: PersonaSnapshotMemoryPack
+    memory_pack_json: str
     markdown: str
     included_row_ids: list[str]
     struck_row_ids: list[str]
     compiled_at: str
     stale_after_secs: int
+    receipt: PersonaSnapshotCopyReceipt
 class PersonaSnapshotTextEdit(TypedDict):
     row_id: str
     text: str
@@ -7498,6 +7504,85 @@ class OffRecordExecuted(TypedDict):
     next_step_seq: NotRequired[int | None]
     steps_run: int
     bridge_calls: int
+class OffRecordResultsRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    offset: NotRequired[int | None]
+    limit: NotRequired[int | None]
+ResultBodyKind = Literal["text", "binary"]
+ResultTaintState = Literal["clean", "tainted_live", "tainted_stale"]
+class ResultTaint(TypedDict):
+    state: ResultTaintState
+    secret: NotRequired[str | None]
+ResultFacet = Literal["slice", "search", "query", "chunks"]
+class ResultCard(TypedDict):
+    handle: str
+    bytes: int
+    kind: ResultBodyKind
+    lines: int
+    complete: bool
+    preview: str
+    name: NotRequired[str | None]
+    taint: ResultTaint
+    more: list[ResultFacet]
+    shape: NotRequired[Any | None]
+class OffRecordResultCards(TypedDict):
+    run_ref: str
+    run_id: str
+    count: int
+    cards: list[ResultCard]
+    next_offset: NotRequired[int | None]
+    withheld: bool
+class OffRecordResultReadRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    ref: str
+    facet: NotRequired[ResultFacet | None]
+    input: NotRequired[Any | None]
+class ResultReadRefusal(TypedDict):
+    denied: str
+    reasonCodes: list[str]
+    error: NotRequired[str | None]
+    bytes: NotRequired[int | None]
+class OffRecordResultReadCard(TypedDict):
+    status: Literal["card"]
+    card: ResultCard
+class OffRecordResultReadPage(TypedDict):
+    status: Literal["page"]
+    facet: ResultFacet
+    page: Any
+class OffRecordResultReadDenied(TypedDict):
+    status: Literal["denied"]
+    refusal: ResultReadRefusal
+OffRecordResultRead = OffRecordResultReadCard | OffRecordResultReadPage | OffRecordResultReadDenied
+class OffRecordWaitRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+class OffRecordRunWait(TypedDict):
+    wait_id: str
+    generation: int
+    effect: str
+    reason: str
+    prompt: NotRequired[str | None]
+    answerable: bool
+    delivered_at_ms: NotRequired[int | None]
+class OffRecordWaitView(TypedDict):
+    run_ref: str
+    run_id: str
+    wait: NotRequired[OffRecordRunWait | None]
+class OffRecordWaitAnswerRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    reply: Any
+    wait_id: NotRequired[EntityId | None]
+    generation: NotRequired[int | None]
+class OffRecordWaitAnswered(TypedDict):
+    run_ref: str
+    run_id: str
+    wait_id: str
+    generation: int
+    already_answered: bool
+    delivered_at_ms: int
 class OffRecordRoomRequest(TypedDict):
     room: str
     session_ref: str
@@ -7537,11 +7622,14 @@ class OffRecordRoomSavedTurn(TypedDict):
     short_ids: list[OffRecordRoomShortIdPair]
 class OffRecordRoomSaved(TypedDict):
     saved: list[OffRecordRoomSavedTurn]
+class OffRecordRoomExportRequest(TypedDict):
+    room: str
+    session_ref: str
+    travel: NotRequired[CopyTravelChoice | None]
 class MessageResultSource(TypedDict):
     run_id: EntityId
     occurrence: EntityId
     path: str
-ResultFacet = Literal["slice", "search", "query", "chunks"]
 class MessageResultAttachment(TypedDict):
     source: MessageResultSource
     handle: str
@@ -7552,23 +7640,41 @@ class MessageResultAttachment(TypedDict):
     preview: str
     preview_truncated: bool
     more: list[ResultFacet]
-class OffRecordTalkMessage(TypedDict):
+class OffRecordRoomCopyResult(TypedDict):
+    label: str
+    bytes: int
+    kind: str
+    lines: int
+    complete: bool
+    preview: str
+    preview_truncated: bool
+OffRecordRoomExportResult = MessageResultAttachment | OffRecordRoomCopyResult
+class OffRecordRoomExportMessage(TypedDict):
     author: str
     message_type: str
     content: str
     order: int
-    result: NotRequired[MessageResultAttachment | None]
+    result: NotRequired[OffRecordRoomExportResult | None]
 class OffRecordRoomExportTurn(TypedDict):
     turn: str
     speaker: NotRequired[str | None]
     occurred_at: str
     saved: bool
-    messages: list[OffRecordTalkMessage]
+    messages: list[OffRecordRoomExportMessage]
+OffRecordRoomCopySlotHandling = Literal["dropped", "labelled"]
+class OffRecordRoomCopySlot(TypedDict):
+    slot: str
+    handling: OffRecordRoomCopySlotHandling
+    count: int
+class OffRecordRoomCopyLoss(TypedDict):
+    refs: CopyRefs
+    slots: list[OffRecordRoomCopySlot]
 class OffRecordRoomExport(TypedDict):
-    session_ref: str
+    session_ref: NotRequired[str | None]
     room: NotRequired[str | None]
     exported_at: str
     turns: list[OffRecordRoomExportTurn]
+    copy: NotRequired[OffRecordRoomCopyLoss | None]
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -10361,6 +10467,21 @@ class LensListRow(TypedDict):
 class LensListPage(TypedDict):
     rows: list[LensListRow]
     next_after: NotRequired[str | None]
+BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
+class TravelChoice(TypedDict):
+    born_with: NotRequired[list[BornWithField]]
+class LensPackExportRequest(TypedDict):
+    lens_ref: str
+    travel: NotRequired[TravelChoice | None]
+class LensPackExportReceipt(TypedDict):
+    lens_ref: str
+    prompt_ref: str
+    skill_id: str
+    content_hash: str
+    travelled: list[BornWithField]
+class LensPackExport(TypedDict):
+    pack_json: str
+    receipt: LensPackExportReceipt
 class LensSelectionRange(TypedDict):
     start: int
     end: int
@@ -10564,9 +10685,6 @@ class SecretGrantUseRequest(TypedDict):
     grant: str
     operation: str
     arguments: NotRequired[Any]
-BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
-class TravelChoice(TypedDict):
-    born_with: NotRequired[list[BornWithField]]
 class ShareCreateRequest(TypedDict):
     share_id: NotRequired[str | None]
     recipient: str
@@ -11448,11 +11566,6 @@ class ResultBodyStatus(TypedDict):
     occurrence: EntityId
     complete: bool
     retained: NotRequired[ResultRetainedBody | None]
-ResultBodyKind = Literal["text", "binary"]
-ResultTaintState = Literal["clean", "tainted_live", "tainted_stale"]
-class ResultTaint(TypedDict):
-    state: ResultTaintState
-    secret: NotRequired[str | None]
 class ResultTaintReference(TypedDict):
     secret_ref: str
     generation: int
@@ -11479,22 +11592,6 @@ class ResultRunStatus(TypedDict):
 class ResultOccurrenceRequest(TypedDict):
     run_id: EntityId
     occurrence: EntityId
-class ResultCard(TypedDict):
-    handle: str
-    bytes: int
-    kind: ResultBodyKind
-    lines: int
-    complete: bool
-    preview: str
-    name: NotRequired[str | None]
-    taint: ResultTaint
-    more: list[ResultFacet]
-    shape: NotRequired[Any | None]
-class ResultReadRefusal(TypedDict):
-    denied: str
-    reasonCodes: list[str]
-    error: NotRequired[str | None]
-    bytes: NotRequired[int | None]
 class ResultReadViewAvailable(TypedDict):
     status: Literal["available"]
     manifest: ResultOccurrenceManifest

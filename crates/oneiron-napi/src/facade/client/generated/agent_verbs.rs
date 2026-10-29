@@ -3369,6 +3369,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_off_record_results_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.results.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_off_record_results_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.results.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_off_record_waits_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.waits.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_off_record_waits_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.waits.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_off_record_rooms_status(
         &self,
         input: serde_json::Value,
@@ -4791,6 +4827,15 @@ impl NativeClient {
     pub fn vault_lenses_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.lenses.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_export_pack(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.export_pack", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
