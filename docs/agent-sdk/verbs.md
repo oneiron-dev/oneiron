@@ -67,6 +67,7 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.launch`
 - `self.budget`
 - `self.budget.land`
+- `self.billing.account.file`
 - `vault.budgets.lease.open`
 - `vault.budgets.lease`
 - `vault.budgets.lease.top_up`
@@ -80,6 +81,8 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.rsi.top_up`
 - `vault.budgets.rsi.hold`
 - `vault.budgets.rsi.hold.resume`
+- `vault.budgets.resident_shares`
+- `vault.budgets.resident_shares.set`
 - `vault.runners.seats.quotas`
 - `vault.runners.seats.top_up`
 - `vault.fanout.resume`
@@ -885,6 +888,7 @@ both bindings and their export-census tests in one change.
 - `vault.models.trials.get`
 - `vault.models.trials.approve`
 - `vault.models.trials.run`
+- `vault.models.trials.resend_arm`
 - `vault.models.trials.complete`
 - `vault.models.bindings.propose`
 - `vault.models.bindings.get`
@@ -924,6 +928,7 @@ both bindings and their export-census tests in one change.
 - `vault.decisions.bands.enforce`
 - `vault.decisions.asks.answer`
 - `vault.decisions.asks.climb`
+- `vault.decisions.asks.confirm_grant`
 - `self.decisions.asks`
 - `connector.list`
 - `connector.status`

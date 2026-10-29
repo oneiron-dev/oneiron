@@ -1436,6 +1436,8 @@ class Oneiron:
             """The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."""
         @property
         def rsi(self) -> "Oneiron._VaultBudgetsRsiVerbs": ...
+        @property
+        def resident_shares(self) -> "Oneiron._VaultBudgetsResidentSharesVerbs": ...
     class _VaultBudgetsLeaseVerbs:
         def __call__(self, spec: Facade.SpendScopeRequest) -> Facade.SpendLeaseView:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
@@ -1462,6 +1464,11 @@ class Oneiron:
             """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
         def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
+    class _VaultBudgetsResidentSharesVerbs:
+        def __call__(self, spec: Facade.ResidentSharesRequest) -> Facade.ResidentSharesView:
+            """The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on."""
+        def set(self, spec: Facade.SetResidentShareRequest) -> Facade.ResidentSharesView:
+            """The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands."""
     class _VaultRunnersVerbs:
         @property
         def seats(self) -> "Oneiron._VaultRunnersSeatsVerbs": ...
@@ -3503,6 +3510,8 @@ class Oneiron:
             """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
         def run(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
             """Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."""
+        def resend_arm(self, spec: Facade.ModelTrialArmRef) -> Facade.ModelTrialView:
+            """Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown."""
         def complete(self, spec: Facade.ModelTrialComplete) -> Facade.ModelTrialView:
             """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
     class _VaultModelsBindingsVerbs:
@@ -3573,6 +3582,7 @@ class Oneiron:
     class _VaultDecisionsAsksVerbs:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
+        def confirm_grant(self, spec: Facade.DecisionAskConfirmGrantRequest) -> Facade.DecisionAsk: ...
     class _VaultBookingVerbs:
         def availability(self, spec: Facade.BookingAvailabilityRequest) -> Facade.BookingOperationResponse:
             """Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."""
@@ -3950,6 +3960,8 @@ class Oneiron:
         @property
         def budget(self) -> "Oneiron._SelfBudgetVerbs": ...
         @property
+        def billing(self) -> "Oneiron._SelfBillingVerbs": ...
+        @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
@@ -4052,6 +4064,12 @@ class Oneiron:
             """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
         def land(self, spec: Facade.BudgetLandRequest) -> Facade.PartialResultHold:
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
+    class _SelfBillingVerbs:
+        @property
+        def account(self) -> "Oneiron._SelfBillingAccountVerbs": ...
+    class _SelfBillingAccountVerbs:
+        def file(self, spec: Facade.BillingAccountFiling) -> Facade.FiledBillingAccount | None:
+            """Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."""
     class _SelfCredentialVerbs:
         def attenuate(self, spec: Facade.CredentialAttenuationRequest) -> Facade.CredentialAttenuated:
             """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
@@ -4218,13 +4236,13 @@ class Oneiron:
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """One image out of the host's image model; reference images make it an edit."""
+            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."""
         def speech(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """Speech audio out of text, from the host's speech model."""
+            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."""
         def transcribe(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """Text out of speech audio, from the host's transcription model."""
+            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."""
         def embed(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """One embedding vector per input text, from the host's embedding model."""
+            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."""
         @property
         def video(self) -> "Oneiron._AiVideoVerbs": ...
         def ask_image(self, spec: Facade.AskImageRequest) -> Facade.AskImageAnswer:
@@ -4282,7 +4300,7 @@ class Oneiron:
             """Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
-            """Starts a video render as a provider job and answers with its ticket."""
+            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."""
         def poll(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoJob:
             """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
