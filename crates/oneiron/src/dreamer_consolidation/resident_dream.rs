@@ -616,11 +616,14 @@ pub async fn run_resident_dream(
             return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
+        // A failed call's paid usage has no terminal step: the park carries
+        // it with the tally (FIX 11554). A tally park, not a handover, as at
+        // the commit below: free-time runs meter their line.
         Err(other) => {
-            return Ok(DreamerAttemptExecution::Park {
-                reason: other.to_string(),
-                cause: DreamerParkCause::of_step(&other),
-            });
+            if let DurableStepError::SpentLlm { usage, .. } = &other {
+                charges.record_usage(usage);
+            }
+            return Ok(charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)));
         }
     };
     if ctx.deadline.expired() {
@@ -629,14 +632,28 @@ pub async fn run_resident_dream(
     let (entry, craft) = match reply::diary_entry(&response) {
         Ok(read) => read,
         // Only a memo stored before the check can hold no entry: it goes,
-        // and the Retry asks again (FIX 7431, OF-193a).
-        Err(reason) => return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason),
+        // and the Retry asks again (FIX 7431, OF-193a). A memo that does
+        // not go keeps its park with its spend on the tally, as a commit
+        // failure does below: this fn also dreams metered free-time items,
+        // so a handover here would charge that spend twice.
+        Err(reason) => {
+            return match charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason) {
+                Ok(parked) => Ok(parked),
+                Err(error) => {
+                    tracing::warn!(?error, "a refused reply's memo did not go");
+                    Ok(charges.park_on_error(&error))
+                }
+            };
+        }
     };
     let now = ctx.now_ms / 1_000;
     // The entry, every part of it, its craft notes, its landing marker and
     // the progress it read commit in one write: a crash between them neither
     // drops the progress nor lands the entry twice.
-    commit_dream(
+    // A tally park, not a handover: this same function dreams free-time
+    // items whose run line the driver meters (FIX 4453), so handing the
+    // tally over would charge metered spend twice.
+    if let Err(error) = commit_dream(
         ctx,
         attempt_id,
         resident,
@@ -648,7 +665,9 @@ pub async fn run_resident_dream(
         },
         &cut,
         now,
-    )?;
+    ) {
+        return Ok(charges.park_on_error(&error));
+    }
     // Its own digest renders from its dreaming, read as it, once this
     // dreaming's progress is committed (OF-499). A refused render leaves the
     // row to the deadline timer and fails no dreaming.
