@@ -10,7 +10,7 @@
 //!   judges and spends nothing, and its caller reaches the writer as its
 //!   transport took it ([`ClockRepairCaller`]);
 //! - an owner's erase or revoke, as the engine classifies the verb and the
-//!   caller's own payload (`revoke_lands::is_restrictive_call`), reads the
+//!   caller's own payload (`revoke_lands::restriction_only_call`), reads the
 //!   restriction-only clock in every synchronous stretch of its ingress,
 //!   owner proof, hooks and door ([`scoped`], [`run_blocking`]), so it
 //!   lands and revives nothing; it writes no floor.
@@ -42,7 +42,7 @@ use crate::auth::{BindingProof, CoreAuth, parse_signature};
 use crate::server::SyncServer;
 
 /// The verb whose caller its own writer judges.
-const REPAIR_VERB: &str = "vault.authority.clock.repair";
+pub(crate) const REPAIR_VERB: &str = "vault.authority.clock.repair";
 
 /// Where every facade verb is served.
 const FACADE_PREFIX: &str = "/v1/core/facade/";
@@ -71,8 +71,8 @@ pub(crate) enum ClockIngress {
 /// its arguments assemble), with the body read here and handed back
 /// unchanged: a body that is not JSON, and a call classified as neither,
 /// takes today's path as it arrived. A body this door cannot read back (past
-/// the facade's request bound) gets the clock's own typed refusal,
-/// `AUTHORITY_CLOCK_CORRUPT`.
+/// the facade's request bound), and a call whose classification faults, gets
+/// the clock's own typed refusal, `AUTHORITY_CLOCK_CORRUPT`.
 pub(crate) async fn classify_request(
     server: &SyncServer,
     request: Request,
@@ -102,13 +102,16 @@ pub(crate) async fn classify_request(
             Some(verb) => Some((verb, body)),
             None => mcp_tool_call(body),
         });
-    let ingress = call.and_then(|(verb, input)| {
-        if verb == REPAIR_VERB {
-            Some(ClockIngress::Repair)
-        } else {
-            restrictive_call(server, &verb, Some(&input)).then_some(ClockIngress::RestrictionOnly)
+    let ingress = match call {
+        None => None,
+        Some((verb, _)) if verb == REPAIR_VERB => Some(ClockIngress::Repair),
+        // A classification whose own read fails keeps the clock's refusal.
+        Some((verb, input)) => {
+            oneiron::task_verb::revoke_lands::restriction_only_call(server.vault(), &verb, &input)
+                .map_err(|_| clock_corrupt_refusal())?
+                .then_some(ClockIngress::RestrictionOnly)
         }
-    });
+    };
     Ok((Request::from_parts(parts, Body::from(bytes)), ingress))
 }
 
@@ -138,14 +141,26 @@ fn mcp_tool_call(body: Value) -> Option<(String, Value)> {
     Some((tool, input))
 }
 
-/// Whether a call of `verb` on `input` is an owner's restriction-only act,
-/// as the engine classifies it. The classification reads the ordinary
-/// clock: one whose own read faults over a damaged floor (a pending shared
-/// act's kind) is no restriction-only act, and keeps the clock's refusal.
+/// Whether a call of `verb` on `input` runs as an owner's restriction-only
+/// act at dispatch (a held socket's call, an MCP or code-mode row): only
+/// while this handle's authority readings refuse, and only for a call the
+/// engine classifies as wholly an erase or a revoke. A classification that
+/// faults is no such act, and the call meets the clock's own refusal. Over a
+/// whole or anchored floor nothing is classified.
 pub(crate) fn restrictive_call(server: &SyncServer, verb: &str, input: Option<&Value>) -> bool {
     input.is_some_and(|input| {
-        oneiron::task_verb::revoke_lands::is_restrictive_call(server.vault(), verb, input)
+        server
+            .vault()
+            .authority_clock_refuses_readings()
+            .unwrap_or(false)
+            && oneiron::task_verb::revoke_lands::restriction_only_call(server.vault(), verb, input)
+                .unwrap_or(false)
     })
+}
+
+/// Whether the binding door left this request's owner repair unjudged.
+pub(crate) fn repair_marked(extensions: &Extensions) -> bool {
+    extensions.get::<ClockIngress>() == Some(&ClockIngress::Repair)
 }
 
 tokio::task_local! {
@@ -196,10 +211,11 @@ where
 
 /// The repair's caller as a request's own headers and extensions carry it,
 /// with nothing judged: its slip and holder proof as they arrived (an MCP
-/// call's credential header first), else the owner its managed ingress
-/// verified for it, else the self-hosted dev mode on a host that admits it.
+/// call's credential header first), beside the owner its managed ingress
+/// attested if any; else that attested owner; else the self-hosted dev mode
+/// on a host that admits it.
 /// `None` for any other request, which takes the ordinary path.
-fn request_repair_caller(
+pub(crate) fn request_repair_caller(
     server: &SyncServer,
     headers: &HeaderMap,
     extensions: &Extensions,
@@ -230,12 +246,18 @@ fn request_repair_caller(
         let slip = CapabilitySlip::from_token(token).ok()?;
         let proof = BindingProof::from_headers(headers).ok()?;
         let signature = parse_signature(&proof.signature).ok()?;
-        return Some(ClockRepairCaller::holder_proof(
+        let caller = ClockRepairCaller::holder_proof(
             slip,
             proof.timestamp,
             signature,
             proof.nonce.into_bytes(),
-        ));
+        );
+        // A slip beside its supervisor's attestation binds only as the person
+        // attested; the repair's writer holds it to that.
+        return Some(match crate::auth::attested_owner(extensions, server) {
+            Some(holder) => caller.beside_attested_owner(holder),
+            None => caller,
+        });
     }
     if let Some(holder) = crate::auth::attested_owner(extensions, server) {
         return Some(ClockRepairCaller::managed_owner(holder));
@@ -260,7 +282,7 @@ impl FromRequestParts<Arc<SyncServer>> for FacadeCaller {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        if parts.extensions.get::<ClockIngress>() == Some(&ClockIngress::Repair)
+        if repair_marked(&parts.extensions)
             && let Some(caller) =
                 request_repair_caller(server, &parts.headers, &parts.extensions, false)
         {
@@ -344,40 +366,4 @@ pub(crate) async fn repair_reply(
         Ok(value) => super::unbound_reply(value).into_response(),
         Err(refused) => refused.into_response(),
     }
-}
-
-/// An MCP `tools/call` of the owner's repair the binding door left unjudged,
-/// answered before any caller is resolved: the repair's own answer as the
-/// tool's structured output, or its typed refusal. `None` for every other
-/// call, which takes the gateway's own path.
-pub(crate) async fn mcp_repair_call(
-    server: &Arc<SyncServer>,
-    headers: &HeaderMap,
-    connection: &Extensions,
-    params: Option<&Value>,
-) -> Option<Result<Value, crate::api::mcp_gateway::McpGatewayError>> {
-    let named = params
-        .and_then(|params| params.get("name"))
-        .and_then(Value::as_str);
-    if connection.get::<ClockIngress>() != Some(&ClockIngress::Repair) || named != Some(REPAIR_VERB)
-    {
-        return None;
-    }
-    let caller = request_repair_caller(server, headers, connection, true)?;
-    Some(
-        repair(server, caller)
-            .await
-            .map_err(crate::api::mcp_gateway::mcp_facade_error)
-            .map(|output| {
-                let output = serde_json::to_value(output).unwrap_or(Value::Null);
-                json!({
-                    "content": [crate::api::mcp_gateway::mcp_text_content(format!("{REPAIR_VERB} completed"))],
-                    "structuredContent": {
-                        "tool": REPAIR_VERB,
-                        "verb": REPAIR_VERB,
-                        "output": output,
-                    },
-                })
-            }),
-    )
 }
