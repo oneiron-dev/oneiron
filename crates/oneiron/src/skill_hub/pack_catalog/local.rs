@@ -15,9 +15,9 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 pub const LOCAL_PACK_NAME: &str = "local";
 /// The `hub_ref` an owner's put records: the verb, not a hub.
 const PUT_REF: &str = "vault.packs.put";
-// A plain manifest scalar may not hold `'` (`manifest::scalar`), so no
-// apostrophe in the description.
-const LOCAL_PACK_MD: &str = "---\nname: local\ndescription: The hooks of this vault. It never publishes to a hub.\nversion: 1\nkind: capability\n---\n";
+// A plain manifest scalar may hold `'` inside (`manifest::scalar` refuses
+// only a leading `'`), so the description keeps its apostrophe.
+const LOCAL_PACK_MD: &str = "---\nname: local\ndescription: This vault's own hooks. It never publishes to a hub.\nversion: 1\nkind: capability\n---\n";
 
 fn put_ref(source: &PackSource) -> Result<HubRef> {
     Ok(HubRef {

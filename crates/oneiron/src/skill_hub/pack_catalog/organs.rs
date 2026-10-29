@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 
 const ORGAN_DIR: &str = "organs/";
 const ORGAN_MANIFEST: &str = "ORGAN.json";
-const MAX_ORGANS: usize = 32;
 const MAX_ORGAN_MEMORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 /// The calls at once an organ runs with when its facet names no `threads`,
 /// as the organ host's first-party spec sets it.
