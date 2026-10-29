@@ -97706,7 +97706,7 @@
      "path": "src/ai_host/dreamer/pause.rs",
      "purpose": "The owner's own pause cause over the Dreamer (`POST /dreamer/pause`, `POST /dreamer/resume`), apart from the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
