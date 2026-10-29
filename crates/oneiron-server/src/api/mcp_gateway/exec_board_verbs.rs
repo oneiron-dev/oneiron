@@ -266,7 +266,6 @@ pub(crate) async fn execute_mcp_read_result(
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
-        | crate::mcp::McpCodeExecutionError::RunBusy
         | crate::mcp::McpCodeExecutionError::RunWaitedOut => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_)
@@ -740,7 +739,8 @@ fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> 
 /// verb's wire value and every row the board was derived from. A refresh's
 /// frame is the answer, so the queue behind it is superseded and drained.
 /// Leaves the hook blocks the answer shows in `hooks`, for
-/// [`deliver_run_board_hooks`] once the answer returns to the run.
+/// [`deliver_run_board_hooks`] once the answer returns to the run. A pumped
+/// run's host door binds no session, so its board renders no SCRATCHPAD.
 pub(crate) async fn execute_run_board_verb(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
@@ -748,7 +748,21 @@ pub(crate) async fn execute_run_board_verb(
     call: oneiron::board_verb::BoardVerbCall,
     hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
-    let board = super::board_setup::run_current_board(server, actor, connection)
+    execute_run_board_verb_in_session(server, actor, connection, None, call, hooks).await
+}
+
+/// [`execute_run_board_verb`] over a board bound to `session`, the session
+/// the call's host origin names (FIX 2340): its SCRATCHPAD is that
+/// session's live pad.
+pub(crate) async fn execute_run_board_verb_in_session(
+    server: &Arc<SyncServer>,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+    session: Option<&str>,
+    call: oneiron::board_verb::BoardVerbCall,
+    hooks: &mut Option<super::board_setup::McpBoardHooks>,
+) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
+    let board = super::board_setup::run_current_board(server, actor, connection, session)
         .await
         .map_err(run_board_error)?;
     let world = actor.entity_ref();
@@ -824,15 +838,21 @@ pub(crate) async fn deliver_run_board_hooks(
 }
 
 /// Drops a pumped run's board connection, snapshot and stream reader (FIX
-/// 4888). Its session, cursor and read set, stays until the run ends, when
+/// 4888), and the self brief snapshot installed for that connection (FIX
+/// 2086). Its session, cursor and read set, stays until the run ends, when
 /// the host's live runs close it (FIX 8143): a run parked on a durable wait
 /// keeps it.
 pub(crate) async fn drop_run_board(
     server: &SyncServer,
-    _actor: oneiron::WriteActor,
+    actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,
 ) {
     server.mcp_registry.lock().await.drop_run_board(connection);
+    server
+        .self_brief_sessions
+        .lock()
+        .await
+        .remove(&(actor.entity_ref(), connection.0.clone()));
 }
 
 /// [`mcp_live_board`]'s view of one rendered board.
@@ -880,7 +900,7 @@ fn live_board_view(
 /// A board refusal as the run's door states it: the verb's own refusal is
 /// the caller's, anything else the host's.
 fn run_board_error(error: McpGatewayError) -> oneiron::memory::MemoryError {
-    if error.kind == "verb_dispatch_failed" {
+    let mut refusal = if error.kind == "verb_dispatch_failed" {
         oneiron::memory::MemoryError::bad_request(error.message)
     } else {
         oneiron::memory::MemoryError::new(
@@ -888,5 +908,8 @@ fn run_board_error(error: McpGatewayError) -> oneiron::memory::MemoryError {
             error.message,
             &["Report this host-door failure."],
         )
-    }
+    };
+    // FIX 7398: the refusal's reason codes ride back to the run.
+    refusal.reason_codes = error.reason_codes;
+    refusal
 }

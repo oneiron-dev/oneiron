@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 mod assembly;
 mod carrier;
+mod children;
 mod run;
 mod setup;
 

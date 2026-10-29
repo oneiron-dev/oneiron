@@ -61,7 +61,16 @@ impl Memory<'_> {
             )));
         }
         let source = self.claim_source(&input.source)?;
-        let value = json_to_rmpv(&input.value);
+        // The publisher sponsors the page's anonymous parses (FIX 5288):
+        // stamped here, where the publish door already holds the publishing
+        // principal as this write's actor.
+        let value = if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
+            let mut claimed = input.value.clone();
+            crate::booking::publication::stamp_publication_sponsor(&mut claimed, self.actor);
+            json_to_rmpv(&claimed)
+        } else {
+            json_to_rmpv(&input.value)
+        };
         let world = match &input.world_ref {
             Some(world_ref) => Some(self.resolve_ref(world_ref)?),
             None => None,

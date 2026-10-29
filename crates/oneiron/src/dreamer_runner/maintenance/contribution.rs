@@ -75,7 +75,10 @@ pub(super) fn execute(
 ) -> Result<DreamerAttemptExecution> {
     // No capsule on this host: nothing is measured and nothing is recorded.
     let Some(host) = host else {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     if ctx.deadline.in_finalize_window() {
         return Ok(DreamerAttemptExecution::Park {
@@ -94,7 +97,10 @@ pub(super) fn execute(
         if after.is_some() {
             vault.with_write_txn_grouped(|txn| CURSOR.delete(&vault.store, txn, &()))?;
         }
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     // The forks' model calls block on the host's runtime, which a thread
     // already driving the wake pass cannot enter: the pairs run on their own
@@ -131,6 +137,7 @@ pub(super) fn execute(
         } else {
             0
         },
+        step_hashes: Vec::new(),
     })
 }
 

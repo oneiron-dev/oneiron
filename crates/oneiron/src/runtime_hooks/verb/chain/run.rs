@@ -7,13 +7,16 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::runtime_hooks::outcome::HookOutcome;
-use crate::runtime_hooks::runner::{MAX_OUTCOME_BYTES, Verdict, bounded, judge};
+use crate::runtime_hooks::runner::{Verdict, bounded, judge};
 use crate::runtime_hooks::store::{HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey};
-use crate::runtime_hooks::{HookBodyUsage, HookBudgetOverrun, HookRunContext, apply, grant, read};
+use crate::runtime_hooks::{
+    HookBodyUsage, HookBudgetOverrun, HookPreparation, HookRunContext, apply, grant, read,
+};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result};
 
 use super::super::VerbArgsCheck;
+use super::projection::{HookView, merge_withheld};
 use super::{Chain, run_key, session};
 
 /// One run, as its receipt tells it, and what its saved copy keeps.
@@ -38,16 +41,27 @@ pub(super) struct RunRecord<'c> {
     /// What the body used; a count its runtime did not measure stays
     /// unavailable (FIX 9332).
     pub(super) usage: HookBodyUsage,
-    /// The exact input the body saw.
+    /// The exact input the body saw, as its grant showed it (FIX 10084).
     pub(super) input: String,
+    /// The rows whose content that input showed.
+    pub(super) dependencies: Vec<EntityId>,
+    /// That input also showed content whose rows no host names.
+    pub(super) unattributed: bool,
+    /// The digest of the grant the input was built under.
+    pub(super) grant: String,
+    /// How the body was prepared before it ran (FIX 9208).
+    pub(super) preparation: Option<HookPreparation>,
     pub(super) reads: Vec<HookReadPin>,
     /// The outcome the body returned, before the engine's own checks.
     pub(super) outcome_json: Option<String>,
 }
 
 impl<'c> Chain<'c> {
-    /// One body run, judged. Blocks, notes and queued outcomes join the
-    /// chain here; the flow outcomes go back to the chain.
+    /// One body run, judged. Its input is built for this hook alone, under
+    /// what both its caller and its current grant may read (FIX 10084). A
+    /// Rewrite over args it saw withheld keeps the caller's originals there
+    /// before the engine checks it. Blocks, notes and queued outcomes join
+    /// the chain here; the flow outcomes go back to the chain.
     pub(super) fn run(
         &mut self,
         id: EntityId,
@@ -57,11 +71,11 @@ impl<'c> Chain<'c> {
         check: Option<VerbArgsCheck<'_>>,
     ) -> Result<Option<HookOutcome>> {
         let key = run_key(self.call.invocation, id, self.phase);
-        let input = self.input(id, binding, args, result)?;
         // The caller's lane, narrowed to the hook's grant: its reader's lane
         // when that is someone else, and its predicates and worlds. A caller
         // whose door carried its key reads under it; a host's own call reads
-        // as its actor. In a room both read the room's view.
+        // as its actor. In a room both read the room's view. Its input and
+        // its reads are both built under that one view.
         let grant = session::hook_read(
             self.storage,
             "grant",
@@ -69,6 +83,13 @@ impl<'c> Chain<'c> {
         )?;
         let view = self.view()?;
         let (lane, cap) = self.lanes(&grant, view.as_ref());
+        let seen = HookView {
+            lane: lane.as_ref(),
+            cap: cap.as_ref().map(Option::as_ref),
+            grant: &grant,
+        };
+        let input = self.input(id, binding, args, result, &seen)?;
+        let args_withheld = self.args_withheld(&seen);
         let mut pins = Vec::new();
         let started = Instant::now();
         let mut context = HookRunContext::new(binding.selector.budget_ms);
@@ -89,7 +110,7 @@ impl<'c> Chain<'c> {
                     // What a runtime's body uses is unavailable until the
                     // runtime reports it (FIX 9332).
                     context.body_starts();
-                    runtime.run_hook(&body, &input, &mut context, &mut answer)
+                    runtime.run_hook(&body, &input.json, &mut context, &mut answer)
                 }
             },
         };
@@ -97,7 +118,10 @@ impl<'c> Chain<'c> {
         // ends here. Time judges nothing (FIX 8842).
         let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let mut verdict = judge(binding, ran, overrun, context.usage());
+        let mut verdict = judge(binding, ran, overrun, &context);
+        if args_withheld && let Some(HookOutcome::Rewrite { args: next }) = &mut verdict.outcome {
+            *next = merge_withheld(args, std::mem::take(next));
+        }
         if let Some(reason) = verdict
             .outcome
             .as_ref()
@@ -125,12 +149,13 @@ impl<'c> Chain<'c> {
             budget_overrun: verdict.budget_overrun,
             rows_read,
             usage: verdict.usage,
-            input,
+            input: input.json,
+            dependencies: input.dependencies,
+            unattributed: input.unattributed,
+            grant: grant.digest(),
+            preparation: verdict.preparation.clone(),
             reads: pins,
-            outcome_json: verdict
-                .outcome_json
-                .clone()
-                .filter(|json| json.len() <= MAX_OUTCOME_BYTES),
+            outcome_json: verdict.outcome_json.clone(),
         };
         // A room does no canonical work: an outcome that needs it is this
         // hook's own, and the call goes on as after a Continue (CALLS-3).

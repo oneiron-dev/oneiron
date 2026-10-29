@@ -1,17 +1,21 @@
 //! `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that
 //! declares the generative class asks through the same decision ladder the
-//! `ai.verdict` row climbs, for the reader its grant names. The hook's
-//! budget is an accounting deadline that never shortens or refuses its
-//! verdict (FIX 8842): a deadline the request names stands as named.
+//! `ai.verdict` row climbs, for the reader its grant names, its evidence
+//! shown only as that grant shows it (FIX 10068) and its model calls charged
+//! once to its pack line (FIX 10075). The hook's budget is an accounting
+//! deadline that never shortens or refuses its verdict (FIX 8842): a
+//! deadline the request names stands as named.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
+use oneiron::EntityId;
 use oneiron::memory::ProducerRows;
-use oneiron::runtime_hooks::HookVerdict;
+use oneiron::runtime_hooks::{
+    HookSettledCallRef, HookVerdict, HookVerdictContext, HookVerdictReply,
+};
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdictRequest};
-use oneiron::{EdgeActorClass, EntityId};
 
 use crate::server::SyncServer;
 
@@ -41,66 +45,68 @@ impl ServerHookVerdict {
         Self(Arc::downgrade(server))
     }
 
-    /// One verdict for `reader`, its reads listing in `producers` and its
-    /// evidence's rows in `evidence`.
+    /// One verdict in `context`, its reads listing in `producers` and its
+    /// evidence's rows in `evidence`; beside it, the calls it settled.
     fn ask(
         &self,
-        reader: EntityId,
-        class: EdgeActorClass,
+        context: &HookVerdictContext,
         request_json: &str,
-        deadline: Instant,
         producers: &ProducerRows,
         evidence: &mut Vec<EntityId>,
-    ) -> Result<String, String> {
-        let server = self
-            .0
-            .upgrade()
-            .ok_or_else(|| "the server is stopping".to_owned())?;
-        let mut request: AiVerdictRequest = serde_json::from_str(request_json)
-            .map_err(|error| format!("invalid ai.verdict request: {error}"))?;
-        request.deadline_ms = verdict_deadline_ms(request.deadline_ms, deadline);
+    ) -> (Result<String, String>, Vec<HookSettledCallRef>) {
+        let Some(server) = self.0.upgrade() else {
+            return (Err("the server is stopping".to_owned()), Vec::new());
+        };
+        let mut request: AiVerdictRequest = match serde_json::from_str(request_json) {
+            Ok(request) => request,
+            Err(error) => {
+                return (
+                    Err(format!("invalid ai.verdict request: {error}")),
+                    Vec::new(),
+                );
+            }
+        };
+        request.deadline_ms = verdict_deadline_ms(request.deadline_ms, context.deadline);
         let memory = server
             .vault
-            .memory(reader, class)
+            .memory(context.grant.reader, context.reader_class())
             .listing_producers(producers);
-        // A hook pulls no image: it has no credential lane to pull one
-        // with, and no browser holds one for it.
-        let verdict = crate::decision_verdict::run_verdict(
-            &server, reader, class, &memory, None, None, &request, None, evidence,
-        )
-        .map_err(|error| format!("{}: {}", error.code, error.message))?;
-        // A browser call collecting its hooks' decisions keeps this one.
-        COLLECTED.with(|collected| {
-            if let Some(decisions) = collected.borrow_mut().as_mut() {
-                decisions.push(serde_json::to_value(&verdict).unwrap_or_default());
-            }
-        });
-        serde_json::to_string(&verdict).map_err(|_| "the verdict did not encode".to_owned())
+        // The hook's pack line, resolved here from its binding: every rung
+        // the verdict reaches spends on it once. A hook pulls no image: it
+        // has no credential lane to pull one with, and no browser holds one
+        // for it.
+        let line = server.vault.hook_pack_line(context);
+        let (verdict, calls) = crate::decision_verdict::hook::run_hook_verdict(
+            &server, context, &line, &memory, &request, evidence,
+        );
+        let reply = verdict
+            .map_err(|error| format!("{}: {}", error.code, error.message))
+            .and_then(|verdict| {
+                // A browser call collecting its hooks' decisions keeps this one.
+                COLLECTED.with(|collected| {
+                    if let Some(decisions) = collected.borrow_mut().as_mut() {
+                        decisions.push(serde_json::to_value(&verdict).unwrap_or_default());
+                    }
+                });
+                serde_json::to_string(&verdict).map_err(|_| "the verdict did not encode".to_owned())
+            });
+        (reply, calls)
     }
 }
 
 impl HookVerdict for ServerHookVerdict {
-    fn verdict(
-        &self,
-        reader: EntityId,
-        class: EdgeActorClass,
-        request_json: &str,
-        deadline: Instant,
-    ) -> (Result<String, String>, Option<Vec<EntityId>>) {
+    fn verdict(&self, context: &HookVerdictContext, request_json: &str) -> HookVerdictReply {
         // The rows the ask resolved its evidence to, and any its reads
         // listed; a refusal before it reads lists none.
         let mut evidence = Vec::new();
         let producers = ProducerRows::default();
-        let reply = self.ask(
-            reader,
-            class,
-            request_json,
-            deadline,
-            &producers,
-            &mut evidence,
-        );
+        let (reply, calls) = self.ask(context, request_json, &producers, &mut evidence);
         evidence.extend(producers.take());
-        (reply, Some(evidence))
+        HookVerdictReply {
+            reply,
+            evidence: Some(evidence),
+            calls,
+        }
     }
 }
 

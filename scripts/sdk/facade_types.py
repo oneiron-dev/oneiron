@@ -612,11 +612,13 @@ class Inventory:
         # What a typed binding needs past the wire shape: each derived enum's
         # serde tagging and variants, by declaration name, and each named
         # field a writer must send as `null` rather than omit (an `Option`
-        # under a field codec with no `default`), by (owner, key), and each
-        # declaration that refuses unknown fields.
+        # under a field codec with no `default`), by (owner, key), each
+        # declaration that refuses unknown fields, and each struct that
+        # derives no `Debug`, whose own Debug keeps a value out (FIX 4993).
         self.variants = {}
         self.null_fields = set()
         self.closed = set()
+        self.redacted = set()
         self.roots = {}       # rust text -> IR
         self.preferred = {}   # item key -> the name a codec module gives its mirror
         self._py_erased, self._py_erased_at = set(), None  # see `py_erased`
@@ -865,6 +867,7 @@ class Inventory:
         case = serialize_case(serde.get('rename_all'))
         default = serde.get('default') is True or isinstance(serde.get('default'), str)
         if serde.get('deny_unknown_fields') is True: self.closed.add(where)
+        if item.kind == 'struct' and 'Debug' not in derived: self.redacted.add(where)
         if item.kind == 'struct':
             if item.shape == 'unit': return NULL
             if item.shape == 'tuple':

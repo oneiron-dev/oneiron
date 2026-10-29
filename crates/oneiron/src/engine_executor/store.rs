@@ -643,6 +643,12 @@ pub(super) fn type_diagnostics_output_path(seq: u64, invocation: u64) -> String 
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.{invocation}.type-diagnostics.json")
 }
 
+/// The board frames a step's verb answers carried beside their outputs
+/// (FIX 2135), kept for the model's view of that step.
+pub(super) fn board_frames_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.board-frames.json")
+}
+
 pub(super) fn implicit_speak_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.implicit-speak.json")
 }

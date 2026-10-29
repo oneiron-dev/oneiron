@@ -248,6 +248,7 @@ impl CoreAuth {
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
+            managed_person: None,
         })
     }
     /// An invitee's slip (FIX 1925) on the facade route of one of

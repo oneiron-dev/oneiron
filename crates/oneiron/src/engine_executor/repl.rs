@@ -9,7 +9,8 @@ mod speech;
 use super::continuation::{ContinuationNote, continuation_note, turn_note};
 use super::driver::EngineNativeExecutor;
 use super::host::{
-    RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
+    CallableChecks, RecordingJsHost, executor_boundary_contract, executor_system_prompt,
+    executor_turn_instruction,
 };
 use super::record::{
     LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
@@ -234,7 +235,8 @@ impl EngineNativeExecutor<'_> {
             )
             .with_recoverable_outputs(&self.storage, &record, recoverable)?
             .with_skill_executor(&config.model)
-            .with_result_share(&self.result_share);
+            .with_result_share(&self.result_share)
+            .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -368,6 +370,14 @@ impl EngineNativeExecutor<'_> {
             // bodies; the calls' rows and the step's bindings carry their
             // handles.
             record.outputs.extend(host.captured);
+            // The board frames its answers carried, for the model's view of
+            // the step (FIX 2135).
+            super::board_frames::record_step_board_frames(
+                &self.storage,
+                &mut record,
+                completed_steps,
+                bridge_start,
+            );
             // The names the step bound join the record in this same
             // checkpointed append; a rebound name keeps its place.
             let bindings: Vec<_> = host

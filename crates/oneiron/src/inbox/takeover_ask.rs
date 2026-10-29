@@ -58,6 +58,11 @@ impl Vault {
             )?);
         }
         txn.commit()?;
+        // A raw writer has no owner to send the notification signal after
+        // its commit, so it sends its own (FIX 3084).
+        if !raised.is_empty() {
+            self.store.notify_notification_updates();
+        }
         Ok(raised)
     }
 
@@ -65,6 +70,7 @@ impl Vault {
     /// owner it was raised for. A row already acked, or gone, stays as it is.
     pub fn clear_takeover_ask(&self, asks: &[EntityId]) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
+        let mut cleared = false;
         for ask in asks {
             let LiveEntityRow::Live { entity_type, body } =
                 live_entity_row_in_txn(&self.store, &txn, ask)?
@@ -84,8 +90,12 @@ impl Vault {
             body.seen_by.insert(owner.clone(), true);
             body.acked_by.insert(owner, true);
             self.put_notification_in_txn(&mut txn, ask, &body)?;
+            cleared = true;
         }
         txn.commit()?;
+        if cleared {
+            self.store.notify_notification_updates();
+        }
         Ok(())
     }
 

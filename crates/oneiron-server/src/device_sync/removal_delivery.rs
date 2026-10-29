@@ -122,7 +122,18 @@ async fn receive(
     archives: PathBuf,
     mut stop: oneshot::Receiver<()>,
 ) {
-    let client = reqwest::Client::new();
+    // FIX 6969: a redirect is answered, never followed with the slip
+    // headers; without a client the receiver cannot run.
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::warn!(%error, "removal archive receiver client");
+            return;
+        }
+    };
     let mut wait = REMOVAL_DELIVERY_RETRY_FIRST;
     loop {
         let session = tokio::select! {

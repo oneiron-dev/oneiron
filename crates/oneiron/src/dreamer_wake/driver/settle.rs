@@ -39,13 +39,19 @@ impl DreamerWakeDriver<'_> {
             hard_cut_error,
         } = state;
         match execution {
-            DreamerAttemptExecution::Completed { completed_units } => {
-                self.store.settle_budget(SettleDreamerBudget {
-                    budget_id: line.clone(),
-                    child_attempt: attempt_id,
-                    actual_units: completed_units,
-                    now: input.now,
-                })?;
+            DreamerAttemptExecution::Completed {
+                completed_units,
+                step_hashes,
+            } => {
+                self.store.settle_budget_with_step_receipts(
+                    SettleDreamerBudget {
+                        budget_id: line.clone(),
+                        child_attempt: attempt_id,
+                        actual_units: completed_units,
+                        now: input.now,
+                    },
+                    &step_hashes,
+                )?;
                 self.complete_attempt(exec, admitted, input.now).await?;
                 self.write_attempt_milestone(admitted, DreamerMilestoneKind::Done, input.now)?;
                 report.completed += 1;
@@ -82,6 +88,7 @@ impl DreamerWakeDriver<'_> {
             DreamerAttemptExecution::Deferred {
                 completed_units,
                 retry_at,
+                step_hashes,
             } => {
                 self.store.defer_selection(
                     admitted,
@@ -92,6 +99,7 @@ impl DreamerWakeDriver<'_> {
                         now: input.now,
                     },
                     retry_at,
+                    &step_hashes,
                 )?;
                 let stage = stage.unwrap_or("deferred");
                 self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
@@ -183,7 +191,7 @@ impl DreamerWakeDriver<'_> {
                 // reservation is refunded, all of it for an attempt that
                 // never dispatched.
                 let settled =
-                    self.settle_charged_or_abort(line, attempt_id, spend_meter, input.now)?;
+                    self.settle_metered_charge(line, attempt_id, spend_meter, input.now)?;
                 let hard_cut = reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
                 let (cause, park) = if let Some(row) = self.store.parked_attempt(attempt_id)? {
                     // One park-owner: the step layer already parked this

@@ -26,8 +26,8 @@ use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 
 pub use crate::voice_identity::ref_bank::{
     VoiceBankInspection, VoiceClipSummary, VoiceDroppedTargetView, VoiceIdentityView,
-    VoicePackSummary, VoiceRenderConsentView, VoiceRenderEventView, VoiceTargetCloneView,
-    VoiceTargetInspection,
+    VoicePackSummary, VoiceReferenceFenceView, VoiceRenderConsentView, VoiceRenderEventView,
+    VoiceTargetCloneView, VoiceTargetInspection, VoiceTargetRender,
 };
 
 /// The pack version a door banks: the bank's one version.
@@ -196,8 +196,9 @@ pub struct VoiceTargetEvictReceipt {
     pub vendor: VoiceVendorDeleteStatus,
 }
 
-/// `vault.voices.inspect`'s input: the voice, and the configured hosted
-/// target whose current clone to read.
+/// `vault.voices.inspect`'s input: the voice, and the target to read it
+/// for: a hosted target's current clone, a reference target's fence, or a
+/// target this host does not render (FIX 4394).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceBankInspectRequest {
@@ -308,14 +309,15 @@ pub fn evict_own_voice_target(
     Ok(vault.evict_voice_target_as(actor, &input.voice_id, &input.target)?)
 }
 
-/// `vault.voices.inspect` under the actor's proof, at the `locality` the
-/// host's clone wire for the target states. A voice the bank holds nothing
-/// of is not found.
+/// `vault.voices.inspect` under the actor's proof, for the target as the
+/// host renders it (`render`, FIX 4394): its hosted clone, the bank's
+/// reference per call, or nothing on this host. A voice the bank holds
+/// nothing of is not found.
 pub fn inspect_voice_bank_as(
     vault: &Vault,
     actor: &VoiceBankActor,
     input: &VoiceBankInspectRequest,
-    locality: ModelLocality,
+    render: VoiceTargetRender,
 ) -> MemoryResult<VoiceBankInspection> {
     vault
         .inspect_voice_bank(
@@ -323,7 +325,7 @@ pub fn inspect_voice_bank_as(
             &input.voice_id,
             &input.target,
             input.include_generated,
-            locality,
+            render,
         )?
         .ok_or_else(|| MemoryError::not_found("no voice is banked or consented under that id"))
 }

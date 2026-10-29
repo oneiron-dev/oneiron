@@ -164,6 +164,30 @@ impl AgentDispatcher<'_> {
     }
 }
 
+impl AgentDispatcher<'_> {
+    /// Whether attempt `id` is a run the native agent pump would take at
+    /// `now` (FIX 4929): queued or scheduled, resting on no schedule or
+    /// backoff past `now`, and an agent run of this pump's by
+    /// [`Self::ready_agent_runs`]'s rule, so no saved workflow's leaf and no
+    /// orphaned child. A status read asks it; it decides and changes nothing.
+    pub fn is_ready_native_run(&self, id: AttemptId, now: u64) -> Result<bool> {
+        let queue = AttemptQueue::new(self.vault);
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(row) = queue.get_in_txn(&txn, id)? else {
+            return Ok(false);
+        };
+        if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+            || row
+                .scheduled_at
+                .or(row.backoff_until)
+                .is_some_and(|at| at > now)
+        {
+            return Ok(false);
+        }
+        Ok(agent_run_row(&queue, &txn, &row)?.is_some())
+    }
+}
+
 /// The row as an agent run of this pump, or `None` when it is another
 /// host's: no agent dispatch, a saved workflow's leaf, a child whose parent
 /// is gone, or a resident's inbox wake.

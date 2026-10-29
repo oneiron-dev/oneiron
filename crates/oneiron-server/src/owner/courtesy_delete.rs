@@ -87,13 +87,41 @@ pub(super) fn with_issuer<T>(
     Ok(sign(issuer)?)
 }
 
+/// What signs and queues a courtesy-delete ask: the vault, and this host's
+/// authority key when it holds one. A running server lends its own; the
+/// stopped-vault CLI lends the vault it opened and the issuer it loaded
+/// (FIX 4185), so both queue the same ask through [`send_with`].
+pub(crate) struct CourtesySender<'a> {
+    pub(crate) vault: &'a oneiron::Vault,
+    pub(crate) issuer: Option<&'a HostSlipIssuer>,
+}
+
+impl<'a> CourtesySender<'a> {
+    /// The running server's vault and authority key.
+    pub(crate) fn of(server: &'a SyncServer) -> Self {
+        Self {
+            vault: server.vault(),
+            issuer: server.host_issuer(),
+        }
+    }
+}
+
 /// Signs (unless the owner brought a signed ask) and queues one ask.
 pub(crate) fn send(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
     request: &CourtesyDeleteSendRequest,
 ) -> OwnerResult<CourtesyDeleteSent> {
-    let vault = server.vault();
+    send_with(&CourtesySender::of(server), owner, request)
+}
+
+/// [`send`] with the vault and key `sender` lends.
+pub(crate) fn send_with(
+    sender: &CourtesySender<'_>,
+    owner: &AuthenticatedOwner,
+    request: &CourtesyDeleteSendRequest,
+) -> OwnerResult<CourtesyDeleteSent> {
+    let vault = sender.vault;
     let pact = hex_field::<32>("pact", &request.pact)?;
     let destination = peer_url("peer", &request.peer, COOP_DELETION_PEER_PATH)?;
     let signed = if let Some(signed) = &request.signed {
@@ -125,9 +153,12 @@ pub(crate) fn send(
         };
         let mut nonce = [0u8; 16];
         rand_core::OsRng.fill_bytes(&mut nonce);
-        with_issuer(server, |issuer| {
-            issuer.sign_cooperative_deletion_request(vault, &pact, worlds, epoch_cutoff, nonce)
-        })?
+        let issuer = sender.issuer.ok_or_else(|| {
+            OwnerError::Refused(
+                "this host holds no signing key; send an ask signed by the pinned key".to_owned(),
+            )
+        })?;
+        issuer.sign_cooperative_deletion_request(vault, &pact, worlds, epoch_cutoff, nonce)?
     };
     let notice =
         vault.queue_cooperative_deletion_request_as(owner, &signed, &destination, now())?;
@@ -188,12 +219,10 @@ pub(crate) fn answer(
             if let Err(refusal) = vault.recheck_owner(owner) {
                 return OwnerError::from(refusal);
             }
-            // A legal order's refusal keeps its typed notice and bound (FIX
-            // 2926); any other refusal reads as before.
-            match error {
-                oneiron::Error::LegalHold(_) => OwnerError::from(error),
-                error => OwnerError::Invalid(error.to_string()),
-            }
+            // Every engine refusal keeps its type (FIX 2923): a legal order's
+            // names its bound (FIX 2926), a hold on a partition an erase took
+            // names that state, and a malformed answer stays a bad request.
+            OwnerError::from(error)
         })?;
     if let Some(destination) = destination {
         let reply = with_issuer(server, |issuer| {

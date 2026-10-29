@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::endpoint::EndpointRef;
 use crate::edit_distance::myers::MOVE_DISCOUNT;
 use crate::error::{Error, Result};
 
@@ -95,17 +96,16 @@ impl OpsSummary {
 /// The six ARCH-0056 §2 Δ fields, serialized into ONE-1747's reserved
 /// `amendment_delta` receipt slot.
 ///
-/// `proposed_ref` / `final_ref` are read THROUGH `source`: the recorded-ops
-/// lane carries encoded Loro `Frontiers` (directly replayable), the
-/// field-diff and reconstructed lanes carry the blake3 of each side (directly
-/// verifiable). One string type, two meanings, disambiguated by a field that
-/// is already in the struct.
+/// `proposed_ref` / `final_ref` are (document, version) pointers in every
+/// lane: each names the retained source its end lives in, so the measurement
+/// recomputes from the refs alone. A lane that hashed an end keeps the hash
+/// beside the pointer as a check value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AmendmentDelta {
-    /// Handle for the window's proposed end.
-    pub proposed_ref: String,
-    /// Handle for the window's finalized end.
-    pub final_ref: String,
+    /// The window's proposed end.
+    pub proposed_ref: EndpointRef,
+    /// The window's finalized end.
+    pub final_ref: EndpointRef,
     /// Which lane measured this Δ.
     pub source: DeltaSource,
     /// [`OpsSummary::d_norm`] — the ONE pinned formula every ED producer
@@ -145,10 +145,15 @@ impl AmendmentDelta {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// House pattern (cf. `gate.rs`): the version is stamped from the manifest at
-/// the measurement site, never written as a literal that outlives its bump.
+/// The measurement engine's own version (ARCH-0056 §2 `engine_ver`). It
+/// moves only when a lane's counting changes, so a crate release that changes
+/// no measurement does not split every version-keyed fold. 2.0.0: the
+/// recorded-ops lane reads the authored op stream (FIX 7820).
+pub const MEASUREMENT_ENGINE_VERSION: &str = "2.0.0";
+
+/// The version stamped on every Δ at its measurement site.
 pub(super) fn engine_ver() -> String {
-    env!("CARGO_PKG_VERSION").to_owned()
+    MEASUREMENT_ENGINE_VERSION.to_owned()
 }
 
 /// Shared with the reconstructed lane's line counts.

@@ -43,7 +43,9 @@ const REASSERT_DIAGNOSTICS_PAGE: usize = 256;
 /// Why a bundle publication's home may keep no sealed copy, as its profile
 /// stands here (FIX 4786). The request stays pending as it was; this only
 /// says why.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BundleHomeWarning {
     /// The home's profile is a phone's: its own doors keep no sealed copy
