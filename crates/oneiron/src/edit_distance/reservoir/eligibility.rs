@@ -336,8 +336,7 @@ pub fn reservoir_source_preview(
     let corpus_use = CorpusUse::TrainingRun {
         consented_sources: consented,
     };
-    let (carried, excluded) =
-        admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?;
+    let (carried, excluded) = admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?;
     Ok(ReservoirSourcePreview {
         carried: carried.len() as u64,
         excluded,

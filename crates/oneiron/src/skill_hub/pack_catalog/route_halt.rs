@@ -1,6 +1,6 @@
 //! A catalog connector's route halts wherever the pack install it is bound
 //! to leaves the vault, in the transaction that takes it out: the owner's
-//! removal (`removal.rs`, FIX 5941), an erase of the pack's source, and a
+//! removal (`removal.rs`, FIX 5941), a delete or erase of the pack's source, and a
 //! restore over a live vault whose image does not hold the live install
 //! (FIX 6034). Each runs [`Vault::halt_pack_connector_routes_in_txn`].
 use std::collections::{BTreeMap, BTreeSet};
@@ -40,7 +40,9 @@ impl Vault {
                 match PACK_INSTALL.get(&self.store, txn, name).ok().flatten() {
                     None => self.halt_pack_connector_routes_in_txn(txn, source, hash, at)?,
                     Some(kept) if kept.source_id != *source || kept.content_hash != *hash => {
-                        self.halt_updated_pack_connector_routes_in_txn(txn, source, hash, at)?;
+                        self.follow_updated_pack_connector_routes_in_txn(
+                            txn, source, hash, &kept, at,
+                        )?;
                     }
                     Some(_) => {}
                 }
@@ -49,11 +51,12 @@ impl Vault {
         })
     }
 
-    /// The erase of `id`, in its transaction, before its body is scrubbed:
-    /// when `id` is a pack source, every catalog route bound to it halts as
-    /// the owner's removal halts it, at its own content hash and at each an
-    /// install naming it holds. Any other row halts nothing.
-    pub(crate) fn halt_erased_pack_source_routes_in_txn(
+    /// The delete or erase of `id`, in its transaction, before its body is
+    /// scrubbed: when `id` is a pack source, every catalog route bound to it
+    /// halts as the owner's removal halts it, at its own content hash and at
+    /// each an install naming it holds (FIX 6034; a plain delete too, FIX
+    /// 6086). Any other row halts nothing.
+    pub(crate) fn halt_deleted_pack_source_routes_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
