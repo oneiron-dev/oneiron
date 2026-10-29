@@ -507,9 +507,13 @@ where
         let vault = self.vault();
         let binding = RunnerWorkBindingId::of(request.parent_attempt_id, &request.step_key)?;
         if let Some(head) = head_hop(vault, wtxn, binding)? {
+            let reported = seat_index(head.seat);
+            // FIX 11644: an existing bind reports the current-policy seat too;
+            // a removed or ambiguous identity keeps the stored index for truth.
+            let seat = remap_seat(policy, &head, reported)?.unwrap_or(reported);
             return Ok(RunnerWorkBound::Bound {
                 binding,
-                seat: seat_index(head.seat),
+                seat,
                 attempt: AttemptId::from_bytes(&head.attempt)?,
                 existing: true,
             });
