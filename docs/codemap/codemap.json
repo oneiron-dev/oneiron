@@ -9911,7 +9911,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 5,
       "fn": 6,
       "re-export": 5,
@@ -10015,7 +10015,7 @@
      "path": "src/browser_library/records.rs",
      "purpose": "The browser library's records (moved out of `browser_library` whole): its programs' and retires' rows…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -17324,7 +17324,7 @@
      "purpose": "Proxy receipts use the existing owner-local gate ledger",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -29710,9 +29710,9 @@
       "AmendmentCauseRecord"
      ],
      "path": "src/edit_distance/attribution/causes.rs",
-     "purpose": "The amendment judge's labels, read for one actor (FIX 8264): the inlet agent-health cards join beside the…",
+     "purpose": "The amendment judge's labels, kept and read for one actor (FIX 8264, 11638): the inlet agent-health cards…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -29747,7 +29747,7 @@
      "surface": {
       "crate-vis": 7,
       "fn": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -29778,7 +29778,8 @@
      "path": "src/edit_distance/attribution/rejection.rs",
      "purpose": "A rejection goes through the judge before it charges anyone (ARCH-0056 §5, §11; FIX 7823)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -29798,7 +29799,7 @@
      "path": "src/edit_distance/attribution/stored.rs",
      "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 31
      }
     },
     {
@@ -29847,7 +29848,7 @@
      "path": "src/edit_distance/attribution/triage.rs",
      "purpose": "The triage packet a persistent failure mints, and the one owner-inbox escalation that carries it (ARCH-0056…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 1,
       "struct": 6
@@ -29860,7 +29861,7 @@
      "path": "src/edit_distance/attribution/worsening.rs",
      "purpose": "The persistent-failure trigger (ARCH-0056 §5 \"Persistent failure → the triage packet\"; FIX 7825)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -30473,7 +30474,7 @@
      "path": "src/edit_distance/publisher/signature_store.rs",
      "purpose": "Stored signature rows: codec and vault_meta keys",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -30584,6 +30585,7 @@
      "path": "src/edit_distance/routing/mod.rs",
      "purpose": "ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment says about the EXECUTOR that…",
      "surface": {
+      "crate-vis": 1,
       "re-export": 6
      }
     },
@@ -30594,7 +30596,7 @@
      "path": "src/edit_distance/routing/outcomes.rs",
      "purpose": "Anchored task outcomes beside edit cost (ARCH-0056 §8, FIX 7828)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -30670,7 +30672,7 @@
      "path": "src/edit_distance/routing/write.rs",
      "purpose": "Judged-amendment fold writes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -34634,7 +34636,7 @@
      "path": "src/feedback/report/delivery/metadata.rs",
      "purpose": "The historical ED-08 metadata a report's subject names (OF-420, FIX 739)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -34655,6 +34657,16 @@
      "surface": {
       "fn": 3,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/packet_signature.rs",
+     "purpose": "The ED-08 issue signature a shipped subject's triage packet earns (FIX 11634), resolved from the packet…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -71762,7 +71774,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 14,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -82070,7 +82082,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82989,7 +83001,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5548,
+   "source_files": 5549,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86851,7 +86863,7 @@
      "purpose": "`demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs…",
      "surface": {
       "crate-vis": 11,
-      "fn": 2
+      "fn": 3
      }
     },
     {
