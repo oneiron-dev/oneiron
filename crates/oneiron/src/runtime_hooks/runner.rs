@@ -144,8 +144,12 @@ impl FactHookRunner {
         if let Err(error) = vault.drain_verb_asks() {
             tracing::warn!(%error, "settled verb hook asks wait for the next pass");
         }
-        if !self.drained.swap(true, Ordering::AcqRel) {
-            apply::drain_pending(vault, &mut report)?;
+        if !self.drained.load(Ordering::Acquire) {
+            if apply::drain_pending(vault, &mut report)? {
+                report.more = true;
+            } else {
+                self.drained.store(true, Ordering::Release);
+            }
         }
         let all = vault.pack_hook_bindings()?;
         pause_disabled(vault, &all)?;
