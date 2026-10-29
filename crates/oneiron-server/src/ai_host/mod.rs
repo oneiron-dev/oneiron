@@ -1083,6 +1083,12 @@ async fn start_dreamer(
             return Err(IdleReason::StartFailed);
         }
     };
+    // Signed promotions landed before their claims were text-indexed; index
+    // those once so recall's lexical channel reaches them. A failure only logs.
+    match vault.index_dreamer_claims_without_text() {
+        Ok(indexed) => tracing::info!(indexed, "dreamer claims without a text posting indexed"),
+        Err(error) => tracing::warn!(kind = ?error.kind(), "dreamer claim text backfill failed"),
+    }
     DreamerHost::spawn(DreamerStart {
         vault: Arc::clone(vault),
         runtime: Arc::clone(runtime),
