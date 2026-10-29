@@ -3024,6 +3024,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BackupModeRootPolicy",
+      "BackupModeRoots",
+      "BackupSignerDelegation",
+      "BackupSignerStatement"
+     ],
+     "path": "src/authority/backup_signer_delegation.rs",
+     "purpose": "Backup signers a vault's mode roots delegate (OF-570 (e), FIX 968)",
+     "surface": {
+      "const": 1,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CausalWriteDisposition"
      ],
      "path": "src/authority/causal_write.rs",
@@ -4112,7 +4129,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 39,
-      "re-export": 64
+      "re-export": 65
      }
     },
     {
@@ -4550,15 +4567,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_vault/backup_signer.rs",
+     "purpose": "The managed host root's signature on a backup signer's delegation (FIX 968): one root's vote toward the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
-      "ConnectOffer"
+      "ConnectOffer",
+      "ScopeOpeningKey"
      ],
      "path": "src/authority/slip_vault/connect.rs",
      "purpose": "Connect, signed by each vault's own host-root key (FIX 323, ARCH-0043 #relationship-lifecycle)",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3,
-      "struct": 1
+      "crate-vis": 4,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -6813,7 +6841,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 45,
       "enum": 1,
       "re-export": 1
      }
@@ -6825,7 +6853,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -6835,7 +6863,7 @@
      "path": "src/batch/secret_scan/container/archive.rs",
      "purpose": "A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -6849,13 +6877,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/container/pdf.rs",
      "purpose": "A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -6873,7 +6901,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/container/retained_iterative.rs",
-     "purpose": "The retained repository read's walk and rebuild with their frames on the heap (FIX 8031): the same readers…",
+     "purpose": "The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held…",
      "surface": {
       "crate-vis": 4
      }
@@ -18912,7 +18940,7 @@
       "const": 5,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 12,
+      "fn": 13,
       "mod": 1,
       "re-export": 1,
       "struct": 7
@@ -55152,7 +55180,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/admission.rs",
@@ -55179,13 +55207,14 @@
       "RestoreCommitFacts",
       "RetiredBy",
       "RetiredRecipient",
+      "SignerTrust",
       "SourceExpectation",
       "VerifiedSource"
      ],
      "path": "src/recovery/checkpoint/admission/facts.rs",
      "purpose": "What a cold managed restore is asked to do and what it verified (LC FIX 5384/5385): the plan's expected…",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "re-export": 1,
       "struct": 10
      }
@@ -55344,6 +55373,16 @@
       "fn": 18,
       "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/custody_head/drain.rs",
+     "purpose": "The owner's custody member drain doors (FIX 5843, ruled 10-20): the one way a member leaves the required…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -55620,9 +55659,29 @@
      "path": "src/recovery/checkpoint/host_holds.rs",
      "purpose": "Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactHostOrderHolds",
+      "HostHoldsAvailability",
+      "HostHoldsRecipient",
+      "HostHoldsSealing",
+      "HostHoldsUnavailable"
+     ],
+     "path": "src/recovery/checkpoint/host_holds/seal.rs",
+     "purpose": "A hosted vault's host-order family in its own checkpoints (FIX 6598, FIX 6817; LEGAL-HOLD = B): a hold must…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 3,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -55884,6 +55943,17 @@
      "purpose": "The live world key pad rows of a side restore's source (KS-5, FIX 5686 part 2): a live row keeps its own pad…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/signer_delegation.rs",
+     "purpose": "The mode-root route a restore's key trusts beside its pins (OF-570 (e), FIX 968)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -58677,7 +58747,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -58699,7 +58769,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3
      }
@@ -64630,7 +64700,7 @@
      "path": "src/store/gate_decision/checkpoint_custody/destination.rs",
      "purpose": "The directory a restore makes for its copy, held under the copy's writer lease until the restore commits…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -64830,6 +64900,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/grant_scope_custody.rs",
+     "purpose": "A federation grant's scope opening keys (FIX 7907, 7958, L04's half): the secret each pact epoch's scope…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -64983,7 +65063,8 @@
      "path": "src/store/key_custody/files.rs",
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 29,
+      "fn": 1
      }
     },
     {
@@ -64993,7 +65074,7 @@
      "path": "src/store/key_custody/folder.rs",
      "purpose": "The folder target (KS-4A1; acknowledgements KS-4A2, FIX 5685): `<folder>/oneiron-custody/<namespace…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -65013,7 +65094,7 @@
      "path": "src/store/key_custody/head.rs",
      "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 10
      }
     },
     {
@@ -65023,7 +65104,7 @@
      "path": "src/store/key_custody/head/carried_pads.rs",
      "purpose": "World pad compartments a restore left unopened, carried forward (PAD-3, FIX 11133)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -65044,6 +65125,16 @@
      "purpose": "Who reads each compartment of a custody head, who its keys are wrapped to, and what a restore opens it with",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head/wire.rs",
+     "purpose": "The custody head's wire (KS-4): its MessagePack shapes, the key id that binds a compartment and its wraps to…",
+     "surface": {
+      "crate-vis": 25
      }
     },
     {
@@ -65115,7 +65206,7 @@
      "surface": {
       "crate-vis": 36,
       "mod": 1,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -65191,9 +65282,26 @@
       "crate-vis": 11,
       "enum": 8,
       "fn": 23,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 9,
       "trait": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DrainAck",
+      "DrainTicket",
+      "DrainToken"
+     ],
+     "path": "src/store/key_custody/protocol/drain.rs",
+     "purpose": "The custody member drain's contract (FIX 5843, ruled 10-20): how the owner takes a member out of the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -65253,7 +65361,7 @@
      "path": "src/store/key_custody/recovery.rs",
      "purpose": "Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -65290,6 +65398,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/key_custody/recovery/takeover.rs",
+     "purpose": "A recovery's takeover fence, published last (FIX 6782, Engine 06:2x)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/key_custody/recovery/unopened.rs",
      "purpose": "What a restore says of the custody head's compartments it left unopened (FIX 9178): which key opens each, by…",
      "surface": {
@@ -65313,7 +65431,17 @@
      "path": "src/store/key_custody/targets.rs",
      "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/targets/drain.rs",
+     "purpose": "The journal's half of a member drain (FIX 5843, ruled 10-20): the owner's door out of the required set…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -65418,15 +65546,15 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "mod": 1,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -79887,7 +80015,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 216,
+     "files": 218,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80881,7 +81009,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 101,
+     "files": 104,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -81126,7 +81254,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 167,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81359,7 +81487,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5419,
+   "source_files": 5429,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81589,7 +81717,21 @@
      "surface": {
       "enum": 5,
       "fn": 6,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopeOpeningAad"
+     ],
+     "path": "src/authority/federation_pact/scope_key.rs",
+     "purpose": "The keyed federation scope commitment and its per-grant opening key",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -82153,7 +82295,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82183,7 +82325,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 47,
+   "source_files": 48,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -87245,6 +87387,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HostHoldsBinding",
+      "SealedHostHolds"
+     ],
+     "path": "src/backup/host_holds.rs",
+     "purpose": "A checkpoint's host-private member (FIX 6598): a hosted vault's host-order legal-hold family, carried in its…",
+     "surface": {
+      "const": 7,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BackupEvidence",
       "BackupTailEvidence"
      ],
@@ -87263,7 +87420,7 @@
      "path": "src/backup/mod.rs",
      "purpose": "The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact…",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -87566,7 +87723,7 @@
    ],
    "modules": {
     "backup": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87638,7 +87795,7 @@
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 21,
+   "source_files": 22,
    "test_files": 8
   },
   "oneiron-docedit": {
@@ -107688,9 +107845,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/restore/host_holds.rs",
-     "purpose": "The host-order legal holds a cold restore installs (FIX 1485, FIX 6598)",
+     "purpose": "The host-order legal holds a cold restore installs (FIX 1485, FIX 6598, FIX 6817)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -118153,6 +118310,7 @@
      "notable": [
       "HostHoldsBytes",
       "HostHoldsCursor",
+      "HostHoldsOrigin",
       "HostHoldsSource",
       "HostOrderHoldsExport",
       "HostOrderHoldsNotProven",
@@ -118162,7 +118320,7 @@
      "path": "src/lib/restore/host_holds.rs",
      "purpose": "The host-order legal holds a cold managed restore carries from its source (FIX 1485, FIX 6598)",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 6,
       "struct": 4
      }
@@ -118171,6 +118329,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BackupModeRootsBytes",
       "EscrowRole",
       "FreshRecipient",
       "ManagedRestoreInput",
@@ -118189,7 +118348,7 @@
       "const": 1,
       "enum": 3,
       "fn": 1,
-      "struct": 8
+      "struct": 9
      }
     },
     {
