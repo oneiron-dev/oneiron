@@ -35,6 +35,7 @@ mod step_state;
 mod submission_custody;
 mod trap;
 mod trap_binding;
+mod trap_sent;
 mod types;
 
 // The moved bodies still spell these parent (`llm`) names as `super::X`;

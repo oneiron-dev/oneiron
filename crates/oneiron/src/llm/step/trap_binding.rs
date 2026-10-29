@@ -156,10 +156,12 @@ pub(super) fn trap_binding_read_in_txn(
     TRAP_BINDING.get(&vault.store, rtxn, anchor)
 }
 
-/// Every trap binding this device holds, by its anchor.
-pub(super) fn trap_bindings(vault: &Vault) -> Result<Vec<(EntityId, TrapBindingRow)>> {
+pub(super) fn trap_binding_read(
+    vault: &Vault,
+    anchor: &EntityId,
+) -> Result<Option<TrapBindingRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    TRAP_BINDING.scan(&vault.store, &rtxn)
+    trap_binding_read_in_txn(vault, &rtxn, anchor)
 }
 
 /// One open `dreamer.trap` wait: created, waiting or sent, not yet consumed.

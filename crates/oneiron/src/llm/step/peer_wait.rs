@@ -392,18 +392,37 @@ pub(crate) fn resume_peer_result_steps(vault: &Vault, now_ms: u64) -> Result<usi
     Ok(resumed)
 }
 
+fn clear_stale_sent_marker(vault: &Vault, anchor: &EntityId) {
+    if let Err(error) = super::trap_sent::unmark_sent(vault, anchor) {
+        tracing::warn!(kind = ?error.kind(), trap = ?anchor, "stale Sent marker not cleared");
+    }
+}
+
 /// Wake-pass resume of attempt-scoped traps whose signal is already Sent: a
-/// consent answer, a budget grant or a person's response. Only this
-/// device's bindings are walked, and consume re-checks each one against its
-/// private row, so a synced claim never names what resumes. Delegated waits
-/// stay the peer sweep's. One trap that fails its checks is logged and
-/// left; it never stops the pass.
+/// consent answer, a budget grant or a person's response. Only this device's
+/// Sent markers are walked, and consume re-checks each one against its
+/// private binding, so a synced claim never names what resumes. Delegated
+/// waits stay the peer sweep's. One trap that fails its checks is logged and
+/// left; it never stops the pass. With no vault migration, a trap Sent before
+/// this index existed gains a marker only if its signal is redelivered.
 pub(crate) fn resume_signalled_steps(vault: &Vault, now_ms: u64) -> Result<usize> {
     let runner = crate::dreamer_runner::DreamerRunnerStore::new(vault);
     let mut resumed = 0;
-    for (anchor, binding) in super::trap_binding::trap_bindings(vault)? {
+    for anchor in super::trap_sent::sent_anchors(vault)? {
+        let binding = match super::trap_binding::trap_binding_read(vault, &anchor) {
+            Ok(Some(binding)) => binding,
+            Ok(None) => {
+                clear_stale_sent_marker(vault, &anchor);
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), trap = ?anchor, "trap binding unreadable; not resumed");
+                continue;
+            }
+        };
         // A step-only wait resumes its step, never an attempt.
         if binding.park_owner != super::trap::trap_park_owner(&anchor) {
+            clear_stale_sent_marker(vault, &anchor);
             continue;
         }
         let head = match trap_head(vault, &anchor) {
@@ -413,7 +432,11 @@ pub(crate) fn resume_signalled_steps(vault: &Vault, now_ms: u64) -> Result<usize
                 continue;
             }
         };
-        if head.state != DreamerTrapState::Sent || head.kind == DreamerTrapKind::PeerResult {
+        if head.state != DreamerTrapState::Sent {
+            clear_stale_sent_marker(vault, &anchor);
+            continue;
+        }
+        if head.kind == DreamerTrapKind::PeerResult {
             continue;
         }
         let trap = TrapRef {

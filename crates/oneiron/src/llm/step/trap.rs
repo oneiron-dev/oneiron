@@ -211,12 +211,15 @@ fn send_trap_signal_in_txn(
         head.state,
         DreamerTrapState::Sent | DreamerTrapState::Consumed
     ) {
+        if head.state == DreamerTrapState::Sent {
+            super::trap_sent::mark_sent_in_txn(vault, wtxn, trap_claim_id)?;
+        }
         return Ok(head_id);
     }
     if !head.state.may_transition_to(DreamerTrapState::Sent) {
         return Err(invalid_trap("dreamer trap signal on non-waiting trap"));
     }
-    append_trap_transition_in_txn(
+    let sent = append_trap_transition_in_txn(
         vault,
         wtxn,
         &head_id,
@@ -224,7 +227,9 @@ fn send_trap_signal_in_txn(
         DreamerTrapState::Sent,
         now,
         None,
-    )
+    )?;
+    super::trap_sent::mark_sent_in_txn(vault, wtxn, trap_claim_id)?;
+    Ok(sent)
 }
 
 /// Validates and absorbs the resume signal (`→consumed`).
@@ -302,8 +307,9 @@ fn consume_trap_signal_in_txn(
     // any park, or a resume raced by the runner); a row parked by any
     // OTHER owner is refused inside resume_parked_in_txn.
     store.resume_parked_in_txn(wtxn, binding.attempt_id, &binding.park_owner, now)?;
-    // Consumed is terminal — retire the private binding with the trap.
+    // Consumed is terminal — retire the private binding and its Sent marker.
     trap_binding_delete_in_txn(vault, wtxn, &trap.trap_claim_id)?;
+    super::trap_sent::unmark_sent_in_txn(vault, wtxn, &trap.trap_claim_id)?;
     // A delegation's TASK→trap binding retires in the SAME transaction, so
     // reconciliation never re-walks a settled wait and a duplicate result
     // finds nothing to signal.
