@@ -730,6 +730,7 @@ impl BrowserSession {
             tab: None,
             result_tab: None,
             result_unread: None,
+            outcome: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };

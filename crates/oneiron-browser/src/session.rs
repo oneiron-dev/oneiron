@@ -113,11 +113,11 @@ use crate::{
     ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
     NoWriter, Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode,
-    ProposeInput, ProposeOutput, Rebound, ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row,
-    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput,
-    SendPolicy, StepStop, StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover,
-    TakeoverRecord, TextProvenance, TypeInput, TypeOperand, ViewInput, WaitForInput, WaitForOutput,
-    WorkflowLibrary, ZoomInput, site_of,
+    ProposeInput, ProposeOutput, Rebound, ReceiptEvidenceSink, ReceiptOutcome, ReplayAction,
+    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody,
+    SecretKind, SelectInput, SendPolicy, StepStop, StoragePhase, SwitchEngineInput,
+    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TextProvenance, TypeInput,
+    TypeOperand, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -254,6 +254,7 @@ struct Left {
     rebound: Option<Rebound>,
     fact: Option<ActionFact>,
     unread: Option<String>,
+    outcome: Option<ReceiptOutcome>,
 }
 
 fn no_library() -> BrowserError {

@@ -130,9 +130,9 @@ pub use programs::{
 pub use verbs::{
     ClickInput, CropInput, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput,
     HotkeyInput, ImageOutput, KeyInput, Observation, ObservationPage, ObserveInput, OpenInput,
-    PartialTree, PointInput, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollDirection,
-    ScrollInput, SelectInput, TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, ZoomInput,
+    PartialTree, PointInput, ReceiptOutcome, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
+    ScrollDirection, ScrollInput, SelectInput, TabSwitch, TabSwitchCause, TypeInput, ViewInput,
+    WaitForInput, WaitForOutput, ZoomInput,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

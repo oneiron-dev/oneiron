@@ -55,6 +55,7 @@ impl CdpDriver {
             secret_nodes: Vec::new(),
             held_closed: Vec::new(),
             sent: false,
+            unknown: false,
         };
         if driver.pipe.mediated() {
             let deadline = Instant::now() + CALL;

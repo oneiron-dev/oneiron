@@ -37,6 +37,7 @@ use crate::request::Custody;
 use crate::session::storage::Sink;
 use crate::{BrowserEngine, BrowserError, DialogAnswerFailure};
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,6 +66,18 @@ const NAVIGATION_EVENTS: [&str; 4] = [
 /// floor where it was read past the framing threshold (`parsed`), or the
 /// error that answered it.
 type Reply = Result<(Value, Option<parsed::Held>), String>;
+
+thread_local! {
+    /// The calls this thread sent a browser so far, on any pipe: an act
+    /// reads it around its input (FIX 10426).
+    static WRITTEN: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The calls this thread sent a browser so far: one that grew across an
+/// act's input that failed means the browser was sent part of it.
+pub(crate) fn written_here() -> u64 {
+    WRITTEN.with(Cell::get)
+}
 type Pending = Arc<Mutex<Option<HashMap<u64, Sender<Reply>>>>>;
 /// Each watched page session's navigation events so far.
 type Navigations = Arc<Mutex<HashMap<String, u64>>>;
@@ -248,6 +261,7 @@ impl Pipe {
             let mut writer = self.writer.lock().map_err(|_| BrowserError::GuestLost)?;
             writer.send(bytes).map_err(|_| BrowserError::GuestLost)?;
         }
+        WRITTEN.with(|written| written.set(written.get().saturating_add(1)));
         let wait = deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(wait) {
             // A parsed reply's charge goes back as its result is handed on.

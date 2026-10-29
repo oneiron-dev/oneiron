@@ -145,6 +145,9 @@ pub(crate) struct CdpDriver {
     /// The last act's input was sent (FIX 8010): its effect stands even
     /// when settling or reading the page after it failed.
     sent: bool,
+    /// The last act's input failed after the browser was sent part of it
+    /// (FIX 10426): its outcome is unknown.
+    unknown: bool,
 }
 
 /// One page target the driver follows, with its session on it, and the
@@ -312,6 +315,12 @@ impl CdpDriver {
     /// Whether the last act's input was sent, taken (FIX 8010).
     pub(crate) fn take_sent(&mut self) -> bool {
         std::mem::take(&mut self.sent)
+    }
+
+    /// Whether the last act's input failed after the browser was sent part
+    /// of it, taken (FIX 10426).
+    pub(crate) fn take_unknown(&mut self) -> bool {
+        std::mem::take(&mut self.unknown)
     }
 
     /// The page's URL and title as they are now.
