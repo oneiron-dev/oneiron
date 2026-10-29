@@ -26,7 +26,7 @@ use crate::lens::{
     FiniteF64, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedActionArg,
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
 };
-use crate::task_verb::sdk::{AgentVerb, RunVerb};
+use crate::task_verb::sdk::{AgentVerb, CUSTODY_VALUE_ROWS, RunVerb};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -260,13 +260,16 @@ impl ActionRegistry {
     /// definition-only rows need a run or a socket of their own, and a row
     /// whose name is no action id is one no lens can name; none is offered.
     /// A row that is also a memory or live run row is offered once, as the
-    /// run row registered below.
+    /// run row registered below. A custody row whose input carries a
+    /// secret's value or its sealed input (`CUSTODY_VALUE_ROWS`, FIX 4993)
+    /// is not offered: an action keeps its whole input in its replay record.
     pub fn register_sdk_verbs(&mut self) -> Result<()> {
         for verb in AgentVerb::ALL.iter().copied().filter(|verb| {
             verb.is_facade()
                 && !super::live_run::is_live_run_verb(verb.as_str())
                 && !RunVerb::from_name(verb.as_str())
                     .is_some_and(|run| super::run_verb_call::MEMORY_RUN_VERBS.contains(&run))
+                && !CUSTODY_VALUE_ROWS.contains(&verb.as_str())
         }) {
             let Ok(id) = SelfUiActionId::new(verb.as_str()) else {
                 continue;

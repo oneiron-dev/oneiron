@@ -28,7 +28,8 @@ use crate::secret_custody::{CustodyInputBinding, seal_custody_input};
 /// ([`crate::secret_custody::seal_custody_input`]).
 ///
 /// # Errors
-/// A change other than a register or rotate; a holder or recipient the
+/// A change other than a register or rotate; a rotate that names a
+/// manifest, which the submit door refuses too; a holder or recipient the
 /// view lists no candidate for; a malformed view field; a key that does not
 /// import; a seal that fails.
 pub fn seal_custody_submit(
@@ -51,6 +52,9 @@ pub fn seal_custody_submit(
     let Some(generation) = generation else {
         return Err(MemoryError::bad_request("no generation follows the last"));
     };
+    if change == CustodyChange::Rotate && manifest_ref.is_some() {
+        return Err(MemoryError::bad_request("only a register names a manifest"));
+    }
     let holder = match holder {
         Some(holder) => entity_id("holder", holder)?,
         None => this_install(view)?,

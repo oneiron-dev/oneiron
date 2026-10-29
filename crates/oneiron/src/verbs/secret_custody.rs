@@ -2,9 +2,11 @@
 //! `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
 //! `vault.secrets.custody.get` and `vault.secrets.custody.submit`. Each runs
 //! the same engine door as its `/v1/owner/secrets/*` route, with the same
-//! request and reply fields, under the owner's proof. A host passes its own
-//! reading of where the request came from as the act's surface, for audit
-//! only. An embedded handle acts as this install.
+//! request fields, under the owner's proof. The replies keep the route's
+//! fields, but a rotate's receipt nests under `receipt` and the view's live
+//! requests are plain receipts. A host passes its own reading of where the
+//! request came from as the act's surface, for audit only. An embedded
+//! handle acts as this install.
 //!
 //! A register or rotate that carries the value (`value_base64`) is the
 //! owner's explicit plaintext choice: the value reaches the custody plane
@@ -36,6 +38,15 @@ use crate::world_keys::OwnerWorkReceipt;
 use crate::{EntityId, Vault};
 
 pub use self::surface_seal::seal_custody_submit;
+
+/// The custody rows whose input carries a secret's value or its sealed
+/// input. The action registry offers none of them: an action keeps its
+/// whole input in its replay record.
+pub const CUSTODY_VALUE_ROWS: [&str; 3] = [
+    "vault.secrets.register",
+    "vault.secrets.rotate",
+    "vault.secrets.custody.submit",
+];
 
 /// The ref a manifest is read at when the request names none, as on the
 /// owner's register route.
