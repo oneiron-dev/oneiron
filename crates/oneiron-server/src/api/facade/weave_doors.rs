@@ -17,7 +17,7 @@ use oneiron::claim::{
     WeaveDigestFeedback, WeaveDigestRendered, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingUndo, WeaveReaderRef, WeaveScheduleView,
 };
-use oneiron::inbox::InboxGroup;
+use oneiron::inbox::InboxGroupPage;
 use oneiron::lens::LensFrameCard;
 use oneiron::memory::DreamerAttemptRef;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
@@ -466,7 +466,7 @@ pub(crate) async fn vault_inbox_groups(
     caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: InboxRunGroupsRequest,
-) -> Listed<Vec<InboxGroup>> {
+) -> Listed<InboxGroupPage> {
     const VERB: &str = "vault.inbox.groups";
     let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,

@@ -283,6 +283,17 @@ impl Vault {
         Ok(self.stored_run_seat(run_id)?.map(|row| row.receipt))
     }
 
+    /// [`Self::model_seat_receipt`] in the caller's snapshot (FIX 10192).
+    pub(crate) fn model_seat_receipt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        run_id: EntityId,
+    ) -> Result<Option<SeatChoiceReceipt>> {
+        Ok(self
+            .stored_run_seat_in_txn(txn, run_id)?
+            .map(|row| row.receipt))
+    }
+
     /// An agent run's seat receipt with the stamp it was born under; `None`
     /// while no seat is born for `run_id`. A seat born generic is no task's,
     /// so it refuses here rather than read as an unstamped task.

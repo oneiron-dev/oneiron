@@ -83,7 +83,7 @@ pub use self::evidence_judge::{
     record_amendment_evidence,
 };
 pub use self::projector::{
-    edit_cost_for, project_amendment_lessons, project_amendment_reliability,
+    EditCost, edit_cost_for, project_amendment_lessons, project_amendment_reliability,
     project_edit_cost_claims,
 };
 pub use self::taxonomy::{

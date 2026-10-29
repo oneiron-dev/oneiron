@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::code_run::{
-    CapsuleRungBinding, CodeRunDeterminism, CodeRunRawOutput, ExecutorStepStart, ReplayRoutePin,
-    SelfDurableWait, StepReplayCapsule,
+    CapsuleRungBinding, CodeRunDeterminism, CodeRunRawOutput, ExecutorStepStart,
+    ProgramStepFeedback, ReplayRoutePin, SelfDurableWait, StepReplayCapsule,
 };
 use crate::compaction::output::OutputRef;
 use crate::engine_executor::{EngineExecutorStatus, WindowFullReason};
@@ -485,6 +485,12 @@ pub struct ShadowStepRun {
     pub effect_trace: ShadowBodyRef,
     pub bridge_trace: ShadowBodyRef,
     pub bridge: ShadowBridgeWindow,
+    /// The type feedback of the program the arm ran, as it stood when the
+    /// step ended (FIX 10389, fork d): the arm's own, under the arm's
+    /// identity, never its source run's step. `None` when the arm ran no
+    /// program of its own, or its source's content is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_feedback: Option<ProgramStepFeedback>,
 }
 
 /// An opaque hold on an arm's bodies at its host: reads need it, and
@@ -528,6 +534,11 @@ pub struct ShadowRunResult {
     pub model_receipts: Vec<ShadowModelReceipt>,
     pub isolation: ShadowIsolation,
     pub lease: Option<ShadowArmLease>,
+    /// The type feedback of the program the arm ran, as it stood when the
+    /// arm answered (FIX 10389, fork d); its later result is read under the
+    /// arm's lease alone. `None` for an arm that ran no program of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_feedback: Option<ProgramStepFeedback>,
 }
 
 impl ShadowRunResult {
@@ -550,6 +561,7 @@ impl ShadowRunResult {
             model_receipts: Vec::new(),
             isolation: ShadowIsolation::TrustedInProcessBaseline,
             lease: None,
+            type_feedback: None,
         }
     }
 

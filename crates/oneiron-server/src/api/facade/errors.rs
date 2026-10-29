@@ -24,6 +24,7 @@ impl FacadeApiError {
                     hook: None,
                     retry_after: None,
                     resets_at: Vec::new(),
+                    program_steps: Vec::new(),
                 },
                 narrowing: None,
             },
@@ -108,6 +109,9 @@ impl From<MemoryError> for FacadeApiError {
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            // FIX 10011: the owner's model pin stands and no offered seat
+            // serves it. The owner's setting refuses it, as `error_map` does.
+            oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => StatusCode::CONFLICT,
             // FIX 8189: an OpenAI proxy call the caller's own deadline cut,
             // as its raw door answers it.
             crate::api::openai_proxy::TIMEOUT_CODE => StatusCode::GATEWAY_TIMEOUT,
@@ -167,6 +171,7 @@ impl From<MemoryError> for FacadeApiError {
                     hook: error.hook,
                     retry_after: error.retry_after,
                     resets_at: error.resets_at,
+                    program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
             },
@@ -190,6 +195,17 @@ impl From<ApiError> for FacadeApiError {
 }
 
 impl FacadeApiError {
+    /// The refusal with a failed run's program type feedback beside it (FIX
+    /// 10389), each item as its destination is given it: never among its
+    /// words, its status, code and retry as they were.
+    pub(crate) fn with_program_steps(
+        mut self,
+        program_steps: Vec<oneiron::code_run::ProgramStepFeedbackRelease>,
+    ) -> Self {
+        self.body.error.program_steps = program_steps;
+        self
+    }
+
     /// The refusal's wire reply: its status and `{error, narrowing?}` body,
     /// and `Retry-After` when the refusal says when to call again.
     pub(super) fn reply(&self) -> Response {
