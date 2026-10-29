@@ -10,13 +10,27 @@
 use rmpv::Value;
 
 use crate::Result;
-use crate::code_run::types::RunObservation;
+use crate::code_run::CodeRunBridgeCall;
+use crate::code_run::types::{RunObservation, SelfDispatchOutcome};
 use crate::context_board::{BoardStreamFrame, FrameKind};
 
 use super::super::support::{
     decode_array, entity_id_value, entity_value, expect_map, invalid_code_run_replay, map_get,
     request_map, str_value, u64_value,
 };
+
+/// The board frames the verb answers among `calls` carried beside their
+/// outputs, in call order; an answer that does not decode carried none.
+pub(crate) fn agent_verb_observations_of(calls: &[CodeRunBridgeCall]) -> Vec<RunObservation> {
+    calls
+        .iter()
+        .filter_map(|call| match super::decode_self_dispatch_outcome(&call.outcome) {
+            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.observations),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
 
 /// The key an answer's observations are kept under, beside its output.
 const OBSERVATIONS: &str = "observations";
