@@ -52,6 +52,7 @@ pub use self::model::{
     InboxGroupReopen, InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
 };
 
+pub(crate) use self::notification::notification_id;
 pub(crate) use self::projection::inbox_claim_hash;
 
 #[cfg(test)]
