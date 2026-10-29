@@ -160,7 +160,8 @@ pub(super) fn ledger_rows<'txn>(
 /// which was never admitted for transport, and the `exclude`d attempt (an
 /// exact retry's own row). Server and tool compare as the capability lookup spells them
 /// (trimmed, ASCII case folded). A row that does not decode counts as well:
-/// an accounting gap never opens a bound.
+/// an accounting gap never opens a bound. So does a call a restore holds no
+/// record of, through its unavailable row (FIX 6260).
 pub(crate) fn admitted_calls_since_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -190,7 +191,10 @@ pub(crate) fn admitted_calls_since_in_txn(
             admitted = admitted.saturating_add(1);
         }
     }
-    Ok(admitted)
+    // A call a restore holds no record of still counts (FIX 6260).
+    let unavailable =
+        checkpoint::unavailable_calls_since_in_txn(vault, txn, server, tool, since_ms, exclude)?;
+    Ok(admitted.saturating_add(unavailable))
 }
 
 /// Decodes one raw row already read by a full-table walk ([`ledger_rows`]). Shares the
