@@ -92,6 +92,8 @@ pub use self::scope::{CarriedPrior, RolloutRung, RoutingScopeKey, RoutingScopeSt
 pub use self::version::{serving_model_version, set_serving_model};
 pub use self::write::record_judged_amendment;
 
+pub(crate) use self::write::refold_task_outcomes_in_txn;
+
 #[cfg(test)]
 mod tests;
 

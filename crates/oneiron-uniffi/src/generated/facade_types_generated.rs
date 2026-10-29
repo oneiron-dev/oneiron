@@ -32268,6 +32268,12 @@ pub struct PackAttributionFields {
     pub type_ref: CellTypeRef,
     #[serde(rename = "executor")]
     pub executor: String,
+    #[serde(
+        rename = "agent_definition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_definition: Option<String>,
     #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
     pub judge: Option<String>,
     #[serde(rename = "pattern")]
