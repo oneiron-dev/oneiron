@@ -207,8 +207,8 @@ impl HeldProvision {
                 .map_err(|_| invalid("a held provision names its request by entity id hex"))
         };
         Ok(Some(Self {
-            request_ref: id(request_ref)?,
-            identity_id: id(identity_ref)?,
+            request_ref: id(request_ref.as_str())?,
+            identity_id: id(identity_ref.as_str())?,
             requested_at: *requested_at,
         }))
     }
