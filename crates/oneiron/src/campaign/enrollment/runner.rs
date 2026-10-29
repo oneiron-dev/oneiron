@@ -497,7 +497,8 @@ impl<'a> CampaignEnrollmentRunner<'a> {
 
     /// Re-derives the saved-query result under the query's OWN owner actor and
     /// the evaluator's current grants, and reports whether the persisted event
-    /// still describes reality.
+    /// still describes reality. With no judge bound, evidence that moved
+    /// reads as stale instead of failing, so the next wake re-detects it.
     async fn evidence_still_holds(
         &self,
         evaluator: &SavedQueryEvaluator<'_>,
@@ -506,7 +507,7 @@ impl<'a> CampaignEnrollmentRunner<'a> {
     ) -> Result<bool> {
         let record = read_saved_query(self.vault, event.owner_actor, event.query_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let outcome = evaluator
+        let outcome = match evaluator
             .evaluate_entity(&EvaluationRequest {
                 query_ref: event.query_ref,
                 campaign_ref: event.campaign_ref,
@@ -516,7 +517,16 @@ impl<'a> CampaignEnrollmentRunner<'a> {
                 valid_at: event.valid_at,
                 detected_at: now,
             })
-            .await?;
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(Error::InvalidConfig(message))
+                if message.contains("judge requires an injected backend") =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
         Ok(outcome.decision.verdict == MatchVerdict::Match
             && outcome.evidence_hash == event.evidence_hash)
     }
