@@ -341,6 +341,19 @@ pub(crate) fn found_key_actions_in_txn(
         }))
 }
 
+/// The custody record of each key a mask lifted out of `record`, in the
+/// order they were found: what an erase of a row outside the entity tables
+/// revokes (FIX 6710).
+pub(super) fn found_key_custody_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(FOUND
+        .get(store, txn, record)?
+        .map_or_else(Vec::new, |found| found.keys.iter().map(|key| key.custody).collect()))
+}
+
 /// The values the owner ruled no secret, by record: the write door reads
 /// none of them as a hit in its record, and the mask leaves each as
 /// written. Each value is read from its revoked custody record and wiped
