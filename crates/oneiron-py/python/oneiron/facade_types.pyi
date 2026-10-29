@@ -21464,6 +21464,7 @@ class FieldSpec(TypedDict):
     instruction: NotRequired[str | None]
     enum_values: NotRequired[list[str] | None]
     secret: NotRequired[str | None]
+    secret_is_text: NotRequired[bool]
 class ReplayActionOpen(TypedDict):
     action: Literal["open"]
     url: str
@@ -21591,6 +21592,15 @@ class WorkflowSeed(TypedDict):
     path: str
     digest: str
     license: str
+class SecretArgHandle(TypedDict):
+    handle: str
+class SecretArgText(TypedDict):
+    text: str
+SecretArg = SecretArgHandle | SecretArgText
+class SnapshotBounds(TypedDict):
+    read_chars: NotRequired[int | None]
+    snapshot_origins: NotRequired[int | None]
+    snapshot_bytes: NotRequired[int | None]
 class ProposeInput(TypedDict):
     subgoal: NotRequired[str]
     params: NotRequired[list[str]]
@@ -21601,6 +21611,8 @@ class ProposeInput(TypedDict):
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
     candidate: NotRequired[str | None]
+    secret_args: NotRequired[dict[str, SecretArg]]
+    snapshot_bounds: NotRequired[SnapshotBounds | None]
 SlotField = Literal["text", "option"]
 class SlotCandidate(TypedDict):
     step: int
@@ -22124,11 +22136,6 @@ class LibraryRetiredOutput(TypedDict):
     retired: list[RetiredCard]
 BrowserLibraryRetiredOutput = BrowserAnswer
 LibraryRunMode = Literal["strict", "assisted"]
-class SecretArgHandle(TypedDict):
-    handle: str
-class SecretArgText(TypedDict):
-    text: str
-SecretArg = SecretArgHandle | SecretArgText
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
@@ -22151,10 +22158,6 @@ class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
 BrowserHandoverOutput = BrowserAnswer
-class SnapshotBounds(TypedDict):
-    read_chars: NotRequired[int | None]
-    snapshot_origins: NotRequired[int | None]
-    snapshot_bytes: NotRequired[int | None]
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str
