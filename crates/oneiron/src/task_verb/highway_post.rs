@@ -216,9 +216,15 @@ fn stamp_copy_fields(
 }
 
 /// The digest one post's request binds: the actor, the key, the brief,
-/// every routed field and the parent it files under (DOOR-113). A replay
-/// under the same key with any other request is refused, as an ask's is.
-fn request_digest(actor: EntityId, key: &str, post: &TaskPost) -> MemoryResult<[u8; 32]> {
+/// every routed field and `parent_ref`, the parent it files under
+/// (DOOR-113). A replay under the same key with any other request is
+/// refused, as an ask's is.
+fn request_digest(
+    actor: EntityId,
+    key: &str,
+    post: &TaskPost,
+    parent_ref: Option<EntityId>,
+) -> MemoryResult<[u8; 32]> {
     let bytes = rmp_serde::to_vec_named(&(
         actor,
         key,
@@ -227,7 +233,7 @@ fn request_digest(actor: EntityId, key: &str, post: &TaskPost) -> MemoryResult<[
         &post.spec,
         post.ttl,
         &post.label,
-        post.parent_ref,
+        parent_ref,
     ))
     .map_err(|_| MemoryError::bad_request("task post does not encode"))?;
     let mut hasher = blake3::Hasher::new();
@@ -515,7 +521,13 @@ impl Memory<'_> {
                 stale_pins,
             )
         };
-        let digest = request_digest(self.actor(), &key.text, &post)?;
+        // A redo binds its source's parent, the one a copy drops when it
+        // turned unfit too (FIX 11106): a parent that turns unfit or fit
+        // again between two calls under one key changes no request.
+        let parent_ref = post
+            .parent_ref
+            .or(copy.and_then(|copy| copy.dropped_parent));
+        let digest = request_digest(self.actor(), &key.text, &post, parent_ref)?;
         let spec = create_spec_of(&post, self.actor(), type_ref, now);
         let validated = validate_task_create(self.vault(), &spec, now)?;
         let stored = StoredBrief::first(post.brief.clone());
