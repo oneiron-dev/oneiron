@@ -141,6 +141,7 @@ impl HostSelfDispatcher<'_> {
             class: hook_class(self.actor.actor_class()),
             scope,
             board_epoch: None,
+            turn: None,
             domain: hook_domain(&call),
             reader: read_as,
         };

@@ -101,6 +101,8 @@ pub enum HookReplayResult {
         /// No run pinned this entry's reads; they read current rows.
         reads_live: bool,
     },
+    /// The hook's current grant no longer shows a saved dependency.
+    Withheld { reason: String },
     /// The entry's inputs are gone: replay will not read newer state instead.
     MissingHistory { reason: String },
 }
@@ -180,8 +182,46 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
-        self.hooks_replay_page_listing(runtime, verdict, binding, since, None, limit)
-            .map(|(page, rows)| (page.entries, rows))
+        let total = limit.max(1);
+        let mut entries = Vec::new();
+        let mut rows: Option<Vec<EntityId>> = Some(Vec::new());
+        let mut cursor = None;
+        let mut since = since;
+        loop {
+            let remaining = total.saturating_sub(entries.len());
+            if remaining == 0 {
+                break;
+            }
+            let page_limit = remaining.min(MAX_REPLAY_ENTRIES);
+            let (page, listed) = self.hooks_replay_page_listing(
+                runtime,
+                verdict.clone(),
+                binding,
+                since.take(),
+                cursor,
+                page_limit,
+            )?;
+            entries.extend(page.entries);
+            if let Some(listed) = listed {
+                if let Some(acc) = rows.as_mut() {
+                    acc.extend(listed);
+                }
+            } else {
+                rows = None;
+            }
+            let Some(next) = page.next else {
+                break;
+            };
+            if entries.len() >= total {
+                break;
+            }
+            cursor = Some(next);
+        }
+        if let Some(rows) = rows.as_mut() {
+            rows.sort_unstable();
+            rows.dedup();
+        }
+        Ok((entries, rows))
     }
 
     /// [`Self::hooks_replay`] over `row` as given, stored or not: a hub
@@ -215,8 +255,47 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
-        self.hooks_replay_binding_page(runtime, verdict, binding_id, row, since, None, limit)
-            .map(|(page, rows)| (page.entries, rows))
+        let total = limit.max(1);
+        let mut entries = Vec::new();
+        let mut rows: Option<Vec<EntityId>> = Some(Vec::new());
+        let mut cursor = None;
+        let mut since = since;
+        loop {
+            let remaining = total.saturating_sub(entries.len());
+            if remaining == 0 {
+                break;
+            }
+            let page_limit = remaining.min(MAX_REPLAY_ENTRIES);
+            let (page, listed) = self.hooks_replay_binding_page(
+                runtime,
+                verdict,
+                binding_id,
+                row,
+                since.take(),
+                cursor,
+                page_limit,
+            )?;
+            entries.extend(page.entries);
+            if let Some(listed) = listed {
+                if let Some(acc) = rows.as_mut() {
+                    acc.extend(listed);
+                }
+            } else {
+                rows = None;
+            }
+            let Some(next) = page.next else {
+                break;
+            };
+            if entries.len() >= total {
+                break;
+            }
+            cursor = Some(next);
+        }
+        if let Some(rows) = rows.as_mut() {
+            rows.sort_unstable();
+            rows.dedup();
+        }
+        Ok((entries, rows))
     }
 
     /// `body` over `runs`, each on what it saved, by hex run key: one

@@ -3601,6 +3601,12 @@ pub struct ShapeApplyItem {
         skip_serializing_if = "Option::is_none"
     )]
     pub slips_kept: Option<bool>,
+    #[serde(
+        rename = "receipt_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_refs: Option<Vec<String>>,
 }
 
 /// `oneiron::vault_shape::run::ShapeApplyRun`.
@@ -17232,6 +17238,11 @@ pub enum HookReplayOutcome {
         from_memo: bool,
         #[serde(rename = "reads_live")]
         reads_live: bool,
+    },
+    #[serde(rename = "withheld")]
+    Withheld {
+        #[serde(rename = "reason")]
+        reason: String,
     },
     #[serde(rename = "missing_history")]
     MissingHistory {
@@ -35083,6 +35094,12 @@ pub struct HookGoldenDiff {
     pub cases: u64,
     #[serde(rename = "changed")]
     pub changed: Vec<String>,
+    #[serde(rename = "execution_failed")]
+    pub execution_failed: Vec<String>,
+    #[serde(rename = "withheld")]
+    pub withheld: Vec<String>,
+    #[serde(rename = "missing_history")]
+    pub missing_history: Vec<String>,
 }
 
 /// `oneiron::runtime_hooks::regen::HookRegenFailurePhase`.

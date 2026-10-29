@@ -378,7 +378,13 @@ impl CompactionBackend for ServedCompactionBackend {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> Result<CompactionProduct, CompactionRefusal> {
-        let served = self.serve(request, retry, &Admit::Role, |_, _| Ok(()))?;
+        // The seat resolved at bind is the exact model: admit it directly,
+        // with no role-route rewrite or fallback (FIX 4541).
+        let admit = Admit::Exact {
+            model: self.model.clone(),
+            locality: self.locality,
+        };
+        let served = self.serve(request, retry, &admit, |_, _| Ok(()))?;
         Ok(product_of(&served.response, served.latency))
     }
 }

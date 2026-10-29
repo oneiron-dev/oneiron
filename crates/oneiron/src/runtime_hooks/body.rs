@@ -43,6 +43,12 @@ pub trait HookBodyRuntime: Send + Sync {
         let _ = verdict;
         self.run_hook(body, input_json, context, read)
     }
+
+    /// The exact runtime that executes the body, when the implementation has
+    /// a stable identity. A run records it in its derivation envelope.
+    fn runtime_identity(&self) -> Option<String> {
+        None
+    }
 }
 
 /// What one body run gave back.

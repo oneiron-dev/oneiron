@@ -1139,6 +1139,7 @@ class ShapeApplyItem(TypedDict):
     state: ShapeItemState
     approval: NotRequired[ShapeApprovalDependencies | None]
     slips_kept: NotRequired[bool]
+    receipt_refs: NotRequired[list[str] | None]
 class ShapeApplyRun(TypedDict):
     run_id: str
     root: str
@@ -5562,10 +5563,13 @@ class HookReplayOutcomeRan(TypedDict):
     compare: HookReplayCompare
     from_memo: bool
     reads_live: bool
+class HookReplayOutcomeWithheld(TypedDict):
+    status: Literal["withheld"]
+    reason: str
 class HookReplayOutcomeMissingHistory(TypedDict):
     status: Literal["missing_history"]
     reason: str
-HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
+HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeWithheld | HookReplayOutcomeMissingHistory
 class HookReplayRow(TypedDict):
     case: HookReplayCase
     result: HookReplayOutcome
@@ -11120,6 +11124,9 @@ class HookContractStamp(TypedDict):
 class HookGoldenDiff(TypedDict):
     cases: int
     changed: list[str]
+    execution_failed: list[str]
+    withheld: list[str]
+    missing_history: list[str]
 HookRegenFailurePhase = Literal["intent", "generate", "validate", "golden_replay"]
 class HookRegenFailure(TypedDict):
     phase: HookRegenFailurePhase

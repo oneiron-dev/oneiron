@@ -155,15 +155,48 @@ impl EngineNativeExecutor<'_> {
             };
             let request =
                 self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
-            if let Some(reason) = self.feed_compaction(config, &record, &request)? {
-                return Ok(self.outcome(
-                    EngineExecutorStatus::WindowFull {
-                        next_step_seq: completed_steps,
-                        reason,
-                    },
-                    steps_run,
-                    record,
-                ));
+            match self.feed_compaction(config, &record, &request)? {
+                Ok(Some(reason)) => {
+                    return Ok(self.outcome(
+                        EngineExecutorStatus::WindowFull {
+                            next_step_seq: completed_steps,
+                            reason,
+                        },
+                        steps_run,
+                        record,
+                    ));
+                }
+                Ok(None) => {}
+                Err(stop) => {
+                    let Some(wait) = turn_hook_wait(&stop) else {
+                        return Err(Error::from(stop).into());
+                    };
+                    let key = wait_key(&record, &wait);
+                    if !self.storage.park_wait(&key)? {
+                        return Ok(self.outcome(
+                            EngineExecutorStatus::Waiting(wait),
+                            steps_run,
+                            record,
+                        ));
+                    }
+                    // The ask settled before the park: retry the same sealed
+                    // invocation once, with its fold marks still pending.
+                    self.storage.clear_wait(&key)?;
+                    match self.feed_compaction(config, &record, &request)? {
+                        Ok(Some(reason)) => {
+                            return Ok(self.outcome(
+                                EngineExecutorStatus::WindowFull {
+                                    next_step_seq: completed_steps,
+                                    reason,
+                                },
+                                steps_run,
+                                record,
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(stop) => return Err(Error::from(stop).into()),
+                    }
+                }
             }
             // Rule 5 (FIX 4197): the first step past the `[limits]
             // executor_run_steps` row asks whether everything is okay, once
@@ -184,7 +217,13 @@ impl EngineNativeExecutor<'_> {
                 let _generating = self.gated_write.activity_generating();
                 self.backend.generate(request, self.lease).await
             }?;
-            self.post_turn_hooks(turn, &response)?;
+            let execution_text = self.post_turn_hooks(turn, &response)?;
+            // Only the post-hook execution view is healed below. The raw
+            // provider response stays separate as evidence (FIX 9840).
+            let mut execution_response = response.clone();
+            execution_response.message.content = vec![ContentPart::Text {
+                text: execution_text,
+            }];
             // The provider that answered is the one this turn's program
             // speaks for: each verb call it makes carries the name (OF-560).
             self.gated_write
@@ -204,7 +243,7 @@ impl EngineNativeExecutor<'_> {
                 code: script,
                 trailing_speak,
                 repairs,
-            } = heal_executor_reply(&response)?;
+            } = heal_executor_reply(&execution_response)?;
             record_script_output(
                 &self.storage,
                 &mut record,
