@@ -1,6 +1,6 @@
 //! Pack hook bindings: the stored row, its read doors and the owner's bind
 //! and enable switches.
-//! Entry: `PackHookBinding`. Defines its own items; the binding scan and install stay in `hooks`.
+//! Entry: `PackHookBinding`. Defines its own items; the binding scan stays in `hooks`, its writes in `install`.
 
 use super::*;
 
