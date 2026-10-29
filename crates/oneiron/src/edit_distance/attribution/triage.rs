@@ -8,17 +8,17 @@
 //! [`TriagePacket`] is its stable JSON shape, so it can be handed as it is to
 //! any debugging agent; the fix rides the normal propose lane.
 //!
-//! One escalation per subject, scope and signal: an Ask NOTIFICATION in each
-//! live owner's inbox, keyed by all four, so the row is its own
-//! open-escalation record. A re-trigger rewrites that row's packet and puts
+//! One escalation per subject, project, scope and signal: an Ask
+//! NOTIFICATION in each live owner's inbox, keyed by all five, so the row
+//! is its own open-escalation record. A re-trigger rewrites that row's packet and puts
 //! it back in front of an owner who had cleared it; the same trigger again
 //! writes nothing, and a row its owner deleted stays deleted.
 //!
 //! Routing by publisher (r5): the packet names its artifact's publisher, and
-//! every packet reaches the owner's inbox. A shipped artifact's issue
-//! signature is not emitted here: the ED-08 signature door needs a
-//! registered model stack and a numbered artifact version, which these
-//! receipts do not carry.
+//! every packet reaches the owner's inbox. A shipped subject's packet also
+//! earns its ED-08 issue signature in the same write (FIX 11634), resolved
+//! from the packet's own receipts; it is stored local — whether it may
+//! leave stays the delivery lane's switches to decide.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use super::cells::charges_subject;
 use super::evidence_judge::amendment_judgments_in_txn;
 use super::stored::{EVIDENCE, EVIDENCE_ROW_LABEL, hex_entity};
-use super::taxonomy::AmendmentJudgment;
+use super::taxonomy::{AmendmentClass, AmendmentJudgment};
 use super::worsening::outcomes_in_txn;
 use crate::Vault;
 use crate::claim::ClaimSource;
@@ -41,7 +41,7 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_NOTIFICATION};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// Producer name of a worsening escalation.
-const NOTIFICATION_PRODUCER_WORSENING: &str = "edit_distance.worsening";
+pub(super) const NOTIFICATION_PRODUCER_WORSENING: &str = "edit_distance.worsening";
 
 /// Newest failing receipts a packet cites. Canon pins no bound; sixteen
 /// keeps one packet one inbox row.
@@ -169,7 +169,9 @@ pub struct AgentDefinitionRef {
     /// The AGENT_DEF entity.
     pub definition: String,
     pub agent_id: String,
-    /// Its version as it stands now; the runs may have used an earlier one.
+    /// The revision the failing runs were stamped with, where their pack
+    /// receipts pin one (FIX 11637); else its version as it stands now, and
+    /// the runs may have used an earlier one.
     pub version: String,
     /// The seeded `sys.*` id of a shipped definition.
     pub logical_id: Option<String>,
@@ -209,6 +211,11 @@ pub struct TriagePacket {
     pub subject_kind: TriageSubject,
     /// The consent scope the failing receipts share.
     pub scope: String,
+    /// The project the failing runs counted in, as an entity id; `None` is
+    /// the vault's (FIX 11627). A packet written before packets carried a
+    /// project decodes as the vault's.
+    #[serde(default)]
+    pub project: Option<String>,
     pub publisher: ArtifactPublisher,
     /// The newest failing receipts, oldest first: the judged receipts in this
     /// scope that charge the subject or left an amended or rejected outcome
@@ -224,8 +231,10 @@ pub struct TriagePacket {
     pub at: u64,
 }
 
-/// The packet `signal` mints for `subject` in `scope` at `at`, read from the
-/// judgment ledger, the subject's cells and the records they name in `txn`.
+/// The packet `signal` mints for `subject` in `scope` and `project` (`None`,
+/// the vault's) at `at`, read from the judgment ledger, the subject's cells
+/// and the records they name in `txn`. Only outcomes and judgments that
+/// counted in `project` enter it (FIX 11627).
 ///
 /// # Errors
 ///
@@ -236,13 +245,14 @@ pub(super) fn packet_in_txn(
     subject: EntityId,
     subject_kind: TriageSubject,
     scope: &str,
+    project: Option<EntityId>,
     at: u64,
     signal: WorseningSignal,
 ) -> Result<TriagePacket> {
     // A count-only outcome charges nobody, yet it is the subject's failure.
     let marked: BTreeSet<String> = outcomes_in_txn(vault, txn, &subject, scope)?
         .into_iter()
-        .filter(|outcome| outcome.failed())
+        .filter(|outcome| outcome.failed() && outcome.project == project)
         .map(|outcome| outcome.receipt)
         .collect();
     let mut failing: Vec<AmendmentJudgment> = amendment_judgments_in_txn(vault, txn)?
@@ -250,6 +260,7 @@ pub(super) fn packet_in_txn(
         .map(|(row, _)| row)
         .filter(|row| {
             row.scope == scope
+                && row.project == project
                 && (charges_subject(row, &subject) || marked.contains(&row.receipt_id))
         })
         .collect();
@@ -260,6 +271,7 @@ pub(super) fn packet_in_txn(
         actors.push(subject);
     }
     let mut receipts = Vec::new();
+    let mut definition_pins: Vec<(String, String)> = Vec::new();
     for row in failing.into_iter().skip(skip) {
         let evidence = EVIDENCE.get(&vault.store, txn, &row.receipt_id)?;
         let mut skill = (subject_kind == TriageSubject::Skill).then_some(subject);
@@ -280,6 +292,20 @@ pub(super) fn packet_in_txn(
             }
             None => None,
         };
+        // A run whose pack receipt pins no attribution field set names no
+        // definition revision; its packet ref falls back to the live row.
+        if let Some(attempt) = row.attempt_receipt.as_deref()
+            && let Some(receipt) =
+                crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
+            && let Ok(fields) = receipt.pack_attribution_fields()
+            && let Some(pin) = fields.agent_definition
+            && let Some((agent_id, version)) = pin.rsplit_once('@')
+        {
+            let pin = (agent_id.to_owned(), version.to_owned());
+            if !definition_pins.contains(&pin) {
+                definition_pins.push(pin);
+            }
+        }
         receipts.push(TriageReceipt {
             delta_ref: amendment_recorded_in_txn(vault, txn, &row.receipt_id)?
                 .then(|| row.receipt_id.clone()),
@@ -295,7 +321,12 @@ pub(super) fn packet_in_txn(
     }
     let mut agent_definitions = Vec::new();
     for actor in &actors {
-        agent_definitions.extend(agent_definition_in_txn(vault, txn, actor)?);
+        agent_definitions.extend(agent_definitions_in_txn(
+            vault,
+            txn,
+            actor,
+            &definition_pins,
+        )?);
     }
     let publisher = publisher_in_txn(vault, txn, subject, subject_kind, &agent_definitions)?;
     let mut skills: Vec<SkillAtVersion> = Vec::new();
@@ -319,6 +350,7 @@ pub(super) fn packet_in_txn(
         subject: subject.to_hex(),
         subject_kind,
         scope: scope.to_owned(),
+        project: project.map(|project| project.to_hex()),
         publisher,
         receipts,
         agent_definitions,
@@ -359,6 +391,7 @@ pub(super) fn escalate_in_txn(
             subject_refs.push(id);
         }
     }
+    let mut wrote = false;
     for owner in crate::policy_model::owners_in_txn(vault, &*txn)? {
         let owner_ref = owner.to_hex();
         let event = NotificationEvent {
@@ -366,11 +399,12 @@ pub(super) fn escalate_in_txn(
             source: NotificationSource {
                 producer: NOTIFICATION_PRODUCER_WORSENING.to_owned(),
                 // The scope goes last: it is the one part that may hold a
-                // separator.
+                // separator. The project segment is empty for the vault's.
                 event: format!(
-                    "{}:{}:{owner_ref}:{}",
+                    "{}:{}:{owner_ref}:{}:{}",
                     packet.signal.token(),
                     packet.subject,
+                    packet.project.as_deref().unwrap_or_default(),
                     packet.scope
                 ),
                 result: Some(packet.subject.clone()),
@@ -406,8 +440,52 @@ pub(super) fn escalate_in_txn(
         body.seen_by.remove(&owner_ref);
         body.acked_by.remove(&owner_ref);
         vault.put_notification_in_txn(txn, &id, &body)?;
+        wrote = true;
+    }
+    // One signature per new trigger, not per owner (FIX 11634): a trigger
+    // every row already held earned its signature when it landed, and the
+    // emit is idempotent for an owner who did not hold it.
+    if wrote && packet.publisher == ArtifactPublisher::Shipped {
+        let category = signature_category_in_txn(vault, &*txn, packet)?;
+        if let Some(signature) = vault.packet_issue_signature_in_txn(&*txn, packet, category)? {
+            crate::edit_distance::publisher::emit_issue_signature_local_in_txn(
+                vault, txn, &signature,
+            )?;
+        }
     }
     Ok(())
+}
+
+/// The ED-08 category `packet`'s signature files under: the defect class
+/// its subject kind names, when one of the packet receipts' judgments
+/// actually charged the subject with it; unclear when none did — a packet
+/// minted by counts alone claims no class it cannot point at.
+fn signature_category_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    packet: &TriagePacket,
+) -> Result<crate::edit_distance::publisher::IssueCategory> {
+    use crate::edit_distance::publisher::IssueCategory;
+    let wanted = match packet.subject_kind {
+        TriageSubject::Skill => AmendmentClass::SkillDefect,
+        TriageSubject::Actor => AmendmentClass::ExecutionLapse,
+    };
+    let Ok(subject) = EntityId::from_hex(&packet.subject) else {
+        return Ok(IssueCategory::Unclear);
+    };
+    for receipt in &packet.receipts {
+        let Some(judgment) =
+            super::evidence_judge::amendment_judgment_in_txn(vault, txn, &receipt.receipt)?
+        else {
+            continue;
+        };
+        if judgment.split.iter().any(|share| {
+            share.class == wanted && share.subject == Some(subject) && share.share > 0.0
+        }) {
+            return Ok(IssueCategory::from_verdict(wanted));
+        }
+    }
+    Ok(IssueCategory::Unclear)
 }
 
 /// The triage packet the worsening escalation `id` carries; `None` when `id`
@@ -466,27 +544,43 @@ fn skill_at_version_in_txn(
         .map(|record| at_version(record, false)))
 }
 
-/// `actor`'s AgentDefinition, when it is a live AGENT_DEF.
-fn agent_definition_in_txn(
+/// `actor`'s AgentDefinition at each revision the failing runs pinned for
+/// it (FIX 11637), or as it stands now when none of them pinned one; empty
+/// when `actor` is not a live AGENT_DEF.
+fn agent_definitions_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: &EntityId,
-) -> Result<Option<AgentDefinitionRef>> {
+    pins: &[(String, String)],
+) -> Result<Vec<AgentDefinitionRef>> {
     let LiveEntityRow::Live { entity_type, body } =
         live_entity_row_in_txn(&vault.store, txn, actor)?
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     if entity_type != ENTITY_TYPE_AGENT_DEF {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let definition = crate::agent_def::decode_agent_definition(&body)?;
-    Ok(Some(AgentDefinitionRef {
+    let standing = AgentDefinitionRef {
         definition: actor.to_hex(),
         agent_id: definition.agent_id,
         version: definition.version,
         logical_id: definition.logical_id,
-    }))
+    };
+    let pinned: Vec<AgentDefinitionRef> = pins
+        .iter()
+        .filter(|(agent_id, _)| *agent_id == standing.agent_id)
+        .map(|(_, version)| AgentDefinitionRef {
+            version: version.clone(),
+            ..standing.clone()
+        })
+        .collect();
+    Ok(if pinned.is_empty() {
+        vec![standing]
+    } else {
+        pinned
+    })
 }
 
 /// Who published `subject`: an imported skill, or a seeded agent definition,

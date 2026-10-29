@@ -125,6 +125,27 @@ pub(crate) fn emit_issue_signature_in_txn(
     Ok(id)
 }
 
+/// [`emit_issue_signature`] in the caller's write, with no send lane: the
+/// signature lands with what else that write records and reads
+/// [`SignatureSendState::Local`] until a lane takes it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn emit_issue_signature_local_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    sig: &IssueSignature,
+) -> Result<EntityId> {
+    // The id is spelled from the signature's own stored bytes, so emitting
+    // the same signature again — a trigger re-escalated to an owner who
+    // did not hold it yet — lands on the same row instead of a second one.
+    let bytes = encode_signature(sig)?;
+    let id = EntityId::derive(b"oneiron:issue-signature:v1", &[bytes.as_slice()])?;
+    SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
+    Ok(id)
+}
+
 /// Reads back the signature stored under `id`.
 ///
 /// # Errors

@@ -390,9 +390,18 @@ fn persist_amendment_split(
 
     let receipt_id_owned = receipt_id.to_owned();
     vault.with_write_txn_grouped(|wtxn| {
+        // A displaced judge's answers no longer land (FIX 11638): the fence
+        // the attempt lane checks before its judgment put.
+        if let Some(revision) = judgment.judge.as_deref() {
+            crate::skill_attribution::ensure_current_attribution_judge_in_txn(
+                vault, &*wtxn, revision,
+            )?;
+        }
         let mut row = row.clone();
         row.proposal = settle_edit_proposal_in_txn(vault, wtxn, &receipt_id_owned, &judgment)?;
         JUDGMENT.put(&vault.store, wtxn, &receipt_id_owned, &row)?;
+        // The labels settle their write-once cause row in the same write.
+        super::causes::put_amendment_cause_in_txn(vault, wtxn, &judgment)?;
         // A note and the judgment that demanded it land together, and a
         // re-judgment that no longer carries the share withdraws the note it
         // no longer stands behind.
@@ -577,7 +586,7 @@ pub(super) fn amendment_judgments_in_txn(
 }
 
 /// The judgment persisted for `receipt_id` on the caller's snapshot, if any.
-pub(super) fn amendment_judgment_in_txn(
+pub(in crate::edit_distance) fn amendment_judgment_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt_id: &str,

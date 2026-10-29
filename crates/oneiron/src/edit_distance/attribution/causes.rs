@@ -1,23 +1,38 @@
-//! The amendment judge's labels, read for one actor (FIX 8264): the inlet
-//! agent-health cards join beside the attempt lane's settled causes.
+//! The amendment judge's labels, kept and read for one actor (FIX 8264,
+//! 11638): the inlet agent-health cards join beside the attempt lane's
+//! settled causes.
 //!
-//! Only what the judgment ledger keeps is exposed. An amendment's labels are
-//! its judgment's split, overwritten when it is judged again: there is no
-//! cause row of their own, so no source id, no displacement fence and no
-//! witness list stand behind them.
+//! Every persisted amendment judgment also settles a cause row here,
+//! write-once per receipt and judge-revision slot, in the same write as the
+//! judgment row. The judgment row is overwritten when the amendment is
+//! judged again; its cause rows are not. Each stands under the revision
+//! fence the attempt lane keeps: once its judge revision is displaced, the
+//! row reads back with the displacement named, so a label the re-judgment
+//! dropped stops standing as current. A withdrawal deletes no cause row —
+//! labels a judge once settled are history the fence retires, not an
+//! abstention.
 
 use std::ops::RangeInclusive;
 
-use super::evidence_judge::amendment_judgments_in_txn;
-use super::stored::{EVIDENCE, EVIDENCE_ROW_LABEL, hex_entity};
-use super::taxonomy::{AmendmentClass, AmendmentShare};
+use super::evidence_judge::judgment_row;
+use super::stored::{
+    AMENDMENT_CAUSE, CAUSE_ROW_LABEL, JUDGMENT, ROW_VERSION, StoredAmendmentCause, hex_entity,
+};
+use super::taxonomy::{AmendmentClass, AmendmentJudgment, AmendmentShare};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::skill_attribution::displacing_revision_in_txn;
 
-/// One judged amendment or rejection, as its labels stand.
+/// Domain of a cause's source id: one id per receipt and judge-revision slot.
+const SOURCE_DOMAIN: &[u8] = b"oneiron:amendment-cause:v1";
+
+/// One judged amendment or rejection, as the judge revision that settled
+/// its cause row labeled it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AmendmentCauseRecord {
+    /// Immutable: the same receipt and revision slot always spell it.
+    pub source: EntityId,
     /// The judged receipt.
     pub receipt: String,
     /// The terminal pack receipt of the attempt the proposal came from, when
@@ -28,23 +43,78 @@ pub struct AmendmentCauseRecord {
     pub skill: Option<EntityId>,
     /// The label shares, summing to one.
     pub shares: Vec<AmendmentShare>,
-    /// The judge revision the labels stand on; `None` for the rule tier and
-    /// for settled or owner-scripted labels.
+    /// The judge revision the labels stand on; `None` only for settled,
+    /// unjudged or owner-scripted labels — the rule tier stamps its own
+    /// revision.
     pub judge: Option<String>,
     /// The drafting executor at revision; `None` when unknown.
     pub executor: Option<String>,
     /// A rejection's judgment, which carries no Δ.
     pub rejected: bool,
+    /// The revision that displaced `judge`, when one has: the labels are
+    /// history then, not current support.
+    pub displaced_by: Option<String>,
     pub at: u64,
 }
 
-/// Every judged amendment and rejection of `actor`'s proposals in `window`,
-/// oldest first, on the caller's snapshot; with `skill`, only those that
-/// name it. Reads stored rows only: it never asks a judge.
+/// Keeps `judgment`'s labels as their cause row, in the write that lands
+/// the judgment. First write wins for the receipt's revision slot: a later
+/// answer under the same judge revision never rewrites the row, as
+/// judgments are never rescored under one revision — except a held row
+/// that charged nobody (every share unclear), which takes the settled
+/// answer a later pass in the same slot brings, keeping its source id.
 ///
-/// The actor is the one the amendment's evidence row names. A rejection
-/// keeps no evidence row, so only its `execution_lapse` share names its
-/// actor.
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn put_amendment_cause_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    judgment: &AmendmentJudgment,
+) -> Result<()> {
+    let slot = judgment.judge.as_deref().unwrap_or_default();
+    let key = (receipt_key(&judgment.receipt_id), slot.to_owned());
+    let source = match AMENDMENT_CAUSE.get(&vault.store, wtxn, &key)? {
+        Some(held) => {
+            let held_unclear = held
+                .split
+                .iter()
+                .all(|share| share.class == AmendmentClass::Unclear.as_str() || share.share <= 0.0);
+            let settles = judgment
+                .split
+                .iter()
+                .any(|share| share.class != AmendmentClass::Unclear && share.share > 0.0);
+            if !(held_unclear && settles) {
+                return Ok(());
+            }
+            held.source
+        }
+        None => source_id(&judgment.receipt_id, slot)?.to_hex(),
+    };
+    let stored = judgment_row(judgment);
+    let row = StoredAmendmentCause {
+        v: ROW_VERSION,
+        receipt: judgment.receipt_id.clone(),
+        source,
+        actor: stored.actor,
+        skill: stored.skill,
+        attempt: judgment.attempt_receipt.clone(),
+        split: stored.split,
+        executor: stored.executor,
+        project: stored.project,
+        judge: stored.judge,
+        rejected: stored.rejected,
+        at: stored.at,
+    };
+    AMENDMENT_CAUSE.put(&vault.store, wtxn, &key, &row)
+}
+
+/// Every cause row settled on `actor`'s proposals in `window`, oldest
+/// first, on the caller's snapshot; with `skill`, only those that name it.
+/// One receipt re-judged under another revision reads back once per
+/// revision, each row marked when its judge was displaced; a receipt whose
+/// judgment was withdrawn reads none. Reads stored rows only: it never
+/// asks a judge.
 ///
 /// # Errors
 ///
@@ -58,51 +128,75 @@ pub(crate) fn amendment_causes_in_txn(
     window: RangeInclusive<u64>,
 ) -> Result<Vec<AmendmentCauseRecord>> {
     let mut causes = Vec::new();
-    for (judgment, join) in amendment_judgments_in_txn(vault, txn)? {
-        if !window.contains(&judgment.at) {
+    for (_, row) in AMENDMENT_CAUSE.scan(&vault.store, txn)? {
+        if !window.contains(&row.at) {
             continue;
         }
-        let evidence = EVIDENCE.get(&vault.store, txn, &judgment.receipt_id)?;
-        let named_actor = match &evidence {
-            Some(row) => Some(hex_entity(&row.actor, EVIDENCE_ROW_LABEL)?),
-            None => judgment
-                .split
-                .iter()
-                .find(|share| share.class == AmendmentClass::ExecutionLapse)
-                .and_then(|share| share.subject),
-        };
+        // A receipt whose judgment was withdrawn reads no causes: its rows
+        // stay stored as history, but no judgment stands behind them.
+        if JUDGMENT.get(&vault.store, txn, &row.receipt)?.is_none() {
+            continue;
+        }
+        let named_actor = row
+            .actor
+            .as_deref()
+            .map(|hex| hex_entity(hex, CAUSE_ROW_LABEL))
+            .transpose()?;
         if named_actor != Some(*actor) {
             continue;
         }
-        let named_skill = match (join, &evidence) {
-            (Some((_, joined)), _) => Some(joined),
-            (None, Some(row)) => row
-                .skill
-                .as_deref()
-                .map(|hex| hex_entity(hex, EVIDENCE_ROW_LABEL))
-                .transpose()?,
-            (None, None) => None,
-        };
+        let named_skill = row
+            .skill
+            .as_deref()
+            .map(|hex| hex_entity(hex, CAUSE_ROW_LABEL))
+            .transpose()?;
+        let shares: Vec<AmendmentShare> = row
+            .split
+            .iter()
+            .map(|share| -> Result<AmendmentShare> {
+                Ok(AmendmentShare {
+                    class: AmendmentClass::parse(&share.class)
+                        .ok_or(Error::CorruptedIndex(CAUSE_ROW_LABEL))?,
+                    share: share.share,
+                    subject: share
+                        .subject
+                        .as_deref()
+                        .map(|hex| hex_entity(hex, CAUSE_ROW_LABEL))
+                        .transpose()?,
+                })
+            })
+            .collect::<Result<_>>()?;
         if let Some(wanted) = skill
             && named_skill != Some(*wanted)
-            && !judgment
-                .split
-                .iter()
-                .any(|share| share.subject == Some(*wanted))
+            && !shares.iter().any(|share| share.subject == Some(*wanted))
         {
             continue;
         }
+        let displaced_by = match &row.judge {
+            Some(revision) => displacing_revision_in_txn(vault, txn, revision)?,
+            None => None,
+        };
         causes.push(AmendmentCauseRecord {
-            receipt: judgment.receipt_id,
-            attempt_receipt: judgment.attempt_receipt,
+            source: hex_entity(&row.source, CAUSE_ROW_LABEL)?,
+            receipt: row.receipt,
+            attempt_receipt: row.attempt,
             skill: named_skill,
-            shares: judgment.split,
-            judge: judgment.judge,
-            executor: judgment.executor,
-            rejected: judgment.rejected,
-            at: judgment.at,
+            shares,
+            judge: row.judge,
+            executor: row.executor,
+            rejected: row.rejected,
+            displaced_by,
+            at: row.at,
         });
     }
-    causes.sort_by(|a, b| (a.at, &a.receipt).cmp(&(b.at, &b.receipt)));
+    causes.sort_by(|a, b| (a.at, &a.receipt, &a.judge).cmp(&(b.at, &b.receipt, &b.judge)));
     Ok(causes)
+}
+
+fn receipt_key(receipt: &str) -> [u8; 32] {
+    *blake3::hash(receipt.as_bytes()).as_bytes()
+}
+
+fn source_id(receipt: &str, slot: &str) -> Result<EntityId> {
+    EntityId::derive(SOURCE_DOMAIN, &[receipt.as_bytes(), slot.as_bytes()])
 }
