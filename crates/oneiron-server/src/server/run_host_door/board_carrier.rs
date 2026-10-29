@@ -21,11 +21,13 @@ impl RunHostDoor {
         &self,
         answered: oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>>,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        let Ok(Ok(mut answer)) = answered else {
-            return answered;
-        };
-        answer.observations = self.take_observations();
-        Ok(Ok(answer))
+        match answered {
+            Ok(Ok(mut answer)) => {
+                answer.observations = self.take_observations();
+                Ok(Ok(answer))
+            }
+            other => other,
+        }
     }
 
     /// The one frame queued on the run's board connection, as an
