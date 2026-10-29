@@ -249,6 +249,7 @@ impl McpCallContext {
             room_turn: None,
             drain: Some(drain),
             forwarded: None,
+            client_surface: None,
         };
         rerun_saved_call(server, &context, call).await
     }
