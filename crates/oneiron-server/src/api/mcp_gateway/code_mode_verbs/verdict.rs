@@ -67,6 +67,7 @@ impl LadderDecider {
                         input,
                         held,
                         line.as_ref(),
+                        None,
                     );
                     // Only the verdict is read here; its rows are not.
                     let answered =

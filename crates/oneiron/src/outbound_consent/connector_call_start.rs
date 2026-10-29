@@ -151,6 +151,7 @@ impl Vault {
             code: None,
             sealed_arguments: None,
             off_record: memory.keeps_no_record(),
+            paced_until: None,
         };
         let Some(named) = named else {
             return self.drive_connector_call(None, None, pending, host);
@@ -190,6 +191,7 @@ impl Vault {
                         intent: None,
                         result: None,
                         result_absence: Some(ConnectorResultAbsence::NotRetained),
+                        budget_steering: Vec::new(),
                     }),
                 held.source_rows,
             )),

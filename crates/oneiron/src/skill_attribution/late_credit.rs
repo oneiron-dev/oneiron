@@ -65,6 +65,21 @@ pub fn late_credit_receipt(vault: &Vault, receipt_id: &str) -> Result<Option<Lat
     CREDIT_RECEIPT.get(&vault.store, &txn, &receipt_id.to_owned())
 }
 
+/// [`late_credit_receipt`] inside the caller's transaction, so a projection
+/// pass reads the sealed credit and the evidence it reconciles in one
+/// snapshot (FIX 10148).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn late_credit_receipt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt_id: &str,
+) -> Result<Option<LateCreditReceipt>> {
+    CREDIT_RECEIPT.get(&vault.store, txn, &receipt_id.to_owned())
+}
+
 /// The stored projection for one anchored outcome, using the projector's key.
 /// This read never runs attribution or mints a receipt.
 pub fn late_credit_receipt_for_outcome(

@@ -315,6 +315,7 @@ fn delivered(tool: WebTool, output: Value, is_error: bool) -> ConnectorCallReply
                 rpc_error: None,
             }),
             result_absence: None,
+            budget_steering: Vec::new(),
         },
     )
 }

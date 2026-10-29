@@ -301,8 +301,9 @@ impl Vault {
                 None => actor,
             };
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
-            // A pad is held by its world's holds too (OF-470).
-            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
+            // A pad is held by its world's holds too (OF-470), refused as
+            // this actor (FIX 3059).
+            crate::world_keys::reject_held_pad_world_as_in_txn(&self.store, &txn, &[*id], &actor)?;
             if reason.active_store_hard_purge_v1() {
                 self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
             }
@@ -762,7 +763,12 @@ impl Vault {
             .map(|due| due.prove_when_unpublished(self, &wtxn, id, authority_settled))
             .transpose()?;
         self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
-        crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
+        crate::world_keys::reject_held_pad_world_as_in_txn(
+            &self.store,
+            &wtxn,
+            &[*id],
+            requester.as_ref().unwrap_or(&HoldActor::UNATTRIBUTED),
+        )?;
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }

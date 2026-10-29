@@ -59,6 +59,21 @@ pub(crate) fn read_existing_entity_rows(
         .collect())
 }
 
+/// The `sync_state` rows under `prefixes` of the vault at `path`, read
+/// through the same read-only environment: a side restore's source's
+/// hard-delete markers (FIX 4753).
+pub(crate) fn read_existing_sync_state_rows(
+    path: &Path,
+    prefixes: &[&[u8]],
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    Ok(read_existing_rows(
+        path,
+        ("sync_state", "vault holds no sync state database"),
+        prefixes,
+    )?
+    .rows)
+}
+
 /// The embedding model the vault at `path` is pinned to, read through the
 /// same read-only environment; `None` when it holds none.
 pub(crate) fn read_existing_embedding_model(path: &Path) -> Result<Option<String>> {

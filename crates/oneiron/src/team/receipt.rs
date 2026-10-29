@@ -479,7 +479,7 @@ pub(super) fn team_receipt_in_txn(
 
 /// Which team receipts a scan keeps (FIX 6038).
 #[derive(Debug, Clone, Copy)]
-pub(super) enum ReceiptScan<'a> {
+pub(crate) enum ReceiptScan<'a> {
     /// Every scope's receipts, only those of one task type when one is
     /// named: an inventory.
     AllScopes(Option<&'a TypeRef>),
@@ -511,7 +511,7 @@ pub fn team_receipts(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<Te
 }
 
 /// The receipts `scan` keeps, in the caller's snapshot.
-pub(super) fn team_receipts_in_txn(
+pub(crate) fn team_receipts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     scan: ReceiptScan<'_>,

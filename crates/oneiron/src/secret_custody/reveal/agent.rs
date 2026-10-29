@@ -134,6 +134,18 @@ impl Vault {
                     receipt: Some(row.receipt(*reveal)?),
                 })
             };
+            // An approve-once covers the provider the owner saw. When the
+            // host now binds another, the reveal asks again for it, before
+            // the marker is spent; the old marker stays unspent (FIX 7991).
+            if row.state == SecretRevealState::ApprovedOnce
+                && now < row.expires_at
+                && row.provider != asker.provider
+            {
+                row.provider.clone_from(&asker.provider);
+                file_ask_in_txn(self, txn, reveal, &mut row, now)?;
+                REVEALS.put(&self.store, txn, reveal, &row)?;
+                return answer(SecretRevealDecision::Pending, &row);
+            }
             // A PERSON claim is re-admitted in this writer before any grant
             // is spent or receipt is written. A changed claim needs a new ask.
             let person_value = if row.person.is_some()

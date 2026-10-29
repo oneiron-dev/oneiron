@@ -786,6 +786,8 @@ pub(crate) fn draft_with_secrets(
             supersedes: None,
             seed: None,
             candidate: None,
+            secret_args: BTreeMap::new(),
+            snapshot_bounds: None,
         },
         slot_candidates,
         gaps: draft.gaps,

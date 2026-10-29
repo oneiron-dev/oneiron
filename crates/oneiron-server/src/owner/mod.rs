@@ -57,6 +57,18 @@ pub(crate) fn local_owner(vault: &oneiron::Vault) -> anyhow::Result<Authenticate
     Ok(owner)
 }
 
+/// The owner an offline host command acts as (FIX 8225; FIX 2222 = A): on a
+/// self-hosted vault the host acts as its owner, bound as [`local_owner`]
+/// binds it; on any other vault the operator acts as nobody, and the command
+/// gets the typed support-grant refusal, as a host credential does at every
+/// server door (`api::host_action`).
+pub(crate) fn host_owner(vault: &oneiron::Vault) -> anyhow::Result<AuthenticatedOwner> {
+    if vault.privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
+        return Err(oneiron::Error::HostActionRequiresSupportGrant.into());
+    }
+    local_owner(vault)
+}
+
 /// Why an owner action did not happen.
 #[derive(Debug)]
 pub(crate) enum OwnerError {

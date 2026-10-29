@@ -151,6 +151,7 @@ impl BrowserSession {
                     && serde_json::to_value(operands).is_ok_and(|given| given == armed.operands)
             });
             if same {
+                self.pre_press = Some(self.landed_seq());
                 return Ok(PressMode::PerSend);
             }
             self.press_refused = class.map(str::to_owned);
@@ -167,6 +168,9 @@ impl BrowserSession {
             return Ok(PressMode::None);
         };
         let pressed = self.press_for(class, row);
+        if pressed.is_ok() {
+            self.pre_press = Some(self.landed_seq());
+        }
         if pressed.is_err() {
             let need = if SendPolicy::person_only(class) {
                 PressNeed::PersonOnly

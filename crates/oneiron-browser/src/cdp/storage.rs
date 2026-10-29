@@ -32,6 +32,24 @@ impl Pipe {
         )
     }
 
+    /// Keeps the bound page `session`'s exit read was installed with
+    /// (FIX 11580): its reads are kept under the bound that read them,
+    /// not the session's bound of the moment.
+    pub(crate) fn note_exit_bound(&self, session: &str, bound: usize) {
+        if let Ok(mut pages) = self.pages.lock() {
+            pages.exit_bounds.insert(session.to_owned(), bound);
+        }
+    }
+
+    /// The bound page `session`'s exit read was installed with, when one
+    /// was (FIX 11580).
+    fn exit_bound(&self, session: &str) -> Option<usize> {
+        self.pages
+            .lock()
+            .ok()
+            .and_then(|pages| pages.exit_bounds.get(session).copied())
+    }
+
     /// Whether this pipe keeps its pages' storage reads.
     pub(crate) fn collects(&self) -> bool {
         self.sink.get().is_some()
@@ -90,7 +108,9 @@ impl Pipe {
             return;
         };
         let engine = BrowserEngine::Chromium;
-        let bound = self.snapshot_read_chars();
+        let bound = self
+            .exit_bound(session)
+            .unwrap_or_else(|| self.snapshot_read_chars());
         let Some(chars) = switch_storage_capture_policy(engine, StoragePhase::Exit, bound) else {
             return;
         };

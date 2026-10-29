@@ -154,10 +154,7 @@ fn fold_principal_reach(
     let mut grants = Vec::new();
     let mut relationships = BTreeSet::new();
     for kind in [ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM] {
-        for row in
-            crate::ports::EntityStoreRead::port_entity_ids_by_type(&vault.store, txn, kind, None)?
-        {
-            let id = row?;
+        for id in crate::access_grant::principal_reach_ids_in(vault, txn, kind)? {
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                 .ok_or(Error::CorruptedIndex("authority fingerprint row"))?;
             let header = EntityMetadataHeader::parse(&raw)

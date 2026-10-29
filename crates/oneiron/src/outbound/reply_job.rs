@@ -68,6 +68,10 @@ pub struct ConnectorReplyJob {
     pub event: ConnectorEvent,
     /// The wake attempt that handed the reply off.
     pub parent_attempt: AttemptId,
+    /// The 80%/95% budget messages the wake's charge fired (FIX 3761),
+    /// shown to the agent's reply turn. Empty when none fired.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub budget_steering: Vec<String>,
 }
 
 /// Where a reply job ended. The outbound receipt stays the authority on
