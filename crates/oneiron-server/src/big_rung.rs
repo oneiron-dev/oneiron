@@ -242,9 +242,10 @@ impl BigModel {
             });
         }
         let state = serde_json::to_string(&state).map_err(failed)?;
-        // A yes/no question's criteria triple, as the rubric it is judged by.
-        let rubric = QuestionCriteria::for_call(call)
-            .map(|criteria| format!("{}\n", criteria.rubric()))
+        // The question's criteria triple, as the rubric its contract is
+        // judged by (FIX 2181).
+        let rubric = QuestionCriteria::rubric_in(call.state, &call.question.contract)
+            .map(|rubric| format!("{rubric}\n"))
             .unwrap_or_default();
         content.push(ContentPart::Text {
             text: format!(

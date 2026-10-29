@@ -2,6 +2,7 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
+use oneiron::llm::decision::{AnswerContract, RemoteDecisionCapability};
 use oneiron::llm::routing::DescriptionNotes;
 
 use super::{
@@ -93,11 +94,10 @@ impl DecisionProvider for SystemOneRung {
         self.seat.pin()
     }
 
+    /// A score goes to the seat with the caller's levels (FIX 3269); a score
+    /// with none abstains, so the call steps up.
     fn capability(&self) -> ProviderCapability {
-        ProviderCapability {
-            score: false,
-            ..ProviderCapability::default()
-        }
+        ProviderCapability::default()
     }
 
     /// The seat sends a call's images as named wire assets, when the posture
@@ -117,16 +117,33 @@ impl DecisionProvider for SystemOneRung {
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let abstain = ProviderDecision {
+            answer: DecisionAnswer::Abstain,
+            probability: None,
+            paired: None,
+            person: None,
+            served: None,
+        };
+        let score_levels = call.score_levels().unwrap_or_default();
+        if matches!(call.question.contract, AnswerContract::Score { .. })
+            && score_levels.is_empty()
+        {
+            return Ok(abstain);
+        }
         let request = SeatRequest {
             question: call.question.clone(),
             state: call.state.clone(),
             images: call.images.to_vec(),
             audio: call.audio.to_vec(),
-            score_levels: Vec::new(),
+            score_levels,
             posture: self.posture,
             remote_opt_in: self.remote_opt_in,
             phase: SeatPhase::Background,
         };
+        // More levels than the seat reads passes it over (FIX 9909).
+        if !RemoteDecisionCapability::default().takes(&request) {
+            return Ok(abstain);
+        }
         request
             .validate_remote()
             .map_err(|_| failed("the posture or the request keeps this call local"))?;
