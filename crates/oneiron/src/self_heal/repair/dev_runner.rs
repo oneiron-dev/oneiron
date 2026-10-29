@@ -9,8 +9,8 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, ScopedReadResult};
 use crate::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatcher,
-    ByoaEgressPort, ByoaError, ByoaResult, ByoaStream, DispatchByoa, DreamerProviderAdapter,
-    DreamerProviderInput, StagedJob,
+    ByoaEgressPort, ByoaError, ByoaResult, ByoaStream, DevRunnerRefs, DispatchByoa,
+    DreamerProviderAdapter, DreamerProviderInput, StagedJob,
 };
 use crate::limit_ask::EngineLimit;
 use crate::self_heal::healer_host::HealerRegistration;
@@ -171,6 +171,22 @@ impl HealerRegistration<'_> {
             EngineLimit::RepairDiagnosticRefs,
             failure_corpus.value.len() as u64,
         );
+        let diagnostics: BTreeSet<[u8; 16]> = failure_corpus
+            .value
+            .iter()
+            .map(|failure| *failure.diagnostic_ref.as_bytes())
+            .collect();
+        let evidence: BTreeSet<[u8; 16]> = failure_corpus
+            .value
+            .iter()
+            .flat_map(|failure| failure.evidence_refs.iter())
+            .map(|id| *id.as_bytes())
+            .collect();
+        let dev_refs = DevRunnerRefs {
+            actor: *actor.entity_ref().as_bytes(),
+            diagnostics: diagnostics.into_iter().collect(),
+            evidence: evidence.into_iter().collect(),
+        };
         let mut input = request.provider_input;
         let task = DevRunnerTask {
             instructions: input.task,
@@ -210,6 +226,7 @@ impl HealerRegistration<'_> {
                 user_login: request.user_login,
                 connector,
                 task_ref: request.task_ref,
+                dev_refs: Some(dev_refs),
                 parent_attempt_id: request.parent_attempt_id,
                 run_id: Some(request.run_ref),
                 dedupe_key: None,

@@ -17,8 +17,8 @@ use crate::llm::{BudgetLease, LlmBackend, LlmError, LlmRequest};
 
 use super::connector::{
     BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, ByoEndpointSpec, ByoaAttemptPayload,
-    ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec, DispatchByoa,
-    ProtocolAttachSpec, encode_byoa_attempt_payload,
+    ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec, DevRunnerRefs,
+    DispatchByoa, ProtocolAttachSpec, encode_byoa_attempt_payload,
 };
 use super::error::{
     ByoaError, ByoaResult, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT, ERR_EXECUTION_SHAPE,
@@ -41,12 +41,14 @@ use super::seat::{
     HostedSeatBound, OnSeatSpent, RunnerSeatPolicy, RunnerWork, SeatIdentity, SeatRoute, SeatSpent,
     hosted_seat_bound, spent_seat_in,
 };
-use super::seat_quota::record_seat_quota_in_txn;
+use super::seat_quota::{record_seat_quota_in_txn, seat_quota_id};
 use super::validate::{
     encode_execution_transcript, encoded_json_len, validate_cli_sandbox, validate_connector,
     validate_endpoint, validate_execution_budget, validate_exhaust,
 };
-use super::work_binding::{RunnerWorkBinding, SpentCapture, note_spent_hop_in_txn};
+use super::work_binding::{
+    RunnerWorkBinding, SpentCapture, capture_seat_in_txn, note_spent_hop_in_txn,
+};
 use super::work_resume::moved_on_in_txn;
 /// Resolves an endpoint config into a concrete host-owned backend.
 ///
@@ -117,6 +119,7 @@ pub(super) struct ByoaEnqueue {
     pub(super) connector: ByoaConnectorSpec,
     pub(super) task_ref: Option<String>,
     pub(super) parent_attempt: Option<[u8; 16]>,
+    pub(super) dev_refs: Option<DevRunnerRefs>,
     pub(super) run_id: Option<String>,
     pub(super) dedupe_key: Option<String>,
     pub(super) now: u64,
@@ -192,6 +195,7 @@ where
             connector: request.connector,
             task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
             parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
+            dev_refs: request.dev_refs,
             run_id: request.run_id,
             dedupe_key: request.dedupe_key,
             now: request.now,
@@ -243,6 +247,7 @@ where
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: request.connector,
             parent_attempt: request.parent_attempt,
+            dev_refs: request.dev_refs,
             official_seat: request.official_seat,
             repo_binding: pinned.clone(),
             work,
@@ -321,6 +326,7 @@ where
                     connector: request.connector,
                     task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
                     parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
+                    dev_refs: None,
                     run_id: request.run_id,
                     dedupe_key: request.dedupe_key,
                     now: request.now,
@@ -361,6 +367,7 @@ where
                 user_login: chosen.logs_in(),
                 connector,
                 task_ref: work.task_ref,
+                dev_refs: None,
                 parent_attempt_id: work.parent_attempt_id,
                 run_id: work.run_id,
                 dedupe_key: work.dedupe_key,
@@ -404,7 +411,7 @@ where
         spent: Option<SeatSpent>,
     ) -> ByoaResult<SeatRoute> {
         policy.validate(registry)?;
-        let ran = policy.seat(seat)?;
+        policy.seat(seat)?;
         let spent = match spent {
             None if capture.disposition == ByoaTerminalDisposition::Failed => {
                 spent_seat_in(&capture.exhaust)?
@@ -427,9 +434,13 @@ where
             let receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
             // A replayed spend of a bound work that moved past it (FIX 7450)
             // writes nothing more and names where the work stands.
-            if let Some(route) = moved_on_in_txn(self.vault, wtxn, &receipt, spent.as_ref())? {
+            if let Some(route) =
+                moved_on_in_txn(self.vault, wtxn, policy, &receipt, spent.as_ref())?
+            {
                 return Ok(route);
             }
+            let seat = capture_seat_in_txn(self.vault, wtxn, policy, &receipt, seat)?;
+            let ran = policy.seat(seat)?;
             record_seat_quota_in_txn(self.vault, wtxn, ran, &receipt.attempt, spent.as_ref())?;
             let Some(spent) = spent else {
                 return Ok(SeatRoute::Settled(receipt));
@@ -458,7 +469,14 @@ where
             };
             // A bound work the spend kept on this seat notes it for its outcome.
             if !matches!(route, SeatRoute::NextSeat { .. }) {
-                note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, &spent)?;
+                note_spent_hop_in_txn(
+                    self.vault,
+                    wtxn,
+                    route.receipt(),
+                    seat,
+                    *seat_quota_id(ran)?.as_bytes(),
+                    &spent,
+                )?;
             }
             Ok(route)
         })

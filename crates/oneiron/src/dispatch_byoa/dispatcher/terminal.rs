@@ -10,6 +10,7 @@ use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
     read_blob_artifact_head_in_txn,
 };
+use crate::dispatch_byoa::ERASED_TASK_FAILURE_REASON;
 use crate::dispatch_byoa::connector::{BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE};
 use crate::dispatch_byoa::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
@@ -135,10 +136,14 @@ where
             else {
                 return Err(invalid(ERR_CAPTURE_CONFLICT));
             };
+            // FIX 7618: a scrubbed row carries the fixed marker, not the
+            // reason the first capture landed with; the exhaust bytes below
+            // still prove the retry is the same capture.
             if matches!(
                 envelope.disposition,
                 ByoaTerminalDisposition::Failed | ByoaTerminalDisposition::Abandoned
             ) && record.last_error.as_deref() != Some(reason.as_str())
+                && record.last_error.as_deref() != Some(ERASED_TASK_FAILURE_REASON)
             {
                 return Err(invalid(ERR_CAPTURE_CONFLICT));
             }
