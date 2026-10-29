@@ -17,10 +17,12 @@
 //! it stages the proven floor (for an Unproven answer, the best proven lower
 //! bound, then aborts), then judges the owner's proof as every owner door
 //! does, against that floor, and commits the floor, its high-water copy and
-//! its provenance receipt together only when the proof holds. The authority
-//! cache moves to a new generation with them. A slip holder reaches it through
-//! [`crate::Vault::repair_authority_clock_by_slip`], whose request proof is
-//! judged in that same writer.
+//! its provenance receipt together only when the proof holds. The proof reads
+//! the staged floor without seeding this handle's anchor (FIX 11192), so no
+//! other reader on the handle reads at a floor that has not committed. The
+//! authority cache moves to a new generation with them. A slip holder
+//! reaches it through [`crate::Vault::repair_authority_clock_by_slip`], whose
+//! request proof is judged in that same writer.
 
 use serde::{Deserialize, Serialize};
 
@@ -281,9 +283,9 @@ impl crate::Vault {
 
     /// Stages the proven floor (or, unproven, the best proven lower bound) in
     /// `txn`, judges the caller with `judge` against it, and commits the
-    /// proven floor with its receipt; an unproven one aborts. A reading the
-    /// staged floor seeded into this handle's anchor is undone unless the
-    /// repair commits.
+    /// proven floor with its receipt; an unproven one aborts. The judgment
+    /// reads the staged floor without seeding this handle's anchor (FIX
+    /// 11192), so no reader on the handle reads at it before it commits.
     fn repair_damaged_floor(
         &self,
         mut txn: heed::RwTxn<'_>,
@@ -299,16 +301,9 @@ impl crate::Vault {
         let staged = proven
             .or_else(|| evidence.lower_bound())
             .ok_or_else(authority_clock_corrupt)?;
-        let clock = || {
-            self.store
-                .authority_local_clock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        };
-        let anchor = clock().anchor_state();
         let judged = self.stage_clock_floor(&mut txn, staged, judge);
-        let committed = match (judged, proven) {
-            (Ok(actor), Some(floor)) => self.commit_clock_repair(
+        match (judged?, proven) {
+            (actor, Some(floor)) => self.commit_clock_repair(
                 txn,
                 &AuthorityClockRepairReceipt {
                     floor,
@@ -318,10 +313,9 @@ impl crate::Vault {
                     anchored: evidence.anchored,
                     actor: actor.to_hex(),
                 },
-            ),
-            (Ok(_), None) => {
+            )?,
+            (_, None) => {
                 drop(txn);
-                clock().restore_anchor(anchor);
                 return Ok(AuthorityClockRepair {
                     outcome: AuthorityClockRepairOutcome::Unproven,
                     floor: None,
@@ -329,11 +323,6 @@ impl crate::Vault {
                     anchored: evidence.anchored,
                 });
             }
-            (Err(error), _) => Err(error),
-        };
-        if let Err(error) = committed {
-            clock().restore_anchor(anchor);
-            return Err(error);
         }
         Ok(AuthorityClockRepair {
             outcome: AuthorityClockRepairOutcome::Repaired,
@@ -344,7 +333,8 @@ impl crate::Vault {
     }
 
     /// Writes `floor` and a new authority cache generation in `txn`, then
-    /// judges the caller against them.
+    /// judges the caller against them, reading the clock without seeding
+    /// this handle's anchor ([`staged_repair_reading`]).
     fn stage_clock_floor(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -353,6 +343,7 @@ impl crate::Vault {
     ) -> Result<EntityId> {
         put_authority_clock_floor_in_txn(&self.store, txn, floor)?;
         advance_authority_cache_generation(&self.store, txn)?;
+        let _unseeded = staged_repair_reading();
         judge(txn)
     }
 
