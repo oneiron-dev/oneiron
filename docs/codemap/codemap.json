@@ -27603,7 +27603,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CompactionCheckDecisions"
@@ -27611,7 +27611,7 @@
      "path": "src/dreamer_runner/maintenance/compaction_check/support.rs",
      "purpose": "The support verdict of a compaction check (FIX 8713)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "struct": 1
      }
     },
