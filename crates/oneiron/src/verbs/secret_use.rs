@@ -133,9 +133,9 @@ pub fn use_secret_as_caller(
 /// caller's own grant and gate, with the handle's secret as its credential
 /// in place of the route's own. The record's binding must name the route's
 /// effector, `connector:<connector>`. A call the gate holds keeps the record
-/// on its row, and the settler sends it with the same one once the hold
-/// clears. The tool's reply comes back as `result`, foreign data, cleared of
-/// the value.
+/// and the use on its row, and the settler sends it with the same record
+/// once the hold clears, writing that send's own use records (FIX 2822). The
+/// tool's reply comes back as `result`, foreign data, cleared of the value.
 pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
     memory: &Memory<'_>,
     input: SecretUseRequest,
@@ -175,12 +175,14 @@ pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
                 let Some(request) = request.take() else {
                     return SecretUseConsumed::failed("the call was already made".to_owned());
                 };
+                // The call's row keeps the use, its intent committed, so a
+                // resume's send writes its own records (FIX 2822).
                 let (outcome, sent) = vault.call_connector_with_secret(
                     memory,
                     request,
                     invocation,
                     &mut *host,
-                    target.custody,
+                    target.context().clone(),
                 );
                 // Its host cleared the reply inside the send's door (FIX
                 // 7647); what the send presented is noted on an engine error
@@ -267,7 +269,7 @@ pub fn use_secret_grant_for_connector_call<H: ConnectorCallHost>(
                     request,
                     invocation,
                     &mut *host,
-                    used.custody,
+                    used.context().clone(),
                     *presented,
                 );
                 // Noted on an engine error after the send too (FIX 8053).

@@ -28,6 +28,7 @@
 //! ([`reveal_run_admission`]): an asker another run binds is refused before
 //! the check; one no run binds takes the check alone.
 
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::doors::{
@@ -64,7 +65,8 @@ const RUN_DIFF_DOMAIN: &[u8] = b"oneiron.secret_run.v1";
 const RUN_SEATS: [RunSecretSeat; 2] = [RunSecretSeat::Browser, RunSecretSeat::Desktop];
 
 /// The seat of a run that found a secret: its browser or its desktop.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RunSecretSeat {
     Browser,
     Desktop,
@@ -92,13 +94,38 @@ impl RunSecretSeat {
 }
 
 /// Who holds a run-bound secret: the run whose seat found it, that seat,
-/// and the verified actor the run's call acts for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// and the verified actor the run's call acts for. Ids only, so a held
+/// connector call's row keeps it (FIX 2822).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunSecretHolder {
     pub run: EntityId,
     pub seat: RunSecretSeat,
     pub actor: EntityId,
+    #[serde(with = "actor_class_byte")]
     pub actor_class: EdgeActorClass,
+}
+
+/// An actor class kept in a row as its byte, as the edge codecs keep it.
+pub(crate) mod actor_class_byte {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::edge::EdgeActorClass;
+
+    pub(crate) fn serialize<S: Serializer>(
+        class: &EdgeActorClass,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(*class as u8)
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<EdgeActorClass, D::Error> {
+        let byte = u8::deserialize(deserializer)?;
+        EdgeActorClass::try_from_u8(byte)
+            .ok_or_else(|| serde::de::Error::custom("an unknown actor class byte"))
+    }
 }
 
 /// Whether `name` is a run-bound record's: the known-value index never

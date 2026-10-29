@@ -67,6 +67,7 @@ pub use self::output::{
     SentPresentation, SentValue,
 };
 use self::output::{clear_text, handle_text};
+pub(crate) use self::receipt::SecretUseContext;
 use self::receipt::{UsePhase, Used};
 
 /// The owner door that adds a binding to a secret, named by every refusal of
@@ -163,9 +164,17 @@ pub(crate) struct SecretUseTarget<'a> {
     /// What the operation's send presented, its answer already cleared of
     /// it inside the door (FIX 7647).
     sent: Mutex<Option<SentPresentation>>,
+    /// The use, its intent record committed before this send (FIX 2622):
+    /// what a connector call keeps on its row (FIX 2822).
+    context: SecretUseContext,
 }
 
 impl SecretUseTarget<'_> {
+    /// The use this send is, its intent record committed before it.
+    pub(crate) const fn context(&self) -> &SecretUseContext {
+        &self.context
+    }
+
     /// Keeps the refusal a redemption at the send gave.
     fn refuse(&self, refusal: Error) {
         *self.refusal.lock().unwrap_or_else(PoisonError::into_inner) = Some(refusal);
@@ -381,6 +390,7 @@ impl Vault {
             operation,
             effector,
             grant: None,
+            first_intent: None,
         };
         let admitted = if !live || rec.status != SecretCustodyStatus::Active {
             Err(not_active(&used.handle))
@@ -446,6 +456,7 @@ impl Vault {
             grant,
             refusal: Mutex::new(None),
             sent: Mutex::new(None),
+            context: used.context(intent, None),
         };
         let SecretUseConsumed {
             mut result,
