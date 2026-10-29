@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::receipt::{ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
-use crate::skill_hub::pack_catalog::PackHookBinding;
+use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
 use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -154,6 +154,58 @@ pub(super) fn put_cursor_in_txn(
     row: &CursorRow,
 ) -> Result<()> {
     CURSORS.put(&vault.store, txn, &(binding, [source.tag()]), row)
+}
+
+/// Commits a fact binding's cursor with its real enable, disable or
+/// replacement write. A selector-only update of an already-enabled binding
+/// keeps its cursor; a disabled-to-enabled transition starts at the enable
+/// write, including the settlement head (FIX 10078).
+pub(crate) fn sync_binding_cursor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: EntityId,
+    previous: Option<&PackHookBinding>,
+    current: &PackHookBinding,
+) -> Result<()> {
+    if current.selector.phase != HookPhase::Fact {
+        return Ok(());
+    }
+    let at = vault.store.clock.now_recorded_at();
+    if !current.enabled {
+        for source in FactSource::ALL {
+            let key = (binding, [source.tag()]);
+            let prior = CURSORS.get(&vault.store, txn, &key)?;
+            if prior.is_some_and(|row| row.paused) {
+                continue;
+            }
+            let row = prior
+                .unwrap_or_else(|| CursorRow::new(None, at))
+                .paused(at);
+            CURSORS.put(&vault.store, txn, &key, &row)?;
+        }
+        return Ok(());
+    }
+    let restart = previous.is_none_or(|previous| {
+        !previous.enabled
+            || previous.code != current.code
+            || previous.source != current.source
+            || previous.hook_version != current.hook_version
+            || previous.body_hash != current.body_hash
+    });
+    if !restart {
+        return Ok(());
+    }
+    for source in FactSource::ALL {
+        let start = source::enable_start_in_txn(vault, txn, &binding, source)?;
+        put_cursor_in_txn(
+            vault,
+            txn,
+            binding,
+            source,
+            &CursorRow::new(start, at),
+        )?;
+    }
+    Ok(())
 }
 
 /// Moves `binding`'s cursor to `position` unless it already stands there or
