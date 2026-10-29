@@ -482,13 +482,23 @@ fn settlements_after(
 /// The newest position in `source`, or `None` while it is empty.
 pub(super) fn head(vault: &Vault, source: FactSource) -> Result<Option<FactPosition>> {
     let rtxn = vault.store.env.read_txn()?;
+    head_in_txn(vault, &rtxn, source)
+}
+
+/// [`head`] in the caller's snapshot, including a binding lifecycle write's
+/// own settlement head.
+pub(super) fn head_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+) -> Result<Option<FactPosition>> {
     let head = match source {
         FactSource::ClaimChangelog => vault
             .store
-            .port_changelog_head(&rtxn)?
+            .port_changelog_head(txn)?
             .map(|(id, _)| FactPosition::ClaimChangelog(ClaimChangelogPosition(id))),
         FactSource::Settlement => SETTLED
-            .iter_rev_from(&vault.store, &rtxn, &[])?
+            .iter_rev_from(&vault.store, txn, &[])?
             .next()
             .transpose()?
             .map(|(sequence, _)| FactPosition::Settlement(SettlementPosition(sequence))),
@@ -503,14 +513,40 @@ pub(super) fn binding_written_at(
     binding: &EntityId,
 ) -> Result<Option<FactPosition>> {
     let rtxn = vault.store.env.read_txn()?;
+    binding_written_at_in_txn(vault, &rtxn, binding)
+}
+
+/// [`binding_written_at`] in the caller's snapshot.
+pub(super) fn binding_written_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: &EntityId,
+) -> Result<Option<FactPosition>> {
     let changes = vault
         .store
-        .port_changelog_list_by_entity(&rtxn, binding, BINDING_CHANGES)?;
+        .port_changelog_list_by_entity(txn, binding, BINDING_CHANGES)?;
     Ok(changes
         .iter()
         .map(|change| change.id)
         .max()
         .map(|id| FactPosition::ClaimChangelog(ClaimChangelogPosition(id))))
+}
+
+/// Where an enabled binding starts in each source at its real lifecycle
+/// write: its own claim write where one exists, otherwise the source head.
+pub(super) fn enable_start_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: &EntityId,
+    source: FactSource,
+) -> Result<Option<FactPosition>> {
+    match source {
+        FactSource::ClaimChangelog => match binding_written_at_in_txn(vault, txn, binding)? {
+            Some(position) => Ok(Some(position)),
+            None => head_in_txn(vault, txn, source),
+        },
+        FactSource::Settlement => head_in_txn(vault, txn, source),
+    }
 }
 
 fn decode_hex<const N: usize>(text: &str) -> Result<[u8; N]> {

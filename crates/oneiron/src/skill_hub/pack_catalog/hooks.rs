@@ -635,17 +635,29 @@ impl Vault {
         let occurred = TimeRange { start: at, end: at };
         let mut batch = self.batch_in();
         let mut stopped = false;
+        let mut transitions = Vec::new();
         for (id, mut row) in bindings_in_txn(&self.store, txn)? {
             if row.pack != pack || !row.enabled {
                 continue;
             }
+            let previous = row.clone();
             row.enabled = false;
+            transitions.push((id, previous, row.clone()));
             let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
             batch = batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
             stopped = true;
         }
         if stopped {
             batch.apply(txn)?;
+        }
+        for (id, previous, row) in transitions {
+            crate::runtime_hooks::sync_binding_cursor_in_txn(
+                self,
+                txn,
+                id,
+                Some(&previous),
+                &row,
+            )?;
         }
         Ok(())
     }
@@ -697,6 +709,7 @@ impl Vault {
             );
         }
         let mut bound = Vec::new();
+        let mut transitions = Vec::new();
         for hook in source.hooks() {
             // A moved body keeps its hook's dial: on while any of its
             // bindings runs, off once the owner stopped every one.
@@ -717,6 +730,11 @@ impl Vault {
                     }
                 },
             };
+            let previous = prior
+                .iter()
+                .find(|(prior_id, _)| *prior_id == id)
+                .map(|(_, kept)| kept.clone());
+            transitions.push((id, previous, row.clone()));
             let code = row.code;
             if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &code)? {
                 let body = CodeArtifactBody::new(
@@ -750,12 +768,23 @@ impl Vault {
         }
         for (id, mut row) in prior {
             if row.pack == pack && row.enabled && !bound.contains(&id) {
+                let previous = row.clone();
                 row.enabled = false;
+                transitions.push((id, previous, row.clone()));
                 batch =
                     batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
             }
         }
         batch.apply(txn)?;
+        for (id, previous, row) in transitions {
+            crate::runtime_hooks::sync_binding_cursor_in_txn(
+                self,
+                txn,
+                id,
+                previous.as_ref(),
+                &row,
+            )?;
+        }
         Ok(bound)
     }
 }
