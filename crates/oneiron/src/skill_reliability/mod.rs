@@ -26,6 +26,7 @@ mod rule_outcome;
 pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
+pub(crate) use self::floor::open_floor_crossings_in_txn;
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
     SKILL_RELIABILITY_FLOOR_KEY, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,
