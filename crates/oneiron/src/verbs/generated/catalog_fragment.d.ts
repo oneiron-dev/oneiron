@@ -11,9 +11,9 @@
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
 // Census: 1214 code-mode rows (1174 host rows, 40 run rows), 4266 declarations.
-// Replies: 1089 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Replies: 1049 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 107; unread shapes: none.
+// Opaque serde_json::Value leaves: 108; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -3310,7 +3310,7 @@ declare namespace Sdk {
   type WindowSwitch = { window: string; app: string; title: string; from: string; why: WindowSwitchCause };
   type SessionSeccomp = "runtime_default" | "guest_sandbox" | "engine_fence";
   type SessionFenceProof = { ruleset_hash: string; seccomp_hash: string; network_routes: string[]; network_evidence_digest: string; sandbox_generation: string; launcher_digest: string };
-  type SessionManifest = { backend: string; runtime: string; image: string; argv_digest: string; network: string; seccomp: SessionSeccomp; generation: string; fence_proof?: SessionFenceProof | null; fence_unproven?: boolean };
+  type SessionManifest = { backend: string; runtime: string; image: string; argv_digest: string; network: string; seccomp: SessionSeccomp; generation: string; fence_proof?: SessionFenceProof | null; fence_unproven?: boolean; image_release?: unknown | null };
   type DesktopAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: WindowSwitch | null; session_manifest?: SessionManifest | null };
   type RowSplice = { start: number; delete_count: number };
   type RowGapField = "href" | "level" | "datetime";

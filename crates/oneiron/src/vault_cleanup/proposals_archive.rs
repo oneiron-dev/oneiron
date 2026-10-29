@@ -348,6 +348,7 @@ impl Vault {
             }
         }
         self.clear_archive_tombstone_in_txn(wtxn, entity)?;
+        crate::browser_library::reindex_restored_source_in_txn(self, wtxn, entity)?;
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, entity)?
             .ok_or_else(|| {
                 Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {
