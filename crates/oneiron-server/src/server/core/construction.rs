@@ -257,6 +257,9 @@ impl SyncServer {
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
             usage_ledger: UsageLedger::new(vault.clone()),
+            retrieval_buffer: crate::usage::RetrievalMeterBuffer::new(UsageLedger::new(
+                vault.clone(),
+            )),
             // Each resident's share of the allocation, kept in the vault (FIX 7767).
             host_account: oneiron::llm::run_admission::HostAccount::with_residents(
                 oneiron::llm::VaultResidentLedger::new(vault.clone()),
