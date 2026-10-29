@@ -3595,6 +3595,12 @@ pub struct ShapeApplyItem {
         skip_serializing_if = "Option::is_none"
     )]
     pub slips_kept: Option<bool>,
+    #[serde(
+        rename = "receipt_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_refs: Option<Vec<String>>,
 }
 
 /// `oneiron::vault_shape::run::ShapeApplyRun`.
