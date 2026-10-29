@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1190 facade rows, 4310 declarations.
+Census: 1190 facade rows, 4311 declarations.
 Inputs: 1119 of 1190 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1035 of 1190 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 118; unread shapes: 0.
+Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -252,6 +252,7 @@ class ReportIssue(TypedDict):
     review: ReportReview
     disclosure: ReportDisclosure
     disclosure_basis: NotRequired[ReportDisclosureBasis | None]
+    disclosure_round: NotRequired[int]
 class ReportRouteRequest(TypedDict):
     subject_ref: str
     route: ReportRoute
@@ -9476,7 +9477,7 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
-class EvidenceFloors(TypedDict):
+class VectorEvidenceFloors(TypedDict):
     floor: float
     strong: float
 class EmbeddingSpace(TypedDict):
@@ -9484,7 +9485,7 @@ class EmbeddingSpace(TypedDict):
     dimensions: int
     accepts: list[InputKind]
     query_towers: list[InputKind]
-    evidence: NotRequired[EvidenceFloors | None]
+    evidence: NotRequired[VectorEvidenceFloors | None]
 class SpaceRefDeclared(TypedDict):
     declared: str
 SpaceRef = Literal["text_index"] | SpaceRefDeclared
@@ -10274,7 +10275,10 @@ class ObservationMagnitude(TypedDict):
 class ObservationCategory(TypedDict):
     kind: Literal["category"]
     v: str
-Observation = ObservationSuccess | ObservationMagnitude | ObservationCategory
+class ObservationCountOnly(TypedDict):
+    kind: Literal["count_only"]
+    v: str
+Observation = ObservationSuccess | ObservationMagnitude | ObservationCategory | ObservationCountOnly
 class ContributionCheck(TypedDict):
     receipt: str
     contributed: bool
@@ -10315,6 +10319,7 @@ class EvidenceRow(TypedDict):
     outcome_label: NotRequired[str | None]
     pack_attribution: NotRequired[PackLearningContext | None]
     goal_revision: NotRequired[str | None]
+    measurement_version: NotRequired[str | None]
 class LearningEvidenceView(TypedDict):
     receipt: str
     evidence: EvidenceRow
@@ -16919,14 +16924,19 @@ class QuestionPauseRequest(TypedDict):
 class QuestionPaused(TypedDict):
     id: EntityId
     paused: bool
+class GraphQuestionInput(TypedDict):
+    unit: str
+    evidence: list[str]
 class QuestionBackfillRequest(TypedDict):
     id: EntityId
     expected_version: int
     at: NotRequired[int | None]
+    joins: NotRequired[list[GraphQuestionInput]]
 class ScheduledBackfill(TypedDict):
     question: str
     version: int
     due_at: int
+    joins: NotRequired[list[GraphQuestionInput]]
 class QuestionReadRequest(TypedDict):
     id: EntityId
     version: NotRequired[int | None]
@@ -22284,7 +22294,8 @@ class LensFrameEventRequest(TypedDict):
     event: GeneratedUiActionEvent
     idempotencyKey: str
     selectedContext: NotRequired[list[str]]
-LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot})
+    stream: NotRequired[GeneratedUiStreamProfile]
+LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot, "refinement": NotRequired[Any | None]})
 class LensFrameEventReplyTool(TypedDict):
     outcome: Any
     readReceipt: ScopedReadReceipt

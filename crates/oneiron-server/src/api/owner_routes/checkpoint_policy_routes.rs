@@ -56,7 +56,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/checkpoint-policy/roots/deliveries", get(deliveries))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SelectPolicy {
     /// The roots, each `<suite>:<hex key>` (`ed25519:` or `p256:`), each
@@ -73,7 +73,13 @@ struct SelectPolicy {
     seen: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/checkpoint-policy`'s body (FIX 11611):
+/// [`SelectPolicy`].
+pub(crate) fn select_policy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SelectPolicy>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ClearPolicy {
     /// As for a selection.
@@ -81,7 +87,13 @@ struct ClearPolicy {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/checkpoint-policy/clear`'s body
+/// (FIX 11611): [`ClearPolicy`].
+pub(crate) fn clear_policy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ClearPolicy>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RootReply {
     key: String,
     tier: &'static str,
@@ -89,7 +101,7 @@ struct RootReply {
     host: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PolicyReply {
     posture: &'static str,
     roots: Vec<RootReply>,
@@ -99,14 +111,14 @@ struct PolicyReply {
     owner_selected: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ChoiceReply {
     roots: Vec<String>,
     quorum: u8,
     hardware: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct HeadReply {
     /// The choice's authority entry, as 64 hex.
     act: String,
@@ -118,7 +130,7 @@ struct HeadReply {
     at: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PolicyViewReply {
     /// Present back as `seen`.
     revision: String,
@@ -131,6 +143,12 @@ struct PolicyViewReply {
     heads: Vec<HeadReply>,
     /// The live choices in conflict; empty when none.
     conflict: Vec<HeadReply>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/checkpoint-policy`'s answer (FIX 11611),
+/// shared with `POST /v1/owner/checkpoint-policy/clear`: [`PolicyViewReply`].
+pub(crate) fn policy_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PolicyViewReply>()
 }
 
 #[derive(Debug, Serialize)]

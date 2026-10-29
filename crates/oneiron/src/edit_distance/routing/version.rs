@@ -1,58 +1,20 @@
-//! Model stack versioning.
+//! The executor serving now.
 
-use std::sync::LazyLock;
-
-use super::keys::{
-    DRAFTING_ROLE, ROW_VERSION, SERVING_MODEL, ServingModelVersion, StoredModelVersion,
-};
+use super::keys::{DRAFTING_ROLE, ROW_VERSION, SERVING_MODEL, ServingExecutor, StoredExecutor};
 use crate::Vault;
 use crate::error::Result;
 use crate::llm::ModelId;
-use crate::settings::{ModelStack, ModelStackRegistry, default_model_stack_registry};
 
 // ---------------------------------------------------------------------------
-// Model version resolution
+// The serving executor
 // ---------------------------------------------------------------------------
 
-/// The compiled stack table, read-only prior art consulted on every version
-/// resolution.
-static MODEL_STACK_REGISTRY: LazyLock<ModelStackRegistry> =
-    LazyLock::new(default_model_stack_registry);
-
-/// The generation token for `model` — see [`RoutingScopeKey::for_model`].
+/// The executor identity at revision serving now: the declared model, else
+/// the drafting role's compiled default.
 ///
-/// A model claimed by the current default stack takes that stack's identity
-/// even if an older generation also lists it, so the common case needs no
-/// tie-break at all. Otherwise the newest generation claiming it wins.
-pub(super) fn model_version_token(model: &ModelId) -> String {
-    let registry = &*MODEL_STACK_REGISTRY;
-    let current = registry.current_default();
-    if stack_claims(current, model) {
-        return format!("stack:{}", current.id);
-    }
-    registry
-        .stacks
-        .values()
-        .filter(|stack| stack_claims(stack, model))
-        .max_by_key(|stack| stack.generation)
-        .map_or_else(
-            || format!("model:{}", model.as_str()),
-            |stack| format!("stack:{}", stack.id),
-        )
-}
-
-fn stack_claims(stack: &ModelStack, model: &ModelId) -> bool {
-    stack
-        .models
-        .iter()
-        .any(|entry| entry.model.as_str() == model.as_str())
-}
-
-/// The generation [`record_judged_amendment`](crate::edit_distance::routing::record_judged_amendment) stamps new folds with.
-///
-/// Unset resolves to the drafting role's compiled default, which is what the
-/// consumer side would build a key from — so an unconfigured vault records and
-/// reads under the same token instead of silently missing itself.
+/// No fold reads this. A receipt folds under the executor its own judgment was
+/// stamped with when the drafting run began (FIX 9812); this answers a caller
+/// asking what serves now, which says nothing about history.
 ///
 /// # Errors
 ///
@@ -60,25 +22,24 @@ fn stack_claims(stack: &ModelStack, model: &ModelId) -> bool {
 pub fn serving_model_version(vault: &Vault) -> Result<String> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(SERVING_MODEL.get(&vault.store, &rtxn, &())?.map_or_else(
-        || model_version_token(&DRAFTING_ROLE.default_model_id()),
-        |row| row.0.model_version,
+        || DRAFTING_ROLE.default_model_id().as_str().to_owned(),
+        |row| row.0.executor,
     ))
 }
 
-/// Declares which model is serving, and so which generation later folds belong
-/// to.
+/// Declares which model is serving.
 ///
-/// Already-folded runs are untouched by design: they happened under the
-/// generation that was serving when they happened, and a swap is not new
-/// information about them.
+/// Folded runs are untouched by design, and so are runs folded later: each
+/// folds under the executor stamped on its own receipt, and a swap is not new
+/// information about any of them.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn set_serving_model(vault: &Vault, model: &ModelId) -> Result<()> {
-    let row = ServingModelVersion(StoredModelVersion {
+    let row = ServingExecutor(StoredExecutor {
         v: ROW_VERSION,
-        model_version: model_version_token(model),
+        executor: model.as_str().to_owned(),
     });
     vault.with_write_txn_grouped(|wtxn| SERVING_MODEL.put(&vault.store, wtxn, &(), &row))
 }

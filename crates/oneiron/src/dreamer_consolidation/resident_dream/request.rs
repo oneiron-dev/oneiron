@@ -14,6 +14,13 @@ use crate::llm::{
     ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
+/// The ask for another round of its own time, after the existing
+/// instructions, when the dreaming runs as a free-time own-time item (FIX
+/// 7763). A dreaming outside free time asks nothing new.
+const OWN_TIME_ROUND_ASK: &str = "This is your own time. If you want another round of it after \
+     this one, add one block fenced ```oneiron-free-time holding {\"another_round\": true} \
+     after your diary entry and before any craft block.";
+
 /// The dreaming's admitted request, its step hash and the craft note claims
 /// its craft message was read from (FIX 6998).
 pub(super) fn dream_request(
@@ -22,6 +29,7 @@ pub(super) fn dream_request(
     resident_id: EntityId,
     model: &ResidentDreamModel<'_>,
     cut: &DreamCut,
+    own_time: bool,
 ) -> Result<(LlmRequest, [u8; 32], Vec<EntityId>)> {
     let locality = model
         .inference
@@ -61,11 +69,14 @@ pub(super) fn dream_request(
             content: vec![ContentPart::Text { text }],
         });
     }
+    let mut asking = format!("{}\n\n{CRAFT_ASK}", cut.text());
+    if own_time {
+        asking.push(' ');
+        asking.push_str(OWN_TIME_ROUND_ASK);
+    }
     messages.push(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text {
-            text: format!("{}\n\n{CRAFT_ASK}", cut.text()),
-        }],
+        content: vec![ContentPart::Text { text: asking }],
     });
     let request = LlmRequest {
         model: model.model.clone(),

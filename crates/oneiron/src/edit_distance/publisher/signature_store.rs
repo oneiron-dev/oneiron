@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::signature::is_content_hash;
-use super::{CountKey, IssueCategory, IssueSignature, PublisherResult};
+use super::transport::{SEND_STATE, SendStateRow};
+use super::{CountKey, IssueCategory, IssueSignature, PublisherResult, SignatureSendState};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -99,8 +100,11 @@ pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResu
     Ok(id)
 }
 
-/// [`emit_issue_signature`] in the caller's write: the signature lands with
-/// what else that write records, or not at all.
+/// [`emit_issue_signature`] for a delivery lane, in the lane's write: the
+/// signature lands with what else that write records, or not at all, and is
+/// [`SignatureSendState::Pending`] under the lane's logical send `send_ref`,
+/// the key its outcome is written back under. A signature no lane stores
+/// reads [`SignatureSendState::Local`].
 ///
 /// # Errors
 ///
@@ -109,9 +113,15 @@ pub(crate) fn emit_issue_signature_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     sig: &IssueSignature,
+    send_ref: &str,
 ) -> PublisherResult<EntityId> {
     let id = vault.store.clock.entity_id()?;
     SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
+    let row = SendStateRow {
+        state: SignatureSendState::Pending,
+        send_ref: Some(send_ref.to_owned()),
+    };
+    SEND_STATE.put(&vault.store, wtxn, &id, &row)?;
     Ok(id)
 }
 
