@@ -844,6 +844,9 @@ both bindings and their export-census tests in one change.
 - `vault.skills.outcomes.get`
 - `vault.models.manifest.read`
 - `vault.models.manifest.replace`
+- `vault.settings.web_connector`
+- `vault.settings.web_connector.replace`
+- `vault.connectors.web.usage`
 - `vault.models.oneironer.bind`
 - `vault.models.routes.read`
 - `vault.models.routes.replace`

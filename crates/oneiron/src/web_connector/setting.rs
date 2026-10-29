@@ -54,9 +54,9 @@ impl WebConnectorSetting {
                     self.provider.as_str()
                 )))
             }
-            WebProviderKey::Secret { name } if name.trim().is_empty() => Err(
-                Error::InvalidConfig("web connector: a secret key names its custody record".into()),
-            ),
+            WebProviderKey::Secret { name } if name.trim().is_empty() => Err(Error::InvalidConfig(
+                "web connector: a secret key names its custody record".into(),
+            )),
             WebProviderKey::Hub { connector }
                 if connector.trim().is_empty() || connector == WEB_CONNECTOR_NAME =>
             {
@@ -74,9 +74,7 @@ impl Vault {
     /// set none. The server reads it for every web call.
     pub fn web_connector_setting(&self) -> Result<WebConnectorSetting> {
         let txn = self.store.env.read_txn()?;
-        Ok(SETTING
-            .get(&self.store, &txn, &())?
-            .unwrap_or_default())
+        Ok(SETTING.get(&self.store, &txn, &())?.unwrap_or_default())
     }
 
     pub fn web_connector_setting_as_owner(
@@ -85,9 +83,7 @@ impl Vault {
     ) -> Result<WebConnectorSetting> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        Ok(SETTING
-            .get(&self.store, &txn, &())?
-            .unwrap_or_default())
+        Ok(SETTING.get(&self.store, &txn, &())?.unwrap_or_default())
     }
 
     /// Replaces the switch under the owner proof. The returned setting is the
