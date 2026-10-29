@@ -18225,7 +18225,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 5
      }
     },
@@ -18246,7 +18246,7 @@
      "path": "src/comm/parties.rs",
      "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -18267,7 +18267,7 @@
      "path": "src/comm/projector.rs",
      "purpose": "Ordered idempotent projector pass and the record verbs that feed it",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -29636,13 +29636,37 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AmendmentCauseRecord"
+     ],
+     "path": "src/edit_distance/attribution/causes.rs",
+     "purpose": "The amendment judge's labels, read for one actor (FIX 8264): the inlet agent-health cards join beside the…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/cells.rs",
+     "purpose": "The one write path into the shared `learning.edit_cost` cells (ARCH-0003 #learning-qualifiers, ARCH-0056 §5)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/evidence_judge.rs",
      "purpose": "Amendment evidence doors and the judging pass",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8
      }
     },
@@ -29653,26 +29677,54 @@
      "path": "src/edit_distance/attribution/mod.rs",
      "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and everything a judged amendment's shares earn",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 1,
-      "re-export": 4
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/origin.rs",
+     "purpose": "Who drafted an amended proposal: the executor identity at revision, the task type and the project its run…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "EditCost"
-     ],
+     "notable": [],
      "path": "src/edit_distance/attribution/projector.rs",
-     "purpose": "Projection of judged amendments — edit-cost claims, the skill's reliability record, actor lessons — and…",
+     "purpose": "Projection of judged amendments — attributed shares into the shared `learning.edit_cost` cells, the skill's…",
      "surface": {
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 1,
+      "fn": 3
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/rejection.rs",
+     "purpose": "A rejection goes through the judge before it charges anyone (ARCH-0056 §5, §11; FIX 7823)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/scope_erase.rs",
+     "purpose": "A project's erase takes the project off the amendment rows that carry it (FIX 6038)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/stored.rs",
@@ -29697,7 +29749,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 13,
+      "fn": 16,
       "struct": 5,
       "type": 1
      }
@@ -29709,6 +29761,39 @@
      "path": "src/edit_distance/attribution/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentDefinitionRef",
+      "ArtifactPublisher",
+      "RecentChange",
+      "RecentChanges",
+      "SkillAtVersion",
+      "TriagePacket",
+      "TriageReceipt",
+      "TriageSubject",
+      "WorseningSignal"
+     ],
+     "path": "src/edit_distance/attribution/triage.rs",
+     "purpose": "The triage packet a persistent failure mints, and the one owner-inbox escalation that carries it (ARCH-0056…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/worsening.rs",
+     "purpose": "The persistent-failure trigger (ARCH-0056 §5 \"Persistent failure → the triage packet\"; FIX 7825)",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "m",
@@ -29807,7 +29892,7 @@
      "path": "src/edit_distance/delta/store.rs",
      "purpose": "Delta side-ledger writes, receipt attachment, and the identity-topology projection pass",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -30121,6 +30206,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/edit_distance/miner/observed.rs",
+     "purpose": "The observed-preference door's evidence bar for a mined cluster (FIX 3083)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/edit_distance/miner/policy.rs",
      "purpose": "OF-379 proposal routing, driven by validated policy-manifest rows",
      "surface": {
@@ -30223,7 +30318,7 @@
      "path": "src/edit_distance/proposal_text/receipts.rs",
      "purpose": "Commit-envelope writer and read-time provenance fold for authored text",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -30234,6 +30329,16 @@
      "path": "src/edit_distance/proposal_text/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/publisher/delivery_outcome.rs",
+     "purpose": "The outbound path's answer for a handed-off signature (FIX 7690, 9811)",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "s",
@@ -30272,7 +30377,7 @@
      "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "re-export": 7,
       "type": 1
@@ -30320,11 +30425,12 @@
       "SignatureSendState"
      ],
      "path": "src/edit_distance/publisher/transport.rs",
-     "purpose": "Publisher comm transport: counterparty, send states, and the send door",
+     "purpose": "Publisher comm transport: send states and the send door",
      "surface": {
-      "const": 3,
+      "const": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -30383,13 +30489,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/routing/keys.rs",
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 26
      }
     },
     {
@@ -30408,10 +30514,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/routing/mod.rs",
-     "purpose": "ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment says about the MODEL GENERATION…",
+     "purpose": "ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment says about the EXECUTOR that…",
      "surface": {
-      "crate-vis": 1,
       "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/outcomes.rs",
+     "purpose": "Anchored task outcomes beside edit cost (ARCH-0056 §8, FIX 7828)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/prior.rs",
+     "purpose": "The carried prior (ARCH-0056 §8, ARCH-0003 #prior-origins): what a head with too few own runs reads beside…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -30438,6 +30563,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CarriedPrior",
       "RolloutRung",
       "RoutingScopeKey",
       "RoutingScopeStats",
@@ -30447,8 +30573,8 @@
      "purpose": "Routing scope and rung types",
      "surface": {
       "enum": 1,
-      "fn": 5,
-      "struct": 3
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -30464,9 +30590,8 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/routing/version.rs",
-     "purpose": "Model stack versioning",
+     "purpose": "The executor serving now",
      "surface": {
-      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -34410,6 +34535,16 @@
       "re-export": 2,
       "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/counterparty.rs",
+     "purpose": "The publisher ACTOR a report's signature channel runs to (FIX 7829)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -39048,7 +39183,7 @@
      "path": "src/learning/evidence.rs",
      "purpose": "The anchored-evidence ledger: the only input the projector reads",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 6,
       "struct": 3
@@ -55476,7 +55611,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 5,
-      "fn": 21,
+      "fn": 22,
       "struct": 1
      }
     },
@@ -63029,7 +63164,7 @@
      "path": "src/skill_hub/pack_catalog/builtin.rs",
      "purpose": "Engine-embedded connector source and local first-open installation",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 3,
       "struct": 1
      }
@@ -63103,7 +63238,7 @@
      "purpose": "Who a pack hook's outcomes run as: the owner, or a foreign skill publisher",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1
      }
     },
@@ -64773,7 +64908,7 @@
      "purpose": "The reliability floor dial and the quarantine proposal a floor crossing mints",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -64795,7 +64930,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 7
      }
     },
@@ -72098,7 +72233,7 @@
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -81618,7 +81753,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 75,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -81709,7 +81844,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82628,7 +82763,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5515,
+   "source_files": 5527,
    "test_files": 902
   },
   "oneiron-android": {
