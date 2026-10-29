@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1162 facade rows, 4164 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1114.
+// UniFFI census: 1166 facade rows, 4173 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1118.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -22631,6 +22631,241 @@ pub struct OffRecordExecuted {
     pub bridge_calls: u64,
 }
 
+/// `oneiron::verbs::off_record_runs::OffRecordResultsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordResultsRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "offset", default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultBodyKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResultBodyKind {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "binary")]
+    Binary,
+}
+
+/// `oneiron::memory::result_doors::types::ResultTaintState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResultTaintState {
+    #[serde(rename = "clean")]
+    Clean,
+    #[serde(rename = "tainted_live")]
+    TaintedLive,
+    #[serde(rename = "tainted_stale")]
+    TaintedStale,
+}
+
+/// `oneiron::memory::result_doors::types::ResultTaint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultTaint {
+    #[serde(rename = "state")]
+    pub state: ResultTaintState,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+/// `oneiron::code_run::result_read::ResultFacet`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResultFacet {
+    #[serde(rename = "slice")]
+    Slice,
+    #[serde(rename = "search")]
+    Search,
+    #[serde(rename = "query")]
+    Query,
+    #[serde(rename = "chunks")]
+    Chunks,
+}
+
+/// `oneiron::memory::result_doors::types::ResultCard`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultCard {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "kind")]
+    pub kind: ResultBodyKind,
+    #[serde(rename = "lines")]
+    pub lines: u64,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "preview")]
+    pub preview: String,
+    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(rename = "taint")]
+    pub taint: ResultTaint,
+    #[serde(rename = "more")]
+    pub more: Vec<ResultFacet>,
+    #[serde(rename = "shape", default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<crate::WireJson>,
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordResultCards`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordResultCards {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "count")]
+    pub count: u64,
+    #[serde(rename = "cards")]
+    pub cards: Vec<ResultCard>,
+    #[serde(
+        rename = "next_offset",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_offset: Option<u64>,
+    #[serde(rename = "withheld")]
+    pub withheld: bool,
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordResultReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordResultReadRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "ref")]
+    pub r#ref: String,
+    #[serde(rename = "facet", default, skip_serializing_if = "Option::is_none")]
+    pub facet: Option<ResultFacet>,
+    #[serde(rename = "input", default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<crate::WireJson>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultReadRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultReadRefusal {
+    #[serde(rename = "denied")]
+    pub denied: String,
+    #[serde(rename = "reasonCodes")]
+    pub reason_codes: Vec<String>,
+    #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(rename = "bytes", default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordResultRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum OffRecordResultRead {
+    #[serde(rename = "card")]
+    Card {
+        #[serde(rename = "card")]
+        card: ResultCard,
+    },
+    #[serde(rename = "page")]
+    Page {
+        #[serde(rename = "facet")]
+        facet: ResultFacet,
+        #[serde(rename = "page")]
+        page: crate::WireJson,
+    },
+    #[serde(rename = "denied")]
+    Denied {
+        #[serde(rename = "refusal")]
+        refusal: ResultReadRefusal,
+    },
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordWaitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordWaitRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordRunWait`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordRunWait {
+    #[serde(rename = "wait_id")]
+    pub wait_id: String,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "effect")]
+    pub effect: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "prompt", default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(rename = "answerable")]
+    pub answerable: bool,
+    #[serde(
+        rename = "delivered_at_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delivered_at_ms: Option<u64>,
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordWaitView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordWaitView {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "wait", default, skip_serializing_if = "Option::is_none")]
+    pub wait: Option<OffRecordRunWait>,
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordWaitAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordWaitAnswerRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "reply")]
+    pub reply: crate::WireJson,
+    #[serde(rename = "wait_id", default, skip_serializing_if = "Option::is_none")]
+    pub wait_id: Option<String>,
+    #[serde(
+        rename = "generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub generation: Option<u64>,
+}
+
+/// `oneiron::verbs::off_record_runs::OffRecordWaitAnswered`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordWaitAnswered {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "wait_id")]
+    pub wait_id: String,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "already_answered")]
+    pub already_answered: bool,
+    #[serde(rename = "delivered_at_ms")]
+    pub delivered_at_ms: u64,
+}
+
 /// `oneiron::verbs::off_record_rooms::OffRecordRoomRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -22770,19 +23005,6 @@ pub struct MessageResultSource {
     pub occurrence: String,
     #[serde(rename = "path")]
     pub path: String,
-}
-
-/// `oneiron::code_run::result_read::ResultFacet`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ResultFacet {
-    #[serde(rename = "slice")]
-    Slice,
-    #[serde(rename = "search")]
-    Search,
-    #[serde(rename = "query")]
-    Query,
-    #[serde(rename = "chunks")]
-    Chunks,
 }
 
 /// `oneiron::memory::result_attachment::MessageResultAttachment`.
@@ -35217,35 +35439,6 @@ pub struct ResultBodyStatus {
     pub retained: Option<ResultRetainedBody>,
 }
 
-/// `oneiron::memory::result_doors::types::ResultBodyKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ResultBodyKind {
-    #[serde(rename = "text")]
-    Text,
-    #[serde(rename = "binary")]
-    Binary,
-}
-
-/// `oneiron::memory::result_doors::types::ResultTaintState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ResultTaintState {
-    #[serde(rename = "clean")]
-    Clean,
-    #[serde(rename = "tainted_live")]
-    TaintedLive,
-    #[serde(rename = "tainted_stale")]
-    TaintedStale,
-}
-
-/// `oneiron::memory::result_doors::types::ResultTaint`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ResultTaint {
-    #[serde(rename = "state")]
-    pub state: ResultTaintState,
-    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
-    pub secret: Option<String>,
-}
-
 /// `oneiron::memory::result_doors::types::ResultTaintReference`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResultTaintReference {
@@ -35313,44 +35506,6 @@ pub struct ResultOccurrenceRequest {
     pub run_id: String,
     #[serde(rename = "occurrence")]
     pub occurrence: String,
-}
-
-/// `oneiron::memory::result_doors::types::ResultCard`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ResultCard {
-    #[serde(rename = "handle")]
-    pub handle: String,
-    #[serde(rename = "bytes")]
-    pub bytes: u64,
-    #[serde(rename = "kind")]
-    pub kind: ResultBodyKind,
-    #[serde(rename = "lines")]
-    pub lines: u64,
-    #[serde(rename = "complete")]
-    pub complete: bool,
-    #[serde(rename = "preview")]
-    pub preview: String,
-    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(rename = "taint")]
-    pub taint: ResultTaint,
-    #[serde(rename = "more")]
-    pub more: Vec<ResultFacet>,
-    #[serde(rename = "shape", default, skip_serializing_if = "Option::is_none")]
-    pub shape: Option<crate::WireJson>,
-}
-
-/// `oneiron::memory::result_doors::types::ResultReadRefusal`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ResultReadRefusal {
-    #[serde(rename = "denied")]
-    pub denied: String,
-    #[serde(rename = "reasonCodes")]
-    pub reason_codes: Vec<String>,
-    #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(rename = "bytes", default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
 }
 
 /// `oneiron::memory::result_doors::types::ResultReadView`.

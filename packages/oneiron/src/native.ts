@@ -421,6 +421,10 @@ vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
+selfOffRecordResultsList(input: unknown): unknown
+selfOffRecordResultsRead(input: unknown): unknown
+selfOffRecordWaitsGet(input: unknown): unknown
+selfOffRecordWaitsAnswer(input: unknown): unknown
 vaultOffRecordRoomsStatus(input: unknown): unknown
 vaultOffRecordRoomsStart(input: unknown): unknown
 vaultOffRecordRoomsWitness(input: unknown): unknown

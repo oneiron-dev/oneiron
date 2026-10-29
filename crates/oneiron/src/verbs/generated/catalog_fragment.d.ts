@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4240 declarations.
-// Replies: 1088 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4249 declarations.
+// Replies: 1090 fully typed, 126 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 107; unread shapes: none.
+// Opaque serde_json::Value leaves: 110; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1502,6 +1502,21 @@ declare namespace Sdk {
   type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
   type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";
   type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number };
+  type OffRecordResultsRequest = { session_ref: string; run_ref: string; offset?: number | null; limit?: number | null };
+  type ResultBodyKind = "text" | "binary";
+  type ResultTaintState = "clean" | "tainted_live" | "tainted_stale";
+  type ResultTaint = { state: ResultTaintState; secret?: string | null };
+  type ResultFacet = "slice" | "search" | "query" | "chunks";
+  type ResultCard = { handle: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; preview: string; name?: string | null; taint: ResultTaint; more: ResultFacet[]; shape?: unknown | null };
+  type OffRecordResultCards = { run_ref: string; run_id: string; count: number; cards: ResultCard[]; next_offset?: number | null; withheld: boolean };
+  type OffRecordResultReadRequest = { session_ref: string; run_ref: string; ref: string; facet?: ResultFacet | null; input?: unknown | null };
+  type ResultReadRefusal = { denied: string; reasonCodes: string[]; error?: string | null; bytes?: number | null };
+  type OffRecordResultRead = { status: "card"; card: ResultCard } | { status: "page"; facet: ResultFacet; page: unknown } | { status: "denied"; refusal: ResultReadRefusal };
+  type OffRecordWaitRequest = { session_ref: string; run_ref: string };
+  type OffRecordRunWait = { wait_id: string; generation: number; effect: string; reason: string; prompt?: string | null; answerable: boolean; delivered_at_ms?: number | null };
+  type OffRecordWaitView = { run_ref: string; run_id: string; wait?: OffRecordRunWait | null };
+  type OffRecordWaitAnswerRequest = { session_ref: string; run_ref: string; reply: unknown; wait_id?: EntityId | null; generation?: number | null };
+  type OffRecordWaitAnswered = { run_ref: string; run_id: string; wait_id: string; generation: number; already_answered: boolean; delivered_at_ms: number };
   type OffRecordRoomRequest = { room: string; session_ref: string };
   type OffRecordNoticeAct = "saved_talk" | "saved_turn" | "saving_from_here" | "saving_stopped" | "exported" | "save_suggested" | "save_declined";
   type OffRecordRoomNotice = { act: OffRecordNoticeAct; by: string; at: string };
@@ -1513,7 +1528,6 @@ declare namespace Sdk {
   type OffRecordRoomSavedTurn = { turn: string; replayed: string[]; short_ids: OffRecordRoomShortIdPair[] };
   type OffRecordRoomSaved = { saved: OffRecordRoomSavedTurn[] };
   type MessageResultSource = { run_id: EntityId; occurrence: EntityId; path: string };
-  type ResultFacet = "slice" | "search" | "query" | "chunks";
   type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] };
   type OffRecordTalkMessage = { author: string; message_type: string; content: string; order: number; result?: MessageResultAttachment | null };
   type OffRecordRoomExportTurn = { turn: string; speaker?: string | null; occurred_at: string; saved: boolean; messages: OffRecordTalkMessage[] };
@@ -2316,15 +2330,10 @@ declare namespace Sdk {
   type ResultEffectRecord = { seq: number; effect: string; action_digest?: string | null; started_at_ms: number; finished_at_ms: number };
   type ResultRetainedBody = { blake3: string; bytes: number };
   type ResultBodyStatus = { occurrence: EntityId; complete: boolean; retained?: ResultRetainedBody | null };
-  type ResultBodyKind = "text" | "binary";
-  type ResultTaintState = "clean" | "tainted_live" | "tainted_stale";
-  type ResultTaint = { state: ResultTaintState; secret?: string | null };
   type ResultTaintReference = { secret_ref: string; generation: number };
   type ResultOccurrenceManifest = { run_id: EntityId; occurrence: EntityId; path: string; handle: string; blake3: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; taint: ResultTaint; taint_refs: ResultTaintReference[]; source_rows?: EntityId[] | null };
   type ResultRunStatus = { run_id: EntityId; replay_present: boolean; checkpoint_count: number; effects: ResultEffectRecord[]; bodies: ResultBodyStatus[]; occurrences: ResultOccurrenceManifest[] };
   type ResultOccurrenceRequest = { run_id: EntityId; occurrence: EntityId };
-  type ResultCard = { handle: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; preview: string; name?: string | null; taint: ResultTaint; more: ResultFacet[]; shape?: unknown | null };
-  type ResultReadRefusal = { denied: string; reasonCodes: string[]; error?: string | null; bytes?: number | null };
   type ResultReadView = { status: "available"; manifest: ResultOccurrenceManifest; card: ResultCard } | { status: "denied"; refusal: ResultReadRefusal };
   type ResultByteSelection = { bytes: number[] };
   type ResultLineCursor = { offset: number; line: number };
@@ -4678,6 +4687,18 @@ declare namespace self {
   const off_record: {
     /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
     execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
+    results: {
+      /** The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not. */
+      list(input: Sdk.OffRecordResultsRequest): Promise<Sdk.OffRecordResultCards | StoredResult>;
+      /** The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint. */
+      read(input: Sdk.OffRecordResultReadRequest): Promise<Sdk.OffRecordResultRead | StoredResult>;
+    };
+    waits: {
+      /** The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on. */
+      answer(input: Sdk.OffRecordWaitAnswerRequest): Promise<Sdk.OffRecordWaitAnswered | StoredResult>;
+      /** The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered. */
+      get(input: Sdk.OffRecordWaitRequest): Promise<Sdk.OffRecordWaitView | StoredResult>;
+    };
   };
   const report_blocked: (input: Sdk.ReportBlockedInput) => Promise<Sdk.ReportBlockedOutput | StoredResult>;
   const run: {

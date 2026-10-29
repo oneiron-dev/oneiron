@@ -39,6 +39,7 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
+pub(crate) use self::record::parked_wait_now;
 pub use self::shadow_step::run_shadow_step;
 pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};

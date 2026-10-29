@@ -3113,6 +3113,18 @@ export class Oneiron {
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
+      results: {
+        /** The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not. */
+        list: (input: Facade.OffRecordResultsRequest): Facade.OffRecordResultCards => this.#call(() => this.#client.selfOffRecordResultsList(input) as Facade.OffRecordResultCards),
+        /** The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint. */
+        read: (input: Facade.OffRecordResultReadRequest): Facade.OffRecordResultRead => this.#call(() => this.#client.selfOffRecordResultsRead(input) as Facade.OffRecordResultRead),
+      },
+      waits: {
+        /** The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered. */
+        get: (input: Facade.OffRecordWaitRequest): Facade.OffRecordWaitView => this.#call(() => this.#client.selfOffRecordWaitsGet(input) as Facade.OffRecordWaitView),
+        /** The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on. */
+        answer: (input: Facade.OffRecordWaitAnswerRequest): Facade.OffRecordWaitAnswered => this.#call(() => this.#client.selfOffRecordWaitsAnswer(input) as Facade.OffRecordWaitAnswered),
+      },
     },
     consent: {
       graduation: {
