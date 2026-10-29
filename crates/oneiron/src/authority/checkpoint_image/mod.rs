@@ -63,8 +63,9 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// off its frontier as replay evidence (FIX 3007), carries the bodies of home
 /// candidacies, federation lifecycle acts and residence rows (FIX 3004, 3005,
 /// 5412), and the fold keeps each valid residence directive (FIX 5412). 16:
-/// the fold keeps each setting's signed acts and the refused export acts,
-/// and an image carries the bodies of both (FIX 4624, FIX 5660).
+/// the fold keeps each setting's signed acts, the refused export acts and
+/// each agent-carried act's Grant, and an image carries the bodies of both
+/// ops (FIX 4624, FIX 5660).
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 16;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
