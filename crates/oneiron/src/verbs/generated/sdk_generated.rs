@@ -2930,6 +2930,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.secrets.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretRevokeRequest,
+                >(),
+            ),
+            (
                 "vault.secrets.custody.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SecretCustodyGetRequest,
@@ -14089,6 +14095,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.secrets.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.secrets.custody.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20425,6 +20438,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.secrets.rewrap" => {
             let _input: crate::task_verb::sdk::SecretRewrapRequest = decode(value.clone())?;
         }
+        "vault.secrets.revoke" => {
+            let _input: crate::task_verb::sdk::SecretRevokeRequest = decode(value.clone())?;
+        }
         "vault.secrets.custody.get" => {
             let _input: crate::task_verb::sdk::SecretCustodyGetRequest = decode(value.clone())?;
         }
@@ -23900,6 +23916,7 @@ pub fn invoke(
         "vault.secrets.register" => encode(vault_secrets_register(memory, decode(value)?)?),
         "vault.secrets.rotate" => encode(vault_secrets_rotate(memory, decode(value)?)?),
         "vault.secrets.rewrap" => encode(vault_secrets_rewrap(memory, decode(value)?)?),
+        "vault.secrets.revoke" => encode(vault_secrets_revoke(memory, decode(value)?)?),
         "vault.secrets.custody.get" => encode(vault_secrets_custody_get(memory, decode(value)?)?),
         "vault.secrets.custody.submit" => {
             encode(vault_secrets_custody_submit(memory, decode(value)?)?)
@@ -29921,6 +29938,17 @@ pub fn vault_secrets_rewrap(
     crate::task_verb::sdk::rewrap_secret_as(
         memory.vault(),
         &memory.embedded_owner("vault.secrets.rewrap")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_secrets_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretRevokeReply> {
+    crate::task_verb::sdk::revoke_secret_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.revoke")?,
         crate::authority::ActSurface::ThisInstall,
         input,
     )

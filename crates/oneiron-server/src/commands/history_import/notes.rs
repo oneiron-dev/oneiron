@@ -115,9 +115,10 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(folder.is_dir(), "{} is not a folder", path.display());
     let mut counts = NoteCounts::default();
-    // A one-shot import lands notes only: the files held by name keep no
-    // original here, with no ledger row to name one on.
-    let (mut notes, _) = read_folder(&folder, &mut counts)?;
+    // The files held by name ride in the batch too, bound by its digest, and
+    // are kept as their originals once the owner approves (FIX 11587): a
+    // one-shot import names no ledger row, so the approve keeps them outright.
+    let (mut notes, name_only) = read_folder(&folder, &mut counts)?;
     super::progress(&format!("read {} note(s)", notes.len()));
     let folder = folder
         .to_str()
@@ -190,7 +191,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
     let earlier_titles = earlier_titles(&vault, &folder, &notes, &standings)?;
     let (links, link_counts) = resolve_links(&notes, &standings, &earlier_titles);
 
-    let batch = if files.is_empty() {
+    let batch = if files.is_empty() && name_only.is_empty() {
         None
     } else {
         let batch = ImportedNoteBatch {
@@ -198,6 +199,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             folder: folder.clone(),
             notes: files,
             links,
+            name_only,
         };
         let digest = note_imports::digest(&vault, &owner, &batch)?;
         let (note_count, link_count) = (batch.notes.len(), batch.links.len());

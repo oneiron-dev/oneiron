@@ -189,7 +189,7 @@ pub struct JudgeIncumbent {
 }
 
 /// Who settles a disagreement that no pick and no settled outcome decides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JudgeTieBreaker {
     /// A third judge from another model family.
@@ -200,7 +200,7 @@ pub enum JudgeTieBreaker {
 
 /// The vault's judge-swap policy, which the owner sets. Each field the owner
 /// leaves out takes canon's default (ARCH-0079 #model-swaps, ARCH-0003).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct JudgeSwapPolicy {
     /// Disagreements on a case of any other axis. Default: a third judge.
@@ -331,7 +331,7 @@ pub struct JudgeSwapReceipt {
 /// The owner's hand-test answer to one disagreement: the judge whose answer
 /// is right. It overrides any outcome or tie-breaker on the case, and like
 /// every calibration label it is final.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JudgeSwapPick {
     pub case_ref: String,
     pub judge: String,

@@ -102,6 +102,11 @@ pub struct FreeTimePolicy {
     /// once that agent was erased. Audit only; no rule reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_by_agent: Option<EntityId>,
+    /// The Grant the agent's set acted under (FIX 11608); `None` for the
+    /// owner's own set, for rows set before grants were stamped, and once
+    /// that agent was erased.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_grant: Option<EntityId>,
     /// Vault clock seconds. No cycle opens at a boundary before this.
     pub set_at: u64,
     /// Where the owner said so; `None` also once the linked machine it was
@@ -440,6 +445,10 @@ impl Vault {
                 cap_shown_at_ms: input.cap_shown_at_ms,
                 set_by: matches!(actor.by, ActBy::Owner).then_some(actor.owner),
                 set_by_agent: matches!(actor.by, ActBy::Agent { .. }).then_some(actor.acting),
+                set_grant: match actor.by {
+                    ActBy::Agent { grant, .. } => Some(grant),
+                    ActBy::Owner => None,
+                },
                 set_at,
                 surface: actor.surface,
                 prior: policy_digest(prior)?,

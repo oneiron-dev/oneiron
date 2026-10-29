@@ -8381,6 +8381,21 @@
       "section": false
     },
     {
+      "name": "vault.secrets.revoke",
+      "description": "The owner revokes a secret: the record goes terminal and every lease over it is revoked; the reply reads as a rotation's, with kind revoked, beside the custody request carried for his other machines.",
+      "input": "crate::task_verb::sdk::SecretRevokeRequest",
+      "output": "crate::task_verb::sdk::SecretRevokeReply",
+      "call": "crate::task_verb::sdk::revoke_secret_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.revoke\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.secrets.custody.get",
       "description": "The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to.",
       "input": "crate::task_verb::sdk::SecretCustodyGetRequest",

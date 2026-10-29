@@ -45,7 +45,7 @@ struct CardView {
 }
 
 /// A released batch's receipt.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ReceiptView {
     batch: String,
     /// The owner who confirmed, as 32 hex; absent once his identity is erased.
@@ -59,7 +59,7 @@ pub(crate) struct ReceiptView {
 
 /// What one credential came to: `readable`, `still_unavailable`, `erased`,
 /// `superseded` or `pending`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct OutcomeView {
     handle: String,
     generation: u32,

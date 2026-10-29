@@ -15,7 +15,7 @@ use crate::{EntityId, Result};
 use serde::{Deserialize, Serialize};
 
 /// The host's undo-fidelity finding, as an ask carries it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AskUndoFidelity {
     Full,
@@ -48,7 +48,7 @@ impl From<AskUndoFidelity> for UndoFidelity {
 
 /// One composed effect as plain fields: the engine-owned facts, where it runs, and the
 /// requirements it must be covered by. It rebuilds to the same effect, digest included.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskEffect {
     /// What kind of operation it is (e.g. `channel.send`).
@@ -74,7 +74,7 @@ pub struct AskEffect {
 
 /// What an ask about one consent effect carries: the effect, and the bound an owner's
 /// reason drafts a standing grant of, one of the effect's own requirements.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskConsent {
     pub effect: AskEffect,

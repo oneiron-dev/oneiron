@@ -22,12 +22,20 @@ pub(super) async fn facade_invocation_claim(
     let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
         return next.run(Request::from_parts(parts, body)).await;
     };
-    let bytes = axum::body::to_bytes(body, FACADE_MAX_BODY_BYTES)
-        .await
-        .unwrap_or_default();
-    let digest = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(value) => oneiron::receipt::call_json_digest(&value),
-        Err(_) => oneiron::receipt::call_bytes_digest(&bytes),
+    // A custody value's body arrives redacted from the outer layer; its claim
+    // states the arrival's own digest (FIX 11442).
+    let verb = parts.uri.path().trim_start_matches('/').to_owned();
+    let (bytes, redacted) =
+        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
+    let digest = match parts
+        .extensions
+        .get::<super::secret_body::FacadeOriginalDigest>()
+    {
+        Some(stored) => stored.digest().to_owned(),
+        None => match redacted {
+            Some(value) => oneiron::receipt::call_json_digest(&value),
+            None => oneiron::receipt::call_bytes_digest(&bytes),
+        },
     };
     let header = |name: &str| {
         parts

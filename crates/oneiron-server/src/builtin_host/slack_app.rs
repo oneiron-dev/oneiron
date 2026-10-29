@@ -80,7 +80,7 @@ pub(crate) fn slack_app_manifest(origin: &str) -> oneiron::Result<Value> {
 }
 
 /// One URL the provider's console needs from the owner.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ProviderUrl {
     id: &'static str,
     /// Where it goes in the provider's console.
@@ -92,7 +92,7 @@ pub(crate) struct ProviderUrl {
 
 /// What a built-in channel's setup adds on this host: the URLs the provider
 /// delivers to, and for Slack the app manifest.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, schemars::JsonSchema)]
 pub(crate) struct ProviderSetup {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     provider_urls: Vec<ProviderUrl>,
@@ -165,7 +165,7 @@ impl ProviderSetup {
 }
 
 /// What the owner opens to install the Slack app to the workspace.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct SlackInstallLink {
     authorize_url: String,
     redirect_url: String,

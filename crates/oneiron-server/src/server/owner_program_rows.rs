@@ -75,9 +75,12 @@ pub(super) fn answer(
     verb: AgentVerb,
     input: Value,
     line: Option<&RunAdmission>,
+    attempt: Option<&str>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     let Some(owner) = program_owner(server, actor) else {
-        return answer_as_agent(server, actor, origin, invocation, verb, input, None, line);
+        return answer_as_agent(
+            server, actor, origin, invocation, verb, input, None, line, attempt,
+        );
     };
     let producers = ProducerRows::default();
     let memory = agent_memory(server, actor, origin, invocation).listing_producers(&producers);
@@ -90,6 +93,7 @@ pub(super) fn answer(
             owner,
             actor.entity_ref(),
             line,
+            attempt,
             verb,
             input,
             &mut listed,
@@ -112,6 +116,7 @@ fn owner_row(
     owner: AuthenticatedOwner,
     actor: EntityId,
     line: Option<&RunAdmission>,
+    attempt: Option<&str>,
     verb: AgentVerb,
     input: Value,
     listed: &mut Option<Vec<EntityId>>,
@@ -122,9 +127,9 @@ fn owner_row(
     let media = |operation: AiOperation, input: Value| -> MemoryResult<Value> {
         let input = decode(input)?;
         let answered = match line {
-            Some(line) => {
-                runtime.block_on(crate::api::ai_media_for_run(server, line, operation, input))
-            }
+            Some(line) => runtime.block_on(crate::api::ai_media_for_run(
+                server, line, operation, attempt, input,
+            )),
             None => runtime.block_on(crate::api::ai_media_as_owner(server, operation, input)),
         };
         encode(answered?)
@@ -166,6 +171,7 @@ fn owner_row(
                 Some(line) => runtime.block_on(crate::api::ai_video_for_run(
                     server,
                     line,
+                    attempt,
                     input,
                     Some(actor),
                 )),

@@ -2,7 +2,7 @@
 use super::{conversation_members::actor, core_engine_error, json_payload, parse_entity_id_param};
 use crate::{
     auth::{CoreAuth, CoreScope},
-    error::{ApiError, EnvelopedApiError},
+    error::{ApiError, ApiErrorEnvelope, EnvelopedApiError},
     server::SyncServer,
 };
 use axum::{
@@ -40,6 +40,22 @@ pub(super) struct PresenceWrite {
     #[serde(default)]
     actor: Option<EntityId>,
 }
+/// Set one session's mode and facet placement.
+#[utoipa::path(
+    patch,
+    path = "/v1/core/sessions/{id}",
+    params(("id" = String, Path, description = "Hex session id.")),
+    request_body(content = Object, description = "`ModeWrite`: `mode` (`direct`, `group` or `council`), an optional `facet_ref` (32 hex, or null to clear; omitted keeps the stored placement) and an optional `actor` (32 hex).", content_type = "application/json"),
+    responses(
+        (status = 200, description = "The session's mode and facet placement.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed session id or request body.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write or a lane record scope the session sits in.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Session was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Session mode write failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn mode(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -83,6 +99,22 @@ pub(super) async fn mode(
         json!({"mode":req.mode,"facet_ref":facet_ref.map(|facet| facet.to_hex())}),
     ))
 }
+/// Set who is present in one session.
+#[utoipa::path(
+    post,
+    path = "/v1/core/sessions/{id}/presence",
+    params(("id" = String, Path, description = "Hex session id.")),
+    request_body(content = Object, description = "`PresenceWrite`: `ids` (32 hex each) and an optional `actor` (32 hex).", content_type = "application/json"),
+    responses(
+        (status = 200, description = "The session's presence in arrival order.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed session id or request body.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Session was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Session presence write failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn presence(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

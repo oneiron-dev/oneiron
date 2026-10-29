@@ -27,7 +27,7 @@ use super::record::{
 use super::{key_owner_in_txn, not_holder, unanimity, world_holders_in_txn};
 
 /// What a holder's answer came to.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldPrivacyAnswer {
     /// His yes applied the settings: the receipt.

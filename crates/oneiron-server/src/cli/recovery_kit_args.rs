@@ -171,6 +171,12 @@ pub struct RecoveryKitIssueArgs {
     #[arg(long, value_name = "FILE")]
     pub secret_file: Option<PathBuf>,
 
+    /// How the vault key unlocks (FIX 11386), as `confirm` takes it (FIX
+    /// 2201): this install's keystore by default. `issue-vault-key` holds a
+    /// locked key through it; `issue` opens a sealed vault with it.
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

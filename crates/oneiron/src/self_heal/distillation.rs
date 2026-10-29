@@ -23,12 +23,14 @@ const LABEL: SideTable<Vec<u8>, ReviewedFinding, Named> =
 const MINTED: SideTable<Vec<u8>, MintedRegistration, Named> =
     SideTable::new(&side_table::SELF_HEAL_MINTED);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReviewedFinding {
     pub family: String,
     #[serde(with = "super::receipt_serde::id")]
+    #[schemars(with = "String")]
     pub event_id: EntityId,
     #[serde(with = "super::receipt_serde::id")]
+    #[schemars(with = "String")]
     pub reviewer: EntityId,
     pub positive: bool,
 }

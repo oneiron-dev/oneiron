@@ -1892,6 +1892,8 @@ export class Oneiron {
       rotate: (input: Facade.SecretRotateRequest): Facade.SecretRotateReply => this.#call(() => this.#client.vaultSecretsRotate(input) as Facade.SecretRotateReply),
       /** The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown. */
       rewrap: (input: Facade.SecretRewrapRequest): Facade.SecretCustodyReply => this.#call(() => this.#client.vaultSecretsRewrap(input) as Facade.SecretCustodyReply),
+      /** The owner revokes a secret: the record goes terminal and every lease over it is revoked; the reply reads as a rotation's, with kind revoked, beside the custody request carried for his other machines. */
+      revoke: (input: Facade.SecretRevokeRequest): Facade.SecretRevokeReply => this.#call(() => this.#client.vaultSecretsRevoke(input) as Facade.SecretRevokeReply),
       custody: {
         /** The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to. */
         get: (input: Facade.SecretCustodyGetRequest): Facade.SecretCustodyViewReply => this.#call(() => this.#client.vaultSecretsCustodyGet(input) as Facade.SecretCustodyViewReply),

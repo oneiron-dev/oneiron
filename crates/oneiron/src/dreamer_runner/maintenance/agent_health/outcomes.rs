@@ -39,7 +39,7 @@ pub const HEALTH_REVIEW_RECEIPT_PREFIX: &str = "health_review:";
 const REVIEW_STATE_DOMAIN: &[u8] = b"oneiron.coach.agent_health.review_state.v1";
 
 /// One outcome set on a card, with what it judged frozen as it stood then.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthReviewReceipt {
     /// The review state's id: `health_review:` and 64 hex. A re-settle of the

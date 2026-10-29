@@ -2711,6 +2711,11 @@ export_facade! {
     let output = client.vault_secrets_rewrap(&input)?;
     crate::codec::lift_record("vault.secrets.rewrap", &output)
 };
+"vault.secrets.revoke" => fn vault_secrets_revoke(&self, input: SecretRevokeRequest) -> SecretRevokeReply = |client| {
+    let input: oneiron::task_verb::sdk::SecretRevokeRequest = crate::codec::lower_record("vault.secrets.revoke", input)?;
+    let output = client.vault_secrets_revoke(&input)?;
+    crate::codec::lift_record("vault.secrets.revoke", &output)
+};
 "vault.secrets.custody.get" => fn vault_secrets_custody_get(&self, input: SecretCustodyGetRequest) -> SecretCustodyViewReply = |client| {
     let input: oneiron::task_verb::sdk::SecretCustodyGetRequest = crate::codec::lower_record("vault.secrets.custody.get", input)?;
     let output = client.vault_secrets_custody_get(&input)?;
