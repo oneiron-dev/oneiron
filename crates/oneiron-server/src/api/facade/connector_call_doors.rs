@@ -18,6 +18,7 @@
 //! inside a write transaction.
 use std::sync::Arc;
 
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::ConnectorCallRequest;
 use oneiron::runtime_hooks::InvocationId;
@@ -50,13 +51,14 @@ pub(crate) async fn connector_call(
     Option<Vec<EntityId>>,
 ) {
     const VERB: &str = "connector.call";
+    let line = super::host_doors::calling_line();
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |server, _, memory| {
             let memory = match invocation {
                 Some(invocation) => memory.with_invocation(invocation),
                 None => memory,
             };
-            connector_call_listing_as(server, &memory, input)
+            connector_call_listing_on(server, &memory, input, line.as_ref())
         })
         .await;
     let answer = match answer {
@@ -93,6 +95,21 @@ pub(crate) fn answers_as_before(reply: &ConnectorCallReply) -> bool {
             && matches!(reply, ConnectorCallReply::AwaitingInput { .. }))
 }
 
+/// [`connector_call_listing_as`] for a caller that spends on `line`, its
+/// run's own: a web call on the deploy's key is charged there (FIX 11604).
+/// Every other call runs as [`connector_call_listing_as`] runs it.
+pub(crate) fn connector_call_listing_on(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    input: ConnectorCallRequest,
+    line: Option<&RunAdmission>,
+) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
+    if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
+        return crate::web_connector::call_listing(server, memory, input, line);
+    }
+    connector_call_listing_as(server, memory, input)
+}
+
 /// One connector call for the caller `memory` is bound to, with the
 /// invocation it carries, beside the rows the call's passes picked
 /// (FIX 5455), `None` when they are not known. Blocking: it sends, so call
@@ -103,7 +120,7 @@ pub(crate) fn connector_call_listing_as(
     input: ConnectorCallRequest,
 ) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
     if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
-        return crate::web_connector::call_listing(server, memory, input);
+        return crate::web_connector::call_listing(server, memory, input, None);
     }
     let invocation = memory
         .invocation()
