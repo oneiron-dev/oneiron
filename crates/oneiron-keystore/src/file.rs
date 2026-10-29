@@ -54,7 +54,10 @@ impl LocalFileKeystore {
         if !tag.exists() {
             fs::write(&tag, CACHEDIR_TAG).map_err(io)?;
         }
-        Ok(Self { dir })
+        let this = Self { dir };
+        // FIX 8019: sweep every slot's stale temporary files once.
+        this.sweep_temps(None);
+        Ok(this)
     }
 
     fn path(&self, slot: &KeystoreSlot) -> PathBuf {
@@ -85,6 +88,76 @@ impl LocalFileKeystore {
                 file.sync_all()
             });
         (tmp, written)
+    }
+
+    /// Removes stale temporary files for one slot, or every slot (FIX 8019).
+    fn sweep_temps(&self, slot: Option<&KeystoreSlot>) {
+        // Without /proc no pid is known gone, so every file is kept.
+        if !Path::new("/proc").exists() {
+            return;
+        }
+        let wanted = slot.map(|s| s.name());
+        let own = std::process::id();
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            let file_name = entry.file_name();
+            let name = match file_name.to_str() {
+                Some(name) => name,
+                None => continue,
+            };
+            let after_dot = match name.strip_prefix('.') {
+                Some(rest) => rest,
+                None => continue,
+            };
+            let inner = match after_dot.strip_suffix(".tmp") {
+                Some(inner) => inner,
+                None => continue,
+            };
+            let (prefix, nanos_text) = match inner.rsplit_once('.') {
+                Some(pair) => pair,
+                None => continue,
+            };
+            let (slot_part, pid_text) = match prefix.rsplit_once('.') {
+                Some(pair) => pair,
+                None => continue,
+            };
+            if slot_part.is_empty() || pid_text.is_empty() || nanos_text.is_empty() {
+                continue;
+            }
+            if let Some(wanted) = wanted.as_deref() {
+                if slot_part != wanted {
+                    continue;
+                }
+            } else if slot_part.split('.').any(|part| part.is_empty()) {
+                continue;
+            }
+            if !pid_text.bytes().all(|b| b.is_ascii_digit())
+                || !nanos_text.bytes().all(|b| b.is_ascii_digit())
+            {
+                continue;
+            }
+            let pid: u32 = match pid_text.parse() {
+                Ok(pid) => pid,
+                Err(_) => continue,
+            };
+            if nanos_text.parse::<u128>().is_err() {
+                continue;
+            }
+            if pid == own {
+                continue;
+            }
+            if Path::new(&format!("/proc/{pid}")).exists() {
+                continue;
+            }
+            let _ = fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -121,9 +194,12 @@ impl DeviceKeystore for LocalFileKeystore {
     /// Writes a private temporary file, then links it into place. A crash leaves
     /// either no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
+        // FIX 8019: sweep this slot's stale temporary files before writing.
+        self.sweep_temps(Some(slot));
         let path = self.path(slot);
         let (tmp, written) = self.write_temp(slot, secret);
         let linked = written.and_then(|()| fs::hard_link(&tmp, &path));
+        // FIX 8019: a failed removal is swept by a later open, create or delete.
         let _ = fs::remove_file(&tmp);
         match linked {
             Ok(()) => self.sync_dir(),
@@ -134,8 +210,16 @@ impl DeviceKeystore for LocalFileKeystore {
 
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
         match fs::remove_file(self.path(slot)) {
-            Ok(()) => self.sync_dir(),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Ok(()) => {
+                // FIX 8019: sweep this slot's stale temporary files, then sync.
+                self.sweep_temps(Some(slot));
+                self.sync_dir()
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                // FIX 8019: no slot file, still sweep this slot's stale files.
+                self.sweep_temps(Some(slot));
+                Ok(())
+            }
             Err(e) => Err(io(e)),
         }
     }

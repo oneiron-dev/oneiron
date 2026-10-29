@@ -305,10 +305,15 @@ pub(crate) fn sighted_bytes_in_txn(
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        if secret_scan::is_container(&bytes)
-            && let Some(reason) = secret_scan::write_tree_hit(&bytes)
-        {
-            return Err(masked_copy_withheld(reason));
+        if secret_scan::is_container(&bytes) && secret_scan::write_tree_hit(&bytes).is_some() {
+            // A hidden-only key is served the rebuilt copy, hidden bytes
+            // dropped (FIX 11553).
+            let copy =
+                secret_scan::served_masked_copy(&bytes, &KeyPlaces::new(), &PlaceHandles::new())?;
+            if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+                return Err(masked_copy_withheld(reason));
+            }
+            return Ok(copy);
         }
         return Ok(bytes);
     };

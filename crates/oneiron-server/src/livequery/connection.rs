@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 use crate::admission::{Admission, Permit};
 use crate::wire_telemetry::LimitRow;
 
+mod refresh_loop;
+
 const RETENTION: Duration = Duration::from_secs(300);
 
 struct Session {
@@ -73,21 +75,7 @@ impl Hub {
             ),
         });
         hubs.insert(key, Arc::downgrade(&hub));
-        let worker = hub.clone();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(25));
-            loop {
-                tick.tick().await;
-                if worker.server.strong_count() == 0 {
-                    break;
-                }
-                worker.refresh();
-                // Refolding live authority can exceed one period. Do not replay
-                // overdue checks in a continuously-ready catch-up loop that
-                // starves socket I/O; inspect current state again after a pause.
-                tick.reset();
-            }
-        });
+        refresh_loop::spawn(hub.clone(), server.vault().subscribe_notification_updates());
         hub
     }
 
@@ -229,12 +217,11 @@ impl Hub {
             document.clone(),
             self.budget.clone(),
         ));
-        let queries = Arc::new(LiveQueries::with_budget_limits(
-            conn_id,
-            source,
-            self.budget.clone(),
-            limits,
-        ));
+        // Subscribed before the session's first derive (FIX 3084).
+        let queries = Arc::new(
+            LiveQueries::with_budget_limits(conn_id, source, self.budget.clone(), limits)
+                .following_notifications(server.vault().subscribe_notification_updates()),
+        );
         let tee: Arc<dyn LiveQueryTee> = queries.clone();
         server
             .reassert_manager

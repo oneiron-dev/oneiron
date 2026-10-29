@@ -199,6 +199,11 @@ impl WavePlanner for ModelWavePlanner<'_> {
                     }],
                 },
             ];
+            // The plan's inputs as the caller's part of one read set (FIX
+            // 6934): its planner row. Its epic, objective and constraints
+            // are caller text, not rows. The call carries it as its sources
+            // (FIX 11313); the record below reuses it.
+            let planner_rows = vec![planner];
             // FIX 5777: the plan speaks with its planner's instructions for
             // its requester, so it carries both crafts, each attributed, read
             // when its call is built. Payer and actor stay the requester's.
@@ -214,6 +219,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                         purpose: WAVE_PLAN_ATTEMPT_KIND,
                         messages,
                         planner: Some(planner),
+                        sources: Some(planner_rows.clone()),
                         response_format: ResponseFormat::Json {
                             schema: output_schema(),
                         },
@@ -223,15 +229,14 @@ impl WavePlanner for ModelWavePlanner<'_> {
                     self.exhausted.set(fault.exhausted);
                     fault.error
                 })?;
-            // The plan's inputs as one read set (FIX 6934): its definition
-            // row and its planner craft, or unknown when those are not known
-            // complete. Its epic, objective and constraints are caller text,
-            // not rows. A plan that ends early before its call records
-            // nothing.
+            // The plan's inputs as one read set (FIX 6934): the caller's
+            // part above with its planner craft, or unknown when those are
+            // not known complete. A plan that ends early before its call
+            // records nothing.
             let rows = if generated.tool_rounds {
                 None
             } else {
-                union_source_rows([Some(vec![planner]), generated.planner_craft_rows])
+                union_source_rows([Some(planner_rows), generated.planner_craft_rows])
             };
             record_wave_read(self.vault, self.attempt.id, rows, &mut read_set_lost);
             let bytes = generated.bytes;

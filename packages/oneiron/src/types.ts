@@ -214,6 +214,17 @@ export type WitnessReceipt = {
   messageShortIds: string[]
   /** Facade write marker; always begins `witness:`. */
   receiptRef: string
+  /** What the wake this turn owes its actor's armed programs came to; absent when it owes none. */
+  wakeOutcome?: TurnProgramWakeOutcome
+}
+
+/** What a landed turn's program wake came to. The turn is accepted either way. */
+export type TurnProgramWakeOutcome = {
+  outcome: "not_armed" | "evaluated" | "unpersisted"
+  /** Wakes this landing recorded, when `evaluated`; zero is no failure. */
+  newlyRecorded?: number
+  /** Why no wake was recorded, when `unpersisted`. */
+  reason?: "no_authority" | "storage_failure"
 }
 
 /** One claim to commit. `approval` is deliberately not settable by callers. */
