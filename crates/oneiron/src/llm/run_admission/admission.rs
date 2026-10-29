@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
-    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId,
+    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, WorkClass,
 };
 use super::declaration::{DeclarationEditor, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
@@ -17,6 +17,7 @@ use super::host::{HostAccount, OfferBinding, PaidConnector, PayerPerson};
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
+use super::work_context::WorkContext;
 
 mod denied;
 mod media;
@@ -66,6 +67,8 @@ pub struct RunAdmission {
     /// The idempotency key a job submitted through this handle goes out
     /// with ([`Self::submit_keyed`], FIX 2248); `None` on the run itself.
     submit_key: Option<String>,
+    /// Host scheduling and physical-custody context for this handle (R4).
+    work_context: Option<WorkContext>,
 }
 
 pub(super) struct RunInner {
@@ -212,6 +215,7 @@ impl RunAdmission {
             sources: None,
             initiator: None,
             submit_key: None,
+            work_context: None,
         }
     }
 
@@ -256,6 +260,31 @@ impl RunAdmission {
             initiator: actor,
             ..self.clone()
         }
+    }
+
+    /// This handle with host scheduling and physical-custody context (R4).
+    /// Every clone-based overlay preserves it, and scheduling stays outside
+    /// the run's declaration, prompt, conditioning, and dispatch identity.
+    #[must_use]
+    pub fn with_work_context(&self, context: WorkContext) -> Self {
+        Self {
+            work_context: Some(context),
+            ..self.clone()
+        }
+    }
+
+    /// The effective context for device admission. Explicit context wins;
+    /// memory work is Background, and every other unlabeled call is
+    /// Foreground so today's callers keep their equal FIFO standing.
+    #[must_use]
+    pub fn work_context(&self) -> WorkContext {
+        self.work_context.clone().unwrap_or_else(|| {
+            let mut context = WorkContext::default();
+            if self.inner.memory_work() {
+                context.class = WorkClass::Background;
+            }
+            context
+        })
     }
 
     /// Who this handle's calls answer to (FIX 562): the actor that acted to
