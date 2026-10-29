@@ -106,7 +106,8 @@ pub(crate) struct InstallSigner {
 impl InstallSigner {
     pub(crate) fn derive(machine: crate::EntityId, seed: &[u8; 32]) -> Self {
         let key = |context: &str| {
-            let derived = zeroize::Zeroizing::new(blake3::derive_key(context, seed));
+            // FIX 6669: derive straight into the guard.
+            let derived = crate::world_keys::derive_guarded(context, &[&seed[..]]);
             SigningKey::from_bytes(&derived)
         };
         Self {
