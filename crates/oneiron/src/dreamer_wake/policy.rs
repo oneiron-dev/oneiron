@@ -579,6 +579,7 @@ impl Vault {
                 actor,
                 surface,
                 &prior,
+                &policy,
             )
         })
     }

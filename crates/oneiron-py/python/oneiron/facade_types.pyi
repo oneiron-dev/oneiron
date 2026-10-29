@@ -6483,6 +6483,7 @@ class SharedActExecutionReceipt(TypedDict):
     revoked_slips: list[str]
     export: NotRequired[SharedActExport | None]
     authority_entry: NotRequired[str | None]
+    authorizer: NotRequired[str | None]
     completed_at: int
 class RemovalExportDelivery(TypedDict):
     receipt_id: str

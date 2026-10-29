@@ -176,6 +176,8 @@ fold_state_fields!(
     home_pick,
     conversation_training,
     conversation_training_vault,
+    policy_settings,
+    refused_export_acts,
     home_candidacy,
     owner_work,
     world_keys,

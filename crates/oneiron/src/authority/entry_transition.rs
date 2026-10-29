@@ -146,6 +146,8 @@ pub(super) fn fold_entry_state(
                 super::conversation_training::ConversationTrainingChoiceState::default(),
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
+            policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
+            refused_export_acts: BTreeSet::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
@@ -295,6 +297,37 @@ pub(super) fn fold_entry_state(
     if let AuthorityOp::AgentGrantAct(record) = &entry.op {
         if let Err(issue) = super::agent_grant_act::apply_agent_grant_act(
             &state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is an act on a vault setting or an agent's free-time policy, on its
+    // target's frontier (FIX 4624, FIX 5660).
+    if let AuthorityOp::PolicySettingSet(set) = &entry.op {
+        if let Err(issue) = super::policy_setting_choice::apply_policy_setting(
+            &mut state,
+            entry,
+            set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the owner's whole-vault export, which moves no fold state but a
+    // refused one's mark (FIX 4624).
+    if let AuthorityOp::ExportAct(record) = &entry.op {
+        if let Err(issue) = super::export_act::apply_export_act(
+            &mut state,
             entry,
             record,
             hash,
@@ -599,6 +632,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)

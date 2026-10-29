@@ -28,6 +28,10 @@ pub(super) fn scrub_policy_attribution(
         policy.set_by = None;
         changed = true;
     }
+    if policy.set_by_agent == Some(*actor) {
+        policy.set_by_agent = None;
+        changed = true;
+    }
     if matches!(policy.surface, Some(ActSurface::LinkedDevice { machine }) if machine == *actor) {
         policy.surface = None;
         changed = true;

@@ -240,6 +240,13 @@ pub(super) fn project_once(
                 context.machine_standing,
             )
         }),
+        policy_settings: merged.as_ref().map_or_else(Default::default, |state| {
+            super::policy_setting_choice::folded_policy_settings(
+                state,
+                context.pin,
+                context.machine_standing,
+            )
+        }),
         home_candidacy: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::home_candidacy::folded_home_candidacies(state)
         }),

@@ -62,8 +62,10 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// its body (FIX 5765). 15: an image keeps the fold state at each covered row
 /// off its frontier as replay evidence (FIX 3007), carries the bodies of home
 /// candidacies, federation lifecycle acts and residence rows (FIX 3004, 3005,
-/// 5412), and the fold keeps each valid residence directive (FIX 5412).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 15;
+/// 5412), and the fold keeps each valid residence directive (FIX 5412). 16:
+/// the fold keeps each setting's signed acts and the refused export acts,
+/// and an image carries the bodies of both (FIX 4624, FIX 5660).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 16;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

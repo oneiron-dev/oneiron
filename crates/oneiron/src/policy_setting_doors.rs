@@ -11,13 +11,16 @@
 //! The owner's act on either setting is recorded in the commit that changes
 //! it (WILL-PLAN L13 row 01, Engine 10-19 02:4x): an [`OwnerAct`] of kind
 //! [`OwnerActKind::PolicySetting`], on the setting's reserved target
-//! ([`owner_act_target`]), with where the owner said so (audit only) and the
-//! setting as it stood. This install keeps it ([`Vault::policy_setting_acts`]);
-//! no signed op carries it to another machine yet.
+//! ([`owner_act_target`]), with where the owner said so (audit only), the
+//! setting's live acts as its revision, and the setting as it stood. This
+//! install keeps it as its local index ([`Vault::policy_setting_acts`]), and
+//! the same commit signs it as a `PolicySettingSet` every machine the owner
+//! admits folds and checks (FIX 4624), best effort: a record that cannot be
+//! signed leaves the setting and this index as before.
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::{ActSurface, OwnerAct, OwnerActKind};
+use crate::authority::{ActSurface, OwnerAct, OwnerActKind, PolicySettingAct};
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::actions::{
     ActionArgument, ActionDispatch, ActionHostBinding, ActionRegistry, AgentActionCall,
@@ -192,41 +195,9 @@ pub fn inference_defaults_replace_embedded(
     run_embedded(memory, input.into_action()?, None)
 }
 
-/// A vault-wide setting an owner act of kind [`OwnerActKind::PolicySetting`]
-/// changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicySetting {
-    /// The dreamer's wake policy (`dreamer.wake_policy.set`).
-    DreamerWakePolicy,
-    /// The per-purpose inference defaults (`inference.defaults.replace`).
-    InferenceDefaults,
-}
-
-impl PolicySetting {
-    /// The setting's name, which its act's target is derived from.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::DreamerWakePolicy => "settings.dreamer_wake_policy",
-            Self::InferenceDefaults => "settings.inference_defaults",
-        }
-    }
-}
-
-/// The target an owner act names when it changes no row of its own: a
-/// vault-wide setting, by its name, or a whole-vault export
-/// (`vault.export`). Reserved and derived from the name (BLAKE3 under a
-/// fixed context, first 16 bytes), so every install names the same target.
-///
-/// # Errors
-/// A derived id that lands on a reserved pattern (never in practice).
-pub fn owner_act_target(name: &str) -> Result<EntityId> {
-    let digest = blake3::derive_key("oneiron owner act target v1", name.as_bytes());
-    let mut id = [0_u8; 16];
-    id.copy_from_slice(&digest[..16]);
-    EntityId::from_bytes(id)
-}
+// The setting an owner act changes and the reserved target of a vault-wide
+// one live beside the signed op that carries them (FIX 4624).
+pub use oneiron_authority::authority::{PolicySetting, owner_act_target};
 
 /// One owner act on a vault-wide setting, as this install recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +205,8 @@ pub fn owner_act_target(name: &str) -> Result<EntityId> {
 pub struct PolicySettingActReceipt {
     pub setting: PolicySetting,
     pub act: OwnerAct,
+    /// BLAKE3 over the setting as it stood, as JSON.
+    pub prior: [u8; 32],
     /// Vault clock seconds.
     pub at: u64,
 }
@@ -243,9 +216,12 @@ const ACTS: SideTable<u64, PolicySettingActReceipt, Named> =
 
 /// Records, in the caller's write transaction, the act of the owner `owner`
 /// (the person the caller revalidated in that transaction) on `setting`,
-/// whose value before the write was `prior`. The act's `seen` is BLAKE3 over
-/// `prior` as JSON. With no `surface`, the host named none, so nothing is
-/// recorded and the write stands as it is.
+/// whose value before the write was `prior` and after it `value`. The act's
+/// `seen` is the setting's live acts (zero where the fold does not read);
+/// `prior` is kept as BLAKE3 over it as JSON. The act is also signed as a
+/// `PolicySettingSet` in this transaction, best effort (FIX 4624). With no
+/// `surface`, the host named none, so nothing is recorded and the write
+/// stands as it is.
 pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -253,19 +229,49 @@ pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
     owner: EntityId,
     surface: Option<ActSurface>,
     prior: &T,
+    value: &T,
 ) -> Result<()> {
     let Some(surface) = surface else {
         return Ok(());
     };
     let prior = serde_json::to_vec(prior)
         .map_err(|_| Error::InvariantViolation("policy setting act encoding"))?;
+    let prior = *blake3::hash(&prior).as_bytes();
+    let target = owner_act_target(setting.as_str())?;
+    // A fold or a value that does not read leaves the act unsigned and this
+    // index as before (rubric 1).
+    let signable = match (
+        vault.policy_setting_revision_in_txn(txn, target),
+        serde_json::to_vec(value),
+    ) {
+        (Ok(seen), Ok(value)) => Some((seen, *blake3::hash(&value).as_bytes())),
+        (Err(error), _) => {
+            tracing::warn!(%error, "policy setting act: the setting's revision did not read");
+            None
+        }
+        (_, Err(error)) => {
+            tracing::warn!(%error, "policy setting act: the new value did not encode");
+            None
+        }
+    };
     let act = OwnerAct::by_owner(
         owner,
         OwnerActKind::PolicySetting,
-        owner_act_target(setting.as_str())?,
+        target,
         surface,
-        *blake3::hash(&prior).as_bytes(),
+        signable.map_or([0; 32], |(seen, _)| seen),
     );
+    if let Some((_, value)) = signable {
+        vault.record_policy_setting_op_in_txn(
+            txn,
+            PolicySettingAct {
+                act,
+                setting,
+                prior,
+                value: Some(value),
+            },
+        );
+    }
     let sequence = match ACTS.iter_rev_from(&vault.store, txn, &[])?.next() {
         None => 0,
         Some(row) => row?
@@ -278,7 +284,12 @@ pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
         &vault.store,
         txn,
         &sequence,
-        &PolicySettingActReceipt { setting, act, at },
+        &PolicySettingActReceipt {
+            setting,
+            act,
+            prior,
+            at,
+        },
     )
 }
 

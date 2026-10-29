@@ -60,6 +60,7 @@ impl HostSelfDispatcher<'_> {
                         actor,
                         self.owner_surface,
                         prior.table(),
+                        &next,
                     )?;
                 }
                 Ok(())
