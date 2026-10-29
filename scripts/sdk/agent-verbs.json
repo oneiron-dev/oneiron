@@ -10930,7 +10930,7 @@
     },
     {
       "name": "vault.agents.grants.mint",
-      "description": "The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant.",
+      "description": "The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door.",
       "input": "crate::task_verb::sdk::AgentGrantMintRequest",
       "output": "crate::task_verb::sdk::AgentGrantMinted",
       "call": "crate::task_verb::sdk::mint_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.mint\")?, crate::authority::ActSurface::ThisInstall, input)?",
@@ -13979,7 +13979,7 @@
     },
     {
       "name": "ai.options",
-      "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
+      "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows.",
       "input": "AiOptionsRequest",
       "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
@@ -13993,7 +13993,7 @@
     },
     {
       "name": "ai.image",
-      "description": "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid.",
+      "description": "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. The owner calls it, or an agent whose Grant names ai.image, as his call.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
@@ -14007,7 +14007,7 @@
     },
     {
       "name": "ai.speech",
-      "description": "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice.",
+      "description": "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. The owner calls it, or an agent whose Grant names ai.speech, as his call.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
@@ -14112,7 +14112,7 @@
     },
     {
       "name": "ai.transcribe",
-      "description": "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid.",
+      "description": "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. The owner calls it, or an agent whose Grant names ai.transcribe, as his call.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
@@ -14126,7 +14126,7 @@
     },
     {
       "name": "ai.embed",
-      "description": "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid.",
+      "description": "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. The owner calls it, or an agent whose Grant names ai.embed, as his call.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
@@ -14140,7 +14140,7 @@
     },
     {
       "name": "ai.video",
-      "description": "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job.",
+      "description": "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. The owner calls it, or an agent whose Grant names ai.video, as his call.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiVideoTicket",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
@@ -14154,7 +14154,7 @@
     },
     {
       "name": "ai.video.poll",
-      "description": "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it.",
+      "description": "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. The owner polls every job; an agent whose owner agent Grant names ai.video polls only the jobs it asked for.",
       "input": "AiVideoJobRequest",
       "output": "crate::task_verb::sdk::AiVideoJob",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
@@ -14168,7 +14168,7 @@
     },
     {
       "name": "ai.video.cancel",
-      "description": "Stops a video job at its provider.",
+      "description": "Stops a video job at its provider. The owner cancels any job; an agent whose owner agent Grant names ai.video cancels only the jobs it asked for.",
       "input": "AiVideoJobRequest",
       "output": "crate::task_verb::sdk::AiVideoCancelled",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
