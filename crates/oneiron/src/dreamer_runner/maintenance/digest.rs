@@ -273,8 +273,9 @@ pub struct ProactivityDigest {
     /// view rebuilds its text with (FIX 6411).
     pub presentation: ProactivityPresentation,
     /// The witness an urgent digest was delivered under (FIX 8955): the
-    /// `dreamer.digest.urgent` job whose input keeps the ladder's answer with
-    /// its full receipt. `None` for every other digest.
+    /// `dreamer.digest.urgent` job whose input keeps the ladder's or the
+    /// host-built answer with its full receipt (FIX 10942). `None` for every
+    /// other digest.
     pub witness: Option<crate::attempt_queue::AttemptId>,
 }
 #[derive(Default, Serialize, Deserialize)]
