@@ -133,10 +133,12 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let proposals = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some(completed_units) = landed_units_in_txn(ctx.vault, &txn, attempt_id)? {
+            if let Some((completed_units, step_hashes)) =
+                landed_units_in_txn(ctx.vault, &txn, attempt_id)?
+            {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units,
-                    step_hashes: Vec::new(),
+                    step_hashes,
                 });
             }
             let merged = merged_snapshot_in_txn(ctx.vault, &txn, input.merge)?;
