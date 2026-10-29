@@ -162,4 +162,35 @@ impl Vault {
         }
         Ok(result)
     }
+
+    /// Whether a write through the door with nothing of its own would still
+    /// do per-write work (FIX 11664): scan checks waiting to be kept, a
+    /// stale-stamp sweep owed, a found-key notice due, or a scope summary
+    /// owed its rederive. A timer pass whose opening write would carry none
+    /// of them skips that write.
+    #[doc(hidden)]
+    pub fn write_door_work_due(&self) -> crate::error::Result<bool> {
+        if self.store.pending_scan_checks.any_waiting()
+            || self
+                .store
+                .federation_stale_sweep_owed
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Ok(true);
+        }
+        let txn = self.store.env.read_txn()?;
+        Ok(
+            crate::secret_custody::found_key_notices_due_in_txn(self, &txn)?
+                || (!crate::scope_summary::rederive_deferred()
+                    && crate::scope_summary::rederive_owed_in_txn(self, &txn)?),
+        )
+    }
+
+    /// The wakes an empty write's commit sends, sent with no write: every
+    /// attempt observer and the owner's waiting shed look again (FIX 11664).
+    #[doc(hidden)]
+    pub fn send_empty_commit_wakes(&self) {
+        self.store.notify_attempt_observers();
+        self.wake_owner_shed();
+    }
 }
