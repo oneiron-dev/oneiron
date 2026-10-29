@@ -132,7 +132,7 @@ pub(crate) fn read_result_in(
     let Some((output, name)) = selected else {
         return Ok(unknown_handle(&live));
     };
-    if withholds(record.agent_verb_rows().as_deref())? {
+    if withholds(record.result_rows().as_deref())? {
         return Ok(refusal("result_withheld"));
     }
     ResultRead::outside_run(storage, run_id, output, name, target.range, facet, input)

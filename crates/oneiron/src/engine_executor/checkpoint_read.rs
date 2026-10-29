@@ -128,7 +128,7 @@ fn project(
         .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;
     let ledger = storage.code_run_folds(run)?;
     let epochs = storage.code_run_compaction_epochs(run)?;
-    let mut sources = record.agent_verb_rows().ok_or_else(|| {
+    let mut sources = record.result_rows().ok_or_else(|| {
         Error::InvalidConfig("run history contains an answer with unlisted sources".into())
     })?;
     sources.extend(

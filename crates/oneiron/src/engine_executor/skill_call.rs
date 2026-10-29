@@ -101,6 +101,9 @@ fn live_skill_call(
     // and a callable invocation witness never settle the attempt's outcome.
     record.bridge_calls.extend(host.bridge_calls);
     record.outputs.extend(host.captured);
+    // The callable's loaded skills and read rows stay on the record, for the
+    // run's later steps and its readers (FIX 5763).
+    record.callable_rows = host.callable_rows;
     for binding in host.bound {
         match record
             .bindings

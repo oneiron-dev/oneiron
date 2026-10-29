@@ -300,6 +300,7 @@ impl EngineNativeExecutor<'_> {
                     let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
+                    record.callable_rows = host.callable_rows;
                     if !bridge_calls.is_empty()
                         && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
@@ -339,6 +340,7 @@ impl EngineNativeExecutor<'_> {
                 let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
                 let captured = host.captured;
+                record.callable_rows = host.callable_rows;
                 if let Some(status) = self.persist_failed_step_after_bridge_calls(
                     &mut record,
                     expected_generation,
@@ -375,6 +377,7 @@ impl EngineNativeExecutor<'_> {
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
+                    record.callable_rows = host.callable_rows;
                     if !bridge_calls.is_empty()
                         && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
@@ -409,6 +412,9 @@ impl EngineNativeExecutor<'_> {
             // bodies; the calls' rows and the step's bindings carry their
             // handles.
             record.outputs.extend(host.captured);
+            // The rows the step's callables stood on, kept for the run's
+            // later steps and its readers (FIX 5763).
+            record.callable_rows = host.callable_rows;
             // The board frames its answers carried, for the model's view of
             // the step (FIX 2135).
             super::board_frames::record_step_board_frames(
