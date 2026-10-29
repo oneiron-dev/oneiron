@@ -122,7 +122,7 @@ impl EngineNativeExecutor<'_> {
             record,
             completed_steps,
             bridge_start,
-        )?;
+        );
         record_text_output(
             &self.storage,
             record,

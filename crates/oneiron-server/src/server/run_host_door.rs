@@ -27,9 +27,9 @@
 //! dispatcher over the agent's own board on the run's own STREAM connection,
 //! which goes when the door does. Its `describe(self)` reads the run's own
 //! self brief, and its `vault.weave.lens` renders the agent's own lens on
-//! the run's line, its card held for the run (FIX 2086). Each successful
-//! answer carries the frame that connection queued, beside its output
-//! (FIX 2135). Each row's verb hooks fire once around it.
+//! the run's line, its card held for the run (FIX 2086). A successful
+//! answer the run reads as it stands carries the frame that connection
+//! queued, beside its output (FIX 2135). Each row's verb hooks fire once around it.
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -205,7 +205,7 @@ impl AgentVerbDoor for RunHostDoor {
             // The run's thread holds the call while its guest acts; its step
             // verdicts spend on the run's line (FIX 3574).
             let memory = agent_memory(&self.server, self.actor, origin, invocation);
-            return self.observed(self.guests.call(
+            return self.observed(call.verb, self.guests.call(
                 &self.server,
                 &self.runtime,
                 call,
@@ -286,7 +286,7 @@ impl AgentVerbDoor for RunHostDoor {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
         };
-        self.observed(match answered {
+        self.observed(verb, match answered {
             Ok((output, rows)) => Ok(Ok(AgentVerbAnswer::new(output, rows))),
             // A verb hook's stop goes back to the run as the typed stop, and
             // a model call no provider answered as the typed outage, which
@@ -367,7 +367,7 @@ impl AgentVerbDoor for RunHostDoor {
             let _ = sender
                 .send(crate::api::connector_answer_as(&server, &memory, request).and_then(encode));
         });
-        self.observed(Ok(match receiver.recv() {
+        Ok(match receiver.recv() {
             // An answer serves no vault rows: the connector's reply is
             // foreign data.
             Ok(Ok(output)) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
@@ -375,7 +375,7 @@ impl AgentVerbDoor for RunHostDoor {
             Err(_) => Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }),
-        }))
+        })
     }
 }
 
