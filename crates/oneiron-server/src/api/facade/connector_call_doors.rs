@@ -22,7 +22,11 @@ use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::ConnectorCallRequest;
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::task_verb::sdk::{self, ActAnswer, ConnectorAnswerRequest, ConnectorCallReply};
+use oneiron::settings::ReadDestination;
+use oneiron::task_verb::sdk::{
+    self, ActAnswer, ConnectorAnswerRequest, ConnectorCallReply, NarrowedQuestion,
+    NarrowedQuestions,
+};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing};
@@ -38,8 +42,10 @@ use crate::server::SyncServer;
 /// presented; unknown when they are not known. The call runs as it asked
 /// from any surface; for a caller off this device whose reply names or
 /// lists a row that stays here, only the answer narrows, to the word that
-/// it ran ([`crate::device_local::act_answer`]). Some answers are left
-/// unjudged and answer as before ([`answers_as_before`]).
+/// it ran ([`crate::device_local::act_answer`]); a connector's questions
+/// narrow only their text and keep their answer path ([`narrowed_questions`],
+/// FIX 5824). Some answers are left unjudged and answer as before
+/// ([`answers_as_before`]).
 pub(crate) async fn connector_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -71,28 +77,124 @@ pub(crate) async fn connector_call(
     };
     match answer {
         (Ok(reply), rows) if answers_as_before(&reply) => (Ok(ActAnswer::Done(reply)), rows),
+        (Ok(reply @ ConnectorCallReply::AwaitingInput { .. }), rows) => {
+            narrowed_questions(server.vault(), &auth.destination(), reply, rows)
+        }
         answer => {
             crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
         }
     }
 }
 
-/// Whether a connector's `awaiting_input` reply narrows like any other act
-/// answer. Off (FIX-LIST line 5824): its caller keeps the questions, the
-/// handle it answers them by through `connector.answer`, and their expiry,
-/// as before, until an answer shape that keeps the handle and narrows only
-/// the questions naming a kept row exists.
-const AWAITING_INPUT_REPLY_NARROWS: bool = false;
+/// Whether a connector's `awaiting_input` reply narrows for a caller off
+/// this device. On (FIX 5824): only the text of a question naming a row that
+/// stays here is left behind, and the handle it is answered by through
+/// `connector.answer`, the call's ref, its source and the round's live lease
+/// leave whole ([`narrowed_questions`]).
+const AWAITING_INPUT_REPLY_NARROWS: bool = true;
 
 /// Whether `reply` answers as before, unjudged. A held or pending call's
 /// reply names the call ref its caller parks on and polls by, and no row
 /// content; what the ref leads to narrows where it is read or delivered. A
-/// connector's questions keep their answer path
+/// connector's questions narrow only their text
 /// ([`AWAITING_INPUT_REPLY_NARROWS`]).
 pub(crate) fn answers_as_before(reply: &ConnectorCallReply) -> bool {
     reply.wait_ref().is_some()
         || (!AWAITING_INPUT_REPLY_NARROWS
             && matches!(reply, ConnectorCallReply::AwaitingInput { .. }))
+}
+
+/// Whether an `ai.voice.tool` call's connector `reply` answers as before,
+/// unjudged: as [`answers_as_before`], and its questions keep their answer
+/// path whole, since the voice tool's reply has no narrowed questions form.
+pub(crate) fn voice_answers_as_before(reply: &ConnectorCallReply) -> bool {
+    reply.wait_ref().is_some() || matches!(reply, ConnectorCallReply::AwaitingInput { .. })
+}
+
+/// A connector's `awaiting_input` `reply` for a caller toward `destination`
+/// (FIX 5824). A reply that may leave, or whose rows are not known, answers
+/// whole beside its rows, as [`crate::device_local::act_answer_maybe`]
+/// answers it. One that names or lists a row a world withheld from that
+/// destination keeps (or whose check fails) keeps its answer path whole and
+/// leaves the text of each question naming such a row here, beside no rows.
+fn narrowed_questions(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    reply: ConnectorCallReply,
+    rows: Option<Vec<EntityId>>,
+) -> (
+    MemoryResult<ActAnswer<ConnectorCallReply>>,
+    Option<Vec<EntityId>>,
+) {
+    let Some(rows) = rows else {
+        return (Ok(ActAnswer::Done(reply)), None);
+    };
+    // Whether `payload`, derived from `named`, may leave: no row it names by
+    // whole id or short ref, nor one of `named`, is withheld from there.
+    let leaves = |mut named: Vec<EntityId>, payload: &serde_json::Value| {
+        let Some(mut by_short_ref) = crate::device_local::short_refs_named(vault, payload) else {
+            return false;
+        };
+        named.append(&mut by_short_ref);
+        serde_json::to_vec(payload).is_ok_and(|bytes| {
+            matches!(
+                crate::device_local::retained_hold(vault, destination, &named, &bytes),
+                Ok(None)
+            )
+        })
+    };
+    let whole = serde_json::to_value(&reply).unwrap_or(serde_json::Value::Null);
+    if !destination.is_off_device() || leaves(rows.clone(), &whole) {
+        return (Ok(ActAnswer::Done(reply)), Some(rows));
+    }
+    let ConnectorCallReply::AwaitingInput {
+        handle,
+        call_ref,
+        source,
+        foreign,
+        questions,
+        live_until_ms,
+        reasons,
+    } = reply
+    else {
+        return (Ok(ActAnswer::details_on_device()), Some(Vec::new()));
+    };
+    let questions = questions
+        .into_iter()
+        .map(|question| {
+            let text = serde_json::Value::Array(vec![
+                serde_json::Value::String(question.message.clone()),
+                question.requested_schema.clone(),
+            ]);
+            if leaves(Vec::new(), &text) {
+                NarrowedQuestion {
+                    key: question.key,
+                    message: Some(question.message),
+                    requested_schema: Some(question.requested_schema),
+                    on_device: false,
+                }
+            } else {
+                NarrowedQuestion {
+                    key: question.key,
+                    message: None,
+                    requested_schema: None,
+                    on_device: true,
+                }
+            }
+        })
+        .collect();
+    let narrowed = NarrowedQuestions {
+        outcome: "awaiting_input".to_owned(),
+        questions_narrowed: true,
+        handle,
+        call_ref,
+        source,
+        foreign,
+        questions,
+        live_until_ms,
+        reasons,
+    };
+    (Ok(ActAnswer::QuestionsNarrowed(narrowed)), Some(Vec::new()))
 }
 
 /// [`connector_call_listing_as`] for a caller that spends on `line`, its

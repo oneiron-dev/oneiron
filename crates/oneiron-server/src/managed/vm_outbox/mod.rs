@@ -40,16 +40,14 @@ mod source_check;
 mod store;
 mod transfer;
 
-pub(crate) use self::diverged::{
-    DIVERGED_ANSWER_ROUTE, DivergedOwnerAnswer, VmOutboxMemberStatus,
-};
+pub(crate) use self::diverged::{DIVERGED_ANSWER_ROUTE, DivergedOwnerAnswer, VmOutboxMemberStatus};
 pub(crate) use self::endpoint::{answer_diverged, companion_member_statuses};
 pub(super) use self::endpoint::{
     companion_revision, park_companion, register_backup, resume_companion,
 };
-pub(crate) use self::store::DivergedAnswer;
 pub use self::guest::run_vm_outbox;
 pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label};
+pub(crate) use self::store::DivergedAnswer;
 
 use self::local::Owner;
 use self::store::{MemberRecord, Store};

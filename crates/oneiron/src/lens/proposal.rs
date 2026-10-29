@@ -19,8 +19,7 @@ use serde::{Deserialize, Serialize};
 use super::artifact::{LensArtifacts, lens_tree_in};
 use super::intent::{INTENTS, LensIntentIndex};
 use super::scope::{
-    LensAdmission, LensScope, declared_position, placed_in, proposal_admission_in,
-    tree_admitted_in,
+    LensAdmission, LensScope, declared_position, placed_in, proposal_admission_in, tree_admitted_in,
 };
 use super::{GeneratedLens, LensIntentRecord, LensLoadAction, LensVersionStamp, lens_load_action};
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
@@ -38,8 +37,6 @@ pub(super) const PROPOSALS: SideTable<EntityId, LensProposalRecord, Named> =
 /// The owner's selected revision per pack/skill slot. Key: [`slot_key`].
 pub(super) const SLOTS: SideTable<String, LensSlotRecord, Named> =
     SideTable::new(&side_table::LENS_SLOT);
-/// The largest frozen tree a proposal stores, as canonical JSON.
-pub const LENS_PROPOSAL_MAX_BYTES: usize = 1024 * 1024;
 /// The most rows one `vault.lenses.list` page returns.
 pub const LENS_LIST_MAX_PAGE: usize = 200;
 
@@ -241,13 +238,10 @@ impl Memory<'_> {
                 "compiled must target this vault's lens atom kit and apps contract",
             ));
         }
+        // The tree is stored whole, whatever its size: its author holds it
+        // and sent it whole (FIX 11257).
         let compiled_json = serde_json::to_string(&compiled)
             .map_err(|_| Error::InvalidConfig("lens tree did not encode".into()))?;
-        if compiled_json.len() > LENS_PROPOSAL_MAX_BYTES {
-            return Err(MemoryError::bad_request(format!(
-                "compiled is at most {LENS_PROPOSAL_MAX_BYTES} bytes"
-            )));
-        }
         let intent = LensIntentRecord::new(input.intent_prompt)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         // An axis the credential's binding leaves open is declared only by an
@@ -421,9 +415,8 @@ impl Vault {
                     .is_some_and(|install| active_at(&install, &record.pack_content_hash));
             let compiled = record.compiled_in(self, txn, &lens_ref)?;
             let stamp = compiled.version_stamp();
-            let carried = with_compiled
-                && admission == LensAdmission::Whole
-                && tree_admits(txn, &compiled)?;
+            let carried =
+                with_compiled && admission == LensAdmission::Whole && tree_admits(txn, &compiled)?;
             rows.push(LensListRow {
                 lens_ref: lens_ref.to_hex(),
                 pack_name: record.pack_name,

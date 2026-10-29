@@ -477,6 +477,12 @@ impl OneironClient {
                 "vault.export" => {
                     remote_agent_verb_output::<oneiron::memory::ExportAnswer>(client, verb, &input)
                 }
+                "vault.export.transfer.read" => remote_agent_verb_output::<
+                    oneiron::memory::ExportTransferPiece,
+                >(client, verb, &input),
+                "vault.export.transfer.release" => remote_agent_verb_output::<
+                    oneiron::memory::ExportTransferReleased,
+                >(client, verb, &input),
                 "self.credential.attenuate" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CredentialAttenuated,
                 >(client, verb, &input),
@@ -5598,6 +5604,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.export", value)
+    }
+    pub fn vault_export_transfer_read(
+        &self,
+        input: &oneiron::memory::ExportTransferReadRequest,
+    ) -> Result<oneiron::memory::ExportTransferPiece, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.export.transfer.read", value)
+    }
+    pub fn vault_export_transfer_release(
+        &self,
+        input: &oneiron::memory::ExportTransferReleaseRequest,
+    ) -> Result<oneiron::memory::ExportTransferReleased, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.export.transfer.release", value)
     }
     pub fn self_credential_attenuate(
         &self,
