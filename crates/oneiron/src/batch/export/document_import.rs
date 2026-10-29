@@ -51,7 +51,7 @@ impl Vault {
         &self,
         source: R,
     ) -> Result<WholeVaultDocument> {
-        let scratch = self.store.archive_scratch_env()?;
+        let scratch = self.store.archive_scratch_env(self.config.page_seal.as_ref())?;
         let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
         archive.validate(self)?;
         archive.document()
@@ -119,7 +119,7 @@ impl Vault {
         source: R,
         actor: Option<&WriteActor>,
     ) -> Result<WholeVaultImportReceipt> {
-        let scratch = self.store.archive_scratch_env()?;
+        let scratch = self.store.archive_scratch_env(self.config.page_seal.as_ref())?;
         let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
         archive.validate(self)?;
         if actor.is_none() && archive.expressions {

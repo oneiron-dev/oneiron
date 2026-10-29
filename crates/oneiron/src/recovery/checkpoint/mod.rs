@@ -38,6 +38,7 @@ mod rebuild;
 mod response_rows;
 mod restore_class;
 mod side_pads;
+mod signer_delegation;
 mod snapshot;
 mod tiers;
 mod watermark;
@@ -53,7 +54,7 @@ pub use admission::{
     CustodyRouteFact, EscrowRole, FreshRecipient, RecipientAdmissionFacts,
     RecipientRetirementDisposition, ReleasedRecipient, RestoreAdmission, RestoreAdmissionError,
     RestoreAdmissionReason, RestoreCommitFacts, RestoreDestinationState, RestorePhase, RestorePlan,
-    RetiredBy, RetiredRecipient, SourceExpectation, VerifiedSource,
+    RetiredBy, RetiredRecipient, SignerTrust, SourceExpectation, VerifiedSource,
 };
 pub(crate) use admission::{Rejected, because};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey, CheckpointSequenceBelowFloor};
@@ -62,7 +63,10 @@ pub use credential_custody::CredentialRestoreNote;
 pub use custody_head::*;
 pub use epochs::RestorePadState;
 pub(crate) use epochs::{prune_carried_pads, reconcile_restore_pad_notes_in_txn};
-pub use host_holds::{BackupHoldVisibility, BackupHolds, HostOrderHolds};
+pub use host_holds::{
+    ArtifactHostOrderHolds, BackupHoldVisibility, BackupHolds, HostHoldsAvailability,
+    HostHoldsRecipient, HostHoldsSealing, HostHoldsUnavailable, HostOrderHolds,
+};
 use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
@@ -429,14 +433,16 @@ impl Vault {
             config,
             reason,
             restored_at,
-            |_| Ok(()),
+            |_, _| Ok(()),
         )
     }
     /// [`Vault::restore_checkpoint`], with `finish` run on the restored vault
     /// once its rows are in and it reopened, before it is kept: how a host
     /// wraps a restored sealed vault's key to itself before the vault is
     /// published. A refusal from `finish` removes the vault, and the
-    /// page-seal mirror its open wrote, as any refusal does.
+    /// page-seal mirror its open wrote, as any refusal does. `finish` also
+    /// gets the host-order family `key` carries from the artifact's member,
+    /// where its tag names the member the artifact carries (FIX 6817).
     pub fn restore_checkpoint_finishing(
         path: &Path,
         key: &CheckpointKey,
@@ -444,7 +450,7 @@ impl Vault {
         config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
-        finish: impl FnOnce(&Self) -> Result<()>,
+        finish: impl FnOnce(&Self, Option<&HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         Self::restore_keeping_custody(
             path,

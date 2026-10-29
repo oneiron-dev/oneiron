@@ -37,7 +37,8 @@ pub struct OfferConnect {
 }
 
 /// A host-signed Connect half; the two hosts sign identical disclosed terms.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+/// It prints its key redacted.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Offer {
     pub pact: String,
@@ -47,6 +48,10 @@ pub struct Offer {
     pub scope: FederationPactScope,
     pub signer: String,
     pub signature: String,
+    /// The pact epoch's scope opening key, 64 hex (FIX 7907, 7958): what
+    /// the scope commitment is keyed by, outside the signed transcript and
+    /// logged nowhere; each host's custody holds it until the pact ends.
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -83,7 +88,8 @@ pub struct RescopeConnect {
     pub inbound: FederationDirectionScope,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+/// A host-signed re-scope half. It prints its key redacted.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RescopeOffer {
     pub pact: String,
@@ -94,6 +100,39 @@ pub struct RescopeOffer {
     pub scope: FederationPactScope,
     pub signer: String,
     pub signature: String,
+    /// The new epoch's scope opening key, 64 hex (FIX 7907, 7958).
+    pub key: String,
+}
+
+impl std::fmt::Debug for Offer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Offer")
+            .field("pact", &self.pact)
+            .field("nonce", &self.nonce)
+            .field("from", &self.from)
+            .field("to", &self.to)
+            .field("scope", &self.scope)
+            .field("signer", &self.signer)
+            .field("signature", &self.signature)
+            .field("key", &"..")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for RescopeOffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RescopeOffer")
+            .field("pact", &self.pact)
+            .field("epoch", &self.epoch)
+            .field("nonce", &self.nonce)
+            .field("from", &self.from)
+            .field("to", &self.to)
+            .field("scope", &self.scope)
+            .field("signer", &self.signer)
+            .field("signature", &self.signature)
+            .field("key", &"..")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

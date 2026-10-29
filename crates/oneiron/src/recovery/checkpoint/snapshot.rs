@@ -237,6 +237,10 @@ impl Vault {
             }
             databases.insert(entry.name.into(), rows);
         }
+        // A hosted vault's whole host-order family, read in this same
+        // transaction, so it is the one these rows saw; sealed after it
+        // (FIX 6598).
+        let host_holds = super::host_holds::export_in_txn(self, &txn);
         drop(txn);
         super::window_pad_refs::warn_kept_window_pads(kept_windows);
         tracing::info!(
@@ -265,6 +269,12 @@ impl Vault {
             return Ok(None);
         };
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
+        // The artifact's snapshot id, minted before anything is sealed to
+        // it: the host-order member binds it, never the image's digest.
+        let mut snapshot = [0u8; 32];
+        crate::world_keys::os_fill(&mut snapshot)?;
+        let (host_holds, host_holds_availability) =
+            super::host_holds::seal_member(self, *self.vault_id().as_bytes(), snapshot, host_holds);
         let image = CheckpointImage {
             version: super::image::IMAGE_VERSION,
             created_at,
@@ -273,6 +283,8 @@ impl Vault {
             sealed_bodies,
             inline_bodies,
             checkpoint_sequence: None,
+            host_holds,
+            snapshot: None,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         tracing::info!(
@@ -300,6 +312,7 @@ impl Vault {
         );
         let (id, head, evidence) = artifact::write_artifact(
             path,
+            snapshot,
             &key,
             kind,
             registry,
@@ -352,6 +365,7 @@ impl Vault {
             covered: mark.covered(),
             evidence,
             checkpoint_fact,
+            host_holds: host_holds_availability,
         }))
     }
 

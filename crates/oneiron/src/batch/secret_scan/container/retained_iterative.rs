@@ -1,11 +1,10 @@
-//! The retained repository read's walk and rebuild with their frames on the
-//! heap (FIX 8031): the same readers, the same order and the same stops as
-//! the recursive `walk` and `rebuild` beside them, each container's frame
-//! held here rather than on the thread's stack, so a blob of distinct nested
-//! containers is read whole at any depth without running that stack out. No
-//! depth, count or byte bound is added (rule 5); only the retained read
-//! comes here, and the bounded read keeps its recursion, which its own depth
-//! bound holds.
+//! The container walk and rebuild with their frames on the heap (FIX 8031,
+//! 7943): each container's frame held here rather than on the thread's
+//! stack, so a file of distinct nested containers is read whole at any depth
+//! without running that stack out. No depth or count bound holds (rule 5);
+//! a container met inside itself is a cycle, and the bounded read's byte
+//! floor is its budget's. Every read comes here: the write door's, the
+//! release and serving doors' and the retained repository read.
 //!
 //! A container's members are read one level at a time through its reader,
 //! then walked in order, each handed to the visitor before anything under
@@ -21,13 +20,16 @@
 //! each from the bottom up, then has the container's reader read it again
 //! and encode it around those members, handed back at their steps in order.
 //! What it does at each place is its leaf transform's
-//! ([`RetainedLeafTransform`]): masking fills the place's spans, and a
+//! ([`RetainedLeafTransform`]): masking fills the place's spans, a serving
+//! copy's text member taking each key's handle text (FIX 7944), and a
 //! projection edit replays a member's edit onto its original (FIX 7608
 //! 2b-ii), over this one traversal and these readers.
 
-use super::{Budget, Kind, Stop, Walked, archive, gzip, kind, pdf};
+use super::{
+    Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, writes_handles,
+};
 use crate::error::Error;
-use crate::secret_custody::{KeyPlaces, MemberStep, filled};
+use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
 
 /// What the walk does next, the last frame first.
 enum Frame {
@@ -40,8 +42,8 @@ enum Frame {
     Leave,
 }
 
-/// `walk` over a retained repository read: every member under `bytes`,
-/// depth first in each container's order, handed to `visit` with its path.
+/// Every member under `bytes`, depth first in each container's order,
+/// handed to `visit` with its path.
 pub(super) fn walk(
     bytes: &[u8],
     budget: &mut Budget,
@@ -97,7 +99,7 @@ fn enter(
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
     frames: &mut Vec<Frame>,
 ) -> Walked<bool> {
-    let Some(container) = kind(bytes) else {
+    let Some(container) = classify(bytes) else {
         return Ok(false);
     };
     budget.enter_container(bytes)?;
@@ -105,7 +107,7 @@ fn enter(
     let mut held: Vec<Frame> = Vec::new();
     let mut visitor_stopped = false;
     let mut each = |step: MemberStep, member: &[u8], _: &mut Budget| -> Walked<()> {
-        if !held.is_empty() || kind(member).is_some() {
+        if !held.is_empty() || classify(member).is_some() {
             held.push(Frame::Member(step, member.to_vec()));
             return Ok(());
         }
@@ -157,21 +159,37 @@ pub(super) trait RetainedLeafTransform {
     fn reaches(&self, path: &[MemberStep]) -> bool;
 }
 
-/// Masking's transform: each place's spans filled, `met` counting the
-/// places met.
+/// Masking's transform: each place's spans filled, or in a text member
+/// replaced by the handle text `handles` gives a key (FIX 7944), `met`
+/// counting the places met.
 struct FillPlaces<'p> {
     places: &'p KeyPlaces,
+    handles: Option<&'p PlaceHandles>,
     met: usize,
 }
 
 impl RetainedLeafTransform for FillPlaces<'_> {
     fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>> {
-        let mut copy = bytes;
-        for (_, spans) in self.places.iter().filter(|(at, _)| at.as_slice() == path) {
-            copy = filled(&copy, spans.iter().copied())?;
+        let mut spans: Vec<((u64, u64), Option<&str>)> = Vec::new();
+        for (index, (at, at_spans)) in self.places.iter().enumerate() {
+            if at.as_slice() != path {
+                continue;
+            }
+            let texts = self.handles.and_then(|handles| handles.get(index));
+            spans.extend(at_spans.iter().enumerate().map(|(key, span)| {
+                let text = texts.and_then(|texts| texts.get(key)).and_then(Option::as_deref);
+                (*span, text)
+            }));
             self.met += 1;
         }
-        Ok(copy)
+        if spans.is_empty() {
+            return Ok(bytes);
+        }
+        spans.sort_unstable_by_key(|(span, _)| *span);
+        if self.handles.is_some() && writes_handles(path, &bytes) {
+            return filled_with(&bytes, &spans).map_err(Stop::Fail);
+        }
+        filled(&bytes, spans.into_iter().map(|(span, _)| span)).map_err(Stop::Fail)
     }
 
     fn descends(&self, path: &[MemberStep]) -> bool {
@@ -185,16 +203,21 @@ impl RetainedLeafTransform for FillPlaces<'_> {
     }
 }
 
-/// `rebuild` over a retained repository read: `bytes` with each key
-/// `places` names overwritten, every container on the way rebuilt by its
-/// own reader. `met` counts the places met.
+/// `bytes` with each key `places` names overwritten, every container on the
+/// way rebuilt by its own reader; a key in a text member takes its handle
+/// text from `handles` when given. `met` counts the places met.
 pub(super) fn rebuild(
     bytes: &[u8],
     places: &KeyPlaces,
+    handles: Option<&PlaceHandles>,
     budget: &mut Budget,
     met: &mut usize,
 ) -> Walked<Vec<u8>> {
-    let mut fill = FillPlaces { places, met: 0 };
+    let mut fill = FillPlaces {
+        places,
+        handles,
+        met: 0,
+    };
     let rebuilt = rebuild_with(bytes, &mut fill, budget);
     *met += fill.met;
     rebuilt
@@ -274,7 +297,7 @@ fn start(
         return Ok(Opened::Built(copy));
     }
     let container =
-        kind(bytes).ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
+        classify(bytes).ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
     budget.enter_container(bytes)?;
     let mut pending: Vec<(MemberStep, Vec<u8>)> = Vec::new();
     let mut each = |step: MemberStep, member: &[u8], _: &mut Budget| -> Walked<()> {
@@ -313,6 +336,9 @@ impl Open {
             return Err(Stop::Fail(Error::InvariantViolation(
                 "a container's second read passed a built member by",
             )));
+        }
+        if budget.copy_over(copy.len()) {
+            return Err(over_budget());
         }
         Ok(copy)
     }

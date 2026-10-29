@@ -515,7 +515,7 @@ impl Vault {
 }
 
 /// A handle as a text stands it in for a value: `[secret sc12]`.
-fn handle_text(handle: &str) -> String {
+pub(super) fn handle_text(handle: &str) -> String {
     format!("[secret {handle}]")
 }
 

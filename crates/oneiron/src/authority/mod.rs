@@ -42,6 +42,7 @@ mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod backup_signer_delegation;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -138,6 +139,7 @@ mod task_actor;
 mod vault_api;
 mod weave_admin;
 mod withdrawn_grant;
+mod work_rebind;
 mod world_key_fold;
 mod world_key_support;
 mod world_privacy;
@@ -221,6 +223,10 @@ pub use checkpoint_adopt::{
 pub use checkpoint_attest::*;
 pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
+pub use backup_signer_delegation::{
+    BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots,
+    BackupSignerDelegation, BackupSignerStatement,
+};
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use checkpoint_root_attest::{
@@ -321,7 +327,7 @@ pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
-    HostSlipIssuer,
+    HostSlipIssuer, ScopeOpeningKey,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
@@ -336,6 +342,10 @@ pub use weave_admin::{
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
     mark_if_withdrawn_grant_in_txn, mark_withdrawn_grant_in_txn,
+};
+pub use work_rebind::{
+    InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,
+    REBIND_WIDENS,
 };
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
