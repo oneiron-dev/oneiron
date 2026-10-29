@@ -40,9 +40,8 @@ pub(super) fn rebuilt(
 ) -> Walked<Vec<u8>> {
     let payload = payload(bytes, budget)?;
     let masked = each(MemberStep::Xz, &payload, budget)?.unwrap_or_else(|| payload.to_vec());
-    let mut encoder =
-        lzma_rust2::XzWriter::new(Vec::new(), lzma_rust2::XzOptions::default())
-            .map_err(|_| encode_failed())?;
+    let mut encoder = lzma_rust2::XzWriter::new(Vec::new(), lzma_rust2::XzOptions::default())
+        .map_err(|_| encode_failed())?;
     encoder.write_all(&masked).map_err(|_| encode_failed())?;
     encoder.finish().map_err(|_| encode_failed())
 }

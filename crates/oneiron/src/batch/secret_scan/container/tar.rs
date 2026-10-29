@@ -139,10 +139,7 @@ fn rebuild_file(
 }
 
 /// A link with its target, copied as it is (FIX 2471).
-fn rebuild_link(
-    entry: &mut tar::Entry<&[u8]>,
-    out: &mut tar::Builder<Vec<u8>>,
-) -> Walked<()> {
+fn rebuild_link(entry: &mut tar::Entry<&[u8]>, out: &mut tar::Builder<Vec<u8>>) -> Walked<()> {
     let mut header = entry.header().clone();
     header.set_size(0);
     let raw = entry.path_bytes();
@@ -158,10 +155,7 @@ fn rebuild_link(
 }
 
 /// A directory or special entry, copied as it is (FIX 2471).
-fn rebuild_void(
-    entry: &mut tar::Entry<&[u8]>,
-    out: &mut tar::Builder<Vec<u8>>,
-) -> Walked<()> {
+fn rebuild_void(entry: &mut tar::Entry<&[u8]>, out: &mut tar::Builder<Vec<u8>>) -> Walked<()> {
     let mut header = entry.header().clone();
     header.set_size(0);
     let raw = entry.path_bytes();
