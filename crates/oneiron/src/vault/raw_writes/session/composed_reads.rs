@@ -179,8 +179,8 @@ impl Memory<'_> {
     ///
     /// As [`crate::Vault::would_create_cycle`].
     pub fn raw_would_create_cycle(&self, node: &EntityId, target: &EntityId) -> MemoryResult<bool> {
-        let composed = self
-            .raw_composed_read(|_, view, txn| would_create_cycle_in(view, txn, node, target))?;
+        let composed =
+            self.raw_composed_read(|_, view, txn| would_create_cycle_in(view, txn, node, target))?;
         match composed {
             Some(cycle) => Ok(cycle),
             None => Ok(self.vault().would_create_cycle(node, target)?),

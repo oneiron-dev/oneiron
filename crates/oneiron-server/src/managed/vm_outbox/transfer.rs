@@ -377,7 +377,12 @@ impl Carrier {
                     VmOutboxRefusal::DigestMismatch => "vm_outbox_digest_mismatch",
                     _ => "vm_outbox_deferred",
                 };
-                self.say_as(reason, kind, member, &format!("refused ({code:?}): {detail}"));
+                self.say_as(
+                    reason,
+                    kind,
+                    member,
+                    &format!("refused ({code:?}): {detail}"),
+                );
                 record.pending = None;
                 if !source_check::recheck(&mut record, transfer, code) {
                     record.refused = Some(format!(
