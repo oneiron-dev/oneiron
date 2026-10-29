@@ -833,6 +833,12 @@ export class Oneiron {
     }),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): Facade.ExportAnswer => this.#call(() => this.#client.vaultExport({format: format}) as Facade.ExportAnswer), {
+      transfer: {
+        /** Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it. */
+        read: (input: Facade.ExportTransferReadRequest): Facade.ExportTransferPiece => this.#call(() => this.#client.vaultExportTransferRead(input) as Facade.ExportTransferPiece),
+        /** Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is. */
+        release: (input: Facade.ExportTransferReleaseRequest): Facade.ExportTransferReleased => this.#call(() => this.#client.vaultExportTransferRelease(input) as Facade.ExportTransferReleased),
+      },
       /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
       scoped: (input: Facade.ScopedExportRequest): Facade.ScopedExport => this.#call(() => this.#client.vaultExportScoped(input) as Facade.ScopedExport),
     }),

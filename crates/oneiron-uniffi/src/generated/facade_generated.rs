@@ -721,6 +721,16 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
+"vault.export.transfer.read" => fn vault_export_transfer_read(&self, input: ExportTransferReadRequest) -> ExportTransferPiece = |client| {
+    let input: oneiron::memory::ExportTransferReadRequest = crate::codec::lower_record("vault.export.transfer.read", input)?;
+    let output = client.vault_export_transfer_read(&input)?;
+    crate::codec::lift_record("vault.export.transfer.read", &output)
+};
+"vault.export.transfer.release" => fn vault_export_transfer_release(&self, input: ExportTransferReleaseRequest) -> ExportTransferReleased = |client| {
+    let input: oneiron::memory::ExportTransferReleaseRequest = crate::codec::lower_record("vault.export.transfer.release", input)?;
+    let output = client.vault_export_transfer_release(&input)?;
+    crate::codec::lift_record("vault.export.transfer.release", &output)
+};
 "self.credential.attenuate" => fn self_credential_attenuate(&self, input: CredentialAttenuationRequest) -> CredentialAttenuated = |client| {
     let input: oneiron::task_verb::sdk::CredentialAttenuationRequest = crate::codec::lower_record("self.credential.attenuate", input)?;
     let output = client.self_credential_attenuate(&input)?;

@@ -11,10 +11,10 @@ use oneiron::{
 
 pub(crate) use super::boundary::host_device_class;
 use super::boundary::{
-    DEFAULT_NAPI_SEARCH_LIMIT, entity_ids_to_buffers, parse_created_at, parse_edge_kind,
-    parse_entity_id, parse_search_limit, parse_u8, read_bounded_array, read_codebase_snapshot,
-    NAPI_BATCH_FRAME_ENTITIES, read_query, read_vector, to_napi_err, ts_to_u64,
-    validate_dimensions, validate_entity_payload_len,
+    DEFAULT_NAPI_SEARCH_LIMIT, NAPI_BATCH_FRAME_ENTITIES, entity_ids_to_buffers, parse_created_at,
+    parse_edge_kind, parse_entity_id, parse_search_limit, parse_u8, read_bounded_array,
+    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64, validate_dimensions,
+    validate_entity_payload_len,
 };
 use super::codebase::{CodebaseScope, core_codebase_snapshot, napi_codebase_snapshot};
 use super::email::{core_email_adapter, core_email_inbound};
@@ -445,8 +445,8 @@ impl NapiVault {
         let query = read_query(query)?;
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
         let scope = CodebaseScope::parse(repo_ref, project_id)?;
-        let results =
-            self.query_hits(|builder| scope.query(builder.search_text(&query, limit).limit(limit)))?;
+        let results = self
+            .query_hits(|builder| scope.query(builder.search_text(&query, limit).limit(limit)))?;
         Ok(results
             .into_iter()
             .map(|s| NapiScoredEntity {

@@ -1188,6 +1188,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_export_transfer_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.export.transfer.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_export_transfer_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.export.transfer.release", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_credential_attenuate(
         &self,
         input: serde_json::Value,

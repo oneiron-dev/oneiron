@@ -178,6 +178,8 @@ vaultRetrievalPolicyEvaluate(input: unknown): unknown
 vaultRetrievalPolicyAdmit(input: unknown): unknown
 vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
+vaultExportTransferRead(input: unknown): unknown
+vaultExportTransferRelease(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 selfActor(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown

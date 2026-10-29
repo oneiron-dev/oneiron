@@ -144,7 +144,8 @@ impl Vault {
         let pin_ref = pending.pin.as_ref().map(PairingPinRef::of).transpose()?;
         let transcript =
             pairing_binding_transcript_pinned(code, &binding_key, holder_ref, pin_ref.as_ref())?;
-        key.verify_strict(&transcript, &signature).map_err(|_| invalid_authority())?;
+        key.verify_strict(&transcript, &signature)
+            .map_err(|_| invalid_authority())?;
         if now >= pending.expires_at
             || pending.host_key != issuer.binding_key()
             || pending.machine.is_some() != request.is_some()
@@ -223,13 +224,8 @@ impl Vault {
                     return Err(invalid_authority());
                 }
                 let possession = possession.map(|proof| (proof, transcript.as_slice()));
-                let (machine, re_paired) = self.redeem_machine_answer_in_txn(
-                    &mut txn,
-                    issuer,
-                    answer,
-                    request,
-                    possession,
-                )?;
+                let (machine, re_paired) = self
+                    .redeem_machine_answer_in_txn(&mut txn, issuer, answer, request, possession)?;
                 (Some(machine), re_paired)
             }
             _ => (None, false),
