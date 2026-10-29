@@ -3402,8 +3402,38 @@ export type Of360CaseEvalReport = { case_id: string; metrics: Of360ParsedMetrics
 export type Of360EvalReport = { schema_version: number; metric_set_id: string; metric_definition_envelope: Of360DerivationEnvelope; dataset_id: string; dataset_revision: string; run_id: string; system_id: string; metrics: Of360ParsedMetrics; cases: Of360CaseEvalReport[]; warnings: string[] }
 /** `oneiron_model::extraction_eval::types::Of360Ar3MetricTier` */
 export type Of360Ar3MetricTier = { interface_version: number; metric_definitions: Of360MetricDefinitionSet; report: Of360EvalReport }
+/** `oneiron::llm::decision::types::EvidenceVersion` */
+export type EvidenceVersion = { id: string; body_hash: number[] }
+/** `oneiron::llm::decision::types::PairedReading` */
+export type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number }
+/** `oneiron::llm::decision::types::StopCause` */
+export type StopCause = "done" | "deadline" | "provider_failure"
+/** `oneiron::llm::decision::types::ReasoningCause` */
+export type ReasoningCause = "paired_high" | "small_margin" | "second_measurement"
+/** `oneiron::llm::decision::types::Reasoning` */
+export type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause }
+/** `oneiron::llm::decision::types::DecisionTime` */
+export type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning }
+/** `oneiron::llm::decision::types::ImagePin` */
+export type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number }
+/** `oneiron::llm::decision::rules::HostRuleRef` */
+export type HostRuleRef = { id: string; revision: number }
+/** `oneiron::llm::decision::ladder::roles::RoleRank` */
+export type RoleRank = "responsible" | "board" | "owner"
+/** `oneiron::llm::decision::ladder::roles::AskAct` */
+export type AskAct = "judgment" | "e_signature" | "payment"
+/** `oneiron::llm::decision::ladder::roles::HolderKind` */
+export type HolderKind = "person" | "agent"
+/** `oneiron::llm::decision::types::ReceiptAnswerer` */
+export type ReceiptAnswerer = { role: RoleRank; project?: string | null; kind: HolderKind }
+/** `oneiron::llm::decision::types::ReceiptAsk` */
+export type ReceiptAsk = { seq?: number | null; role: RoleRank; project?: string | null; ceiling: RoleRank; act: AskAct; answered?: ReceiptAnswerer | null }
+/** `oneiron::llm::decision::types::StateCut` */
+export type StateCut = { kept: number; of: number; text_cut_at_bytes?: number | null }
+/** `oneiron::llm::decision::types::DecisionReceipt` */
+export type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null; asked?: ReceiptAsk | null; state_cut?: StateCut | null }
 /** `oneiron::autoreason_campaign::judge::CampaignTaste` */
-export type CampaignTaste = { score: number; useful?: boolean | null; external_anchor_digest: string }
+export type CampaignTaste = { score: number; useful?: boolean | null; external_anchor_digest: string; receipts: DecisionReceipt[] }
 /** `oneiron::autoreason_campaign::report::CampaignSplitReport` */
 export type CampaignSplitReport = { authoring_strategy: AuthoringStrategyPin; arm: CampaignExecutableArm; split: CampaignEvaluationSplit; dataset: CampaignDatasetRef; metric_definition_digest: string; of360: Of360Ar3MetricTier; cost: CampaignCost; taste: CampaignTaste; smoke: CampaignSmokeOutcome; effective_taste_score: number }
 /** `oneiron::verbs::research::ResearchInvalidWire` */
@@ -3716,36 +3746,6 @@ export type ImageBox = { top: number; bottom: number; left: number; right: numbe
 export type ImagePoint = { x: number; y: number }
 /** `oneiron::llm::decision::types::DecisionAnswer` */
 export type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" }
-/** `oneiron::llm::decision::types::EvidenceVersion` */
-export type EvidenceVersion = { id: string; body_hash: number[] }
-/** `oneiron::llm::decision::types::PairedReading` */
-export type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number }
-/** `oneiron::llm::decision::types::StopCause` */
-export type StopCause = "done" | "deadline" | "provider_failure"
-/** `oneiron::llm::decision::types::ReasoningCause` */
-export type ReasoningCause = "paired_high" | "small_margin" | "second_measurement"
-/** `oneiron::llm::decision::types::Reasoning` */
-export type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause }
-/** `oneiron::llm::decision::types::DecisionTime` */
-export type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning }
-/** `oneiron::llm::decision::types::ImagePin` */
-export type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number }
-/** `oneiron::llm::decision::rules::HostRuleRef` */
-export type HostRuleRef = { id: string; revision: number }
-/** `oneiron::llm::decision::ladder::roles::RoleRank` */
-export type RoleRank = "responsible" | "board" | "owner"
-/** `oneiron::llm::decision::ladder::roles::AskAct` */
-export type AskAct = "judgment" | "e_signature" | "payment"
-/** `oneiron::llm::decision::ladder::roles::HolderKind` */
-export type HolderKind = "person" | "agent"
-/** `oneiron::llm::decision::types::ReceiptAnswerer` */
-export type ReceiptAnswerer = { role: RoleRank; project?: string | null; kind: HolderKind }
-/** `oneiron::llm::decision::types::ReceiptAsk` */
-export type ReceiptAsk = { seq?: number | null; role: RoleRank; project?: string | null; ceiling: RoleRank; act: AskAct; answered?: ReceiptAnswerer | null }
-/** `oneiron::llm::decision::types::StateCut` */
-export type StateCut = { kept: number; of: number; text_cut_at_bytes?: number | null }
-/** `oneiron::llm::decision::types::DecisionReceipt` */
-export type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null; asked?: ReceiptAsk | null; state_cut?: StateCut | null }
 /** `oneiron::llm::decision::types::HumanAskReason` */
 export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget"
 /** `oneiron::llm::decision::types::TypedDecision` */
