@@ -498,7 +498,7 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs":
             return Oneiron._VaultClaimsVerbs(self._client)
-        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None, query_affect: dict[str, Any] | None = None) -> dict[str, Any]:
+        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None, query_affect: dict[str, Any] | None = None, token_budget: int | None = None, reader_agent_ref: str | None = None) -> dict[str, Any]:
             """Recalls a memory pack.
 
             ``effort="high"`` needs a lease this package never mints: an embedded
@@ -519,8 +519,10 @@ class Oneiron:
             Explicit ``scope.world_ref`` recalls of retained foreign worlds carry
             ``item["stale"]``: ``stale_since`` and ``age_secs`` (when known),
             ``reason`` and ``pact_epoch``. This selection grants no read authority.
+            ``token_budget`` (0: uncut) sizes the rendered ``format``; omitted,
+            the window budget of ``reader_agent_ref``'s memory profile, else 4,000.
             """
-            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
+            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None, token_budget, reader_agent_ref)))
         @property
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs":
             return Oneiron._VaultRetrievalVerbs(self._client)
@@ -1442,6 +1444,9 @@ class Oneiron:
         def context(self, spec):
             """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
             return json.loads(_translate(lambda: self._client.vault_receipts_context(json.dumps(spec))))
+        def craft_reply_manifest(self, spec):
+            """Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack."""
+            return json.loads(_translate(lambda: self._client.vault_receipts_craft_reply_manifest(json.dumps(spec))))
     class _VaultAssetsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3287,7 +3292,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def propose(self, spec):
-            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""
+            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."""
             return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
         def activate(self, spec):
             """The owner selects a proposed lens revision for its pack slot."""
@@ -4196,12 +4201,18 @@ class Oneiron:
     class _VaultTasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def cancel_force(self, spec):
-            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
+        @property
+        def cancel(self) -> "Oneiron._VaultTasksCancelVerbs":
+            return Oneiron._VaultTasksCancelVerbs(self._client)
         @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
             return Oneiron._VaultTasksLinearVerbs(self._client)
+    class _VaultTasksCancelVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def force(self, spec):
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
     class _VaultTasksLinearVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5485,7 +5496,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ask(self, spec):
-            """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
+            """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
         def answer(self, spec):
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
@@ -5607,10 +5618,10 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def open(self, spec):
-            """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded."""
             return json.loads(_translate(lambda: self._client.self_browser_open(json.dumps(spec))))
         def observe(self, spec):
-            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle."""
+            """Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles."""
             return json.loads(_translate(lambda: self._client.self_browser_observe(json.dumps(spec))))
         def find(self, spec):
             """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
@@ -5655,7 +5666,7 @@ class Oneiron:
         def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs":
             return Oneiron._SelfBrowserDemonstrationVerbs(self._client)
         def handover(self, spec):
-            """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
+            """Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
         def switch_engine(self, spec):
             """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
@@ -5664,13 +5675,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def find(self, spec):
-            """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
+            """The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
         def draft(self, spec):
             """Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."""
             return json.loads(_translate(lambda: self._client.self_browser_library_draft(json.dumps(spec))))
         def propose(self, spec):
-            """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
+            """Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires."""
             return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))
         def retire(self, spec):
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""

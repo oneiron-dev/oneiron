@@ -147,6 +147,8 @@ family neither judge has),
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
+Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
+
 A `key_secret` names a vault secret instead of a variable: the key stays in
 the vault's custody (T0), and only the credential broker sends it. The broker is
 a separate process that runs as its own OS user, adds the key to one request,
@@ -675,9 +677,12 @@ after `models.dreamer.idle_floor_secs` (1200) without activity, or after
 `session_ceiling_secs` (43200). Apps send `{"event":"open"}` and
 `{"event":"activity"}`; chat turns send them for you. Per-pass spend is
 `models.dreamer.pass_budget_units` (400000), metered through the usual budget
-guard. If the server is killed mid-pass, the next start requeues the
-interrupted attempt and runs it once more; durable steps that already have a
-response are not paid for again. A pass that ran out of budget is parked on a
+guard. Each stewardship follow-up draft is written on
+`models.dreamer.drafting.role` (`generative_reasoner`) and may spend
+`models.dreamer.drafting.budget_units` (the pass budget when unset). If the
+server is killed mid-pass, the next start requeues the interrupted attempt
+and runs it once more; durable steps that already have a response are not paid
+for again. A pass that ran out of budget is parked on a
 budget trap instead, and a restart leaves it parked: only the trap's resume
 signal lets it spend again. Once that signal (or a consent answer, or a
 person's response) is sent, here or on a peer that syncs it in, the next pass
@@ -740,7 +745,11 @@ one.
 `POST /v1/ai/chat` with `{"conversation_ref": "<32-hex>", "text": "…"}` (plus
 optional `history`) answers by default with the whole message once it is saved:
 `{conversation_ref, turn_id, message_id, text, incomplete, finish_reason}`.
-`turn_id` is the assistant turn that Continue and Retry name. A reply cut short
+`turn_id` is the assistant turn that Continue and Retry name. When the turn read
+a context board but the call went without it, the answer (and a streamed
+`accepted` line) also carries `board_omitted`: `refused`, `route_held` or
+`not_admitted`; the model's prompt carries one short note saying so, naming no
+row. A reply cut short
 (a crash, a failed stream, a length stop) is still one saved message: it answers
 `incomplete: true` with exactly the text that was saved. With `"stream": true`
 the answer is NDJSON instead: `accepted`, one `delta` per text chunk, `done`,
@@ -826,6 +835,7 @@ reservation for each rung that failed before it. A call that failed spends one
 reservation for each provider call it made: every rung of the seat, or the one
 model the vault's manifest pins. A browser subgoal's step may run on
 `browser_planner` instead, on the same meter ("Browser subgoals", below).
+An omitted `models.code_mode.budget_units` is uncapped.
 A run's clock and config are saved when it
 starts, so a run resumed after a restart keeps its clock and refuses another
 task. A vault with a model
@@ -1338,6 +1348,7 @@ With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
 configured model by its engine id (`<provider>/<model>@<revision>`, shown in
 `GET /v1/ai/status`), or a seat by its seat id. Their process-lifetime meter is
 `models.raw_budget_units`.
+An omitted `models.raw_budget_units` is uncapped.
 
 ## 8. The reranker
 
@@ -1563,6 +1574,8 @@ The owner can probe the read at `POST /v1/llm/decision_read`
 nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 `[limits] decision_reads` probes wait their turn.
 
+A role with `leave_device = "never"` takes no third-party rung. The owner's own server and this device still serve it. When the `local_reasoner` role has `leave_device = "never"` and its rung is third-party, the house reader is unavailable. The bind skips it and returns None. The probe answers 503 `decision_read_unavailable`. The decision read is skipped, and no other rung reads in its place.
+
 The decision read takes yes/no and choice questions over text. A Box question
 ("where is `mug` in `camera`?"), and any question over images, goes only to a
 rung that reads images: a host `DecisionModel` whose `reads_images` is true
@@ -1624,6 +1637,8 @@ rungs = ["local:whisper-large-v3"]
 [models.media.embed]             # POST /v1/embeddings
 rungs = ["local:qwen3-embedding"]
 ```
+
+An omitted `models.media.budget_units` is uncapped.
 
 A media rung on a `key_secret` provider sends through the credential broker
 (§2), as a chat call does. The server builds each exchange's exact request,
@@ -1698,6 +1713,8 @@ The verbs, each the owner's and checked against the vault's inference policy:
   provider is down, whose one probation request is out, or that a limit
   holds, until it is back. The facade's and MCP's `ai.options` list the same
   rows.
+  For an uncapped meter the list reports `units_left` and `media_units_left` as the meter's remaining units.
+  The meter starts at `u64::MAX` and falls only by what it spent.
 - `POST /v1/ai/image`, `/speech`, `/transcribe`, `/embed`:
   `{"prompt": "...", "input": [parts], "references": [parts], "params": {...},
   "model": "<row or seat id>"}`. A part is `{"kind": "text", "text": ...}` or
@@ -2339,17 +2356,31 @@ keeps it:
   names, or, naming none, for a backoff that doubles with each refusal in a
   row from the vault's default rest, with jitter, up to the longest rest.
 - **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
-  wait of 15 minutes or more) is parked until the reset it names.
+  wait of 15 minutes or more) is parked until the reset it names, whether it
+  names a reset time or a `Retry-After`, however far; the longest rest caps
+  only a rate limit.
 - **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
   "billing", Anthropic's `billing_error`) is parked until the owner tops up
   or clears it. The same words in an error inside an open stream read the
   same way.
 
 While only rests stop a call, it waits for the first offer back and tries the
-chain again, until its waits pass the vault's longest wait in all (a caller
-with its own deadline passes its own budget). A call whose every offer is
-parked on credit fails `quota_spent`; one that ran out of wait fails
-`rate_limited` with the earliest reset.
+chain again, until its waits pass the vault's longest wait in all. A call
+whose caller has its own deadline carries that one deadline through every
+send, wait and owner's fallback instead: the Big rung's decision clock is
+one. Past it the call ends `timeout`, each rung it admitted settled (one that
+went out keeps its reservation as spend). A raw call
+(`/v1/llm/generate`, `/v1/llm/stream`, and the mesh's calls) and an `ai.*`
+media call have no deadline but their caller's connection: no longest wait
+ends them early, and they wait for an offer back while the caller holds
+them. A call whose every offer is parked on credit fails `quota_spent`; one
+that ran out of the vault's longest wait fails `rate_limited` with the
+earliest reset.
+
+A house-model decision read probe (`/v1/llm/decision_read`) that its
+provider refuses for rate keeps its turn and goes out again after a backoff
+of at least 1 s plus up to 1 s of jitter, until its caller hangs up; each
+attempt is one permit, dispatched and settled once.
 
 Once every rung of a call has parked, each offer parked on a spent window or
 spent credit leaves the owner a question in `GET /v1/ai/status`
@@ -2608,6 +2639,8 @@ The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The
 escalation read is metered on `models.raw_budget_units`. A model rung blocks
 on the server's runtime, so a caller runs a ladder call on a blocking thread.
+
+An omitted `models.decisions.system_one.budget_units` takes `models.raw_budget_units`. An omitted `models.decisions.big.budget_units` takes `models.raw_budget_units` too. Each is uncapped when the raw meter is. The Local-vision seat spends on `models.raw_budget_units` too, so it is uncapped when the raw meter is.
 
 An `ai.verdict` is paid by its caller (rule 5). Every model rung the call
 reaches (Local-vision, System One, the escalation read and Big) admits and

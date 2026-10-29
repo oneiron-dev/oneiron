@@ -136,6 +136,29 @@ pub(crate) fn adopted_evidence_in_txn(
     Ok(super::log_budget::door_view(store, txn)?.evidence.clone())
 }
 
+/// The residence directives and results the image this vault adopted carries
+/// whole (FIX 5412), by hash, read in `txn`: a machine's directive reader
+/// reads them beside the rows it stores. Empty with no adoption.
+pub(crate) fn carried_residence_rows_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>> {
+    let Some(evidence) = adopted_evidence_in_txn(store, txn)? else {
+        return Ok(BTreeMap::new());
+    };
+    Ok(evidence
+        .bodies()
+        .iter()
+        .filter(|(_, entry)| {
+            matches!(
+                entry.op,
+                AuthorityOp::ResidenceDirective(_) | AuthorityOp::ResidenceResult(_)
+            )
+        })
+        .map(|(hash, entry)| (*hash, entry.clone()))
+        .collect())
+}
+
 /// What a reader that wants one authority row whole reads where this vault
 /// does not store it (OF-469, slice E): on a vault that adopted a checkpoint
 /// image, the body the image carries of that covered row. The reader keeps

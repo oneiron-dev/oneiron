@@ -165,7 +165,9 @@ impl TaskWorkflowAttempt {
     #[must_use]
     pub fn typed_goal(&self) -> bool {
         let goal = &self.row.goal;
-        !goal.browser_checks.is_empty() && goal.yes_if_all.is_empty() && goal.no_if_any.is_empty()
+        !goal.browser_checks.is_empty()
+            && goal.criteria.yes_if_all.is_empty()
+            && goal.criteria.no_if_any.is_empty()
     }
 }
 

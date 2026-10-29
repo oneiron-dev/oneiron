@@ -147,7 +147,8 @@ impl<'a> DecisionPack<'a> {
 /// as it skips an empty slot; it never trims a question to fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderCapability {
-    /// The most options one choice question may offer (the engine's contract allows 64).
+    /// The most options one choice question may offer it. A choice's contract sets no
+    /// count: a wider one goes to a provider that takes it, never cut to fit (FIX 9908).
     pub max_options: usize,
     /// Whether it answers score questions.
     pub score: bool,
@@ -205,6 +206,12 @@ pub trait DecisionProvider: Send + Sync {
     /// posture keeps the text local.
     fn leaves_host(&self) -> bool {
         false
+    }
+    /// What it costs per thousand units at its rung, as its host knows it (its registered
+    /// price over the units it reads); none when the host knows none. The receipt of an
+    /// answer it gives carries it (ARCH-0076, "Cost").
+    fn cost_per_thousand(&self) -> Option<f64> {
+        None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
@@ -297,6 +304,10 @@ pub trait DecisionModel: Send + Sync {
     fn leaves_host(&self) -> bool {
         false
     }
+    /// See [`DecisionProvider::cost_per_thousand`].
+    fn cost_per_thousand(&self) -> Option<f64> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -343,6 +354,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn leaves_host(&self) -> bool {
         self.model.leaves_host()
+    }
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.model.cost_per_thousand()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)

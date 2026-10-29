@@ -4,11 +4,9 @@ use std::collections::BTreeMap;
 
 use rmpv::Value;
 
-use super::config::{
-    MAX_SUBSTITUTION_TOKENS, MINER_K_DEFAULT, MINER_K_ROW_LABEL, PAYLOAD_KEY_SESSION, TONE_LEXICON,
-    invalid,
-};
+use super::config::{MAX_SUBSTITUTION_TOKENS, PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid};
 use super::emission::emit_cluster;
+use super::hunks::MinableHunks;
 use super::model::{
     AmendmentSource, ArtifactIndex, Bucket, ClusterKey, MinedOutcome, MinerRun, MinerWatermark,
     Region, Substitution, SubstitutionClass, SubstitutionCluster,
@@ -19,68 +17,33 @@ use crate::edge::EdgeActorClass;
 use crate::edit_distance::FinalizedProposalText;
 use crate::edit_distance::PROPOSAL_ARTIFACT;
 use crate::edit_distance::attribution::{
-    AmendmentClass, AmendmentJudgment, amendment_evidence, amendment_judgments,
+    AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::{DeltaSource, amendment_delta};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-
-/// Dial: distinct-receipt count K needed before the substitution miner acts
-/// on a cluster.
-const MINER_K: SideTable<(), MinerK, Raw> = SideTable::new(&side_table::EDIT_DISTANCE_MINER_K);
-
-/// K, stored as decimal ASCII so the dial is readable in a `vault_meta` dump
-/// — the `InboxReviewDial` token convention, applied to a count.
-struct MinerK(u32);
-
-impl RawValue for MinerK {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.0.to_string().into_bytes())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|text| text.parse::<u32>().ok())
-            .filter(|k| *k > 0)
-            .map(Self)
-            .ok_or_else(|| CodecError::Value(Error::CorruptedIndex(MINER_K_ROW_LABEL)))
-    }
-}
 
 // ---------------------------------------------------------------------------
-// The K dial
+// The K threshold
 // ---------------------------------------------------------------------------
 
-/// Reads K, the distinct-receipt threshold (default [`MINER_K_DEFAULT`]).
+/// Reads K, the distinct-receipt threshold: the policy manifest's
+/// `miner_recurrence_receipts` row, seeded as data and changed through the
+/// manifest authoring doors (FIX 9809). A manifest that does not read warns
+/// and reads the shipped row.
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] when the stored dial is not a
-/// positive decimal count.
+/// Storage errors opening the read, and a build missing its shipped row.
 pub fn miner_k(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(MINER_K
-        .get(&vault.store, &rtxn, &())?
-        .map_or(MINER_K_DEFAULT, |dial| dial.0))
-}
-
-/// Persists K.
-///
-/// Stored as decimal ASCII so the dial is readable in a `vault_meta` dump —
-/// the `InboxReviewDial` token convention, applied to a count.
-///
-/// # Errors
-///
-/// [`Error::InvalidClaimBody`] when `k` is zero: a threshold of zero emits on
-/// the FIRST correction, which is the opposite of recurrence. Storage errors.
-pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
-    if k == 0 {
-        return Err(invalid("the substitution miner's K must be at least 1"));
-    }
-    vault.with_write_txn_grouped(|wtxn| MINER_K.put(&vault.store, wtxn, &(), &MinerK(k)))
+    let k = crate::gate::edit_distance_thresholds::edit_distance_threshold_in_txn(
+        &vault.store,
+        &rtxn,
+        crate::gate::edit_distance_thresholds::EditDistanceThreshold::RecurrenceReceipts,
+    )?;
+    Ok(u32::try_from(k).unwrap_or(u32::MAX))
 }
 
 // ---------------------------------------------------------------------------
@@ -268,12 +231,12 @@ fn clusters_from(
     let mut buckets: BTreeMap<ClusterKey, Bucket> = BTreeMap::new();
     for judgment in judgments {
         // An unclear share HOLDS: its notes wait in the unclear ledger. The
-        // miner reads the whole corrected text and cannot tell an unclear
-        // hunk's substitutions from a clear one's, so any amendment with an
-        // unclear share is held whole until a re-judgment clears it.
-        if judgment.share_of(AmendmentClass::Unclear) > 0.0 {
+        // judgment keeps each hunk's label, so an amendment with an unclear
+        // share mines only what its clear hunks made (FIX 9808), and is held
+        // whole when no clear hunk made a substitution.
+        let Some(minable) = MinableHunks::of(judgment) else {
             continue;
-        }
+        };
         let Some(source) = amendment_source(vault, judgment, &artifacts)? else {
             continue;
         };
@@ -301,6 +264,9 @@ fn clusters_from(
             continue;
         }
         for substitution in substitutions(source.delta_source, source.artifact) {
+            if !minable.admits(&substitution) {
+                continue;
+            }
             let target = binding.as_ref().map_or_else(Default::default, |_| {
                 super::policy::infer_target(
                     &policies,
@@ -322,6 +288,7 @@ fn clusters_from(
                 &judgment.receipt_id,
                 source.skill,
                 binding.as_ref().map_or(judgment.at, |row| row.at),
+                false,
             );
         }
     }
@@ -329,7 +296,7 @@ fn clusters_from(
         if now.is_some_and(|now| !crate::claim::preference_evidence_in_force(row.at, now)) {
             continue;
         }
-        let pair = if let Some(text) = row.target.text() {
+        let (pair, unattributed) = if let Some(text) = row.target.text() {
             if !matches!(
                 row.outcome.as_str(),
                 "approved" | "approved_amended" | "rejected"
@@ -338,7 +305,7 @@ fn clusters_from(
             }
             // Explicit target text is the compiler instruction; no lexical
             // rule is inferred from an empty/insert-only/rejected delta.
-            (String::new(), text.to_owned())
+            ((String::new(), text.to_owned()), false)
         } else {
             if row.outcome != "approved_amended"
                 || judgments
@@ -350,7 +317,10 @@ fn clusters_from(
             let Some(pair) = row.substitution else {
                 continue;
             };
-            pair
+            (
+                pair,
+                row.target == super::target::CompilationTarget::Fallback,
+            )
         };
         let target = if row.target == super::target::CompilationTarget::Fallback {
             super::policy::infer_target(&policies, row.principal, &row.scope, &pair.0, &pair.1)
@@ -368,7 +338,7 @@ fn clusters_from(
         buckets
             .entry(key)
             .or_default()
-            .observe(&row.receipt, None, row.at);
+            .observe(&row.receipt, None, row.at, unattributed);
     }
     Ok(buckets
         .into_iter()

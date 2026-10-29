@@ -8,9 +8,11 @@
 //! is journaled as one content-free `PublicationPolicy` frame of the custody
 //! log, so the log moves on and every member's head is sealed and
 //! acknowledged again through the existing due, status, Covered and anchor
-//! rules. A pass holds the policy lock from before it reads the folded
-//! policy until its pass ends, so no pass seals an older policy at a newer
-//! position than another pass recorded.
+//! rules. So is a change of the world pad compartments a restore left
+//! unopened, which every head carries (PAD-3, FIX 11133). A pass holds the
+//! policy lock from before it reads the folded policy until its pass ends,
+//! so no pass seals an older policy at a newer position than another pass
+//! recorded.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -20,7 +22,7 @@ use crate::error::Result;
 use crate::store::Store;
 
 use super::files::{open_dir, read_whole, replace_file};
-use super::head::{CustodyRecipients, PadRecipients};
+use super::head::{CustodyRecipients, PadRecipients, carried_set_digest};
 use super::log::LogEntry;
 use super::platform;
 use super::protocol::{TargetKind, TargetSpec};
@@ -54,8 +56,9 @@ impl TargetRecipients {
     /// The digest of the policy both heads follow: each group's recovery
     /// root by id, the worlds each leaves the pads of out, then the
     /// credentials whose keys each may carry (KS-6), then each world's
-    /// admitted pad recipients (FIX 6706), in order.
-    fn policy(&self) -> [u8; 32] {
+    /// admitted pad recipients (FIX 6706), in order, then the `carried` set's
+    /// digest (PAD-3).
+    fn policy(&self, carried: Option<[u8; 32]>) -> [u8; 32] {
         policy_digest(
             &[
                 &self.own.pad_worlds_kept_local,
@@ -65,6 +68,7 @@ impl TargetRecipients {
             ],
             [&self.own, &self.hosted].map(|group| group.root.as_ref().map(|(id, _)| *id)),
             [&self.own.pad_worlds, &self.hosted.pad_worlds],
+            carried,
         )
     }
 }
@@ -73,6 +77,7 @@ fn policy_digest(
     sets: &[&BTreeSet<[u8; 16]>],
     roots: [Option<[u8; 32]>; 2],
     pads: [&BTreeMap<EntityId, PadRecipients>; 2],
+    carried: Option<[u8; 32]>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(POLICY_CONTEXT);
@@ -119,6 +124,13 @@ fn policy_digest(
                 }
             }
         }
+    }
+    // The carried world pad compartments, wraps included (PAD-3): a change
+    // of them alone seals every head again. Hashed only while one is
+    // carried, so a vault with none keeps the digest it has.
+    if let Some(carried) = carried {
+        hasher.update(b"carried-world-pads");
+        hasher.update(&carried);
     }
     *hasher.finalize().as_bytes()
 }
@@ -180,7 +192,11 @@ impl Store {
         if custody_empty(self, custody, &journal)? {
             return Ok(());
         }
-        let policy = recipients.policy();
+        let carried = {
+            let _guard = self.core.key_custody.read_guard()?;
+            carried_set_digest(&custody.carried()?)?
+        };
+        let policy = recipients.policy(carried);
         let recorded = match read_whole(&journal.dir().join(POLICY)) {
             Ok(bytes) => bytes.and_then(|bytes| <[u8; 32]>::try_from(bytes).ok()),
             Err(error) => {

@@ -61,7 +61,7 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
         }
         let memory = answer_memory(&vault, agent, session_key);
         match &open {
-            AnswerOpen::Turn(turn) => memory.begin_message_stream(turn, Some(mode)),
+            AnswerOpen::Turn { turn, .. } => memory.begin_message_stream(turn, Some(mode)),
             AnswerOpen::Retry { turn, action } => {
                 memory.begin_message_regeneration(turn, action, Some(mode))
             }
@@ -169,7 +169,7 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
     tokio::spawn(async move {
         let result = produce(producer).await;
         if let Some(sitting) = activity {
-            ai.session_hint(sitting, SessionHint::Activity);
+            ai.session_hint(sitting, SessionHint::Activity, None);
         }
         // The answer is the agent's turn, so its own cadence dial counts it.
         ai.turn_landed(
@@ -217,14 +217,17 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
     })
 }
 
-/// The conversation a reply is written into: its TURN's, or the continued
-/// MESSAGE's. `None` when it lies in none, or cannot be placed.
+/// The conversation a reply is written into: a fresh turn's, as its caller
+/// bound it before generation (FIX 8132), or the continued MESSAGE's.
+/// `None` when it lies in none, or cannot be placed.
 pub(in crate::api::ai::chat) fn answer_container(
     vault: &Vault,
     open: &AnswerOpen,
 ) -> Option<EntityId> {
     let record = match open {
-        AnswerOpen::Turn(turn) => EntityId::from_hex(turn.turn_ref.as_deref()?).ok()?,
+        // Its TURN is not written until the reply lands: the conversation
+        // its user's turn was witnessed into is the one it answers in.
+        AnswerOpen::Turn { conversation, .. } => return *conversation,
         // A Retry's TURN lands only with its reply (FIX 3152): the reply it
         // answers again sits in the same conversation.
         AnswerOpen::Retry { action, .. } => action.message,

@@ -298,7 +298,10 @@ impl MediaRuntime {
     ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + 'a> {
         let ladder = self.ladder(&request)?;
         let run = self.media_run(payer)?;
-        Ok(async move { ladder.media(&run, request, None, voices).await })
+        // A media call's one deadline is its caller's (FIX 8134): no host
+        // wait ends it before an offer it waits for is back.
+        let deadline = super::CallDeadline::Open;
+        Ok(async move { ladder.media_by(&run, request, None, voices, deadline).await })
     }
 
     /// A run of its own on the media meter, for one call or stream, billed

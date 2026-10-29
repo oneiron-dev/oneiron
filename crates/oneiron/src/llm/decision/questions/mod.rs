@@ -5,13 +5,16 @@ mod arrival;
 mod artifact_refresh;
 mod ask_history;
 mod backfill;
+mod criteria;
 mod graph_ask;
 mod health_ask;
+mod lifetime;
 mod outcomes;
 mod reader_authority;
 mod recipe;
 mod records;
 mod refresh;
+mod role_asks;
 mod standing;
 mod store;
 mod task_ask;
@@ -22,7 +25,10 @@ mod standing_tests;
 
 pub use answers::question_answers;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
-pub use artifact_refresh::{ArtifactAskRecord, ArtifactAskStanding, artifact_ask_records};
+pub(crate) use artifact_refresh::artifact_unit_receipts;
+pub use artifact_refresh::{
+    ArtifactAskRecord, ArtifactAskStanding, ArtifactUnitReceipt, artifact_ask_records,
+};
 pub use artifact_refresh::{
     ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_artifact_question_now,
     refresh_due_artifact_questions, refresh_due_artifact_questions_while,
@@ -42,6 +48,7 @@ pub(crate) use graph_ask::{trial_unit_context, trial_unit_context_in_txn};
 pub use health_ask::{
     HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
 };
+pub(crate) use lifetime::erase_question_source_in_txn;
 pub(crate) use outcomes::calibration_pairs_in_txn;
 pub use outcomes::{
     calibration_pairs, outcome_labels, person_changed_pairs, project_bound_outcomes,
@@ -57,6 +64,7 @@ pub use refresh::{
     refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
+pub use role_asks::question_unit_correlation;
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
 pub use store::{

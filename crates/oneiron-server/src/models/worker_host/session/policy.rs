@@ -106,6 +106,16 @@ fn wire_stamp(message: &JsonValue) -> MessageStamp {
     }
 }
 
+/// The stamps of `conversation`'s wire messages, in order: the path a
+/// successor published from it holds (FIX 10632).
+pub(super) fn stamps(conversation: &JsonValue) -> Vec<MessageStamp> {
+    conversation
+        .get("messages")
+        .and_then(JsonValue::as_array)
+        .map(|messages| messages.iter().map(wire_stamp).collect())
+        .unwrap_or_default()
+}
+
 /// Whether `manifest` describes exactly the wire `messages` the call
 /// sends: a rung that reshaped them gets no session.
 pub(super) fn describes(manifest: &SegmentManifest, messages: &[JsonValue]) -> bool {

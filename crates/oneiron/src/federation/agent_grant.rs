@@ -318,24 +318,37 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<(Vec<AgentGrantStanding>, Vec<EntityId>)> {
-        agent_grants_reporting_for_store_in_txn(&self.store, txn)
+        agent_grants_reporting_for_store_in_txn(&self.store, txn, false)
     }
 
     /// The agent grants as `vault.consent.registry` reviews them: standing
     /// ones, or every live one with `include_revoked` (an expired grant
-    /// shows as revoked).
+    /// shows as revoked). A row re-put at a positively withdrawn Grant's id
+    /// (FIX-LIST 5107) stands for nothing and shows as revoked, with its
+    /// revoke action, so the owner still finds it and revokes it.
     pub(crate) fn agent_grant_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         include_revoked: bool,
     ) -> Result<Vec<crate::consent::ConsentRegistryRow>> {
         let now = self.instant_in_txn(txn)?.secs();
-        Ok(self
-            .agent_grants_in_txn(txn)?
-            .iter()
-            .filter(|standing| include_revoked || standing.stands_at(now))
-            .map(|standing| crate::consent::ConsentRegistryRow::from_agent_grant(standing, now))
-            .collect())
+        let mut rows = Vec::new();
+        for standing in agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0 {
+            let withdrawn =
+                crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id);
+            if !include_revoked && (withdrawn || !standing.stands_at(now)) {
+                continue;
+            }
+            let mut row = crate::consent::ConsentRegistryRow::from_agent_grant(&standing, now);
+            if withdrawn {
+                row.status = crate::consent::ConsentGrantStatus::Revoked;
+                if let Some(agent_grant) = &mut row.agent_grant {
+                    agent_grant.confers = false;
+                }
+            }
+            rows.push(row);
+        }
+        Ok(rows)
     }
 
     /// The base agents' principals, by name, for the owner (FIX 5734): the
@@ -399,13 +412,17 @@ pub(crate) fn agent_grants_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<AgentGrantStanding>> {
-    Ok(agent_grants_reporting_for_store_in_txn(store, txn)?.0)
+    Ok(agent_grants_reporting_for_store_in_txn(store, txn, false)?.0)
 }
 
-/// [`Vault::agent_grants_reporting_in_txn`], read through `store`.
+/// [`Vault::agent_grants_reporting_in_txn`], read through `store`; with
+/// `keep_withdrawn`, a row re-put at a withdrawn Grant's id is listed too,
+/// for the owner's registry review alone, which never reads standing from
+/// it.
 fn agent_grants_reporting_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
+    keep_withdrawn: bool,
 ) -> Result<(Vec<AgentGrantStanding>, Vec<EntityId>)> {
     let mut grants = Vec::new();
     let mut undecoded = Vec::new();
@@ -418,7 +435,7 @@ fn agent_grants_reporting_for_store_in_txn(
         else {
             continue;
         };
-        if crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
+        if !keep_withdrawn && crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
             continue;
         }
         let Ok(grant) = decode_federation_grant_body(&body) else {

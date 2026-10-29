@@ -43,9 +43,6 @@ pub(super) const ASKS: SideTable<u64, DecisionAsk, Named> =
 /// How far back a new ask looks for the same open ask.
 const SAME_ASK_SCAN: usize = 4_096;
 
-/// The most project boards an ask's chain walks.
-const MAX_BOARD_WALK: usize = 64;
-
 /// The queue identity of a world-privacy widen ask (FIX 4480). Such an ask is
 /// answered only at the world-privacy door, which applies the settings as the
 /// answering holder's own act in the same commit
@@ -87,6 +84,12 @@ pub struct DecisionAsk {
     /// it; `None` while it stands. A withdrawn ask is in no role's queue and takes no
     /// answer.
     pub withdrawn_at: Option<u64>,
+    /// The state the ladder's reads weighed when it asked (FIX 2424): the caller-scoped
+    /// pack snapshot, such as a Dreamer verdict's candidate values beside the prior heads,
+    /// as its caller built it from the ask's own evidence. A holder answers over what the
+    /// model read. `None` when the caller handed the queue none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_state: Option<serde_json::Value>,
 }
 
 /// The answer the ladder held when it asked, and the provider that read it.
@@ -174,6 +177,17 @@ impl Vault {
     /// returns its arrival number. An open ask for the same question version, principal,
     /// evidence, route and correlation is that ask, and its number is returned.
     pub fn queue_decision_ask(&self, request: &HumanDecisionRequest) -> Result<u64> {
+        self.queue_decision_ask_with_state(request, None)
+    }
+
+    /// [`Self::queue_decision_ask`] keeping `state`, the pack snapshot the ladder's reads
+    /// weighed, on a new ask (FIX 2424). An open ask that is the same ask keeps the
+    /// snapshot it was queued with.
+    pub fn queue_decision_ask_with_state(
+        &self,
+        request: &HumanDecisionRequest,
+        state: Option<&serde_json::Value>,
+    ) -> Result<u64> {
         request.question.validate()?;
         request.to.validate()?;
         let prior = match (&request.prior, &request.prior_provider) {
@@ -222,6 +236,7 @@ impl Vault {
                 role,
                 answer: None,
                 withdrawn_at: None,
+                pack_state: state.cloned(),
             };
             ASKS.put(&self.store, txn, &seq, &ask)?;
             Ok(seq)
@@ -461,10 +476,6 @@ impl Vault {
                 Err(invalid("decision ask already answered"))
             };
         }
-        let changed = ask.request()?.changed_by(answer.clone())?;
-        if let Some(record) = &changed {
-            self.record_person_changed_answer(ask.id, record)?;
-        }
         let answered_at = self.store.clock.now_recorded_at();
         let answered = self.with_write_txn_grouped(|txn| {
             let mut held = ASKS
@@ -480,6 +491,13 @@ impl Vault {
             }
             let read: &heed::RoTxn<'_> = txn;
             let (by, role, kind) = answerer(read, &held)?;
+            // The answer stands only now, past its withdrawn, competing-answer and
+            // authority checks: its person-changed record lands in this same write
+            // (FIX 9905).
+            let changed = held.request()?.changed_by(answer.clone())?;
+            if let Some(record) = &changed {
+                self.record_person_changed_answer_in_txn(txn, held.id, record)?;
+            }
             let rule = match reason {
                 Some(reason) if role == AskRole::Owner => {
                     self.write_host_rule_in_txn(txn, &held, &answer, reason, by, answered_at)?
@@ -697,7 +715,8 @@ impl Vault {
 
     /// The chain an ask climbs from `role`, each role with the actors named to it: a
     /// responsible actor; then the boards of its project, or of the asked board's, and
-    /// their parents', breadth first; then the owners.
+    /// all their parents', breadth first, each project once however many there are (FIX
+    /// 9906); then the owners.
     fn ask_chain_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -715,7 +734,7 @@ impl Vault {
         let mut queue: VecDeque<EntityId> = project.into_iter().collect();
         let mut seen = BTreeSet::new();
         while let Some(project) = queue.pop_front() {
-            if seen.len() >= MAX_BOARD_WALK || !seen.insert(project) {
+            if !seen.insert(project) {
                 continue;
             }
             let Some((board, parents)) = self.board_in_txn(txn, project)? else {
@@ -909,5 +928,15 @@ impl DecisionAsks {
 impl HumanDecisionQueue for DecisionAsks {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()> {
         self.vault.queue_decision_ask(&request).map(drop)
+    }
+
+    fn queue_with_state(
+        &self,
+        request: HumanDecisionRequest,
+        state: &serde_json::Value,
+    ) -> Result<Option<u64>> {
+        self.vault
+            .queue_decision_ask_with_state(&request, Some(state))
+            .map(Some)
     }
 }

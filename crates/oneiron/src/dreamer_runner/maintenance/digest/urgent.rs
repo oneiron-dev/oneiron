@@ -52,9 +52,9 @@ pub const DIGEST_ASSESS_UNLENT_PARK_REASON: &str =
 const INTENT_PREDICATE: &str = "profile.intent";
 
 /// The payload keys a harm question and a witnessed answer ride under.
-const CANDIDATE_KEY: &str = "candidate";
+pub(crate) const CANDIDATE_KEY: &str = "candidate";
 const QUESTION_KEY: &str = "question";
-const ASSESSMENT_KEY: &str = "assessment";
+pub(crate) const ASSESSMENT_KEY: &str = "assessment";
 
 /// One stored claim a candidate names, at the exact body bytes it was read
 /// at.
@@ -672,7 +672,7 @@ fn json_entry<T: Serialize + ?Sized>(key: &str, value: &T) -> Result<(Value, Val
 }
 
 /// The JSON entry `key` of a payload, decoded.
-fn json_field<T: DeserializeOwned>(input: &Value, key: &str) -> Result<T> {
+pub(crate) fn json_field<T: DeserializeOwned>(input: &Value, key: &str) -> Result<T> {
     let json = input
         .as_map()
         .and_then(|entries| entries.iter().find(|(name, _)| name.as_str() == Some(key)))

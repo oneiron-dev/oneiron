@@ -128,6 +128,8 @@ impl Store {
     /// a connector call's resume key (FIX 9157): each is required by its
     /// call row when one names it, never by the whole census. Nor is an
     /// erasable key (FIX 8875): each is planned by the ref its row names.
+    /// Nor is an inference snapshot's key: a missing one is a cold recompute.
+    /// Nor is the host issuer seed's escrow (FIX-LIST 10770), optional.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -153,7 +155,9 @@ impl Store {
                                 | CustodyKind::CustodyTransition
                                 | CustodyKind::CustodyRequestInput
                                 | CustodyKind::ConnectorResume
+                                | CustodyKind::InferenceSnapshot
                                 | CustodyKind::ErasableKey
+                                | CustodyKind::HostIssuerSeed
                         )
                 })
                 .map(|(id, _)| RequiredId {
@@ -169,11 +173,14 @@ impl Store {
 /// Lands `admitted` beside the restore's destination under `binding`, the
 /// image's own rebound there (the same namespace): a new container, every
 /// retirement fact first, then every live entry but an erased credential's,
-/// which lands retired, then the journal at the next writer epoch and every
-/// erased credential's fact, all synced. The admitted retirements stay owed
-/// as one takeover obligation at the admitted position: the new writer's
-/// targets and anchor must reach it at its epoch before they count complete
-/// (KS-4A2). The directory it made is removed when the restore fails.
+/// which lands retired, then each world pad compartment the head left
+/// unopened, carried on (PAD-3, FIX 11133), then the journal at the next
+/// writer epoch and every erased credential's fact, all synced. The admitted
+/// retirements stay owed as one takeover obligation at the admitted
+/// position: the new writer's targets and anchor must reach it at its epoch
+/// before they count complete (KS-4A2). The directory it made is removed
+/// when the restore fails. A host issuer seed that does not land is warned
+/// and left out, never the restore's failure (FIX-LIST 10770).
 pub(crate) fn land_recovery(
     admitted: &AdmittedCustody,
     binding: &CustodyBinding,
@@ -201,7 +208,20 @@ pub(crate) fn land_recovery(
                 suppressed = true;
                 continue;
             }
-            custody.publish(id, secret)?;
+            match custody.publish(id, secret) {
+                // The host issuer seed's escrow is optional (FIX-LIST 10770):
+                // one that does not land is warned, the restore completes,
+                // and its install comes up holding no seed, as before.
+                Err(error) if id.kind() == CustodyKind::HostIssuerSeed => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the host issuer seed's escrow did not land with this restore; \
+                     the vault comes up without it"
+                ),
+                landed => landed?,
+            }
+        }
+        for carried in &admitted.carried {
+            custody.put_carried(carried)?;
         }
         let control = Control::taken_over(admitted.control.clone(), &admitted.position)?;
         let journal = custody.journal()?;

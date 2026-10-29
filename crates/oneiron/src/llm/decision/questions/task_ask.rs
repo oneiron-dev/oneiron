@@ -2,7 +2,7 @@
 
 use super::{
     arrival,
-    reader_authority::own_authority_readable_in_txn,
+    reader_authority::{Reader, own_authority_readable_in_txn},
     records::*,
     store::{HeadKey, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode, secret_scan_before_put},
 };
@@ -113,6 +113,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 think_row: None,
                 person_row: None,
                 rule: None,
+                asked: None,
             },
             human_ask: None,
         },
@@ -137,7 +138,9 @@ pub(crate) fn bind_task_answer_in_txn(
         if let Some(inherited) = crate::claim::claim_evidence_taint(&body) {
             taint = crate::dreamer_consolidation::source_meet(taint, inherited);
         }
-        if let Some(scope) = body.scope {
+        // The answer is a new claim: the unit's initial ClaimOf weight is the
+        // unit's own birth fact, so the answer is born at the default (FIX 7022).
+        if let Some(scope) = crate::claim::without_initial_weight(body.scope) {
             candidate = candidate.with_scope(scope);
         }
         if let Some(world) = body.world {
@@ -189,6 +192,9 @@ pub(crate) fn bind_task_answer_in_txn(
 }
 
 /// Shared current visibility and secret-custody admission before first-answer CAS.
+/// A record that is no CLAIM answers only at a position both parties' live
+/// record Scope reads, in this same snapshot (FIX 9917); a CLAIM keeps its
+/// live-surface and own-authority admission. A denied record reads as absent.
 pub(crate) fn validate_task_answer_unit(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -197,14 +203,16 @@ pub(crate) fn validate_task_answer_unit(
     unit: EntityId,
 ) -> Result<(u8, Vec<u8>)> {
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-    for principal in [principal, holder] {
-        let reader = ScopedReadActorKey::new(principal.to_hex())
+    let mut readers = Vec::with_capacity(2);
+    for party in [principal, holder] {
+        let reader = ScopedReadActorKey::new(party.to_hex())
             .ok_or(Error::InvariantViolation("canonical ask principal"))?;
         if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)?
-            && !own_authority_readable_in_txn(vault, txn, &policy, principal, &reader, &unit)?
+            && !own_authority_readable_in_txn(vault, txn, &policy, party, &reader, &unit)?
         {
             return Err(Error::EntityNotFound);
         }
+        readers.push((party, reader));
     }
     let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &unit)?
         .ok_or(Error::EntityNotFound)?;
@@ -213,6 +221,32 @@ pub(crate) fn validate_task_answer_unit(
     // Custody records are not decision evidence even in a default-open vault.
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
         return Err(Error::EntityNotFound);
+    }
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, unit, &raw)?
+            .ok_or(Error::EntityNotFound)?;
+        // A NOTE sits at one world it is in that both parties hold, else at
+        // base reality, as a standing source does (FIX-LIST 9433).
+        let ceilings: Vec<_> = readers
+            .iter()
+            .map(|(_, reader)| reader.world_ceiling())
+            .collect();
+        let held: Vec<_> = ceilings.iter().map(|ceiling| &ceiling.worlds).collect();
+        let scope = crate::federation::record_scope::note_world::source_position(
+            &vault.store,
+            txn,
+            unit,
+            header.entity_type,
+            scope,
+            &held,
+        );
+        let home = crate::authority::StandingHome::Vault(vault);
+        for (party, reader) in &readers {
+            let reads = Reader::new(home, *party, reader.clone());
+            if !reads.record_allowed_in_txn(txn, &policy, &scope)? {
+                return Err(Error::EntityNotFound);
+            }
+        }
     }
     Ok((
         header.entity_type,

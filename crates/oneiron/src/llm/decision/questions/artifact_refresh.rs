@@ -17,10 +17,13 @@ use std::time::{Duration, Instant};
 
 mod history;
 mod manual;
+mod unit_receipts;
 
 pub use self::history::artifact_ask_records;
 pub(super) use self::history::artifact_event_record;
 pub use self::manual::refresh_artifact_question_now;
+pub use self::unit_receipts::ArtifactUnitReceipt;
+pub(crate) use self::unit_receipts::artifact_unit_receipts;
 
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +37,7 @@ use crate::edit_roundtrip::{
     SheetRowsAsk, UnitDecider,
 };
 use crate::edit_settle::PendingProposalView;
-use crate::llm::decision::{DecisionBandPolicy, DecisionRung, Reversibility};
+use crate::llm::decision::{DecisionBandPolicy, Reversibility};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
 
@@ -381,8 +384,8 @@ impl Asking<'_> {
         }
         files.retain(|file| readable.contains(file));
         let definition = &self.record.definition;
-        let mut dial = definition.dial;
-        dial.ceiling = dial.ceiling.min(DecisionRung::Big);
+        // The recorded ceiling stands, as on a manual ask (FIX 9912).
+        let dial = definition.dial;
         let budget = definition.deadline(vault)?;
         self.ask_recorded(artifact, observed, "standing", |reference| {
             let ask = ArtifactAsk {
@@ -539,7 +542,7 @@ fn baseline(
 /// (`vault.questions.answers`): the head it asked and where its answers stand. Every
 /// logged ask stays (FIX 2337); a later ask of the same artifact replaces only an ask
 /// stamped before asks were logged, which names no `ask_id`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactAskRecord {
     pub artifact: EntityId,
@@ -568,6 +571,11 @@ pub struct ArtifactAskRecord {
     /// standing is [`ArtifactAskStanding::DetailsOmitted`].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub details_omitted: bool,
+    /// Every unit the ask left without an answer, with its receipt (FIX 9913),
+    /// whether or not it held a proposal; an answered unit's decision rides
+    /// the proposal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub units: Vec<ArtifactUnitReceipt>,
 }
 
 /// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:

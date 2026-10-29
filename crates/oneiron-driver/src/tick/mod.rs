@@ -13,7 +13,7 @@
 //! [`HybridTick`] selects over both with deadline priority: when a deadline
 //! and a push are ready in the same poll, the deadline wins. Push bursts
 //! coalesce (capacity 1 per wake lane and plain-hint slot; session hints
-//! ride a bounded ORDERED queue that coalesces only adjacent Activity hints
+//! ride an uncapped ORDERED queue that coalesces only adjacent Activity hints
 //! arriving within the configured idle floor — lifecycle causality is never
 //! reordered) into follow-up passes,
 //! while a missed deadline can never be dropped — deadlines are never
@@ -26,6 +26,7 @@ mod hybrid;
 mod model;
 mod policy;
 mod push;
+mod queue;
 mod timer;
 
 pub use self::hybrid::HybridTick;

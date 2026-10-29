@@ -67,6 +67,11 @@
 //! `crate::secret`): every engine it runs, an engine switch's target among
 //! them, and the fresh guest a proposal's replay runs on hand the secrets
 //! their reads find to it, and type and expect a handle through it.
+//!
+//! The host's site skills ride the session too (CUA E10, `site`): an
+//! `open` carries the loadable skills of the exact site it landed on,
+//! `library.find` lists their seeds as candidates, and `library.propose`
+//! takes one by its handle.
 
 mod demonstration;
 mod draft;
@@ -75,6 +80,7 @@ mod guest;
 mod lifecycle;
 mod press;
 mod request;
+mod site;
 mod solved;
 pub(crate) mod storage;
 pub(crate) mod switch;
@@ -225,6 +231,9 @@ pub struct BrowserSession {
     /// The demonstration that records, and those that ended and wait to be
     /// given (CUA E9a), across engine switches.
     demos: demonstration::Demonstrations,
+    /// The host's site skills, the last open's matches not yet delivered,
+    /// and the seed candidates listed (CUA E10).
+    sites: site::SiteSkills,
 }
 
 /// One effect verb's receipt facts, known before its input is sent.
@@ -356,6 +365,7 @@ impl BrowserSession {
         {
             observation.library = library.find(&site, None, None).unwrap_or_default();
         }
+        self.site_skills_opened();
         Ok(observation)
     }
 
@@ -467,7 +477,8 @@ impl BrowserDriver for BrowserSession {
         self.live()?.observe_hidden()
     }
 
-    fn paged(&mut self, observation: Observation) -> ObservationPage {
+    fn paged(&mut self, mut observation: Observation) -> ObservationPage {
+        self.deliver_site_skills(&mut observation);
         self.driver.paged(observation)
     }
 
@@ -543,21 +554,21 @@ impl BrowserDriver for BrowserSession {
 
     fn library_find(&mut self, input: LibraryFindInput) -> Result<LibraryFindOutput, BrowserError> {
         self.agent_has()?;
-        let site = match input.site {
-            Some(site) => site.trim().to_ascii_lowercase(),
-            None => site_of(&self.live()?.url()?).ok_or_else(|| {
-                BrowserError::Input("the open page has no site; name one".to_owned())
-            })?,
-        };
+        let (site, page) = self.find_query(input.site.as_deref(), input.url.as_deref())?;
         let library = self.library.as_mut().ok_or_else(no_library)?;
+        let workflows = library.find(&site, input.subgoal.as_deref(), input.type_ref.as_deref())?;
+        let (candidates, site_skill_notes) = self.find_candidates(page.as_deref());
         Ok(LibraryFindOutput {
-            workflows: library.find(&site, input.subgoal.as_deref(), input.type_ref.as_deref())?,
             site,
+            workflows,
+            candidates,
+            site_skill_notes,
         })
     }
 
     fn library_propose(&mut self, input: ProposeInput) -> Result<ProposeOutput, BrowserError> {
         self.agent_has()?;
+        let input = self.seeded_proposal(input)?;
         let mut library = self.library.take().ok_or_else(no_library)?;
         let output = self.propose(library.as_mut(), input);
         self.library = Some(library);
@@ -568,9 +579,11 @@ impl BrowserDriver for BrowserSession {
         // A run refused mid-takeover would count as a missed postcondition.
         self.agent_has()?;
         self.stop_pending = None;
+        self.site_skills_unsent();
         let mut output = self.with_library(|session, library, decider, writer| {
             crate::library::run(session, library, decider, writer, input)
         })?;
+        self.deliver_batch_site_skills(&mut output.batch);
         self.page_batch(&mut output.batch);
         Ok(output)
     }
@@ -648,7 +661,10 @@ impl BrowserDriver for BrowserSession {
         self.live()?;
         // The reason stands whole, as given (FIX 8012): blankness alone
         // refuses it, never its length.
-        let reason = input.reason;
+        let HandoverInput {
+            reason,
+            demonstrate,
+        } = input;
         if reason.trim().is_empty() {
             return Err(BrowserError::Input(
                 "a handover gives its reason".to_owned(),
@@ -656,6 +672,9 @@ impl BrowserDriver for BrowserSession {
         }
         let asked_at_ms = now_ms();
         self.recording_close(DemonstrationStopCause::HandedOver);
+        // An ask that opts in records the span of the person who takes it
+        // (CUA E9b).
+        self.takeover_asked(demonstrate.then(|| reason.clone()));
         self.takeover = Takeover::Waiting {
             reason: reason.clone(),
             asked_at_ms,
@@ -677,6 +696,7 @@ impl BrowserDriver for BrowserSession {
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
         self.stop_pending = None;
+        self.site_skills_unsent();
         let mut decider = self.decider.take();
         let writer = self.field_writer.take();
         let lent: &dyn FieldWriter = match writer.as_deref() {
@@ -690,6 +710,7 @@ impl BrowserDriver for BrowserSession {
         self.decider = decider;
         self.field_writer = writer;
         let mut output = output?;
+        self.deliver_batch_site_skills(&mut output);
         self.page_batch(&mut output);
         Ok(output)
     }

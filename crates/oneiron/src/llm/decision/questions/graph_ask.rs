@@ -12,9 +12,8 @@ use crate::claim::{
 };
 use crate::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO, MAX_DECISION_AUDIO_BYTES,
-    MAX_DECISION_AUDIOS_BYTES, MAX_DECISION_IMAGE_BYTES, MAX_DECISION_IMAGES,
-    MAX_DECISION_IMAGES_BYTES, PairedAnswer, PairedReading, ProviderPin, TypedDecision,
+    DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
+    PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
@@ -738,6 +737,7 @@ fn predicted(
             think_row: None,
             person_row: None,
             rule: None,
+            asked: None,
         },
         human_ask: None,
     }
@@ -774,20 +774,17 @@ pub(super) fn source_versions(context: &GraphUnitContext) -> Vec<EvidenceVersion
 
 /// The images the context's ASSET sources hold, read through `lane` (the
 /// asker's own read) for an answerer that reads them: PNG or JPEG only,
-/// inside a call's count and byte bounds, each named `image_<n>` and pinned
-/// at its pixels' hash. The pull is recorded as an ask-image served form
-/// before any model reads it. An asset the lane withholds, or one past a
-/// bound, is read as text alone.
+/// each inside one image's byte bound, named `image_<n>` and pinned at its
+/// pixels' hash. Every such image goes on: their count and total size drop
+/// none (FIX 9903). The pull is recorded as an ask-image served form before
+/// any model reads it. An asset the lane withholds, or one no decision
+/// image can be, is read as text alone.
 pub(super) fn unit_images(
     lane: &ScopedRead<'_>,
     context: &GraphUnitContext,
 ) -> Result<Vec<DecisionImage>> {
     let mut images: Vec<DecisionImage> = Vec::new();
-    let mut total = 0usize;
     for source in &context.sources {
-        if images.len() == MAX_DECISION_IMAGES {
-            break;
-        }
         if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             continue;
         }
@@ -805,14 +802,9 @@ pub(super) fn unit_images(
             image: pixels,
             frame: None,
         };
-        let bytes = image.image.bytes.len();
-        if image.format().is_none()
-            || bytes > MAX_DECISION_IMAGE_BYTES
-            || total.saturating_add(bytes) > MAX_DECISION_IMAGES_BYTES
-        {
+        if image.format().is_none() || image.image.bytes.len() > MAX_DECISION_IMAGE_BYTES {
             continue;
         }
-        total += bytes;
         images.push(image);
     }
     if !images.is_empty() {
@@ -826,21 +818,18 @@ pub(super) fn unit_images(
 }
 
 /// The audio clips the context's ASSET sources hold, read through `lane` (the
-/// asker's own read) for an answerer that hears them: WAV or MP3 only, inside
-/// a call's count and byte bounds, each named `audio_<n>` and pinned at its
-/// encoded bytes' hash. The clip goes to the model as audio, never as a
-/// transcript. An asset the lane withholds, or one past a bound, is read as
-/// text alone. Each clip handed on is receipted as pulled, as an image is.
+/// asker's own read) for an answerer that hears them: WAV or MP3 only, each
+/// inside one clip's byte bound, named `audio_<n>` and pinned at its encoded
+/// bytes' hash; as with images, their count and total size drop none. The
+/// clip goes to the model as audio, never as a transcript. An asset the lane
+/// withholds, or one no decision clip can be, is read as text alone. Each
+/// clip handed on is receipted as pulled, as an image is.
 pub(super) fn unit_audio(
     lane: &ScopedRead<'_>,
     context: &GraphUnitContext,
 ) -> Result<Vec<DecisionAudio>> {
     let mut audio: Vec<DecisionAudio> = Vec::new();
-    let mut total = 0usize;
     for source in &context.sources {
-        if audio.len() == MAX_DECISION_AUDIO {
-            break;
-        }
         if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             continue;
         }
@@ -858,14 +847,9 @@ pub(super) fn unit_audio(
             media_type,
             bytes,
         };
-        let size = clip.bytes.len();
-        if clip.format().is_none()
-            || size > MAX_DECISION_AUDIO_BYTES
-            || total.saturating_add(size) > MAX_DECISION_AUDIOS_BYTES
-        {
+        if clip.format().is_none() || clip.bytes.len() > MAX_DECISION_AUDIO_BYTES {
             continue;
         }
-        total += size;
         audio.push(clip);
     }
     if !audio.is_empty() {
@@ -880,7 +864,8 @@ pub(super) fn unit_audio(
 
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
-/// well formed.
+/// well formed. An abstention that asked the next authorised role (OF-506)
+/// ends on the person queue's pin: the ask is pending, never an answer.
 pub fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,
@@ -888,6 +873,8 @@ pub fn validate_decision(
 ) -> Result<()> {
     let receipt = &decision.receipt;
     let answered = decision.answer != DecisionAnswer::Abstain;
+    let asked = !answered && decision.human_ask.is_some();
+    let last = receipt.providers.len().saturating_sub(1);
     if receipt.question != question.id
         || receipt.question_version != question.version
         || receipt.principal != principal
@@ -898,9 +885,11 @@ pub fn validate_decision(
             .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
         || receipt.band.validate().is_err()
         || receipt.providers.len() > 64
-        || receipt.providers.iter().any(|pin| {
-            pin.rung == DecisionRung::Human
-                || crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
+        || receipt.providers.iter().enumerate().any(|(at, pin)| {
+            if pin.rung == DecisionRung::Human {
+                return !(asked && at == last);
+            }
+            crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
         })
         || receipt
             .time

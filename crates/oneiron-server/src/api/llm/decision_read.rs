@@ -18,7 +18,7 @@ use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission};
 use oneiron::llm::{
     FatalLlmError, LabelReadFailure, LabelReadRequest, LabelReadout, LabelSet, LlmError, LlmUsage,
-    joint_marginals,
+    RetryableLlmError, joint_marginals,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -150,19 +150,92 @@ pub(super) async fn decision_read(
     );
     // The read blocks on the runtime, so it runs on a blocking thread. Its
     // turn and its permit's settlement go with it: a caller that hangs up
-    // ends nothing the read still holds.
+    // ends nothing the read still holds, and no retry is sent past it.
+    let caller = CallerPresence::default();
+    let present = Arc::clone(&caller.0);
     let read = tokio::task::spawn_blocking(move || {
         let _turn = turn;
         let questions = request.questions(&probe);
-        read(&door, &request.label_read(&questions), reserve, run)
+        read_retained(
+            &door,
+            &request.label_read(&questions),
+            reserve,
+            &run,
+            &present,
+        )
     })
     .await;
+    drop(caller);
     match read {
         Ok(Ok(answer)) => Json(answer).into_response(),
         Ok(Err(error)) => failure(error),
         Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "decision_read_failed"),
     }
 }
+
+/// How long a probe its provider refused for rate waits before it goes out
+/// again, at least (FIX 8184; CALLS: the requeue floor).
+const PROBE_RETRY_FLOOR: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The most a requeued probe's wait adds at random, so probes refused
+/// together come back apart (FIX 8184; CALLS: the jitter range), in
+/// milliseconds.
+const PROBE_RETRY_JITTER_MS: u64 = 1_000;
+
+/// The probe's caller, while it waits on the read: its handler drops this
+/// when the caller hangs up, and the read sends nothing more.
+struct CallerPresence(Arc<std::sync::atomic::AtomicBool>);
+
+impl Default for CallerPresence {
+    fn default() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicBool::new(true)))
+    }
+}
+
+impl Drop for CallerPresence {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// [`read`], requeued while its provider refuses it for rate (FIX 8184):
+/// the probe keeps its fair turn, waits a jittered backoff, and goes out
+/// again until its caller hangs up. Each attempt is one permit, dispatched
+/// and settled once.
+fn read_retained(
+    door: &DecisionReadDoor,
+    request: &LabelReadRequest<'_>,
+    reserve: u64,
+    run: &RunAdmission,
+    present: &std::sync::atomic::AtomicBool,
+) -> Result<ReadAnswer, LlmError> {
+    use rand_core::RngCore;
+    use std::sync::atomic::Ordering;
+    loop {
+        let answer = read(door, request, reserve, run.clone());
+        let Err(LlmError::Retryable(RetryableLlmError::RateLimited { retry_after, .. })) = &answer
+        else {
+            return answer;
+        };
+        let jitter = rand_core::OsRng.next_u64() % (PROBE_RETRY_JITTER_MS + 1);
+        let after = std::time::Duration::from_secs(retry_after.unwrap_or(0));
+        let wait = PROBE_RETRY_FLOOR.max(after) + std::time::Duration::from_millis(jitter);
+        let until = std::time::Instant::now() + wait;
+        while std::time::Instant::now() < until {
+            if !present.load(Ordering::Relaxed) {
+                return answer;
+            }
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            std::thread::sleep(PROBE_RETRY_SLICE.min(left));
+        }
+        if !present.load(Ordering::Relaxed) {
+            return answer;
+        }
+    }
+}
+
+/// How often a requeued probe's wait looks for its caller.
+const PROBE_RETRY_SLICE: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// One read under a run of its own on the raw routes' meter: admitted, its
 /// permit started just before the call, and settled once after it.

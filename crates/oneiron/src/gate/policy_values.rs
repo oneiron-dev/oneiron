@@ -8,11 +8,18 @@ pub(super) enum PolicyValueKey {
     ArtifactAnswerQuietSeconds,
     CommOptOutPosture,
     DreamerRetryParkSeconds,
+    EscalationStandingRulings,
+    MinerRecurrenceReceipts,
+    MinerRejectionWaitSeconds,
     ProposalCheckThreshold,
     ProviderCooldownDefaultSeconds,
     ProviderCooldownMaxSeconds,
     ProviderCooldownMaxWaitSeconds,
+    ResidentRunMaxTries,
     ScopePrecedence,
+    SessionIdleFloorSeconds,
+    SessionLifetimeCeilingSeconds,
+    WorkflowStepMaxTries,
 }
 impl PolicyValueKey {
     fn parse(value: &str) -> Option<Self> {
@@ -20,11 +27,18 @@ impl PolicyValueKey {
             "artifact_answer_quiet_seconds" => Some(Self::ArtifactAnswerQuietSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
             "dreamer_retry_park_seconds" => Some(Self::DreamerRetryParkSeconds),
+            "escalation_standing_rulings" => Some(Self::EscalationStandingRulings),
+            "miner_recurrence_receipts" => Some(Self::MinerRecurrenceReceipts),
+            "miner_rejection_wait_seconds" => Some(Self::MinerRejectionWaitSeconds),
             "proposal_check_threshold" => Some(Self::ProposalCheckThreshold),
             "provider_cooldown_default_seconds" => Some(Self::ProviderCooldownDefaultSeconds),
             "provider_cooldown_max_seconds" => Some(Self::ProviderCooldownMaxSeconds),
             "provider_cooldown_max_wait_seconds" => Some(Self::ProviderCooldownMaxWaitSeconds),
+            "resident_run_max_tries" => Some(Self::ResidentRunMaxTries),
             "scope_precedence" => Some(Self::ScopePrecedence),
+            "session_idle_floor_seconds" => Some(Self::SessionIdleFloorSeconds),
+            "session_lifetime_ceiling_seconds" => Some(Self::SessionLifetimeCeilingSeconds),
+            "workflow_step_max_tries" => Some(Self::WorkflowStepMaxTries),
             _ => None,
         }
     }
@@ -33,11 +47,18 @@ impl PolicyValueKey {
             Self::ArtifactAnswerQuietSeconds => "artifact_answer_quiet_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
+            Self::EscalationStandingRulings => "escalation_standing_rulings",
+            Self::MinerRecurrenceReceipts => "miner_recurrence_receipts",
+            Self::MinerRejectionWaitSeconds => "miner_rejection_wait_seconds",
             Self::ProposalCheckThreshold => "proposal_check_threshold",
             Self::ProviderCooldownDefaultSeconds => "provider_cooldown_default_seconds",
             Self::ProviderCooldownMaxSeconds => "provider_cooldown_max_seconds",
             Self::ProviderCooldownMaxWaitSeconds => "provider_cooldown_max_wait_seconds",
+            Self::ResidentRunMaxTries => "resident_run_max_tries",
             Self::ScopePrecedence => "scope_precedence",
+            Self::SessionIdleFloorSeconds => "session_idle_floor_seconds",
+            Self::SessionLifetimeCeilingSeconds => "session_lifetime_ceiling_seconds",
+            Self::WorkflowStepMaxTries => "workflow_step_max_tries",
         }
     }
 
@@ -55,14 +76,25 @@ impl PolicyValueKey {
             // read at vault scope only, and an offer's cooldown is the
             // deployment's, never one world's.
             // A held answer's proposer is woken on the vault's clock, and a
-            // Dreamer Retry park resumes on it (FIX 8716).
+            // Dreamer Retry park resumes on it (FIX 8716). The edit-distance
+            // ledger and miner read their thresholds with no world or project
+            // (FIX 9802, 9809). A sitting closes on the vault's clock until
+            // trusted session axes exist (FIX 8600), and the served runners read
+            // their try caps on the vault's rows (FIX 7748).
             Self::ArtifactAnswerQuietSeconds
             | Self::CommOptOutPosture
             | Self::DreamerRetryParkSeconds
+            | Self::EscalationStandingRulings
+            | Self::MinerRecurrenceReceipts
+            | Self::MinerRejectionWaitSeconds
             | Self::ProviderCooldownDefaultSeconds
             | Self::ProviderCooldownMaxSeconds
             | Self::ProviderCooldownMaxWaitSeconds
-            | Self::ScopePrecedence => scope == PolicyRowScope::Vault,
+            | Self::ResidentRunMaxTries
+            | Self::ScopePrecedence
+            | Self::SessionIdleFloorSeconds
+            | Self::SessionLifetimeCeilingSeconds
+            | Self::WorkflowStepMaxTries => scope == PolicyRowScope::Vault,
         }
     }
 }
@@ -93,11 +125,18 @@ pub(super) enum PolicyValue {
     ArtifactAnswerQuietSeconds(u64),
     CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
     DreamerRetryParkSeconds(u64),
+    EscalationStandingRulings(u64),
+    MinerRecurrenceReceipts(u64),
+    MinerRejectionWaitSeconds(u64),
     ProposalCheckThreshold(u64),
     ProviderCooldownDefaultSeconds(u64),
     ProviderCooldownMaxSeconds(u64),
     ProviderCooldownMaxWaitSeconds(u64),
+    ResidentRunMaxTries(u64),
     ScopePrecedence(PolicyPrecedence),
+    SessionIdleFloorSeconds(u64),
+    SessionLifetimeCeilingSeconds(u64),
+    WorkflowStepMaxTries(u64),
 }
 impl PolicyValue {
     fn restrict(self, other: Self) -> Self {
@@ -115,6 +154,18 @@ impl PolicyValue {
             (Self::DreamerRetryParkSeconds(a), Self::DreamerRetryParkSeconds(b)) => {
                 Self::DreamerRetryParkSeconds(a.max(b))
             }
+            // More agreeing rulings or recurring receipts, or a longer quiet
+            // after a rejection, never proposes sooner than any trusted row
+            // asks.
+            (Self::EscalationStandingRulings(a), Self::EscalationStandingRulings(b)) => {
+                Self::EscalationStandingRulings(a.max(b))
+            }
+            (Self::MinerRecurrenceReceipts(a), Self::MinerRecurrenceReceipts(b)) => {
+                Self::MinerRecurrenceReceipts(a.max(b))
+            }
+            (Self::MinerRejectionWaitSeconds(a), Self::MinerRejectionWaitSeconds(b)) => {
+                Self::MinerRejectionWaitSeconds(a.max(b))
+            }
             (Self::ProposalCheckThreshold(a), Self::ProposalCheckThreshold(b)) => {
                 Self::ProposalCheckThreshold(a.min(b))
             }
@@ -131,6 +182,21 @@ impl PolicyValue {
             (Self::ProviderCooldownMaxWaitSeconds(a), Self::ProviderCooldownMaxWaitSeconds(b)) => {
                 Self::ProviderCooldownMaxWaitSeconds(a.min(b))
             }
+            // A shorter idle floor or lifetime ceiling never keeps a sitting
+            // open longer than any trusted row allows.
+            (Self::SessionIdleFloorSeconds(a), Self::SessionIdleFloorSeconds(b)) => {
+                Self::SessionIdleFloorSeconds(a.min(b))
+            }
+            (Self::SessionLifetimeCeilingSeconds(a), Self::SessionLifetimeCeilingSeconds(b)) => {
+                Self::SessionLifetimeCeilingSeconds(a.min(b))
+            }
+            // A lower cap never retries past what any trusted row allows.
+            (Self::ResidentRunMaxTries(a), Self::ResidentRunMaxTries(b)) => {
+                Self::ResidentRunMaxTries(a.min(b))
+            }
+            (Self::WorkflowStepMaxTries(a), Self::WorkflowStepMaxTries(b)) => {
+                Self::WorkflowStepMaxTries(a.min(b))
+            }
             _ => unreachable!("policy values for different keys never compose"),
         }
     }
@@ -140,10 +206,17 @@ impl PolicyValue {
             Self::CommOptOutPosture(value) => value.as_str().to_owned(),
             Self::ArtifactAnswerQuietSeconds(value)
             | Self::DreamerRetryParkSeconds(value)
+            | Self::EscalationStandingRulings(value)
+            | Self::MinerRecurrenceReceipts(value)
+            | Self::MinerRejectionWaitSeconds(value)
             | Self::ProposalCheckThreshold(value)
             | Self::ProviderCooldownDefaultSeconds(value)
             | Self::ProviderCooldownMaxSeconds(value)
-            | Self::ProviderCooldownMaxWaitSeconds(value) => value.to_string(),
+            | Self::ProviderCooldownMaxWaitSeconds(value)
+            | Self::ResidentRunMaxTries(value)
+            | Self::SessionIdleFloorSeconds(value)
+            | Self::SessionLifetimeCeilingSeconds(value)
+            | Self::WorkflowStepMaxTries(value) => value.to_string(),
             Self::ScopePrecedence(value) => value.as_str().to_owned(),
         }
     }
@@ -338,6 +411,17 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                         PolicyValueKey::DreamerRetryParkSeconds => {
                             PolicyValue::DreamerRetryParkSeconds(retry_park_seconds(raw)?)
                         }
+                        // A threshold of zero rulings or receipts is no
+                        // threshold; a zero wait re-proposes at the next pass.
+                        PolicyValueKey::EscalationStandingRulings => {
+                            PolicyValue::EscalationStandingRulings(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::MinerRecurrenceReceipts => {
+                            PolicyValue::MinerRecurrenceReceipts(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::MinerRejectionWaitSeconds => {
+                            PolicyValue::MinerRejectionWaitSeconds(raw.as_u64()?)
+                        }
                         PolicyValueKey::ProposalCheckThreshold => {
                             PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)
                         }
@@ -352,8 +436,24 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                                 |seconds| *seconds <= PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS,
                             )?)
                         }
+                        // A cap of zero tries runs nothing: each runner gets
+                        // at least one try.
+                        PolicyValueKey::ResidentRunMaxTries => {
+                            PolicyValue::ResidentRunMaxTries(raw.as_u64().filter(|v| *v > 0)?)
+                        }
                         PolicyValueKey::ScopePrecedence => {
                             PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
+                        }
+                        // A zero floor or ceiling would end every sitting at once.
+                        PolicyValueKey::SessionIdleFloorSeconds => {
+                            PolicyValue::SessionIdleFloorSeconds(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::SessionLifetimeCeilingSeconds => {
+                            let seconds = raw.as_u64().filter(|v| *v > 0)?;
+                            PolicyValue::SessionLifetimeCeilingSeconds(seconds)
+                        }
+                        PolicyValueKey::WorkflowStepMaxTries => {
+                            PolicyValue::WorkflowStepMaxTries(raw.as_u64().filter(|v| *v > 0)?)
                         }
                     };
                 let Value::Map(scope_entries) = field(entries, "scope")? else {
@@ -514,6 +614,22 @@ fn shipped_default_dreamer_retry_park_seconds() -> u64 {
         .and_then(|row| row["value"].as_u64())
         .filter(|value| *value > 0)
         .expect("shipped Dreamer retry park pause")
+}
+
+/// The shipped consecutive-try cap for a try-cap `key` (FIX 7748): three
+/// resident-run tries, five workflow-step tries.
+pub(super) fn shipped_default_max_tries(key: &str) -> u64 {
+    let defaults: serde_json::Value =
+        serde_json::from_str(include_str!("policy_value_defaults.json"))
+            .expect("valid shipped policy defaults");
+    defaults
+        .as_array()
+        .expect("shipped policy rows")
+        .iter()
+        .find(|row| row["key"] == key && row["scope"]["level"] == "vault")
+        .and_then(|row| row["value"].as_u64())
+        .filter(|value| *value > 0)
+        .expect("shipped consecutive-try cap")
 }
 
 impl super::resolution::PolicyManifestResolution {

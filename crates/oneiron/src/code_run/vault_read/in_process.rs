@@ -144,6 +144,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         };
         match crate::skill_reliability::SkillReliabilityQuery::on_tree(
             &tree,
+            project,
             type_ref,
             request.axis.clone(),
         ) {

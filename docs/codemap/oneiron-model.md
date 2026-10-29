@@ -52,15 +52,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
 | `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 5 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
-| `src/llm/mod.rs` | src | s | 4 mod · 30 re-export | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 4 mod · 32 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
 | `src/llm/protocol.rs` | src | m | 7 struct · 6 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage +5 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
 | `src/llm/reply_assertions.rs` | src | s | 2 struct · 3 fn | ReplyAssertionRecord, ReplyAssertions | The typed records one reply cited or created (OF-063, FIX 3416), carried on its terminal |
 | `src/llm/safeguard.rs` | src | s | 2 enum · 5 fn · 2 const | SafeguardModelBinding, SafeguardModelBindingError | Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections |
+| `src/llm/scheduling.rs` | src | s | 7 struct · 4 enum · 4 fn · 3 const | AdmissionGrant, CallSchedule, ResourceClass, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate, SchedulingCapability +3 | The scheduling wire of a model worker (DESIGN-V2 R4, codec v1.3): the order a host asks a worker to run its… |
 | `src/llm/scope.rs` | src | s | 1 struct · 1 enum · 4 fn | Scope, ScopeResource | Four-axis branch scope and exact readable/writable resource identities |
 | `src/llm/segments.rs` | src | m | 5 struct · 6 enum · 16 fn · 2 crate-vis | ByteSpan, DisclosureLabel, MessageStamp, Segment, SegmentClass, SegmentClock, SegmentKind, SegmentLocator +2 | The typed segment manifest of one model call (DESIGN-V2 §3.1, R2): which bytes of which `LlmRequest` message… |
-| `src/llm/session.rs` | src | m | 22 struct · 2 enum · 4 fn · 4 const | CanonicalCheckpointRef, ConversationAnchor, SessionAppend, SessionAppended, SessionCapability, SessionCheckpoint, SessionCheckpointed, SessionCreate +16 | Exact conversation sessions on a model worker (DESIGN-V2 §3.2, R2): what a session is keyed by, the… |
+| `src/llm/session.rs` | src | m | 28 struct · 3 enum · 8 fn · 8 const | CanonicalCheckpointRef, ConversationAnchor, RegionDescriptor, SessionAppend, SessionAppended, SessionCapability, SessionCheckpoint, SessionCheckpointed +23 | Exact conversation sessions on a model worker (DESIGN-V2 §3.2, R2): what a session is keyed by, the… |
 | `src/llm/streaming_tests.rs` | test | s | — | — | — |
 | `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split |

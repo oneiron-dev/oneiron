@@ -59,6 +59,7 @@ mod model_id;
 mod protocol;
 mod reply_assertions;
 mod safeguard;
+mod scheduling;
 mod segments;
 mod session;
 
@@ -143,4 +144,16 @@ pub use self::session::{
     SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionOpStamp, SessionReleased,
     SessionResidency, SessionRestore, SessionRestored, SessionSuffixCommit, SessionSuffixStaged,
     SessionTarget, TokenDigest, VaultRef,
+};
+// DESIGN-V2 R3: the snapshot ops of the worker session wire.
+pub use self::session::{
+    RegionDescriptor, SNAPSHOT_ENCODING, SNAPSHOT_HASH, SNAPSHOT_SCHEMA, SNAPSHOT_SCHEMA_MINOR,
+    SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
+    SnapshotDigest, SnapshotMiss,
+};
+// DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
+pub use self::scheduling::{
+    AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
+    SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
+    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
 };

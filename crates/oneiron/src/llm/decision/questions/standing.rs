@@ -173,9 +173,7 @@ fn sources_in_txn(
     evidence: &[EntityId],
     proposals: &[AnswerRecord],
 ) -> Result<([u8; 32], Vec<Source>)> {
-    if evidence.len() > 4096 {
-        return Err(invalid("too many standing answer sources"));
-    }
+    // Every evidence source is read: their count is no refusal (FIX 9914).
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     // Relationship membership and AccessGrants are the question principal's,
     // for both reads: the writer's own grant never widens what the
@@ -649,6 +647,7 @@ fn backfill_answer(
                     think_row: None,
                     person_row: None,
                     rule: None,
+                    asked: None,
                 },
                 human_ask: None,
             },

@@ -232,7 +232,8 @@ fn handle_entity(handle: &TaskHandle) -> EntityId {
 }
 
 /// What "Done means met?" is asked over: the TASK, its result, the brief's
-/// settled inputs and each criterion's evidence, and the criteria as text.
+/// settled inputs and each criterion's evidence, and the criteria as the
+/// call's `state.criteria`, the triple every rung maps (OF-506).
 pub(super) fn done_question_inputs(
     task_ref: EntityId,
     result_ref: EntityId,
@@ -241,18 +242,11 @@ pub(super) fn done_question_inputs(
     let success = &brief.brief.success;
     let mut evidence = vec![task_ref, result_ref];
     evidence.extend(brief.brief.settled.iter().copied());
-    evidence.extend(
-        success
-            .yes_if_all
-            .iter()
-            .chain(&success.no_if_any)
-            .filter_map(|criterion| criterion.evidence_ref),
-    );
+    evidence.extend(success.criteria_evidence());
     let state = serde_json::json!({
         "objective": brief.brief.objective,
         "question": success.question,
-        "yes_if_all": success.yes_if_all.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
-        "no_if_any": success.no_if_any.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+        "criteria": success.question_criteria(),
         "result_ref": result_ref.to_hex(),
     });
     (evidence, state)

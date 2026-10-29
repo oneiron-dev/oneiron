@@ -59,7 +59,8 @@
 //!
 //! A cluster whose proposal is OPEN, or which already landed, never
 //! re-proposes. A cluster whose proposal the decider REJECTED goes quiet for
-//! [`MINER_REJECTION_COOLDOWN_SECS`] and may then speak again — the sibling of
+//! the policy manifest's `miner_rejection_wait_seconds` row (FIX 9809) and
+//! may then speak again — the sibling of
 //! `DREAMER_GAP_DECAY_MS`'s escalate-or-let-go rule. Nagging is the failure
 //! mode; permanent silence after one "no" is the other one.
 //!
@@ -83,7 +84,9 @@
 
 mod config;
 mod emission;
+mod erase;
 mod feedback;
+mod hunks;
 mod influence;
 mod mining;
 mod model;
@@ -92,16 +95,16 @@ mod store;
 mod target;
 mod win;
 
-pub use self::config::{
-    MINER_K_DEFAULT, MINER_REJECTION_COOLDOWN_SECS, PREDICATE_PREFERENCE_PHRASING,
-};
+pub use self::config::PREDICATE_PREFERENCE_PHRASING;
+pub(crate) use self::erase::{erase_principal_decision_entity_in_txn, erase_source_claim_in_txn};
 pub use self::feedback::bind_amendment_preference_principal;
 pub(crate) use self::feedback::record_inbox_learning_in_txn;
+pub(in crate::edit_distance) use self::hunks::hunk_substitution_refs;
 pub use self::influence::mined_preferences_for_principal;
 pub(crate) use self::influence::{is_mined_preference, preference_receipts_in_force};
 pub use self::mining::{
     classify_substitution, mine_substitution_clusters, miner_attempt_input, miner_k, miner_run_id,
-    miner_session_from_input, run_substitution_miner, run_substitution_miner_at, set_miner_k,
+    miner_session_from_input, run_substitution_miner, run_substitution_miner_at,
 };
 pub use self::model::{
     MinedOutcome, MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerRun,

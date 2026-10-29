@@ -8,22 +8,43 @@
 //! connection's close), and only then lets its lease on the incarnation go.
 //! Nothing here resends a call: once `generate` may have left, a fault is
 //! the caller's to settle under its own retry authority.
-use std::io::{self, IoSlice};
+//!
+//! An op whose answer passes a descriptor (`session.export`) reads its
+//! frames with `recvmsg`, each read no longer than what is left of the
+//! frame, so no byte or descriptor of a later frame is taken; a buffered
+//! read would drop the descriptor. A frame that carried more descriptors
+//! than the room for them is refused, and every descriptor a frame brought
+//! that its reader does not take is closed.
+//!
+//! Scheduling (codec v1.3, `oneiron::llm::CallSchedule`): a call's fields
+//! ride at its `generate` body's top level, and its `schedule` updates go on
+//! its own connection, from any task ([`CallUpdates`]): a connection's
+//! writes are serialized, so no two frames interleave. The worker's
+//! `admitted` and `schedule_ack` come back among the call's events. A call
+//! whose worker could not release its Job (`final` error `release_failed`)
+//! keeps its lease until that incarnation ends: the worker still charges it.
+use std::io::{self, IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
-use oneiron::llm::SessionOp;
+use oneiron::llm::{CallSchedule, ScheduleAck, ScheduleUpdate, SessionOp};
 use oneiron_driver::WorkerLease;
 use oneiron_llm_openai::OpenAiCompatTransportError;
-use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
+use rustix::net::{
+    RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
+    SendAncillaryMessage, SendFlags, recvmsg, sendmsg,
+};
 use serde_json::{Value as JsonValue, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, Interest};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::sync::Mutex as AsyncMutex;
 
-use super::buffer::InputRegion;
+use super::buffer::{InputRegion, Outbound};
 use super::wire::{self, Incoming, Outgoing};
 
 /// A send to a worker that has gone fails with EPIPE rather than raising
@@ -33,6 +54,21 @@ const SEND_FLAGS: SendFlags = SendFlags::NOSIGNAL;
 #[cfg(not(target_os = "linux"))]
 const SEND_FLAGS: SendFlags = SendFlags::empty();
 
+/// A descriptor received is closed on exec as it arrives; macOS has no such
+/// flag, and its descriptors are marked once received.
+#[cfg(target_os = "linux")]
+const RECV_FLAGS: RecvFlags = RecvFlags::CMSG_CLOEXEC;
+#[cfg(not(target_os = "linux"))]
+const RECV_FLAGS: RecvFlags = RecvFlags::empty();
+
+/// Room for the descriptors one read can carry: an answer passes at most
+/// one, and the room for more lets a frame that carries more be seen and
+/// refused.
+const FD_ROOM: usize = 8;
+
+/// How much of a frame one read takes: a read size, never a cap on a frame.
+const FRAME_CHUNK: usize = 1 << 16;
+
 /// Request ids, unique in this process.
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -40,10 +76,11 @@ pub(in crate::models) fn next_request_id() -> u64 {
     NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// One connection to the worker's socket.
+/// One connection to the worker's socket. Its writer is shared, so a call's
+/// `schedule` updates can go from another task.
 pub(super) struct Channel {
     reader: BufReader<OwnedReadHalf>,
-    writer: OwnedWriteHalf,
+    writer: Arc<AsyncMutex<OwnedWriteHalf>>,
 }
 
 impl Channel {
@@ -61,7 +98,7 @@ impl Channel {
         let (reader, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(reader),
-            writer,
+            writer: Arc::new(AsyncMutex::new(writer)),
         })
     }
 
@@ -90,7 +127,7 @@ impl Channel {
         body: JsonValue,
     ) -> io::Result<()> {
         let bytes = Self::frame(op, request_id, epoch, body)?;
-        self.writer.write_all(&bytes).await
+        self.writer.lock().await.write_all(&bytes).await
     }
 
     /// Sends one frame with `fd` riding on its first byte, then the rest of
@@ -112,7 +149,8 @@ impl Channel {
                 "the descriptor does not fit its control message",
             ));
         }
-        let stream: &UnixStream = self.writer.as_ref();
+        let mut writer = self.writer.lock().await;
+        let stream: &UnixStream = (*writer).as_ref();
         let sent = stream
             .async_io(Interest::WRITABLE, || {
                 sendmsg(stream, &[IoSlice::new(&bytes)], &mut control, SEND_FLAGS)
@@ -122,7 +160,7 @@ impl Channel {
         if sent == 0 {
             return Err(io::ErrorKind::WriteZero.into());
         }
-        self.writer.write_all(&bytes[sent..]).await
+        writer.write_all(&bytes[sent..]).await
     }
 
     /// The next frame, or `None` once the worker has closed the connection.
@@ -174,6 +212,122 @@ impl Channel {
         }
     }
 
+    /// Fills `buf` with `recvmsg`, keeping every descriptor that rides on
+    /// its bytes in `fds`; a read never runs past `buf`. `false` at a clean
+    /// end of the stream before the first byte, when `eof_ok`.
+    async fn recv_exact_with_fds(
+        &mut self,
+        buf: &mut [u8],
+        fds: &mut Vec<OwnedFd>,
+        eof_ok: bool,
+    ) -> io::Result<bool> {
+        let stream: &UnixStream = self.reader.get_ref().as_ref();
+        let mut filled = 0;
+        while filled < buf.len() {
+            let rest = &mut buf[filled..];
+            let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(FD_ROOM))];
+            let mut control = RecvAncillaryBuffer::new(&mut space);
+            let received = stream
+                .async_io(Interest::READABLE, || {
+                    recvmsg(
+                        stream,
+                        &mut [IoSliceMut::new(&mut *rest)],
+                        &mut control,
+                        RECV_FLAGS,
+                    )
+                    .map_err(io::Error::from)
+                })
+                .await?;
+            for message in control.drain() {
+                if let RecvAncillaryMessage::ScmRights(passed) = message {
+                    for fd in passed {
+                        #[cfg(not(target_os = "linux"))]
+                        rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
+                        fds.push(fd);
+                    }
+                }
+            }
+            if received.flags.contains(ReturnFlags::CTRUNC) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "a frame carried more descriptors than this side reads",
+                ));
+            }
+            if received.bytes == 0 {
+                return if eof_ok && filled == 0 {
+                    Ok(false)
+                } else {
+                    Err(io::ErrorKind::UnexpectedEof.into())
+                };
+            }
+            filled += received.bytes;
+        }
+        Ok(true)
+    }
+
+    /// The next frame and the descriptors that rode on its bytes, read with
+    /// `recvmsg` at exactly its length, or `None` once the worker has closed
+    /// the connection. Only a channel that has buffered nothing through
+    /// [`Self::next`] reads this way.
+    async fn next_with_fds(&mut self) -> io::Result<Option<(Incoming, Vec<OwnedFd>)>> {
+        if !self.reader.buffer().is_empty() {
+            return Err(io::Error::other(
+                "the channel holds buffered bytes a descriptor may have ridden on",
+            ));
+        }
+        let mut fds = Vec::new();
+        let mut header = [0_u8; wire::HEADER_BYTES];
+        if !self
+            .recv_exact_with_fds(&mut header, &mut fds, true)
+            .await?
+        {
+            return Ok(None);
+        }
+        let mut left = u64::from_be_bytes(header);
+        let mut payload = Vec::new();
+        while left > 0 {
+            let want = usize::try_from(left).map_or(FRAME_CHUNK, |rest| rest.min(FRAME_CHUNK));
+            let start = payload.len();
+            payload.resize(start + want, 0);
+            self.recv_exact_with_fds(&mut payload[start..], &mut fds, false)
+                .await?;
+            left -= u64::try_from(want).unwrap_or(left);
+        }
+        let frame = wire::decode(&payload).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the worker sent a frame this side cannot read",
+            )
+        })?;
+        Ok(Some((frame, fds)))
+    }
+
+    /// Sends `op` with `body` under a new request id, and with `input`'s
+    /// descriptor and its description under `input` when it carries one.
+    async fn send_op(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        mut body: JsonValue,
+        input: Option<Outbound<'_>>,
+    ) -> io::Result<u64> {
+        let request_id = next_request_id();
+        match input {
+            Some(input) => {
+                if let Some(fields) = body.as_object_mut() {
+                    fields.insert(
+                        "input".to_owned(),
+                        wire::region(request_id, input.len, input.encoding),
+                    );
+                }
+                self.send_with_fd(op, request_id, epoch, body, input.fd)
+                    .await?;
+            }
+            None => self.send(op, request_id, epoch, body).await?,
+        }
+        Ok(request_id)
+    }
+
     /// Sends `op` with `body`, and with `input`'s descriptor and its
     /// description under `input` when it carries one, then returns the
     /// worker's frame of the same id: the op's answer, or a `refused`.
@@ -181,20 +335,10 @@ impl Channel {
         &mut self,
         op: &str,
         epoch: Option<&str>,
-        mut body: JsonValue,
-        input: Option<&InputRegion>,
+        body: JsonValue,
+        input: Option<Outbound<'_>>,
     ) -> io::Result<Incoming> {
-        let request_id = next_request_id();
-        match input {
-            Some(input) => {
-                if let Some(fields) = body.as_object_mut() {
-                    fields.insert("input".to_owned(), wire::input(request_id, input.len()));
-                }
-                self.send_with_fd(op, request_id, epoch, body, input.fd())
-                    .await?;
-            }
-            None => self.send(op, request_id, epoch, body).await?,
-        }
+        let request_id = self.send_op(op, epoch, body, input).await?;
         loop {
             match self.next().await? {
                 Some(frame) if frame.request_id == request_id => return Ok(frame),
@@ -204,33 +348,114 @@ impl Channel {
         }
     }
 
+    /// [`Self::exchange`] for an op whose answer passes a descriptor: the
+    /// worker's frame of the same id, with every descriptor that rode on
+    /// it. Those another frame brought are closed.
+    pub(super) async fn exchange_with_fds(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Option<Outbound<'_>>,
+    ) -> io::Result<(Incoming, Vec<OwnedFd>)> {
+        let request_id = self.send_op(op, epoch, body, input).await?;
+        loop {
+            match self.next_with_fds().await? {
+                Some((frame, fds)) if frame.request_id == request_id => return Ok((frame, fds)),
+                Some(_) => {}
+                None => return Err(io::ErrorKind::UnexpectedEof.into()),
+            }
+        }
+    }
+
     /// Sends `cancel` for `request_id` and waits until the worker says the
     /// call has ended: its `released`, its terminal if it ended first, a
     /// `cancel_ack` that found nothing, or the connection's close. No
-    /// deadline: the worker releases at its next pass.
-    async fn cancel(mut self, request_id: u64) {
+    /// deadline: the worker releases at its next pass. False when the
+    /// terminal says the worker could not release the call's Job, which it
+    /// still charges.
+    async fn cancel(mut self, request_id: u64) -> bool {
         if self
             .send("cancel", request_id, None, json!({}))
             .await
             .is_err()
         {
-            return;
+            return true;
         }
         loop {
             match self.next().await {
                 Ok(Some(frame)) if frame.request_id == request_id => match frame.op.as_str() {
-                    "released" | "final" | "refused" => return,
+                    "final" => return !release_failed(&frame.body),
+                    "released" | "refused" => return true,
                     "cancel_ack"
                         if frame.body.get("found").and_then(JsonValue::as_bool) == Some(false) =>
                     {
-                        return;
+                        return true;
                     }
                     _ => {}
                 },
                 Ok(Some(_)) => {}
-                Ok(None) | Err(_) => return,
+                Ok(None) | Err(_) => return true,
             }
         }
+    }
+}
+
+/// Whether a call's `final` says the worker could not release its Job: the
+/// worker keeps its pages, place and reservation charged until the Job ends
+/// there or the incarnation does.
+fn release_failed(body: &JsonValue) -> bool {
+    body.get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(JsonValue::as_str)
+        == Some(wire::RELEASE_FAILED)
+}
+
+/// Holds `lease` until its incarnation ends, on a task of its own: the
+/// worker still charges a call it could not release.
+fn keep_until_revoked(lease: Option<WorkerLease>) {
+    let Some(lease) = lease else {
+        return;
+    };
+    tracing::warn!(
+        "a native EXL3 call's Job was not released; its lease stays until the worker ends"
+    );
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        runtime.spawn(async move {
+            lease.revocation().await;
+            drop(lease);
+        });
+    }
+}
+
+/// A `schedule` sender for one call, on its own connection: it can go from
+/// any task while the call's events are read on another.
+#[derive(Clone)]
+#[expect(
+    dead_code,
+    reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
+)]
+pub(super) struct CallUpdates {
+    writer: Arc<AsyncMutex<OwnedWriteHalf>>,
+    request_id: u64,
+    epoch: String,
+}
+
+impl CallUpdates {
+    /// Sends `update` under the call's id and epoch; the worker's
+    /// `schedule_ack` comes back as [`Event::Scheduled`].
+    #[expect(
+        dead_code,
+        reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
+    )]
+    pub(super) async fn send(&self, update: &ScheduleUpdate) -> io::Result<()> {
+        let bytes = Channel::frame(
+            "schedule",
+            self.request_id,
+            Some(&self.epoch),
+            update.body(Instant::now()),
+        )?;
+        self.writer.lock().await.write_all(&bytes).await
     }
 }
 
@@ -248,10 +473,15 @@ pub(super) enum Start {
 
 /// One event of a call in flight.
 pub(super) enum Event {
+    /// The worker's scheduler admitted the call: its queue wait, the engine
+    /// round, and the worker's cheap stats then.
+    Admitted(JsonValue),
     /// The worker sampled the call's first token.
     FirstToken,
     /// A piece of the reply, reasoning or answer.
     Token { reasoning: bool, text: String },
+    /// The worker's answer to a `schedule` update ([`CallUpdates`]).
+    Scheduled(Box<ScheduleAck>),
     /// The call's terminal, with its body.
     Final(JsonValue),
 }
@@ -305,6 +535,8 @@ fn logged(error: OpenAiCompatTransportError) -> OpenAiCompatTransportError {
 pub(super) struct Call {
     channel: Option<Channel>,
     request_id: u64,
+    /// The incarnation the call went to, which its updates name.
+    epoch: String,
     /// The lease on the incarnation the call went to, held until the call
     /// has ended there.
     lease: Option<WorkerLease>,
@@ -313,9 +545,14 @@ pub(super) struct Call {
 
 impl Call {
     /// Connects to `path`, sends the call with `conversation` as its input
-    /// region, and waits for the worker to accept or refuse it. A call that
-    /// names a `session` working branch goes as `session.generate`, its
-    /// body otherwise a `generate`'s.
+    /// region and `schedule`'s fields at its body's top level, and waits
+    /// for the worker to accept or refuse it. A call that names a `session`
+    /// working branch goes as `session.generate`, its body otherwise a
+    /// `generate`'s.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one fact of the call being started"
+    )]
     pub(super) async fn start(
         path: &Path,
         epoch: &str,
@@ -324,6 +561,7 @@ impl Call {
         stream: bool,
         lease: Option<WorkerLease>,
         session: Option<JsonValue>,
+        schedule: Option<&CallSchedule>,
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
@@ -331,7 +569,7 @@ impl Call {
             .await
             .map_err(|e| not_sent("connect", e))?;
         let request_id = next_request_id();
-        let mut body = wire::generate_body(request_id, input.len(), params, stream);
+        let mut body = wire::generate_body(request_id, input.len(), params, stream, schedule);
         let op = match session {
             Some(session) => {
                 if let Some(fields) = body.as_object_mut() {
@@ -347,6 +585,7 @@ impl Call {
         let mut call = Self {
             channel: Some(channel),
             request_id,
+            epoch: epoch.to_owned(),
             lease,
             ended: false,
         };
@@ -393,6 +632,20 @@ impl Call {
             .unwrap_or_else(|| unreachable!("a call keeps its channel until it drops"))
     }
 
+    /// A sender of this call's `schedule` updates, on its connection.
+    #[expect(
+        dead_code,
+        reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
+    )]
+    pub(super) fn updates(&self) -> Option<CallUpdates> {
+        let channel = self.channel.as_ref()?;
+        Some(CallUpdates {
+            writer: Arc::clone(&channel.writer),
+            request_id: self.request_id,
+            epoch: self.epoch.clone(),
+        })
+    }
+
     /// The call's next event, until its `final`.
     pub(super) async fn next(&mut self) -> Result<Event, Cut> {
         if self.ended {
@@ -417,7 +670,15 @@ impl Call {
                 continue;
             }
             match frame.op.as_str() {
+                "admitted" => return Ok(Event::Admitted(frame.body)),
                 "first_token" => return Ok(Event::FirstToken),
+                "schedule_ack" => match serde_json::from_value::<ScheduleAck>(frame.body) {
+                    Ok(ack) => return Ok(Event::Scheduled(Box::new(ack))),
+                    // An answer that does not read is logged; the call goes on.
+                    Err(error) => {
+                        tracing::warn!(%error, "a native EXL3 schedule_ack does not read");
+                    }
+                },
                 "token" => {
                     let reasoning =
                         frame.body.get("phase").and_then(JsonValue::as_str) == Some("reasoning");
@@ -431,6 +692,9 @@ impl Call {
                 }
                 "final" => {
                     self.ended = true;
+                    if release_failed(&frame.body) {
+                        keep_until_revoked(self.lease.take());
+                    }
                     return Ok(Event::Final(frame.body));
                 }
                 "refused" => {
@@ -461,7 +725,12 @@ impl Drop for Call {
         // cancels every call of a connection that goes.
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                channel.cancel(request_id).await;
+                if !channel.cancel(request_id).await
+                    && let Some(lease) = &lease
+                {
+                    // The worker still charges the call: so does the lease.
+                    lease.revocation().await;
+                }
                 drop(lease);
             });
         }

@@ -1,7 +1,8 @@
 //! Sealing one lineage's batch at its local log position (KS-4): every
 //! member group behind it gets a head of the live entries and retirement
-//! facts its recipients admit, and every erased credential's fact, all from
-//! one census under the read guard.
+//! facts its recipients admit, every erased credential's fact and the world
+//! pad compartments a restore here left unopened (PAD-3), all from one census
+//! under the read guard.
 
 use crate::error::Result;
 use crate::store::Store;
@@ -30,7 +31,15 @@ impl Store {
         let _guard = self.core.key_custody.read_guard()?;
         let position = journal.position()?;
         let census = custody.census()?;
-        if position.seq == 0 && census.is_empty() {
+        // A pad retired here is carried no further, whatever a carried copy
+        // an interrupted retirement left says (PAD-3).
+        let mut carried = custody.carried()?;
+        carried.retain(|pad| {
+            !census
+                .binary_search_by(|(id, _)| id.cmp(pad.id()))
+                .is_ok_and(|at| census[at].1 == EntryState::Retired)
+        });
+        if position.seq == 0 && census.is_empty() && carried.is_empty() {
             return Ok(Sealed::Nothing);
         }
         // Every member's head carries every erased credential's fact,
@@ -65,7 +74,7 @@ impl Store {
             let history = journal.head_history(&control, &position, &census)?;
             sealed.push(Some(
                 seal_head(
-                    &position, &control, entries, retired, released, &history, &evidence,
+                    &position, &control, entries, retired, released, &history, &evidence, &carried,
                     recipients,
                 )
                 .map(|head| CustodyBatch {

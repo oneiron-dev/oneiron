@@ -173,7 +173,8 @@ pub struct LensSpanSelectionRequest {
 }
 
 /// A half-open Unicode-scalar span and its engine-minted Loro cursor pair.
-/// Cursor bytes and the causal frontier identify the source, not the selected text.
+/// Cursor bytes and the causal frontier identify the source, not the selected text;
+/// the quote hash proves the selected text without carrying it (FIX 9894).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LensSpanCursor {
@@ -182,6 +183,7 @@ pub struct LensSpanCursor {
     frontier: Vec<u8>,
     start_cursor: Vec<u8>,
     end_cursor: Vec<u8>,
+    quote_hash: String,
 }
 
 impl LensSpanCursor {
@@ -197,6 +199,12 @@ impl LensSpanCursor {
     pub fn cursors(&self) -> (&[u8], &[u8]) {
         (&self.start_cursor, &self.end_cursor)
     }
+    /// The lowercase hex BLAKE3 hash of the text the span selected, as its
+    /// reader read it.
+    #[must_use]
+    pub fn quote_hash(&self) -> &str {
+        &self.quote_hash
+    }
 
     #[cfg(feature = "sync")]
     pub(super) fn from_anchor(
@@ -211,6 +219,7 @@ impl LensSpanCursor {
             frontier: anchor.frontier().to_vec(),
             start_cursor: start_cursor.to_vec(),
             end_cursor: end_cursor.to_vec(),
+            quote_hash: blake3::hash(anchor.quote().as_bytes()).to_hex().to_string(),
         }
     }
 }

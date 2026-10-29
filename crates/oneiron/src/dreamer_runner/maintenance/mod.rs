@@ -24,6 +24,7 @@ pub mod compaction_check;
 pub use compaction_check::COMPACTION_CHECK_FACET;
 pub(crate) use compaction_check::declare_compaction_check_in_txn;
 mod contribution;
+pub(crate) use contribution::erase_contribution_cursor_in_txn;
 pub use contribution::{ContributionForks, ContributionReplayHost};
 mod curator;
 pub mod detectors;
@@ -63,6 +64,7 @@ use super::{
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
+pub(crate) use curator::PROPOSAL_PREDICATE as CURATOR_PROPOSAL_PREDICATE;
 pub use curator::approved::apply_after_consent as apply_curator_after_consent;
 pub(crate) use curator::curator_slot_in_txn;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};

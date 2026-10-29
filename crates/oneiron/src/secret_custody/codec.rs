@@ -319,7 +319,10 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
 
 /// Decodes a custody body's fields, its value slot apart: the record comes
 /// back with no value bytes and the schema version the body is stamped
-/// with. Exactly one of `value_bytes` and `sealed_value` is present.
+/// with. Exactly one of `value_bytes` and `sealed_value` is present. A key
+/// repeated twice is a corrupt body, never an absent one (FIX-LIST 11156):
+/// `required_value` reads a duplicated key as missing, so a sealed body
+/// hiding a plaintext slot beside it would otherwise decode as sealed.
 pub(super) fn decode_custody_map(bytes: &[u8]) -> Result<(SecretCustodyRecord, BodyValue)> {
     use std::io::Cursor;
 
@@ -332,6 +335,11 @@ pub(super) fn decode_custody_map(bytes: &[u8]) -> Result<(SecretCustodyRecord, B
     let Value::Map(entries) = value else {
         return Err(invalid_body("secret custody body must be a map"));
     };
+    for (at, (key, _)) in entries.iter().enumerate() {
+        if entries[..at].iter().any(|(prior, _)| prior == key) {
+            return Err(invalid_body("duplicate secret custody body key"));
+        }
+    }
 
     let schema_version = required_value(&entries, SECRET_CUSTODY_BODY_KEYS[0])
         .and_then(as_u64)

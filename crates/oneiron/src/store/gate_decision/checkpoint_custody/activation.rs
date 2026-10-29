@@ -24,8 +24,9 @@ use super::super::ledger::LEDGER;
 #[cfg(test)]
 use super::BEFORE_ACTIVATION_FORK;
 use super::{
-    ARCHIVED, GATE_DECISION_KEY_PREFIX, GateDecisionId, LiveCustody, Rows, archived_by, corrupt,
-    destination, live_custody_prefixes, orcb, preflight_checkpoint_rows, refuse_custody_beside,
+    ARCHIVED, ExpectedPadObjects, GATE_DECISION_KEY_PREFIX, GateDecisionId, LiveCustody,
+    PadObjectsLanding, Rows, archived_by, corrupt, destination, install_source_pad_objects_in_txn,
+    live_custody_prefixes, orcb, preflight_checkpoint_rows, refuse_custody_beside,
     replace_host_holds_in_txn, vault_meta_rows,
 };
 use crate::entity_id::EntityId;
@@ -136,17 +137,22 @@ impl Store {
     /// own pad, and a live one forks with the rest. So do its credential
     /// values (KS-6 part 2), each by exact id: one `source` lacks, or one
     /// that does not plan or read back from the forked custody, rests
-    /// sealed, pending, never a refusal. Returns the claim-bound
+    /// sealed, pending, never a refusal. Its source's current pad objects,
+    /// captured with its custody, take the place of its own before the
+    /// archive lifts, while it still holds `expected`, in a savepoint that
+    /// keeps its own on any fault (PAD-1). Returns the claim-bound
     /// decisions dropped because their keys stayed on another host, by id
-    /// (hex), as a restore's report names them, the pads erased, and the
-    /// credentials planned.
+    /// (hex), as a restore's report names them, the pads erased, the
+    /// credentials planned, and what came of the pad objects.
     pub(crate) fn activate_archived(
         &self,
         source: &LiveCustody,
+        expected: Option<&ExpectedPadObjects>,
     ) -> Result<(
         Vec<String>,
         Vec<crate::world_keys::WorldKeyId>,
         crate::secret_custody::PlannedCredentials,
+        PadObjectsLanding,
     )> {
         let (rows, own_fences) = {
             let txn = self.env.read_txn()?;
@@ -195,6 +201,7 @@ impl Store {
         }
         let mut wtxn = self.env.past_seal_write_txn()?;
         let forked = self.fork_gate_custody_to_in_txn(&mut wtxn, &custody, &root)?;
+        let mut landing = PadObjectsLanding::NotAttempted;
         let committed = self
             .prune_bodies_in_txn(&mut wtxn, &prune, source)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
@@ -209,6 +216,16 @@ impl Store {
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // The orders standing on its source now, not the ones it had.
             .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
+            // Its source's pad objects, before the archive lifts.
+            .and_then(|()| {
+                landing = install_source_pad_objects_in_txn(
+                    self,
+                    &mut wtxn,
+                    &source.pad_objects,
+                    expected,
+                );
+                Ok(())
+            })
             .and_then(|()| ARCHIVED.delete(self, &mut wtxn, &()))
             .and_then(|_| Ok(wtxn.commit()?));
         if let Err(err) = committed {
@@ -222,6 +239,7 @@ impl Store {
             lost,
             erased_pads.into_iter().map(|(_, key)| key).collect(),
             credentials,
+            landing,
         ))
     }
 
@@ -237,6 +255,10 @@ impl Store {
         prune: &ArchivePrune,
         source: &LiveCustody,
     ) -> Result<()> {
+        // FIX 9180: what the source retired of a replay row's or a step
+        // start's parts, read before the prune takes a start's rows and
+        // applied once per destination after it.
+        let replay = ResponseFamily::replay_prune_in_txn(self, wtxn, &prune.responses)?;
         destination::delete_vault_meta_in_txn(&self.env, wtxn, &prune.deleted)?;
         for (key, value) in &prune.rewritten {
             self.side_vault_meta().put(wtxn, key, value)?;
@@ -281,6 +303,7 @@ impl Store {
             }
             family.retire_in_txn(self, wtxn, key, &carriage)?;
         }
+        replay.apply_in_txn(self, wtxn)?;
         // A step claim whose response's artifact version rests in a body its
         // source retired takes its erased disposition too, and every pin
         // goes with what the archive no longer holds (FIX 6225). The retired
