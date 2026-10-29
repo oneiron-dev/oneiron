@@ -751,9 +751,13 @@ pub(crate) fn project_hydrated_short_id(
         && matches!(mode, oneiron::memory::ReadMode::Live)
         && entity_type == oneiron::registry::ENTITY_TYPE_ASSET
     {
+        // With nothing left that fits, the ask names what the batch's
+        // budget still held (FIX 680).
+        let room_left = bodies.as_deref().map(projection::BodyBudget::remaining);
         let mut admits = |len: usize| bodies.as_mut().is_none_or(|bodies| bodies.admits(len));
-        let asset = oneiron::memory::hydrated_asset(scoped_read, id, reader, pick, &mut admits)
-            .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
+        let asset =
+            oneiron::memory::hydrated_asset(scoped_read, id, reader, pick, &mut admits, room_left)
+                .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
         narrowing.restrict_with(&asset.receipt);
         response.restrict_with(&asset.receipt);
         asset.value
