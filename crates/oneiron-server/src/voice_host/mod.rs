@@ -124,6 +124,9 @@ pub struct VoiceHost {
     /// built; every sentence's safeguard shares it (FIX 5043), its ladder's
     /// paired question lent (FIX 1201).
     owner_policy: Arc<PolicyModelConfig>,
+    /// The vault the host serves, kept for its body directory: inbound
+    /// wire frames spill there past the inline bound (FIX 3728).
+    vault: Arc<oneiron::Vault>,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -180,6 +183,7 @@ impl VoiceHost {
             bindings.extraction_prompt,
         )?;
         let call_deadline = vault.call_mode_deadline();
+        let host_vault = Arc::clone(&vault);
         let container = bindings
             .session
             .container
@@ -199,6 +203,7 @@ impl VoiceHost {
             extractor,
             shutdown: bindings.shutdown,
             owner_policy: Arc::new(bindings.owner_policy),
+            vault: host_vault,
         })
     }
 

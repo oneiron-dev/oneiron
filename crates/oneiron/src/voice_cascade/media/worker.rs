@@ -3,9 +3,10 @@
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
 use super::{
-    AiMediaDoor, BankVoiceBinding, GenerationEpoch, Instant, LlmResult, MediaFuture, MediaRequest,
-    Ordering, PcmFrame, Poll, Result, Vault, VoiceMediaOutput, VoiceMediaQueue, VoiceMediaSender,
-    VoiceMediaWork, VoiceMediaWorker, asr_error, heard, invalid, speech_pieces, spoken_frame,
+    AiMediaDoor, BankVoiceBinding, GenerationEpoch, Instant, LlmResult, MediaFuture, MediaPart,
+    MediaRequest, MediaVoiceRoute, Ordering, PcmFrame, Poll, Result, Vault, VoiceMediaOutput,
+    VoiceMediaQueue, VoiceMediaSender, VoiceMediaWork, VoiceMediaWorker, asr_error, heard, invalid,
+    speech_pieces, spoken_frame,
 };
 
 impl VoiceMediaSender {
@@ -66,9 +67,10 @@ impl VoiceMediaWorker {
                     submission,
                     request,
                     voice,
+                    fallbacks,
                 } => {
                     let Some(spoken) = self
-                        .speak(door, vault, generation, request, voice.as_ref())
+                        .speak(door, vault, generation, request, voice.as_ref(), &fallbacks)
                         .await
                     else {
                         continue;
@@ -104,8 +106,11 @@ impl VoiceMediaWorker {
     /// Speaks one queued sentence: one call per piece within
     /// [`MAX_SENTENCE_BYTES`](super::MAX_SENTENCE_BYTES), in order, their audio joined into one frame.
     /// A banked voice withdrawn before a piece goes, or before its audio
-    /// comes back, ends the sentence unspoken. `None` when the generation
-    /// was cancelled first.
+    /// comes back, ends the sentence unspoken. A piece whose rung's
+    /// provider is down is spoken by the next bound target holding the
+    /// voice instead (FIX 3195), and the target that answered is tried
+    /// first for the next piece. `None` when the generation was cancelled
+    /// first.
     async fn speak(
         &mut self,
         door: &dyn AiMediaDoor,
@@ -113,32 +118,78 @@ impl VoiceMediaWorker {
         generation: GenerationEpoch,
         request: MediaRequest,
         voice: Option<&BankVoiceBinding>,
+        fallbacks: &[(MediaVoiceRoute, BankVoiceBinding)],
     ) -> Option<std::result::Result<PcmFrame, String>> {
-        let withdrawn = || voice.is_some_and(|voice| !voice.is_current(vault));
+        // Candidate 0 is the piece as submitted, in its own voice;
+        // candidate k past it is `fallbacks[k - 1]`, the piece rebuilt on
+        // that target in its binding's voice.
+        let candidates = fallbacks.len() + 1;
+        let mut start = 0;
         let mut spoken: Option<PcmFrame> = None;
         for piece in speech_pieces(request) {
-            if withdrawn() {
-                return Some(Err("voice withdrawn, evicted or stale".into()));
-            }
-            let response = match self.call(door.call(piece), Some(generation)).await? {
-                Ok(response) => response,
-                Err(error) => return Some(Err(error.to_string())),
-            };
-            if withdrawn() {
-                return Some(Err("voice withdrawn, evicted or stale".into()));
-            }
-            let frame = match spoken_frame(generation, &response) {
-                Ok(frame) => frame,
-                Err(error) => return Some(Err(error.to_string())),
-            };
-            spoken = Some(match spoken.take() {
-                None => frame,
-                Some(mut joined) if joined.sample_rate == frame.sample_rate => {
-                    joined.samples.extend(frame.samples);
-                    joined
+            let mut first_error: Option<String> = None;
+            let mut called = false;
+            let mut answered = false;
+            for step in 0..candidates {
+                let index = (start + step) % candidates;
+                let (call, binding) = if index == 0 {
+                    (piece.clone(), voice)
+                } else {
+                    let (route, binding) = &fallbacks[index - 1];
+                    // Only a lone text part can be rebuilt on another
+                    // target; anything else a fallback cannot speak.
+                    let [MediaPart::Text { text }] = piece.parts.as_slice() else {
+                        continue;
+                    };
+                    (
+                        route.request(
+                            MediaPart::Text { text: text.clone() },
+                            Some(binding.voice()),
+                        ),
+                        Some(binding),
+                    )
+                };
+                if binding.is_some_and(|binding| !binding.is_current(vault)) {
+                    continue;
                 }
-                Some(_) => return Some(Err("speech pieces came back at different rates".into())),
-            });
+                called = true;
+                let response = match self.call(door.call(call), Some(generation)).await? {
+                    Ok(response) => response,
+                    Err(error) if error.is_provider_unavailable() => {
+                        first_error.get_or_insert_with(|| error.to_string());
+                        continue;
+                    }
+                    Err(error) => return Some(Err(error.to_string())),
+                };
+                if binding.is_some_and(|binding| !binding.is_current(vault)) {
+                    return Some(Err("voice withdrawn, evicted or stale".into()));
+                }
+                let frame = match spoken_frame(generation, &response) {
+                    Ok(frame) => frame,
+                    Err(error) => return Some(Err(error.to_string())),
+                };
+                spoken = Some(match spoken.take() {
+                    None => frame,
+                    Some(mut joined) if joined.sample_rate == frame.sample_rate => {
+                        joined.samples.extend(frame.samples);
+                        joined
+                    }
+                    Some(_) => {
+                        return Some(Err("speech pieces came back at different rates".into()));
+                    }
+                });
+                start = index;
+                answered = true;
+                break;
+            }
+            if !answered {
+                return Some(Err(match first_error {
+                    // Every target that was called says its provider is
+                    // down: the first call's error is the sentence's.
+                    Some(error) if called => error,
+                    _ => "voice withdrawn, evicted or stale".into(),
+                }));
+            }
         }
         Some(spoken.ok_or_else(|| "speech has no words to say".to_owned()))
     }
