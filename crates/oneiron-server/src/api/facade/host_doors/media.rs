@@ -253,6 +253,22 @@ fn step_replay(attempt: Option<&str>, request: &MediaRequest) -> Option<MediaRep
     attempt.and_then(|a| MediaReplayKey::step(a.to_owned(), request).ok())
 }
 
+/// The spend scope the attempt `attempt` (32 hex) spends under, which its
+/// entry's meter is opened from (FIX 11496); `None` for a run with no
+/// attempt, an unmetered one, or a scope that cannot be read: its job runs
+/// on its line, as before.
+fn attempt_scope(
+    server: &SyncServer,
+    attempt: Option<&str>,
+) -> Option<oneiron::agent_dispatch::SpendScopeId> {
+    let id = EntityId::from_hex(attempt?).ok()?;
+    let attempt = oneiron::attempt_queue::AttemptId::from_bytes(id.as_bytes()).ok()?;
+    oneiron::agent_dispatch::AgentDispatcher::new(server.vault())
+        .spend_scope_for_attempt(attempt)
+        .ok()
+        .flatten()
+}
+
 /// One media call of a program's run (FIX 3194, FIX 780, FIX 6083):
 /// prepared as the owner's call is, and spent on `run`, the run's own line,
 /// as its other model calls are. The run's door admitted it; no owner
@@ -375,8 +391,11 @@ pub(super) async fn ai_video_answer(
 
 /// [`ai_video`] for a program's run (FIX 780, FIX 6083): its job is
 /// submitted on `run`, the run's own line, which holds it until it ends and
-/// settles its end, its cancel and its take-up after a restart. Its row is
-/// stamped with `actor`, who asked, when the caller names one (KS-2B2).
+/// settles its end, its cancel and its take-up after a restart. A pumped
+/// run whose attempt spends under a scope submits it on a guard of that
+/// scope's own instead, booked on the scope at the job's end (FIX 11496).
+/// Its row is stamped with `actor`, who asked, when the caller names one
+/// (KS-2B2).
 pub(crate) async fn ai_video_for_run(
     server: &SyncServer,
     run: &RunAdmission,
@@ -386,19 +405,26 @@ pub(crate) async fn ai_video_for_run(
 ) -> MemoryResult<AiVideoTicket> {
     let (request, _) = prepare(server, AiOperation::Video, input)?;
     let replay = step_replay(attempt, &request);
-    let ticket = server
-        .ai
-        .model_runtime()
-        .media()
-        .submit_run_admitted(run, request, actor, replay)
-        .await
-        .map_err(|error| {
-            let mut refusal = failure(AiOperation::Video, &error);
-            if matches!(error, oneiron::LlmError::BudgetDenied(_)) {
-                refusal.suggestions = vec![RUN_LINE_SPENT.to_owned()];
-            }
-            refusal
-        })?;
+    let media = server.ai.model_runtime().media();
+    let submitted = match attempt_scope(server, attempt) {
+        Some(scope) => {
+            media
+                .submit_scoped(run, scope, request, actor, replay)
+                .await
+        }
+        None => {
+            media
+                .submit_run_admitted(run, None, request, actor, replay)
+                .await
+        }
+    };
+    let ticket = submitted.map_err(|error| {
+        let mut refusal = failure(AiOperation::Video, &error);
+        if matches!(error, oneiron::LlmError::BudgetDenied(_)) {
+            refusal.suggestions = vec![RUN_LINE_SPENT.to_owned()];
+        }
+        refusal
+    })?;
     Ok(AiVideoTicket {
         job: ticket.job,
         model: ticket.model,

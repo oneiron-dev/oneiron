@@ -2,6 +2,7 @@
 //! Entry: MediaRuntime::run.
 //! Types and private call/job helpers stay in the parent; this module owns the listed impls.
 
+use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::llm::media::MediaReplayKey;
 
 use super::{
@@ -30,6 +31,8 @@ impl Drop for MediaRuntime {
             };
             if self.unkept_program_job(ticket) {
                 job.settle_failed();
+                // What it paid reaches the scope that funds it (FIX 11496).
+                self.book_job_scope(ticket);
                 continue;
             }
             if let Some(permit) = job.permit.take()
@@ -37,6 +40,9 @@ impl Drop for MediaRuntime {
             {
                 tracing::error!(%denied, "a kept media job's permit was not handed off");
             }
+            // What its guard used so far reaches its scope; the runtime that
+            // takes it up books its end (FIX 11496).
+            self.book_job_scope(ticket);
         }
     }
 }
@@ -144,10 +150,12 @@ impl MediaRuntime {
     /// 780, FIX 6083): a program's run's own. The job's permit is held on
     /// that line until the job ends, and its end, its cancel and its take-up
     /// after a restart settle there, never on the media meter. Its row keeps
-    /// the run's name and payer, and is stamped as [`Self::submit`]'s is.
+    /// the run's name and payer, and `scope`, the spend scope that funds it
+    /// when one does (FIX 11496), and is stamped as [`Self::submit`]'s is.
     pub(crate) async fn submit_run_admitted(
         &self,
         run: &RunAdmission,
+        scope: Option<SpendScopeId>,
         request: MediaRequest,
         actor: Option<oneiron::EntityId>,
         replay: Option<MediaReplayKey>,
@@ -194,6 +202,7 @@ impl MediaRuntime {
         };
         let line = JobLine {
             run: run.run().to_owned(),
+            scope,
         };
         let ticket = MediaTicket {
             job: id.clone(),
@@ -259,7 +268,10 @@ impl MediaRuntime {
         if let Ok(ended) = &state
             && ended.ended()
         {
-            return self.complete_kept_job(id, ended);
+            let answer = self.complete_kept_job(id, ended);
+            // Its spend reaches the scope that funds it (FIX 11496).
+            self.book_job_scope(id);
+            return answer;
         }
         state
     }
@@ -269,7 +281,10 @@ impl MediaRuntime {
     /// keeps the job, to poll or stop again (FIX 9513). A job that ended is
     /// only dropped. A drop the vault refuses is an error, never a success.
     pub async fn cancel(&self, id: &str) -> LlmResult<()> {
-        self.cancel_kept_job(id).await
+        self.cancel_kept_job(id).await?;
+        // A stopped job's spend reaches the scope that funds it (FIX 11496).
+        self.book_job_scope(id);
+        Ok(())
     }
 }
 
