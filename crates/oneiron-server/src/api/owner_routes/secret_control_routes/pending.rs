@@ -24,7 +24,19 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/secrets/custody/pending", get(pending).post(release))
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/secrets/custody/pending`'s body (FIX 11611):
+/// [`ReleaseBody`].
+pub(crate) fn release_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReleaseBody>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/custody/pending`'s answer (FIX 11611):
+/// [`ReceiptView`].
+pub(crate) fn pending_release_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReceiptView>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReleaseBody {
     /// The batch, as 32 hex.

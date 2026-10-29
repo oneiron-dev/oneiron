@@ -66,7 +66,82 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/goal-project`'s body (FIX 11611):
+/// [`BindGoalProject`].
+pub(crate) fn bind_goal_project_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<BindGoalProject>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/goal-project`'s answer (FIX 11611):
+/// [`GoalRevision`].
+pub(crate) fn goal_revision_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GoalRevision>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/measure`'s body (FIX 11611): [`Measure`].
+pub(crate) fn measure_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Measure>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/measure`'s answer (FIX 11611):
+/// [`GoalAxisReport`].
+pub(crate) fn goal_axis_report_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GoalAxisReport>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/pairs/pick`'s body (FIX 11611): [`PairPick`].
+pub(crate) fn pair_pick_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PairPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/pairs/pick`'s answer (FIX 11611):
+/// [`ResponsePairPick`].
+pub(crate) fn response_pair_pick_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ResponsePairPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/person-time`'s body (FIX 11611):
+/// [`RecordPersonTime`].
+pub(crate) fn record_person_time_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RecordPersonTime>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/person-time`'s answer (FIX 11611):
+/// [`PersonTimeTotal`].
+pub(crate) fn person_time_total_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PersonTimeTotal>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/swap-policy`'s body and answer (FIX 11611):
+/// [`JudgeSwapPolicy`].
+pub(crate) fn judge_swap_policy_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<JudgeSwapPolicy>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/swaps/pick`'s body (FIX 11611): [`SwapPick`].
+pub(crate) fn swap_pick_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SwapPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/swaps/pick`'s answer (FIX 11611):
+/// [`JudgeSwapPick`].
+pub(crate) fn judge_swap_pick_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<JudgeSwapPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/tradeoff-asks/pick`'s body (FIX 11611):
+/// [`Pick`].
+pub(crate) fn tradeoff_pick_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Pick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/tradeoff-asks/pick`'s answer (FIX 11611):
+/// [`Settled`].
+pub(crate) fn tradeoff_settled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Settled>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PairPick {
     /// The blind preference pair, `first|second` (the two receipts).
@@ -84,7 +159,7 @@ struct Swaps {
     receipts: Vec<JudgeSwapReceipt>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SwapPick {
     /// The swap receipt, as 32 hex.
@@ -109,7 +184,7 @@ struct ProjectQuery {
     project: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct BindGoalProject {
     skill: String,
@@ -124,14 +199,14 @@ struct GoalProject {
     project: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct GoalRevision {
     /// The goal revision the join minted: every pending ask and standing
     /// acceptance is re-ruled under it.
     goal_revision: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Pick {
     /// The open optimizer proposal the ask is about, as 32 hex.
@@ -141,7 +216,7 @@ struct Pick {
     choice: TradeoffChoice,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Settled {
     proposal: String,
     accepted: bool,
@@ -163,7 +238,7 @@ struct Journal {
     decisions: Vec<JournalRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RecordPersonTime {
     /// The run's terminal receipt (`attempt:<32 hex>`).
@@ -173,13 +248,13 @@ struct RecordPersonTime {
     act: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PersonTimeTotal {
     receipt: String,
     minutes: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Measure {
     /// The open optimizer proposal, as 32 hex.
