@@ -250,9 +250,9 @@ pub(crate) fn filled(bytes: &[u8], spans: impl IntoIterator<Item = (u64, u64)>) 
 /// filler at the span's length where it has none (FIX 7944): a key in a text
 /// member reads as the handle custody holds it under. `spans` in byte
 /// order; one that overlaps the span before it replaces what is left of it.
-pub(crate) fn filled_with(
+pub(crate) fn filled_with<'a>(
     bytes: &[u8],
-    spans: impl IntoIterator<Item = ((u64, u64), Option<&str>)>,
+    spans: impl IntoIterator<Item = ((u64, u64), Option<&'a str>)>,
 ) -> Result<Vec<u8>> {
     let mut copy = Vec::with_capacity(bytes.len());
     let mut at = 0;
