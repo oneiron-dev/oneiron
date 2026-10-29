@@ -13,10 +13,12 @@ use serde_json::{Value, json};
 use crate::claim::{ClaimBody, ClaimSubject, PointRead, ScopedRead};
 use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::vault::ReadMode;
 use crate::{EdgeKind, EntityId, Result};
 
 use super::filter::glob_match;
 use super::grant::HookGrant;
+use super::source::FactEntry;
 use super::store::{HookReadPin, HookReadRow};
 
 /// Claims about a subject one step of a `claims_about` read reads before it
@@ -30,7 +32,7 @@ pub(super) struct SeenFact {
     pub(super) claim: Option<ClaimBody>,
     /// The claim in a hook's input shape, or null.
     pub(super) claim_json: Value,
-    /// BLAKE3 of the live body.
+    /// BLAKE3 of the selected body.
     pub(super) body_hash: [u8; 32],
 }
 
@@ -39,10 +41,17 @@ pub(super) struct SeenFact {
 pub(super) fn fact_row(
     lane: &ScopedRead<'_>,
     grant: &HookGrant,
-    entity: EntityId,
+    entry: &FactEntry,
 ) -> Result<Option<SeenFact>> {
+    if entry.body_hash.is_some() && entry.revision.is_none() {
+        return Ok(None);
+    }
+    let point = match entry.revision {
+        Some(revision) => PointRead::id(entry.entity).at(ReadMode::Pinned(revision)),
+        None => PointRead::id(entry.entity),
+    };
     let Some(row) = lane
-        .read(&[PointRead::id(entity)], None)?
+        .read(&[point], None)?
         .value
         .into_iter()
         .next()
@@ -54,6 +63,9 @@ pub(super) fn fact_row(
         return Ok(None);
     };
     let body_hash = *blake3::hash(body).as_bytes();
+    if entry.body_hash.is_some_and(|expected| expected != body_hash) {
+        return Ok(None);
+    }
     if row.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(Some(SeenFact {
             claim: None,
@@ -66,7 +78,7 @@ pub(super) fn fact_row(
         return Ok(None);
     }
     Ok(Some(SeenFact {
-        claim_json: claim_json(entity, &claim),
+        claim_json: claim_json(entry.entity, &claim),
         claim: Some(claim),
         body_hash,
     }))

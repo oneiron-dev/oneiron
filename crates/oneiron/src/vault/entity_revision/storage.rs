@@ -517,6 +517,46 @@ pub(crate) fn revision_for_mode_in_txn(
     }))
 }
 
+/// Selects the exact live or retained revision whose entity body has `body_hash`.
+/// A missing answer never falls back to the live body.
+pub(crate) fn revision_for_body_hash_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body_hash: &[u8; 32],
+) -> Result<Option<RevisionRef>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? else {
+        return Ok(None);
+    };
+    let matches = |raw: &[u8]| {
+        raw.get(ENTITY_METADATA_HEADER_LEN..)
+            .is_some_and(|body| blake3::hash(body).as_bytes() == body_hash)
+    };
+    let live = raw_for_revision(&vault.store, txn, id, &raw, None)?;
+    if matches(&live) {
+        let current = state(&vault.store, txn, id)?;
+        return Ok(Some(current.map_or_else(
+            || reference(id, &raw),
+            |current| current.live,
+        )));
+    }
+    for (_, revision) in FRONTIER.scan_from(&vault.store, txn, id.as_bytes())? {
+        let Some(raw) = read_entity_revision_from_store_in_txn(
+            vault,
+            &vault.store,
+            txn,
+            id,
+            ReadMode::Pinned(revision),
+        )? else {
+            continue;
+        };
+        if matches(&raw) {
+            return Ok(Some(revision));
+        }
+    }
+    Ok(None)
+}
+
 /// A pack-level pin selects only its owning entity; unrelated hits are not errors.
 pub(crate) fn entity_owns_revision_in_txn(
     store: &impl ManifestDbs,
