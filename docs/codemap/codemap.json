@@ -2621,6 +2621,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/payload_rebind.rs",
+     "purpose": "FIX 6108: the payload of an attempt still waiting to be claimed, replaced in place by the door that rebinds…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/ports.rs",
      "purpose": "JobQueue adapter over the existing lease state machine",
      "surface": {}
@@ -3602,7 +3612,7 @@
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an Ask or Connect guest's capability slip, bound to its grant, and withdraws one…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -3850,7 +3860,7 @@
      "path": "src/authority/invocation_slip.rs",
      "purpose": "The signed instrument a request was admitted on, kept with the work it queued, so that work's standing is…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
      }
@@ -4129,7 +4139,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 39,
-      "re-export": 65
+      "re-export": 66
      }
     },
     {
@@ -4416,7 +4426,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "fn": 15,
       "struct": 4
      }
@@ -4539,7 +4549,7 @@
      "path": "src/authority/slip_state.rs",
      "purpose": "Log-derived capability mint ancestry and monotone subtree tombstones",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4,
       "struct": 2
      }
@@ -5259,6 +5269,20 @@
      "purpose": "A positively withdrawn Grant stays withdrawn (FIX-LIST 5107)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InstrumentRebind"
+     ],
+     "path": "src/authority/work_rebind.rs",
+     "purpose": "FIX 6108: work a holder's request queued keeps the slip that request was admitted on, and stops once that…",
+     "surface": {
+      "const": 5,
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -21948,7 +21972,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 6,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 5
      }
     },
@@ -21960,6 +21984,20 @@
      "purpose": "The erase of a turn action's requester takes the signed instrument its request was admitted on out of each…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TurnActionRebindReceipt",
+      "TurnActionRebindRequest"
+     ],
+     "path": "src/conversation/turn_actions/rebind.rs",
+     "purpose": "`vault.conversations.turn.rebind` (FIX 6108): a queued turn action whose slip no longer stands is rebound…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -32975,7 +33013,7 @@
       "const": 4,
       "crate-vis": 20,
       "enum": 3,
-      "fn": 19,
+      "fn": 20,
       "struct": 2
      }
     },
@@ -32988,6 +33026,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/grant/guest_key.rs",
+     "purpose": "The guest payload's `holder_key` (FIX-LIST 1978): the public key the guest generated on their own device, as…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -74603,7 +74651,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1194
+      "fn": 1195
      }
     },
     {
@@ -80008,14 +80056,14 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 218,
+     "files": 219,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80344,7 +80392,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80568,7 +80616,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81487,7 +81535,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5429,
+   "source_files": 5433,
    "test_files": 902
   },
   "oneiron-android": {
@@ -93580,7 +93628,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1162
+      "fn": 1163
      }
     },
     {
@@ -95019,7 +95067,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1163
+      "fn": 1164
      }
     },
     {
@@ -117336,6 +117384,8 @@
       "TrustedContactTierRequest",
       "TrustedContactTierSet",
       "TurnAction",
+      "TurnActionRebindReceipt",
+      "TurnActionRebindRequest",
       "TurnActionReceipt",
       "TurnActionRequest",
       "TurnProgramAdmissionItem",
@@ -117566,7 +117616,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1032,
-      "struct": 3151
+      "struct": 3153
      }
     },
     {

@@ -2521,6 +2521,8 @@ export class Oneiron {
         continue: (input: Facade.TurnActionRequest): Facade.TurnActionReceipt => this.#call(() => this.#client.vaultConversationsTurnContinue(input) as Facade.TurnActionReceipt),
         /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
         retry: (input: Facade.TurnActionRequest): Facade.TurnActionReceipt => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as Facade.TurnActionReceipt),
+        /** Rebinds the caller's queued turn action whose credential no longer stands to the live credential this request was admitted on; the action keeps its scope. */
+        rebind: (input: Facade.TurnActionRebindRequest): Facade.TurnActionRebindReceipt => this.#call(() => this.#client.vaultConversationsTurnRebind(input) as Facade.TurnActionRebindReceipt),
       },
       /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
       create: (input: Facade.ConversationCreateInput): Facade.CoreEntityWriteReceipt => this.#call(() => this.#client.vaultConversationsCreate(input) as Facade.CoreEntityWriteReceipt),

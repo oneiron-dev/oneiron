@@ -4446,6 +4446,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.conversations.turn.rebind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::conversation::TurnActionRebindRequest,
+                >(),
+            ),
+            (
                 "vault.messages.react",
                 crate::code_run::vault_read::request_schema::<
                     crate::reaction::MessageReactionRequest,
@@ -15589,6 +15595,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.conversations.turn.rebind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.messages.react" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20798,6 +20811,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.conversations.turn.retry" => {
             let _input: crate::conversation::TurnActionRequest = decode(value.clone())?;
         }
+        "vault.conversations.turn.rebind" => {
+            let _input: crate::conversation::TurnActionRebindRequest = decode(value.clone())?;
+        }
         "vault.messages.react" => {
             let _input: crate::reaction::MessageReactionRequest = decode(value.clone())?;
         }
@@ -23732,6 +23748,9 @@ pub fn invoke(
         }
         "vault.conversations.turn.retry" => {
             encode(vault_conversations_turn_retry(memory, decode(value)?)?)
+        }
+        "vault.conversations.turn.rebind" => {
+            encode(vault_conversations_turn_rebind(memory, decode(value)?)?)
         }
         "vault.messages.react" => encode(vault_messages_react(memory, decode(value)?)?),
         "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
@@ -31261,6 +31280,12 @@ pub fn vault_conversations_turn_retry(
     input: crate::conversation::TurnActionRequest,
 ) -> MemoryResult<crate::conversation::TurnActionReceipt> {
     memory.conversations_turn_retry(&input)
+}
+pub fn vault_conversations_turn_rebind(
+    memory: &Memory<'_>,
+    input: crate::conversation::TurnActionRebindRequest,
+) -> MemoryResult<crate::conversation::TurnActionRebindReceipt> {
+    memory.conversations_turn_rebind(&input)
 }
 pub fn vault_messages_react(
     memory: &Memory<'_>,
