@@ -1,5 +1,9 @@
 //! The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through
-//! the reader's `ScopedRead` lane, then the hook's own grant.
+//! the reader's `ScopedRead` lane, then the hook's own grant ([`grant_view`]).
+//! A read answers whole (FIX 9233): every row its request selects, however
+//! many and however large, with no cut of its own.
+
+pub(super) mod grant_view;
 
 use std::collections::HashSet;
 
@@ -15,14 +19,10 @@ use super::filter::glob_match;
 use super::grant::HookGrant;
 use super::store::{HookReadPin, HookReadRow};
 
-/// Rows one `claims_about` read answers at most.
-const MAX_READ_ROWS: usize = 64;
-const DEFAULT_READ_ROWS: usize = 20;
-/// Bytes one read answers at most.
-const MAX_READ_BYTES: usize = 256 * 1024;
-/// Claims about a subject one read considers.
-const MAX_ABOUT_SCAN: usize = 512;
-const MAX_REQUEST_BYTES: usize = 4 * 1024;
+/// Claims about a subject one step of a `claims_about` read reads before it
+/// reads the next (CALLS, FIX 9233): how the walk is scheduled, never how
+/// much it answers. A read with a limit stops reading once it has its rows.
+const ABOUT_READ_STEP: usize = 256;
 
 /// The fact's entity as the hook's grant shows it.
 pub(super) struct SeenFact {
@@ -99,7 +99,9 @@ pub(super) fn answer(
 }
 
 /// [`answer`], serving only rows `cap` also reads: a verb hook reads under
-/// its caller's lane, narrowed to its grant's reader.
+/// its caller's lane, narrowed to its grant's reader. A `claims_about` with
+/// no limit answers every claim the lane, the cap and the grant show; one
+/// with a limit answers exactly that many at most, zero included.
 pub(super) fn answer_within(
     lane: &ScopedRead<'_>,
     cap: Option<&ScopedRead<'_>>,
@@ -107,9 +109,6 @@ pub(super) fn answer_within(
     request: &str,
     pins: &mut Vec<HookReadPin>,
 ) -> std::result::Result<String, String> {
-    if request.len() > MAX_REQUEST_BYTES {
-        return Err("read request is too large".to_owned());
-    }
     let parsed: ReadRequest =
         serde_json::from_str(request).map_err(|_| "read request does not parse".to_owned())?;
     let (response, rows) = match parsed {
@@ -118,14 +117,7 @@ pub(super) fn answer_within(
             claims_about,
             predicate,
             limit,
-        } => read_about(
-            lane,
-            cap,
-            grant,
-            &claims_about,
-            predicate.as_deref(),
-            limit.unwrap_or(DEFAULT_READ_ROWS).min(MAX_READ_ROWS),
-        ),
+        } => read_about(lane, cap, grant, &claims_about, predicate.as_deref(), limit),
     }
     .map_err(|error| error.to_string())?;
     pins.push(HookReadPin {
@@ -169,7 +161,7 @@ fn read_about(
     grant: &HookGrant,
     subject: &str,
     predicate: Option<&str>,
-    limit: usize,
+    limit: Option<usize>,
 ) -> Result<(String, Vec<HookReadRow>)> {
     let subject = EntityId::from_hex(subject)?;
     // The claims about the subject in the content the lane reads: a room's
@@ -185,45 +177,40 @@ fn read_about(
             EdgeKind::ClaimOf,
             Some(ENTITY_TYPE_CLAIM),
         )?
-        .into_iter()
-        .take(MAX_ABOUT_SCAN)
-        .collect()
     };
-    let reads: Vec<PointRead<'_>> = ids.iter().map(|id| PointRead::id(*id)).collect();
-    let rows = lane.read(&reads, None)?.value;
-    let seen = visible_to(cap, &reads)?;
     let mut served = Vec::new();
     let mut values = Vec::new();
-    let mut bytes = 2_usize;
-    for row in rows.into_iter().flatten() {
-        if values.len() >= limit {
+    for step in ids.chunks(ABOUT_READ_STEP) {
+        if limit.is_some_and(|limit| values.len() >= limit) {
             break;
         }
-        if seen.as_ref().is_some_and(|seen| !seen.contains(&row.id)) {
-            continue;
+        let reads: Vec<PointRead<'_>> = step.iter().map(|id| PointRead::id(*id)).collect();
+        let rows = lane.read(&reads, None)?.value;
+        let seen = visible_to(cap, &reads)?;
+        for row in rows.into_iter().flatten() {
+            if limit.is_some_and(|limit| values.len() >= limit) {
+                break;
+            }
+            if seen.as_ref().is_some_and(|seen| !seen.contains(&row.id))
+                || row.entity_type != ENTITY_TYPE_CLAIM
+            {
+                continue;
+            }
+            let Some(body) = row.body.as_deref() else {
+                continue;
+            };
+            let claim = crate::claim::decode_claim_body(body, true)?;
+            if !grant.admits(&claim)
+                || predicate.is_some_and(|glob| !glob_match(glob, &claim.predicate))
+            {
+                continue;
+            }
+            values.push(claim_json(row.id, &claim));
+            served.push(HookReadRow {
+                id: row.id,
+                content_hash: row.content_hash,
+            });
         }
-        let Some(body) = row.body.as_deref() else {
-            continue;
-        };
-        if row.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
-        }
-        let claim = crate::claim::decode_claim_body(body, true)?;
-        if !grant.admits(&claim)
-            || predicate.is_some_and(|glob| !glob_match(glob, &claim.predicate))
-        {
-            continue;
-        }
-        let value = claim_json(row.id, &claim);
-        bytes = bytes.saturating_add(value.to_string().len() + 1);
-        if bytes > MAX_READ_BYTES {
-            break;
-        }
-        values.push(value);
-        served.push(HookReadRow {
-            id: row.id,
-            content_hash: row.content_hash,
-        });
     }
     Ok((Value::Array(values).to_string(), served))
 }
