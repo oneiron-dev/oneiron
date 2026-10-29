@@ -24,7 +24,9 @@ mod client_address;
 mod left_notices;
 mod locality;
 mod machine_proof;
+mod managed_person;
 mod managed_request;
+mod operator_credential;
 mod slips;
 pub(crate) use binding_admission::{
     AUTHORITY_CLOCK_REPAIR_PATH, admit_http_binding, admit_owner_proof,
@@ -35,9 +37,13 @@ pub(crate) use locality::{Locality, caller_locality, proved_peer};
 pub(crate) use machine_proof::{
     MachineClaim, owned_machine, owned_machine_stands, required_machine_proof,
 };
+pub(crate) use managed_person::{MANAGED_PERSON_DOORS, managed_person_door};
 pub(crate) use managed_request::{
     attested_owner, caller_slip_too_narrow, carries_caller_slip, forward_caller_credentials,
     owner_attestation_refused, request_path,
+};
+pub(crate) use operator_credential::{
+    OPERATOR_HOLDER, OperatorCredential, operator_slip_claims, verified_operator,
 };
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
@@ -346,6 +352,11 @@ pub(crate) struct CoreAuth {
     /// request (`ManagedOwnerAction`, verified at managed ingress); `None`
     /// for every other request ([`Self::for_attested_owner`]).
     managed_owner: Option<oneiron::EntityId>,
+    /// The person a supervisor-signed person action names at a managed
+    /// member door (`ManagedPersonAction`, verified at managed ingress, FIX
+    /// 1302); `None` for every other request
+    /// ([`Self::for_attested_person`]).
+    managed_person: Option<oneiron::EntityId>,
 }
 
 impl CoreAuth {
@@ -386,6 +397,7 @@ impl CoreAuth {
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
+            managed_person: None,
         }
     }
 
@@ -462,6 +474,7 @@ impl CoreAuth {
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
+            managed_person: None,
         })
     }
 
@@ -483,6 +496,7 @@ impl CoreAuth {
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
+            managed_person: None,
         }
     }
 
@@ -856,6 +870,7 @@ fn core_auth_for_live_claims(
         facets_owner_exempt: false,
         off_record_session: None,
         managed_owner: None,
+        managed_person: None,
     })
 }
 

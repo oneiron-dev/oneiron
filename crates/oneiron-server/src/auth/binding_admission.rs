@@ -187,6 +187,16 @@ fn admit_binding(
     if let Some(token) = mcp_credential.or_else(|| bearer_token(headers).ok().flatten())
         && token.starts_with("v2.slip.")
     {
+        // The operator's own credential (FIX 1814) at a self-hosted vault's
+        // operator door: its proof spent here once, as any slip's. It names
+        // no caller, so nothing rides on to a door but the machine it shows.
+        if let Some(spent) =
+            super::operator_credential::bind_operator_once(server, path, token, headers)
+        {
+            let proof = spent?;
+            machine = super::machine_proof::peer_machine(headers, token, &proof, server.vault());
+            return Ok(AdmittedBinding { machine, admitted });
+        }
         let accepted = BindingProof::from_headers(headers).and_then(|proof| {
             CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
                 .map(|auth| (auth, proof))
