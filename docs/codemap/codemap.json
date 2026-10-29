@@ -15519,7 +15519,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 33,
       "mod": 7,
       "re-export": 25
      }
@@ -15692,6 +15692,16 @@
       "enum": 4,
       "fn": 7,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/replay_parts.rs",
+     "purpose": "A replay row's and a step start's parts under checkpoint custody (FIX 9180, Engine C2; coord-b slice d)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -16040,7 +16050,7 @@
      "path": "src/code_run/spawn_replay.rs",
      "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -16098,7 +16108,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 4
      }
     },
@@ -16243,7 +16253,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1
      }
     },
@@ -16274,7 +16284,17 @@
      "path": "src/code_run/storage/replay_capsule/spawn_erase.rs",
      "purpose": "An erase of a spawn's target over the step starts the capsules keep (FIX 9180, Engine C2)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/start_parts.rs",
+     "purpose": "The step starts a checkpoint carries as parts (FIX 9180, coord-b slice d): each read by its capsule's typed…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -55001,7 +55021,17 @@
      "path": "src/recovery/checkpoint/carried_bodies.rs",
      "purpose": "The bodies a checkpoint carries beside its rows (OF-597, FIX 3677, FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/carried_bodies/replay.rs",
+     "purpose": "The parts a checkpoint carries of a replay row and of a step start (FIX 9180, coord-b slice d; L04 option…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -55487,6 +55517,16 @@
      "purpose": "The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM…",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/response_rows/replay.rs",
+     "purpose": "The census, binding and stale release of a replay row's and a step start's parts (FIX 9180, coord-b slice d…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -63980,6 +64020,16 @@
      "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
      "surface": {
       "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/response/replay.rs",
+     "purpose": "A replay row's and a step start's parts as row-held responses (FIX 9180, coord-b slice d; L04 option (b))",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -79656,7 +79706,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 163,
+     "files": 165,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80475,7 +80525,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 99,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -80720,7 +80770,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 166,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80953,7 +81003,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5383,
+   "source_files": 5388,
    "test_files": 902
   },
   "oneiron-android": {
