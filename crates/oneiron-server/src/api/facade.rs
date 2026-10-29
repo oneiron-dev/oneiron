@@ -190,6 +190,11 @@ mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
 mod wave_doors;
+#[expect(
+    dead_code,
+    reason = "the trusted MFA step-up verifier (FIX 9431) binds the served Admin route to these"
+)]
+mod weave_admin_doors;
 mod weave_doors;
 mod web_connector_doors;
 mod web_fetch_doors;
