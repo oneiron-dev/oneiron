@@ -225,6 +225,7 @@ pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
 pub(crate) use release::*;
+pub(crate) use secret_body::{lift_custody_secret, with_custody_secret};
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;

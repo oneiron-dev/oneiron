@@ -16,6 +16,12 @@
 //! args. The rows keep no call receipt (`NO_RECORD_ROWS`), and the invocation
 //! claim states the arrival's own digest, so a retry naming another value
 //! still names another call.
+//!
+//! A transport that hands the facade's dispatch an input already decoded
+//! (the held socket's `rpc.req`, an MCP `tools/call`, a code-mode invoke)
+//! has its value lifted out the same way before any hook reads it
+//! (`lift_custody_secret`, FIX 11665), and scoped for the door
+//! (`with_custody_secret`).
 
 use std::future::Future;
 
@@ -73,6 +79,43 @@ pub(super) async fn scope_secret<F: Future>(secret: Zeroizing<String>, call: F) 
 /// The scoped value, if the route scoped one.
 pub(super) fn current_secret() -> Option<Zeroizing<String>> {
     SECRET.try_with(|secret| secret.clone()).ok()
+}
+
+/// Takes a custody row's value out of an input that arrived decoded, before
+/// any hook reads it (FIX 11665): `value_base64` on register and rotate,
+/// `input_base64` on custody submit. The member is left empty, as an HTTP
+/// body's redaction leaves it, and the value comes back, moved and never
+/// copied, for [`with_custody_secret`] to scope for the door. `None` for any
+/// other verb, and for a member that is absent, no string or empty: an HTTP
+/// body's value arrives lifted and scoped already.
+pub(crate) fn lift_custody_secret(verb: &str, input: &mut Value) -> Option<Zeroizing<String>> {
+    if !needs_wipe(verb) {
+        return None;
+    }
+    let key = if verb == "vault.secrets.custody.submit" {
+        "input_base64"
+    } else {
+        "value_base64"
+    };
+    let Some(Value::String(held)) = input.get_mut(key) else {
+        return None;
+    };
+    if held.is_empty() {
+        return None;
+    }
+    Some(Zeroizing::new(std::mem::take(held)))
+}
+
+/// Runs `call` with `secret`, when a dispatch lifted one, as its custody
+/// door's value (FIX 11665); with none, as it is.
+pub(crate) async fn with_custody_secret<F: Future>(
+    secret: Option<Zeroizing<String>>,
+    call: F,
+) -> F::Output {
+    match secret {
+        Some(secret) => SECRET.scope(secret, call).await,
+        None => call.await,
+    }
 }
 
 /// Reads a middleware body for `verb`: a wiped verb's through the wiping

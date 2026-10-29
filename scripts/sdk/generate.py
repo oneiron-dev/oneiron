@@ -983,7 +983,7 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
-        input: Value,
+        mut input: Value,
         actor: &McpCallContext,
         run: Option<McpCodeRun>,
         served: &mut McpServed,
@@ -993,7 +993,11 @@ pub(crate) async fn execute_agent_verb_input(
         // An owner's erase or revoke reads the restriction-only clock through
         // its hooks and door, as the engine classifies it (FIX 11201).
         let restrictive = crate::api::clock_ingress::restrictive_call(server, tool, Some(&input));
-        let produced = crate::api::clock_ingress::scoped(restrictive, super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks))).await;
+        // A custody row's value leaves the args before its hooks read them,
+        // and rides to its door scoped, as an HTTP body's does (FIX 11665).
+        let secret = crate::api::facade::lift_custody_secret(tool, &mut input);
+        let listed = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks));
+        let produced = crate::api::clock_ingress::scoped(restrictive, crate::api::facade::with_custody_secret(secret, listed)).await;
         served.extend(producers.take());
         produced
     }
