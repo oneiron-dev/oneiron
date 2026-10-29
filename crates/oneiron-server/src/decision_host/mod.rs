@@ -65,6 +65,7 @@ use crate::server::SyncServer;
 
 mod adapters;
 mod attach;
+mod claim_merge;
 mod doors;
 mod notes;
 mod refresh;
