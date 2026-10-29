@@ -57,7 +57,10 @@ pub(crate) fn resolved_budget_ask(
 /// hard cap a seeded ask resolved to when its plan was fitted (the seed
 /// itself where that plan states none).
 pub(in crate::agent_dispatch) fn launch_budget(asked: &SpawnNeed, plan: &TeamPlan) -> Option<u64> {
-    resolved_budget_ask(asked.budget_cap_units.as_ref(), Some(plan))
+    match asked.budget_cap_units.as_ref()? {
+        SpawnOverride::Pin { value } => Some(*value),
+        SpawnOverride::Seed { value, .. } => plan.envelope.hard_cap_units.or(Some(*value)),
+    }
 }
 
 impl PlanBudget {
