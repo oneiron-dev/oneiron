@@ -3,13 +3,15 @@
 //! resolver (`metadata.rs`): the packet is what the signature describes, so
 //! its tallies span the packet's receipts, its version and executor are the
 //! newest failing receipt's, and its content hash is blake3 over the
-//! packet's canonical bytes — the canonical JSON form the engine already
-//! writes, no new form. The category is the packet's subject kind: a skill
-//! packet stands on the defect shares that charged the skill, an actor
-//! packet on the lapse shares that charged the actor. Anything not exactly
-//! resolvable — no pinned version that is exactly a `u32`, no executor, no
-//! registered stack for it — resolves to no signature: absent, never a
-//! guess, and the packet still reaches the owner's inbox.
+//! packet's canonical JSON bytes (the engine's `llm` canonical form). The
+//! caller states the category from the packet receipts' judgments: the
+//! defect or lapse class a judgment actually charged the subject with, or
+//! unclear when none did. The version is the failing runs' own where the
+//! packet records it — a skill's attempt-pinned version, a definition's
+//! bind-time pin where the run pinned one. Anything not exactly resolvable
+//! — no such version that is exactly a `u32`, no executor, no registered
+//! stack for it — resolves to no signature: absent, never a guess, and the
+//! packet still reaches the owner's inbox.
 
 use super::metadata::{compiled_stack, exact_u32, host_stack_id};
 use crate::edit_distance::attribution::{ArtifactPublisher, TriagePacket, TriageSubject};
@@ -29,6 +31,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         packet: &TriagePacket,
+        category: IssueCategory,
     ) -> Result<Option<IssueSignature>> {
         if packet.publisher != ArtifactPublisher::Shipped {
             return Ok(None);
@@ -36,23 +39,22 @@ impl Vault {
         let Ok(artifact) = EntityId::from_hex(&packet.subject) else {
             return Ok(None);
         };
-        let (category, version) = match packet.subject_kind {
-            TriageSubject::Skill => {
-                let version =
-                    packet.receipts.iter().rev().find_map(|receipt| {
-                        receipt.skill.as_ref().map(|skill| skill.version.as_str())
-                    });
-                (IssueCategory::SkillDefect, version)
-            }
-            TriageSubject::Actor => {
-                let version = packet
-                    .agent_definitions
-                    .iter()
-                    .rev()
-                    .find(|definition| definition.definition == packet.subject)
-                    .map(|definition| definition.version.as_str());
-                (IssueCategory::ExecutionLapse, version)
-            }
+        let version = match packet.subject_kind {
+            // The run's own attempt-pinned skill version; the live
+            // record's version is never presented as the failing run's.
+            TriageSubject::Skill => packet.receipts.iter().rev().find_map(|receipt| {
+                receipt
+                    .skill
+                    .as_ref()
+                    .filter(|skill| skill.via_attempt)
+                    .map(|skill| skill.version.as_str())
+            }),
+            TriageSubject::Actor => packet
+                .agent_definitions
+                .iter()
+                .rev()
+                .find(|definition| definition.definition == packet.subject)
+                .map(|definition| definition.version.as_str()),
         };
         let Some(version) = version.and_then(exact_u32) else {
             return Ok(None);

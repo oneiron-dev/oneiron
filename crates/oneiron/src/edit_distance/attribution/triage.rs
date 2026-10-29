@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use super::cells::charges_subject;
 use super::evidence_judge::amendment_judgments_in_txn;
 use super::stored::{EVIDENCE, EVIDENCE_ROW_LABEL, hex_entity};
-use super::taxonomy::AmendmentJudgment;
+use super::taxonomy::{AmendmentClass, AmendmentJudgment};
 use super::worsening::outcomes_in_txn;
 use crate::Vault;
 use crate::claim::ClaimSource;
@@ -443,14 +443,49 @@ pub(super) fn escalate_in_txn(
         wrote = true;
     }
     // One signature per new trigger, not per owner (FIX 11634): a trigger
-    // every row already held earned its signature when it landed.
-    if wrote
-        && packet.publisher == ArtifactPublisher::Shipped
-        && let Some(signature) = vault.packet_issue_signature_in_txn(&*txn, packet)?
-    {
-        crate::edit_distance::publisher::emit_issue_signature_local_in_txn(vault, txn, &signature)?;
+    // every row already held earned its signature when it landed, and the
+    // emit is idempotent for an owner who did not hold it.
+    if wrote && packet.publisher == ArtifactPublisher::Shipped {
+        let category = signature_category_in_txn(vault, &*txn, packet)?;
+        if let Some(signature) = vault.packet_issue_signature_in_txn(&*txn, packet, category)? {
+            crate::edit_distance::publisher::emit_issue_signature_local_in_txn(
+                vault, txn, &signature,
+            )?;
+        }
     }
     Ok(())
+}
+
+/// The ED-08 category `packet`'s signature files under: the defect class
+/// its subject kind names, when one of the packet receipts' judgments
+/// actually charged the subject with it; unclear when none did — a packet
+/// minted by counts alone claims no class it cannot point at.
+fn signature_category_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    packet: &TriagePacket,
+) -> Result<crate::edit_distance::publisher::IssueCategory> {
+    use crate::edit_distance::publisher::IssueCategory;
+    let wanted = match packet.subject_kind {
+        TriageSubject::Skill => AmendmentClass::SkillDefect,
+        TriageSubject::Actor => AmendmentClass::ExecutionLapse,
+    };
+    let Ok(subject) = EntityId::from_hex(&packet.subject) else {
+        return Ok(IssueCategory::Unclear);
+    };
+    for receipt in &packet.receipts {
+        let Some(judgment) =
+            super::evidence_judge::amendment_judgment_in_txn(vault, txn, &receipt.receipt)?
+        else {
+            continue;
+        };
+        if judgment.split.iter().any(|share| {
+            share.class == wanted && share.subject == Some(subject) && share.share > 0.0
+        }) {
+            return Ok(IssueCategory::from_verdict(wanted));
+        }
+    }
+    Ok(IssueCategory::Unclear)
 }
 
 /// The triage packet the worsening escalation `id` carries; `None` when `id`

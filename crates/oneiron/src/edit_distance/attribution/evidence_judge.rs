@@ -586,7 +586,7 @@ pub(super) fn amendment_judgments_in_txn(
 }
 
 /// The judgment persisted for `receipt_id` on the caller's snapshot, if any.
-pub(super) fn amendment_judgment_in_txn(
+pub(in crate::edit_distance) fn amendment_judgment_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt_id: &str,

@@ -16,7 +16,7 @@ use std::ops::RangeInclusive;
 
 use super::evidence_judge::judgment_row;
 use super::stored::{
-    AMENDMENT_CAUSE, CAUSE_ROW_LABEL, ROW_VERSION, StoredAmendmentCause, hex_entity,
+    AMENDMENT_CAUSE, CAUSE_ROW_LABEL, JUDGMENT, ROW_VERSION, StoredAmendmentCause, hex_entity,
 };
 use super::taxonomy::{AmendmentClass, AmendmentJudgment, AmendmentShare};
 use crate::Vault;
@@ -60,7 +60,9 @@ pub struct AmendmentCauseRecord {
 /// Keeps `judgment`'s labels as their cause row, in the write that lands
 /// the judgment. First write wins for the receipt's revision slot: a later
 /// answer under the same judge revision never rewrites the row, as
-/// judgments are never rescored under one revision.
+/// judgments are never rescored under one revision — except a held row
+/// that charged nobody (every share unclear), which takes the settled
+/// answer a later pass in the same slot brings, keeping its source id.
 ///
 /// # Errors
 ///
@@ -72,14 +74,28 @@ pub(super) fn put_amendment_cause_in_txn(
 ) -> Result<()> {
     let slot = judgment.judge.as_deref().unwrap_or_default();
     let key = (receipt_key(&judgment.receipt_id), slot.to_owned());
-    if AMENDMENT_CAUSE.get(&vault.store, wtxn, &key)?.is_some() {
-        return Ok(());
-    }
+    let source = match AMENDMENT_CAUSE.get(&vault.store, wtxn, &key)? {
+        Some(held) => {
+            let held_unclear = held
+                .split
+                .iter()
+                .all(|share| share.class == AmendmentClass::Unclear.as_str() || share.share <= 0.0);
+            let settles = judgment
+                .split
+                .iter()
+                .any(|share| share.class != AmendmentClass::Unclear && share.share > 0.0);
+            if !(held_unclear && settles) {
+                return Ok(());
+            }
+            held.source
+        }
+        None => source_id(&judgment.receipt_id, slot)?.to_hex(),
+    };
     let stored = judgment_row(judgment);
     let row = StoredAmendmentCause {
         v: ROW_VERSION,
         receipt: judgment.receipt_id.clone(),
-        source: source_id(&judgment.receipt_id, slot)?.to_hex(),
+        source,
         actor: stored.actor,
         skill: stored.skill,
         attempt: judgment.attempt_receipt.clone(),
@@ -96,8 +112,9 @@ pub(super) fn put_amendment_cause_in_txn(
 /// Every cause row settled on `actor`'s proposals in `window`, oldest
 /// first, on the caller's snapshot; with `skill`, only those that name it.
 /// One receipt re-judged under another revision reads back once per
-/// revision, each row marked when its judge was displaced. Reads stored
-/// rows only: it never asks a judge.
+/// revision, each row marked when its judge was displaced; a receipt whose
+/// judgment was withdrawn reads none. Reads stored rows only: it never
+/// asks a judge.
 ///
 /// # Errors
 ///
@@ -113,6 +130,11 @@ pub(crate) fn amendment_causes_in_txn(
     let mut causes = Vec::new();
     for (_, row) in AMENDMENT_CAUSE.scan(&vault.store, txn)? {
         if !window.contains(&row.at) {
+            continue;
+        }
+        // A receipt whose judgment was withdrawn reads no causes: its rows
+        // stay stored as history, but no judgment stands behind them.
+        if JUDGMENT.get(&vault.store, txn, &row.receipt)?.is_none() {
             continue;
         }
         let named_actor = row

@@ -106,7 +106,8 @@ pub(in crate::edit_distance) fn judge_rejection_with_cause_in_txn(
 ///
 /// # Errors
 ///
-/// Storage errors, an unusable stored scope, and whatever the decision
+/// Storage errors, an unusable stored scope, a judge revision the
+/// displacement fence refuses (FIX 11638), and whatever the decision
 /// path or the learning door refuses.
 pub fn judge_rejection_with_cause(
     vault: &Vault,
@@ -126,15 +127,25 @@ pub fn judge_rejection_with_cause(
     let Some(actor) = judged.actor else {
         return Ok(None);
     };
-    let rejection = Rejection {
-        receipt: receipt_id,
-        actor,
-        skill: judged.skill,
-        scope: &judged.scope,
-        project: judged.project,
-        at: judged.at,
-    };
     vault.with_write_txn_grouped(|wtxn| {
+        // The standing check runs again in the writing transaction, and
+        // the replayed facts are that check's own: a withdrawal or
+        // re-judgment since the snapshot above is never clobbered by
+        // facts read from it.
+        let Some(standing) = amendment_judgment_in_txn(vault, &*wtxn, receipt_id)? else {
+            return Ok(None);
+        };
+        if !standing.rejected || standing.actor != Some(actor) {
+            return Ok(None);
+        }
+        let rejection = Rejection {
+            receipt: receipt_id,
+            actor,
+            skill: standing.skill,
+            scope: &standing.scope,
+            project: standing.project,
+            at: standing.at,
+        };
         judge_rejection_with_cause_in_txn(vault, wtxn, &rejection, cause)
     })
 }
@@ -215,8 +226,8 @@ fn judge_rejection_cause_in_txn(
         rejected: true,
     };
     // A displaced judge's answers no longer land (FIX 11638): the fence
-    // the attempt lane checks before its judgment put. The deciding
-    // write's savepoint drops everything above when the fence refuses.
+    // the attempt lane checks before its judgment put, checked here
+    // before any of this door's rows land.
     if let Some(revision) = judgment.judge.as_deref() {
         crate::skill_attribution::ensure_current_attribution_judge_in_txn(vault, &*wtxn, revision)?;
     }

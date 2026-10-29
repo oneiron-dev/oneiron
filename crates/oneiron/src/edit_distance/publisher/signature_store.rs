@@ -137,7 +137,11 @@ pub(crate) fn emit_issue_signature_local_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     sig: &IssueSignature,
 ) -> Result<EntityId> {
-    let id = vault.store.clock.entity_id()?;
+    // The id is spelled from the signature's own stored bytes, so emitting
+    // the same signature again — a trigger re-escalated to an owner who
+    // did not hold it yet — lands on the same row instead of a second one.
+    let bytes = encode_signature(sig)?;
+    let id = EntityId::derive(b"oneiron:issue-signature:v1", &[bytes.as_slice()])?;
     SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
     Ok(id)
 }

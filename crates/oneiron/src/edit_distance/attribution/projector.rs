@@ -142,21 +142,26 @@ pub fn project_edit_cost_claims(
 pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
     vault.with_write_txn_grouped(|wtxn| {
         let mut verdicts = Vec::new();
-        // The newest verdict per (skill, scope, project), for the floor
-        // join below: the receipt and time a crossing this pass mints fires
-        // on.
-        let mut newest: BTreeMap<(EntityId, String, Option<EntityId>), (String, u64)> =
+        // The newest verdict per skill, for the floor join below: the
+        // scope, project, receipt and time a crossing this pass mints
+        // fires on. A crossing is the skill's own, so it fires once per
+        // skill however many scopes its verdicts span.
+        let mut newest: BTreeMap<EntityId, (String, Option<EntityId>, String, u64)> =
             BTreeMap::new();
         for (judgment, attempt) in amendment_judgments_in_txn(vault, wtxn)? {
             let Some((attempt_receipt, skill)) = attempt else {
                 continue;
             };
-            let key = (skill, judgment.scope.clone(), judgment.project);
-            let fired = (judgment.receipt_id.clone(), judgment.at);
+            let fired = (
+                judgment.scope.clone(),
+                judgment.project,
+                judgment.receipt_id.clone(),
+                judgment.at,
+            );
             newest
-                .entry(key)
+                .entry(skill)
                 .and_modify(|held| {
-                    if (fired.1, &fired.0) > (held.1, &held.0) {
+                    if (fired.3, &fired.2) > (held.3, &held.2) {
                         *held = fired.clone();
                     }
                 })
@@ -182,12 +187,10 @@ pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
         }
         let skills = reconcile_amended_outcomes_in_txn(vault, wtxn, &verdicts)?;
         for skill in &skills {
-            for ((verdict_skill, scope, project), (receipt, at)) in &newest {
-                if verdict_skill == skill {
-                    super::worsening::observe_floor_crossing_in_txn(
-                        vault, wtxn, skill, scope, *project, receipt, *at,
-                    );
-                }
+            if let Some((scope, project, receipt, at)) = newest.get(skill) {
+                super::worsening::observe_floor_crossing_in_txn(
+                    vault, wtxn, skill, scope, *project, receipt, *at,
+                );
             }
         }
         Ok(skills)

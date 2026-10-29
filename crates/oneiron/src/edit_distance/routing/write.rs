@@ -184,8 +184,11 @@ fn judgment_for(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentJudgm
 /// the outcome its fold counted, so the refold moves the head's counts from
 /// that outcome to the one that stands now instead of recounting — a
 /// re-settled or re-anchored TASK converges, and a receipt whose judgment
-/// holds counts nothing either way. A refold that fails lands nothing and
-/// never fails the settlement it rides.
+/// holds counts nothing either way. The head is the one the judgment as it
+/// stands now names: a receipt re-judged onto another executor or scope
+/// since its fold keeps its old head's count until the next rebuild, as
+/// before. A refold that fails lands nothing and never fails the
+/// settlement it rides.
 pub(crate) fn refold_task_outcomes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
