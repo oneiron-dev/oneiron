@@ -107,6 +107,15 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::PolicySettingSet(set) => {
+            vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
+        }
+        AuthorityOp::ExportAct(record) => {
+            vec![Grant::InstallKey(
+                record.machine,
+                entry.signer_key().clone(),
+            )]
+        }
         // A frontier join waits for its carrier's install key, as the act it
         // leads to does; the host issuer's waits as any admitter's row.
         AuthorityOp::FrontierJoin(FrontierJoin {
