@@ -11105,7 +11105,7 @@
      "surface": {
       "const": 2,
       "fn": 2,
-      "mod": 8,
+      "mod": 10,
       "struct": 1
      }
     },
@@ -11520,6 +11520,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/enrollment/target.rs",
+     "purpose": "The pinned send target of one campaign enrollment's outward leg (FIX 11513)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -11646,6 +11656,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CampaignChannelSender"
+     ],
+     "path": "src/campaign/sender.rs",
+     "purpose": "One campaign program step's send through the served channel transports (FIX 11513)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExternalStageEvidenceHook"
      ],
      "path": "src/campaign/stage/external.rs",
@@ -11752,6 +11775,17 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/step_body.rs",
+     "purpose": "One campaign program step's filed outbound body (FIX 11513)",
+     "surface": {
+      "const": 1,
+      "fn": 6
      }
     },
     {
@@ -51306,7 +51340,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "re-export": 1,
       "struct": 3
      }
@@ -81665,8 +81699,8 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 59,
-     "impl_vault": false,
+     "files": 62,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "CRM pack engine-side registration home"
@@ -83067,7 +83101,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5555,
+   "source_files": 5558,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88247,7 +88281,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 59,
+      "const": 60,
       "crate-vis": 1
      }
     },
