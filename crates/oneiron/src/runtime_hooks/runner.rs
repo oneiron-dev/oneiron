@@ -491,6 +491,7 @@ impl Pass<'_> {
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let verdict = judge(run.binding, result, overrun, &context);
         let memo = record(
+            self.vault,
             run,
             &input,
             pins,

@@ -4,16 +4,91 @@
 use crate::claim::{PointRead, ScopedRead};
 use crate::runtime_hooks::body::{HookBudgetOverrun, HookRunContext};
 use crate::runtime_hooks::filter;
-use crate::runtime_hooks::read::{self, grant_view::shows_row};
+use crate::runtime_hooks::read::{self, HistoryAdmission, grant_view::shows_row};
 use crate::runtime_hooks::runner::{ask_verdict, input_json, judge, verdict_context};
 use crate::runtime_hooks::source::FactEntry;
 use crate::runtime_hooks::store::{self, HookRunRecord};
 use crate::runtime_hooks::verb::HookVerbRunRecord;
-use crate::{Error, Result};
+use crate::{EntityId, Error, Result};
 
 use super::{HookReplayResult, PinnedReads, PinnedVerdicts, Replay, input_too_large, ran};
 
 impl Replay<'_> {
+    /// `None` when the exact dependency is shown under the current grant;
+    /// otherwise the truthful replay result, before any saved text runs.
+    fn history_failure(
+        &self,
+        lane: &ScopedRead<'_>,
+        id: EntityId,
+        revision: Option<crate::vault::RevisionRef>,
+        body_hash: Option<[u8; 32]>,
+    ) -> Option<HookReplayResult> {
+        match read::history_admission(lane, self.grant, id, revision, body_hash) {
+            Ok(HistoryAdmission::Shown) => None,
+            Ok(HistoryAdmission::Withheld) => Some(HookReplayResult::Withheld {
+                reason: "a saved dependency is not shown to this hook now".to_owned(),
+            }),
+            Ok(HistoryAdmission::Missing) => Some(HookReplayResult::MissingHistory {
+                reason: "a saved dependency's history is gone".to_owned(),
+            }),
+            Err(error) => Some(HookReplayResult::MissingHistory {
+                reason: error.to_string(),
+            }),
+        }
+    }
+
+    /// Authorizes one verdict evidence row against the exact dependency the
+    /// run recorded. An unknown old revision never falls back to live bytes.
+    fn evidence_failure(
+        &self,
+        lane: &ScopedRead<'_>,
+        memo: &HookRunRecord,
+        id: EntityId,
+    ) -> Option<HookReplayResult> {
+        let Some(dependency) = memo
+            .derivation
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.id == id)
+        else {
+            return Some(HookReplayResult::MissingHistory {
+                reason: "a verdict's evidence dependency was not recorded".to_owned(),
+            });
+        };
+        if let Some(revision) = dependency.revision {
+            return self.history_failure(lane, id, Some(revision), dependency.body_hash);
+        }
+        if let Some(body_hash) = dependency.body_hash {
+            let resolved = (|| -> Result<_> {
+                let txn = self.vault.store.env.read_txn()?;
+                crate::vault::entity_revision::revision_for_body_hash_in_txn(
+                    self.vault, &txn, &id, &body_hash,
+                )
+            })();
+            match resolved {
+                Ok(Some(revision)) => {
+                    return self.history_failure(lane, id, Some(revision), Some(body_hash));
+                }
+                Ok(None) => {
+                    return Some(HookReplayResult::MissingHistory {
+                        reason: "a verdict's evidence revision is gone".to_owned(),
+                    });
+                }
+                Err(error) => {
+                    return Some(HookReplayResult::MissingHistory {
+                        reason: error.to_string(),
+                    });
+                }
+            }
+        }
+        if memo.derivation.grant_hash != self.grant.digest() {
+            return Some(HookReplayResult::MissingHistory {
+                reason: "a verdict's evidence has no revision under the changed grant".to_owned(),
+            });
+        }
+        self.history_failure(lane, id, None, None)
+    }
+
     /// A run pinned this entry: its input as it was, each read only when it
     /// answers what it answered then, and each verdict as the run heard it.
     pub(super) fn from_memo(
@@ -21,6 +96,35 @@ impl Replay<'_> {
         lane: &ScopedRead<'_>,
         memo: &HookRunRecord,
     ) -> HookReplayResult {
+        if memo.history_erased {
+            return HookReplayResult::MissingHistory {
+                reason: "the run's source history was erased".to_owned(),
+            };
+        }
+        if let Some(body_hash) = memo.derivation.event_body_hash {
+            let Some(revision) = memo.derivation.event_revision else {
+                return HookReplayResult::MissingHistory {
+                    reason: "the triggering event's exact revision is gone".to_owned(),
+                };
+            };
+            if let Some(failure) =
+                self.history_failure(lane, memo.entity, Some(revision), Some(body_hash))
+            {
+                return failure;
+            }
+        }
+        for pin in &memo.verdicts {
+            let Some(evidence) = pin.evidence.as_deref() else {
+                return HookReplayResult::MissingHistory {
+                    reason: "a verdict's evidence rows are not known".to_owned(),
+                };
+            };
+            for id in evidence {
+                if let Some(failure) = self.evidence_failure(lane, memo, *id) {
+                    return failure;
+                }
+            }
+        }
         let Some(input) = memo.input_json.as_deref() else {
             return input_too_large();
         };
@@ -76,6 +180,11 @@ impl Replay<'_> {
         lane: &ScopedRead<'_>,
         saved: &HookVerbRunRecord,
     ) -> HookReplayResult {
+        if saved.history_erased {
+            return HookReplayResult::MissingHistory {
+                reason: "the run's source history was erased".to_owned(),
+            };
+        }
         let Some(input) = saved.input_json.as_deref() else {
             return input_too_large();
         };

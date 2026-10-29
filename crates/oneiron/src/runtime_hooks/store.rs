@@ -6,6 +6,7 @@ mod erase;
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::receipt::{ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
@@ -314,6 +315,7 @@ pub(super) struct HookRunDerivation {
 
 impl HookRunDerivation {
     fn new(
+        vault: &Vault,
         binding_id: EntityId,
         binding: &PackHookBinding,
         grant: &HookGrant,
@@ -339,11 +341,33 @@ impl HookRunDerivation {
                 body_hash: Some(row.body_hash),
             })
         }));
-        dependencies.extend(verdict_evidence.iter().map(|id| HookDependency {
-            id: *id,
-            revision: None,
-            body_hash: None,
-        }));
+        for id in verdict_evidence {
+            let (revision, body_hash) = {
+                let txn = vault.store.env.read_txn()?;
+                let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+                    vault,
+                    &txn,
+                    id,
+                    crate::vault::ReadMode::Live,
+                )?;
+                let body_hash = raw
+                    .as_deref()
+                    .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+                    .map(|body| *blake3::hash(body).as_bytes());
+                let revision = match body_hash.as_ref() {
+                    Some(hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
+                        vault, &txn, id, hash,
+                    )?,
+                    None => None,
+                };
+                (revision, body_hash)
+            };
+            dependencies.push(HookDependency {
+                id: *id,
+                revision,
+                body_hash,
+            });
+        }
         dependencies.sort();
         dependencies.dedup();
         Ok(Self {
@@ -434,8 +458,10 @@ pub(super) struct HookRunRecord {
     pub(super) fact: FactKind,
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) entity: EntityId,
-    /// The exact input the body saw; `None` past the pin bound.
+    /// The exact input the body saw; `None` past the pin bound or after erase.
     pub(super) input_json: Option<String>,
+    /// Source erasure retired this run's retained payload (FIX 10080).
+    pub(super) history_erased: bool,
     pub(super) input_hash: String,
     pub(super) reads: Vec<HookReadPin>,
     /// Each `ai.verdict` the run asked, in order, while they fit the pin
