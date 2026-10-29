@@ -6,6 +6,11 @@
 //! VM without one does. Restarting a companion that ended is the bootstrap's
 //! part, not this one's.
 //!
+//! Each copy the carrier keeps of a member it never agreed on, as the
+//! member's origin retired the agreed version, raises one owner ask, remove
+//! or keep, at the look that first finds it waiting, and its ask is cleared
+//! at the look that finds it answered or gone ([`diverged_ask`], FIX 11074).
+//!
 //! An escrow recipient the carrier delivers after the engine started is
 //! sealed to and spooled at the next look, as a start seals those present
 //! then, with no restart; a capsule a spool did not hand over, at a start
@@ -21,9 +26,12 @@ use std::time::Duration;
 use oneiron_vault_contract::vm_outbox::VM_GUEST_OUTBOX_DIR;
 use tokio::task::JoinHandle;
 
+use self::diverged_ask::DivergedAsks;
 use super::admission::WriteKind;
 use super::boot_keys::{escrow_unspooled, seal_escrow_recipient, spool_escrow_capsules};
 use super::{ManagedArgs, ManagedShutdown, ManagedState};
+
+mod diverged_ask;
 
 /// How often the engine looks at its outbox companion and at the escrow
 /// recipients its carrier holds: the cadence of a look, not a deadline.
@@ -78,8 +86,10 @@ pub(super) fn spawn(
         let mut stopped = shutdown.triggered();
         let mut asking = None;
         let mut recipients = Recipients::default();
+        let mut asks: Option<JoinHandle<DivergedAsks>> = None;
         loop {
             asking = Some(look_at_companion(&state, asking).await);
+            asks = Some(look_at_diverged(&state, &vault, asks).await);
             if managed.escrow_outbox.is_some() {
                 let (state, vault, managed) =
                     (Arc::clone(&state), Arc::clone(&vault), Arc::clone(&managed));
@@ -110,6 +120,22 @@ async fn look_at_companion(
         None => {}
     }
     tokio::task::spawn_blocking(crate::managed::vm_outbox::companion_revision)
+}
+
+/// Takes the diverged copies' look in flight once it ended, and starts the
+/// next; while it is still in flight, no second one starts.
+async fn look_at_diverged(
+    state: &Arc<ManagedState>,
+    vault: &Arc<oneiron::Vault>,
+    looking: Option<JoinHandle<DivergedAsks>>,
+) -> JoinHandle<DivergedAsks> {
+    let asks = match looking {
+        Some(look) if !look.is_finished() => return look,
+        Some(look) => look.await.unwrap_or_default(),
+        None => DivergedAsks::default(),
+    };
+    let (state, vault) = (Arc::clone(state), Arc::clone(vault));
+    tokio::task::spawn_blocking(move || asks.look(&state, &vault))
 }
 
 /// Keeps the companion's answer for `Ping`, and says when it went down or

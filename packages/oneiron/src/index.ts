@@ -495,6 +495,8 @@ export class Oneiron {
           /** Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card. */
           get: (input: Facade.OfferPilotRef): Facade.OfferPilot | null => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsGet(input) as Facade.OfferPilot | null),
         },
+        /** Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far. */
+        sources: (input: Facade.ReservoirSourcesRequest): Facade.ReservoirSourcePreview => this.#call(() => this.#client.vaultCoachTrainingOffersSources(input) as Facade.ReservoirSourcePreview),
       }),
     },
     people: {
@@ -543,9 +545,21 @@ export class Oneiron {
       /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
       read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
       /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
-      plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
+      plan: Object.assign((input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan), {
+        /** The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read. */
+        card: (input: Facade.ShapePlanRequest): Facade.ShapePlanCardView => this.#call(() => this.#client.vaultShapePlanCard(input) as Facade.ShapePlanCardView),
+      }),
       /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
+      items: {
+        /** Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable. */
+        receipt: (input: Facade.ShapeItemReceiptRequest): Facade.ShapeItemReceipt | null => this.#call(() => this.#client.vaultShapeItemsReceipt(input) as Facade.ShapeItemReceipt | null),
+      },
+      /** Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof. */
+      groups: Object.assign((input: Facade.EmptyRequest = {}): Facade.ShapeInboxGroup[] => this.#call(() => this.#client.vaultShapeGroups(input) as Facade.ShapeInboxGroup[]), {
+        /** The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged. */
+        resolve: (input: Facade.ShapeGroupResolveRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeGroupsResolve(input) as Facade.ShapeApplyReceipt),
+      }),
     },
     companions: {
       access_requests: {
@@ -986,8 +1000,11 @@ export class Oneiron {
       },
       /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
       lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.vaultInboxLens(input) as Facade.InboxLensPage),
-      /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
-      groups: (input: Facade.InboxRunGroupsRequest): Facade.InboxGroupPage => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.InboxGroupPage),
+      /** Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it. */
+      groups: Object.assign((input: Facade.InboxRunGroupsRequest): Facade.UnifiedInboxGroupPage => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.UnifiedInboxGroupPage), {
+        /** The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items. */
+        resolve: (input: Facade.InboxGroupResolveRequest): Facade.InboxGroupResolution => this.#call(() => this.#client.vaultInboxGroupsResolve(input) as Facade.InboxGroupResolution),
+      }),
     },
     skills: {
       /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
@@ -1916,13 +1933,13 @@ export class Oneiron {
       answer: (input: Facade.CraftCandidateAnswer): Facade.CraftVerdictView => this.#call(() => this.#client.vaultCraftCandidatesAnswer(input) as Facade.CraftVerdictView),
     }),
     lenses: {
-      /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
+      /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),
       /** The owner selects a proposed lens revision for its pack slot. */
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
       /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
-      /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
+      /** One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
       /** Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt. */
       export_pack: (input: Facade.LensPackExportRequest): Facade.LensPackExport => this.#call(() => this.#client.vaultLensesExportPack(input) as Facade.LensPackExport),
@@ -3084,6 +3101,20 @@ export class Oneiron {
     },
     /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
     revert_run: (input: Facade.RevertRunRequest): Facade.RevertRunOutcome => this.#call(() => this.#client.vaultRevertRun(input) as Facade.RevertRunOutcome),
+    custody: {
+      members: {
+        drain: {
+          /** The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter. */
+          begin: (input: Facade.CustodyMemberRef): Facade.CustodyDrainTicketView => this.#call(() => this.#client.vaultCustodyMembersDrainBegin(input) as Facade.CustodyDrainTicketView),
+          /** The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row. */
+          commit: (input: Facade.CustodyDrainCommitRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersDrainCommit(input) as Facade.CustodySetRevision),
+          /** The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision. */
+          folder: (input: Facade.CustodyMemberRef): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersDrainFolder(input) as Facade.CustodySetRevision),
+        },
+        /** The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision. */
+        reenrol: (input: Facade.CustodyMemberReenrolRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersReenrol(input) as Facade.CustodySetRevision),
+      },
+    },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
   fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }

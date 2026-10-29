@@ -47,6 +47,10 @@ pub enum AgentVerb {
     VaultShapeRead,
     VaultShapePlan,
     VaultShapeApply,
+    VaultShapePlanCard,
+    VaultShapeItemsReceipt,
+    VaultShapeGroups,
+    VaultShapeGroupsResolve,
     SelfMessage,
     SelfGrantsAsk,
     SelfGrantsAsked,
@@ -206,6 +210,7 @@ pub enum AgentVerb {
     VaultInboxConcernsReview,
     VaultInboxLens,
     VaultInboxGroups,
+    VaultInboxGroupsResolve,
     VaultWeaveDigestRender,
     VaultWeaveLinkCorrections,
     SelfInboxLens,
@@ -447,6 +452,7 @@ pub enum AgentVerb {
     VaultCoachTrainingOffersPilotsPrepare,
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
+    VaultCoachTrainingOffersSources,
     VaultResearchBind,
     VaultResearchFork,
     VaultResearchWeave,
@@ -1182,6 +1188,10 @@ pub enum AgentVerb {
     VaultIdentityEventsGet,
     VaultIdentityProposalsResolve,
     VaultIdentityProposalsForPair,
+    VaultCustodyMembersDrainBegin,
+    VaultCustodyMembersDrainCommit,
+    VaultCustodyMembersDrainFolder,
+    VaultCustodyMembersReenrol,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -1266,6 +1276,10 @@ impl AgentVerb {
         Self::VaultShapeRead,
         Self::VaultShapePlan,
         Self::VaultShapeApply,
+        Self::VaultShapePlanCard,
+        Self::VaultShapeItemsReceipt,
+        Self::VaultShapeGroups,
+        Self::VaultShapeGroupsResolve,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
         Self::SelfGrantsAsked,
@@ -1425,6 +1439,7 @@ impl AgentVerb {
         Self::VaultInboxConcernsReview,
         Self::VaultInboxLens,
         Self::VaultInboxGroups,
+        Self::VaultInboxGroupsResolve,
         Self::VaultWeaveDigestRender,
         Self::VaultWeaveLinkCorrections,
         Self::SelfInboxLens,
@@ -1666,6 +1681,7 @@ impl AgentVerb {
         Self::VaultCoachTrainingOffersPilotsPrepare,
         Self::VaultCoachTrainingOffersPilotsComplete,
         Self::VaultCoachTrainingOffersPilotsGet,
+        Self::VaultCoachTrainingOffersSources,
         Self::VaultResearchBind,
         Self::VaultResearchFork,
         Self::VaultResearchWeave,
@@ -2401,6 +2417,10 @@ impl AgentVerb {
         Self::VaultIdentityEventsGet,
         Self::VaultIdentityProposalsResolve,
         Self::VaultIdentityProposalsForPair,
+        Self::VaultCustodyMembersDrainBegin,
+        Self::VaultCustodyMembersDrainCommit,
+        Self::VaultCustodyMembersDrainFolder,
+        Self::VaultCustodyMembersReenrol,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -2488,6 +2508,10 @@ impl AgentVerb {
             Self::VaultShapeRead => "vault.shape.read",
             Self::VaultShapePlan => "vault.shape.plan",
             Self::VaultShapeApply => "vault.shape.apply",
+            Self::VaultShapePlanCard => "vault.shape.plan.card",
+            Self::VaultShapeItemsReceipt => "vault.shape.items.receipt",
+            Self::VaultShapeGroups => "vault.shape.groups",
+            Self::VaultShapeGroupsResolve => "vault.shape.groups.resolve",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
             Self::SelfGrantsAsked => "self.grants.asked",
@@ -2647,6 +2671,7 @@ impl AgentVerb {
             Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
             Self::VaultInboxLens => "vault.inbox.lens",
             Self::VaultInboxGroups => "vault.inbox.groups",
+            Self::VaultInboxGroupsResolve => "vault.inbox.groups.resolve",
             Self::VaultWeaveDigestRender => "vault.weave.digest.render",
             Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
             Self::SelfInboxLens => "self.inbox.lens",
@@ -2898,6 +2923,7 @@ impl AgentVerb {
                 "vault.coach.training_offers.pilots.complete"
             }
             Self::VaultCoachTrainingOffersPilotsGet => "vault.coach.training_offers.pilots.get",
+            Self::VaultCoachTrainingOffersSources => "vault.coach.training_offers.sources",
             Self::VaultResearchBind => "vault.research.bind",
             Self::VaultResearchFork => "vault.research.fork",
             Self::VaultResearchWeave => "vault.research.weave",
@@ -3651,6 +3677,10 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => "vault.identity.events.get",
             Self::VaultIdentityProposalsResolve => "vault.identity.proposals.resolve",
             Self::VaultIdentityProposalsForPair => "vault.identity.proposals.for_pair",
+            Self::VaultCustodyMembersDrainBegin => "vault.custody.members.drain.begin",
+            Self::VaultCustodyMembersDrainCommit => "vault.custody.members.drain.commit",
+            Self::VaultCustodyMembersDrainFolder => "vault.custody.members.drain.folder",
+            Self::VaultCustodyMembersReenrol => "vault.custody.members.reenrol",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -3737,6 +3767,10 @@ impl AgentVerb {
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
+                | Self::VaultShapePlanCard
+                | Self::VaultShapeItemsReceipt
+                | Self::VaultShapeGroups
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfGrantsAsked
@@ -3896,6 +3930,7 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
@@ -4137,6 +4172,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
+                | Self::VaultCoachTrainingOffersSources
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -4850,6 +4886,10 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -4985,6 +5025,10 @@ impl AgentVerb {
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
+                | Self::VaultShapePlanCard
+                | Self::VaultShapeItemsReceipt
+                | Self::VaultShapeGroups
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfGrantsAsked
@@ -5144,6 +5188,7 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
@@ -5385,6 +5430,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
+                | Self::VaultCoachTrainingOffersSources
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -6098,6 +6144,10 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6160,6 +6210,7 @@ impl AgentVerb {
                 | Self::VaultCommitmentsProposals
                 | Self::SelfStandingList
                 | Self::SelfInboxList
+                | Self::VaultShapeGroups
                 | Self::Describe
                 | Self::VaultRetrievalHydePending
                 | Self::VaultRetrievalRuns
@@ -6381,6 +6432,10 @@ impl AgentVerb {
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
+                | Self::VaultShapePlanCard
+                | Self::VaultShapeItemsReceipt
+                | Self::VaultShapeGroups
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfGrantsAsked
@@ -6523,6 +6578,7 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
@@ -6762,6 +6818,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
+                | Self::VaultCoachTrainingOffersSources
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -7431,6 +7488,10 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7495,6 +7556,7 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleCreate
                 | Self::VaultShapeApply
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
@@ -7584,6 +7646,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
@@ -8158,6 +8221,10 @@ impl AgentVerb {
                 | Self::VaultIdentityPropose
                 | Self::VaultIdentityUndo
                 | Self::VaultIdentityProposalsResolve
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -8264,6 +8331,10 @@ impl AgentVerb {
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
+            Self::VaultShapePlanCard => &["spec"],
+            Self::VaultShapeItemsReceipt => &["spec"],
+            Self::VaultShapeGroups => &["spec"],
+            Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfGrantsAsked => &["spec"],
@@ -8440,6 +8511,7 @@ impl AgentVerb {
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
+            Self::VaultInboxGroupsResolve => &["spec"],
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
@@ -8681,6 +8753,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsPrepare => &["spec"],
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
+            Self::VaultCoachTrainingOffersSources => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -9416,6 +9489,10 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::VaultCustodyMembersDrainBegin => &["spec"],
+            Self::VaultCustodyMembersDrainCommit => &["spec"],
+            Self::VaultCustodyMembersDrainFolder => &["spec"],
+            Self::VaultCustodyMembersReenrol => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -9501,6 +9578,10 @@ impl AgentVerb {
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
+            Self::VaultShapePlanCard => &["spec"],
+            Self::VaultShapeItemsReceipt => &["spec"],
+            Self::VaultShapeGroups => &["spec"],
+            Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfGrantsAsked => &["spec"],
@@ -9660,6 +9741,7 @@ impl AgentVerb {
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
+            Self::VaultInboxGroupsResolve => &["spec"],
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
@@ -9901,6 +9983,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsPrepare => &["spec"],
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
+            Self::VaultCoachTrainingOffersSources => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -10636,6 +10719,10 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::VaultCustodyMembersDrainBegin => &["spec"],
+            Self::VaultCustodyMembersDrainCommit => &["spec"],
+            Self::VaultCustodyMembersDrainFolder => &["spec"],
+            Self::VaultCustodyMembersReenrol => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -10801,6 +10888,18 @@ impl AgentVerb {
             }
             Self::VaultShapeApply => {
                 "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."
+            }
+            Self::VaultShapePlanCard => {
+                "The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read."
+            }
+            Self::VaultShapeItemsReceipt => {
+                "Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable."
+            }
+            Self::VaultShapeGroups => {
+                "Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof."
+            }
+            Self::VaultShapeGroupsResolve => {
+                "The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged."
             }
             Self::SelfMessage => {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
@@ -11277,7 +11376,10 @@ impl AgentVerb {
                 "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."
             }
             Self::VaultInboxGroups => {
-                "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."
+                "Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."
+            }
+            Self::VaultInboxGroupsResolve => {
+                "The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."
             }
             Self::VaultWeaveDigestRender => {
                 "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due."
@@ -11990,6 +12092,9 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsGet => {
                 "Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."
             }
+            Self::VaultCoachTrainingOffersSources => {
+                "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."
+            }
             Self::VaultResearchBind => {
                 "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."
             }
@@ -12326,7 +12431,7 @@ impl AgentVerb {
                 "Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."
             }
             Self::VaultLensesPropose => {
-                "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."
+                "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."
             }
             Self::VaultLensesActivate => {
                 "The owner selects a proposed lens revision for its pack slot."
@@ -12335,7 +12440,7 @@ impl AgentVerb {
                 "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."
             }
             Self::VaultLensesList => {
-                "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
+                "One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree."
             }
             Self::VaultLensesExportPack => {
                 "Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."
@@ -14126,6 +14231,18 @@ impl AgentVerb {
             }
             Self::VaultIdentityProposalsForPair => {
                 "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."
+            }
+            Self::VaultCustodyMembersDrainBegin => {
+                "The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter."
+            }
+            Self::VaultCustodyMembersDrainCommit => {
+                "The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."
+            }
+            Self::VaultCustodyMembersDrainFolder => {
+                "The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."
+            }
+            Self::VaultCustodyMembersReenrol => {
+                "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

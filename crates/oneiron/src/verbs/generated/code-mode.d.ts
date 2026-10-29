@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1245 code-mode rows (1205 host rows, 40 run rows), 4371 declarations.
-// Replies: 1068 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1255 code-mode rows (1215 host rows, 40 run rows), 4400 declarations.
+// Replies: 1072 fully typed, 182 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 115; unread shapes: none.
+// Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -237,6 +237,15 @@ declare namespace Sdk {
   type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[]; conversation_learning?: boolean | null };
+  type ShapePlanCardItem = { seq: number; line: string; change: ShapeChange; class: ShapeItemClass; door?: string | null; state?: ShapeItemState | null };
+  type ShapePlanCard = { frontier: string; seed_id?: string | null; resting: string; summary: ShapePlanSummary; reach_line: string; items: ShapePlanCardItem[]; undeclared: number; run?: ShapeApplyRun | null };
+  type ShapePlanCardView = { plan: ShapePlan; card: ShapePlanCard; generated_ui: unknown };
+  type ShapeItemReceiptRequest = { reference: string };
+  type ShapeItemReceipt = { reference: string; frontier: string; seq: number; run_id: string; attempt_id?: string | null; item: ShapeApplyItem };
+  type ShapeInboxMember = { attempt_id: string; item: ShapePlanItem; state: ShapeItemState };
+  type ShapeInboxGroup = { group_key: string; run_id: string; frontier: string; headline: string; created_at: number; members: ShapeInboxMember[] };
+  type InboxBulkVerb = "accept_all" | "reject_all" | "review_each";
+  type ShapeGroupResolveRequest = { group_key: string; verb: InboxBulkVerb };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null; from_project?: string | null; to_project?: string | null };
   type UnpersistedWakeReason = "no_authority" | "storage_failure";
   type TurnProgramWakeOutcome = { outcome: "not_armed" } | { outcome: "evaluated"; newly_recorded: number } | { outcome: "unpersisted"; reason: UnpersistedWakeReason };
@@ -977,7 +986,12 @@ declare namespace Sdk {
   type InboxPointerRow = { claim_id: string; duplicate_of_claim_id: string; duplicate_of_group_key: string };
   type InboxSubCluster = { key: string; member_claim_ids: string[] };
   type InboxGroup = { group_key: string; run_id: string; headline: string; created_at: number; members?: InboxGroupMember[]; held_member_count: number; pointer_rows?: InboxPointerRow[]; sub_clusters?: InboxSubCluster[]; new_claim_count: number; update_count: number; conflict_count: number };
-  type InboxGroupPage = { groups: InboxGroup[]; next?: string | null };
+  type UnifiedInboxGroup = { kind: "dreamer"; group: InboxGroup } | { kind: "shape"; group: ShapeInboxGroup };
+  type UnifiedInboxGroupPage = { groups: UnifiedInboxGroup[]; next?: string | null };
+  type InboxGroupKind = "dreamer" | "shape";
+  type InboxGroupResolveRequest = { kind: InboxGroupKind; group_key: string; verb: InboxBulkVerb; verb_class?: string | null };
+  type InboxBundleResolution = { group_key: string; verb: InboxBulkVerb; bundle_ref: string; bundle_receipt: ReceiptRecord; item_receipts?: ReceiptRecord[]; review_items?: string[] };
+  type InboxGroupResolution = { kind: "dreamer"; resolution: InboxBundleResolution } | { kind: "shape"; receipt: ShapeApplyReceipt };
   type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
   type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
   type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
@@ -1736,6 +1750,10 @@ declare namespace Sdk {
   type OfferPilotPrepared = { pilot: OfferPilot; release: EvalRelease };
   type OfferPilotComplete = { pilot: EntityId; measurement: OfferPilotMeasurement };
   type OfferPilotRef = { pilot: EntityId };
+  type ReservoirSourcesRequest = { task_classes?: string[] | null; since?: number | null; consented_sources?: EntityId[] };
+  type ReservoirSourcePeople = "others" | "unknown";
+  type ReservoirSourceRow = { source: EntityId; people: ReservoirSourcePeople; pairs: number; consented: boolean };
+  type ReservoirSourcePreview = { carried: number; excluded: Record<string, number>; sources: ReservoirSourceRow[] };
   type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
   type ForkKind = "variation" | "debug";
   type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
@@ -2183,7 +2201,8 @@ declare namespace Sdk {
   type PolicyActionOutcome = { outcome: unknown };
   type InferenceDefaultsReplaceRequest = { defaults: unknown; idempotency_key: string };
   type LensSlot = { pack_name: string; skill_id: string };
-  type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string; trigger?: MadeByTrigger | null };
+  type LensScope = { world?: string | null; facet?: string | null };
+  type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string; trigger?: MadeByTrigger | null; scope?: LensScope | null };
   type LensApproval = "proposed";
   type LensProposalReceipt = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; approval: LensApproval; proposed_by: string; proposed_at: number };
   type LensActivateRequest = { lens_ref: string; compiled_hash: string; expected_active_ref?: string | null };
@@ -4239,6 +4258,16 @@ declare namespace Sdk {
   type IdentityProposalResolutionResult = { receipt: IdentityTopologyReceipt; applied?: IdentityTopologyReceipt | null };
   type IdentityPairRequest = { a: EntityId; b: EntityId };
   type IdentityPairProposals = { a: EntityId; b: EntityId; proposals: EntityId[]; distinct_claims: EntityId[] };
+  type CustodyMemberRef = { target_id: string };
+  type AckPosition = { vault: string; namespace: string; epoch: number; seq: number; tip: string };
+  type CustodyDrainTicketView = { target_id: string; set_revision: number; position: AckPosition; operation_id: string; token: string };
+  type ProtocolEvidenceKind = "filesystem_sweep" | "residence_sweep" | "ssh_version_sweep" | "object_version_sweep" | "no_head_in_scope" | "unversioned_object_sweep";
+  type DeletionEvidence = { kind: ProtocolEvidenceKind; superseded_removed: number; remaining_heads: number; inventory_digest: string };
+  type DrainAck = { version: number; target_id: string; set_revision: number; position: AckPosition; operation_id: string; evidence: DeletionEvidence; placement: string; origin: string; mac: string };
+  type CustodyDrainCommitRequest = { ack: DrainAck };
+  type CustodySetRevision = { revision: number };
+  type TargetScope = "head_and_log" | "log_only";
+  type CustodyMemberReenrolRequest = { target_id?: string | null; folder?: string | null; scope?: TargetScope | null };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
   type DemonstrationId = string;
@@ -5403,6 +5432,8 @@ declare const vault: Sdk.VaultHost & {
       };
       /** Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer. */
       result(input: Sdk.OfferPassRef): Promise<Sdk.OfferPassResult | null | StoredResult>;
+      /** Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far. */
+      sources(input: Sdk.ReservoirSourcesRequest): Promise<Sdk.ReservoirSourcePreview | StoredResult>;
       /** Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body. */
       trigger(input: Sdk.OfferPassRequest): Promise<Sdk.OfferPassRef | StoredResult>;
       /** Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding. */
@@ -5799,6 +5830,20 @@ declare const vault: Sdk.VaultHost & {
     /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
     review(input: Sdk.CriticReviewSubmit): Promise<Sdk.CriticReviewOutcome | StoredResult>;
   };
+  custody: {
+    members: {
+      drain: {
+        /** The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter. */
+        begin(input: Sdk.CustodyMemberRef): Promise<Sdk.CustodyDrainTicketView | StoredResult>;
+        /** The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row. */
+        commit(input: Sdk.CustodyDrainCommitRequest): Promise<Sdk.CustodySetRevision | StoredResult>;
+        /** The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision. */
+        folder(input: Sdk.CustodyMemberRef): Promise<Sdk.CustodySetRevision | StoredResult>;
+      };
+      /** The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision. */
+      reenrol(input: Sdk.CustodyMemberReenrolRequest): Promise<Sdk.CustodySetRevision | StoredResult>;
+    };
+  };
   decisions: {
     asks: {
       answer(input: Sdk.DecisionAskAnswerRequest): Promise<Sdk.DecisionAsk | StoredResult>;
@@ -6169,8 +6214,11 @@ declare const vault: Sdk.VaultHost & {
       /** Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows. */
       review(input: Sdk.EmptyRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     };
-    /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
-    groups(input: Sdk.InboxRunGroupsRequest): Promise<Sdk.InboxGroupPage | StoredResult>;
+    /** Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it. */
+    groups: ((input: Sdk.InboxRunGroupsRequest) => Promise<Sdk.UnifiedInboxGroupPage | StoredResult>) & {
+      /** The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items. */
+      resolve(input: Sdk.InboxGroupResolveRequest): Promise<Sdk.InboxGroupResolution | StoredResult>;
+    };
     /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
     lens(input: Sdk.InboxLensRequest): Promise<Sdk.InboxLensPage | StoredResult>;
   };
@@ -6217,9 +6265,9 @@ declare const vault: Sdk.VaultHost & {
     default(input: Sdk.LensDefaultRequest): Promise<Sdk.ScopedReadResult<Sdk.LensFrameCard> | StoredResult>;
     /** Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt. */
     export_pack(input: Sdk.LensPackExportRequest): Promise<Sdk.LensPackExport | StoredResult>;
-    /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
+    /** One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree. */
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
-    /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
+    /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.LensProposalReceipt | StoredResult>;
     /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
     resolve(input: Sdk.LensSelectionResolveRequest): Promise<Sdk.LensSelectionResolved | StoredResult>;
@@ -7049,8 +7097,20 @@ declare const vault: Sdk.VaultHost & {
   shape: {
     /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
     apply(input: Sdk.ShapeApplyRequest): Promise<Sdk.ShapeApplyReceipt | StoredResult>;
+    /** Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof. */
+    groups: ((input: Sdk.EmptyRequest) => Promise<Sdk.ShapeInboxGroup[] | StoredResult>) & {
+      /** The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged. */
+      resolve(input: Sdk.ShapeGroupResolveRequest): Promise<Sdk.ShapeApplyReceipt | StoredResult>;
+    };
+    items: {
+      /** Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable. */
+      receipt(input: Sdk.ShapeItemReceiptRequest): Promise<Sdk.ShapeItemReceipt | null | StoredResult>;
+    };
     /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
-    plan(input: Sdk.ShapePlanRequest): Promise<Sdk.ShapePlan | StoredResult>;
+    plan: ((input: Sdk.ShapePlanRequest) => Promise<Sdk.ShapePlan | StoredResult>) & {
+      /** The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read. */
+      card(input: Sdk.ShapePlanRequest): Promise<Sdk.ShapePlanCardView | StoredResult>;
+    };
     /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
     read(input: Sdk.EmptyRequest): Promise<Sdk.ShapeRead | StoredResult>;
   };

@@ -4,8 +4,8 @@
 //! so their schema fns live here, beside the route files' own.
 
 use super::{
-    AcceptRequest, EnabledRequest, KeyView, QualifyRequest, RefreshRequest, Refreshed,
-    RegisterRequest, Registered, SlateView,
+    AcceptRequest, AttestRequest, EnabledRequest, KeyView, QualifyRequest, RefreshRequest,
+    Refreshed, RegisterRequest, Registered, SlateView,
 };
 
 /// The OpenAPI schema of `POST /v1/owner/connectors/register`'s body (FIX 11611):
@@ -36,6 +36,12 @@ pub(crate) fn admitted_slate_schema() -> serde_json::Value {
 /// [`QualifyRequest`].
 pub(crate) fn qualify_request_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<QualifyRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/attest`'s body
+/// (CONNECTOR-QUALIFY = A): [`AttestRequest`]. Its answer is [`KeyView`].
+pub(crate) fn attest_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AttestRequest>()
 }
 
 /// The OpenAPI schema of `POST /v1/owner/connectors/qualify`'s answer (FIX 11611),
