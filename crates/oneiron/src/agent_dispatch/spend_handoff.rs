@@ -9,6 +9,16 @@
 //! scope whose parents lead to one. Any other launch's tree stays. Scopes
 //! are stored as JSON (`LegacyJson`); they travel as this MessagePack DTO
 //! and land through the table's typed write.
+//!
+//! FIX 8875 stage 2: a scope travels as its content-free skeleton (its id
+//! and parent, unit, cap, spend, holds, state and times, and when a payer
+//! accepted it), always carried and never scrubbed, with its agent in that
+//! agent's compartment and its payer's party and grantor in the party's,
+//! each sealed under that actor's erasable key. A compartment that does not
+//! open here leaves the field as the scope here holds it, or empty where
+//! none is here: an erased payer lands as no payer accepted. The tree and
+//! its totals move whole; one actor's compartment never stops a scope or
+//! the tree.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,26 +27,193 @@ use serde::{Deserialize, Serialize};
 
 use super::AgentDispatcher;
 use super::spend_lease::observe_spend_walk;
-use super::spend_record::{SCOPE, SpendScope, SpendScopeId, SpendState};
+use super::spend_record::{SCOPE, SpendPayer, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
 use crate::attempt_queue::AttemptQueue;
+use crate::entity_id::EntityId;
+use crate::llm::run_admission::LeaseUnit;
 use crate::scan_check::EngineScan;
 use crate::side_table::{self, SideTableDecl};
 use crate::sync::home_handoff::{
-    HomeFence, HomeMove, HomeTable, TableAdopt, froze_home_state_in_txn,
+    ActorContent, HomeFence, HomeMove, HomeTable, Partitioned, TableAdopt, froze_home_state_in_txn,
 };
 use crate::{Result, Vault};
 
-/// The free-time spend trees a home move carries.
+/// The free-time spend trees a home move carries: each scope's skeleton,
+/// its actors apart.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct FreeTimeSpendRows {
-    scopes: Vec<SpendScope>,
+    scopes: Vec<ScopeSkeleton>,
+}
+
+/// One scope without its agent or its payer's actors.
+#[derive(Serialize, Deserialize)]
+struct ScopeSkeleton {
+    scope: SpendScopeId,
+    parent: Option<SpendScopeId>,
+    unit: LeaseUnit,
+    cap_units: u64,
+    hard: bool,
+    spent_units: u64,
+    held_units: u64,
+    state: SpendState,
+    shown_at_ms: Option<u64>,
+    opened_at: u64,
+    closed_at: Option<u64>,
+    /// Whether an agent's settlement calibrates it.
+    calibrates: bool,
+    /// When its payer accepted its cap, if one did.
+    payer_at_ms: Option<u64>,
+}
+
+/// One actor's compartments of the carried scopes, by each scope's place
+/// among the skeletons.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct SpendCompartment {
+    actor: EntityId,
+    pieces: Vec<SpendPiece>,
+}
+
+#[derive(Serialize, Deserialize)]
+enum SpendPiece {
+    /// The actor is the scope's agent.
+    Agent { scope: u32 },
+    /// The actor is the scope's payer, its yes taken by `granted_by`.
+    Payer { scope: u32, granted_by: EntityId },
+}
+
+impl ActorContent for SpendCompartment {
+    fn actor(&self) -> EntityId {
+        self.actor
+    }
+}
+
+/// `scopes` split into skeletons and each actor's compartments.
+fn partition(scopes: Vec<SpendScope>) -> Result<Partitioned<FreeTimeSpendRows, SpendCompartment>> {
+    let mut compartments: BTreeMap<EntityId, Vec<SpendPiece>> = BTreeMap::new();
+    let mut skeletons = Vec::with_capacity(scopes.len());
+    for (index, scope) in scopes.into_iter().enumerate() {
+        let place = u32::try_from(index)
+            .map_err(|_| invalid("a home move carries more spend scopes than a place holds"))?;
+        if let Some(agent) = scope.agent {
+            compartments
+                .entry(agent)
+                .or_default()
+                .push(SpendPiece::Agent { scope: place });
+        }
+        if let Some(payer) = &scope.payer {
+            compartments
+                .entry(payer.party)
+                .or_default()
+                .push(SpendPiece::Payer {
+                    scope: place,
+                    granted_by: payer.granted_by,
+                });
+        }
+        skeletons.push(ScopeSkeleton {
+            calibrates: scope.agent.is_some(),
+            payer_at_ms: scope.payer.as_ref().map(|payer| payer.at_ms),
+            scope: scope.scope,
+            parent: scope.parent,
+            unit: scope.unit,
+            cap_units: scope.cap_units,
+            hard: scope.hard,
+            spent_units: scope.spent_units,
+            held_units: scope.held_units,
+            state: scope.state,
+            shown_at_ms: scope.shown_at_ms,
+            opened_at: scope.opened_at,
+            closed_at: scope.closed_at,
+        });
+    }
+    Ok(Partitioned {
+        facts: FreeTimeSpendRows { scopes: skeletons },
+        actors: compartments
+            .into_iter()
+            .map(|(actor, pieces)| SpendCompartment { actor, pieces })
+            .collect(),
+    })
+}
+
+/// Each carried scope rebuilt from its skeleton and the compartments that
+/// opened here. An agent or a payer whose compartment did not open takes the
+/// one the scope here holds, if any and not erased here, else none: a scope
+/// or a tree never stops for it.
+fn rejoin_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    rows: Partitioned<FreeTimeSpendRows, SpendCompartment>,
+) -> Result<Vec<SpendScope>> {
+    let mut agents = BTreeMap::new();
+    let mut payers = BTreeMap::new();
+    for compartment in rows.actors {
+        for piece in compartment.pieces {
+            match piece {
+                SpendPiece::Agent { scope } => {
+                    agents.insert(scope, compartment.actor);
+                }
+                SpendPiece::Payer { scope, granted_by } => {
+                    payers.insert(scope, (compartment.actor, granted_by));
+                }
+            }
+        }
+    }
+    let mut scopes = Vec::with_capacity(rows.facts.scopes.len());
+    for (place, skeleton) in (0u32..).zip(rows.facts.scopes) {
+        let opened_agent = agents.get(&place).copied();
+        let opened_payer = payers.get(&place).copied();
+        let gone = (skeleton.calibrates && opened_agent.is_none())
+            || (skeleton.payer_at_ms.is_some() && opened_payer.is_none());
+        let here = if gone {
+            SCOPE.get(&vault.store, txn, &skeleton.scope.0)?
+        } else {
+            None
+        };
+        let erased = |id: &EntityId| crate::ports::removed_in_txn(&vault.store, txn, id);
+        let agent = match opened_agent {
+            Some(agent) => Some(agent),
+            None if skeleton.calibrates => match here.as_ref().and_then(|here| here.agent) {
+                Some(agent) if !erased(&agent)? => Some(agent),
+                _ => None,
+            },
+            None => None,
+        };
+        let payer = match (skeleton.payer_at_ms, opened_payer) {
+            (Some(at_ms), Some((party, granted_by))) => Some(SpendPayer {
+                party,
+                granted_by,
+                at_ms,
+            }),
+            (Some(_), None) => match here.and_then(|here| here.payer) {
+                Some(payer) if !erased(&payer.party)? && !erased(&payer.granted_by)? => Some(payer),
+                _ => None,
+            },
+            (None, _) => None,
+        };
+        scopes.push(SpendScope {
+            scope: skeleton.scope,
+            parent: skeleton.parent,
+            unit: skeleton.unit,
+            cap_units: skeleton.cap_units,
+            hard: skeleton.hard,
+            spent_units: skeleton.spent_units,
+            held_units: skeleton.held_units,
+            state: skeleton.state,
+            shown_at_ms: skeleton.shown_at_ms,
+            opened_at: skeleton.opened_at,
+            closed_at: skeleton.closed_at,
+            agent,
+            payer,
+        });
+    }
+    Ok(scopes)
 }
 
 impl HomeTable for FreeTimeSpendRows {
     type Rows = Self;
+    type Actor = SpendCompartment;
     const TABLE: &'static SideTableDecl = &side_table::AGENT_DISPATCH_SPEND_SCOPE;
-    const SCHEMA_VERSION: u16 = 1;
+    const SCHEMA_VERSION: u16 = 2;
 
     /// No try still spends under an open scope of a free-time tree: each has
     /// ended, or is a free-time item that never started, which the move
@@ -67,10 +244,12 @@ impl HomeTable for FreeTimeSpendRows {
         Ok(true)
     }
 
-    fn export(vault: &Vault, txn: &RoTxn<'_>, _fence: &HomeFence) -> Result<Self> {
-        Ok(Self {
-            scopes: selected_in_txn(vault, txn)?.into_values().collect(),
-        })
+    fn export(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        _fence: &HomeFence,
+    ) -> Result<Partitioned<Self, SpendCompartment>> {
+        partition(selected_in_txn(vault, txn)?.into_values().collect())
     }
 
     /// Each carried scope lands where this node holds none under its id, or
@@ -82,10 +261,11 @@ impl HomeTable for FreeTimeSpendRows {
         vault: &Vault,
         txn: &mut RwTxn<'_>,
         _fence: &HomeFence,
-        rows: Self,
+        rows: Partitioned<Self, SpendCompartment>,
     ) -> Result<TableAdopt> {
+        let scopes = rejoin_in_txn(vault, txn, rows)?;
         let mut longest = 0;
-        let carried = carried_trees(rows.scopes, &mut longest);
+        let carried = carried_trees(scopes, &mut longest);
         observe_spend_walk(
             &vault.store,
             txn,

@@ -396,12 +396,14 @@ impl Vault {
             && old.content_hash != receipt.content_hash
         {
             self.end_pack_setup_sessions_in_txn(txn, None, &old.pack_name, &old.content_hash)?;
-            // FIX 5941, off by default: a catalog connector the superseded
-            // source admitted stops routing until it qualifies on this one.
-            self.halt_updated_pack_connector_routes_in_txn(
+            // A catalog connector the superseded source admitted moves to
+            // this one when its declaration did not move (FIX 6041); FIX
+            // 5941, off by default, halts the rest.
+            self.follow_updated_pack_connector_routes_in_txn(
                 txn,
                 &old.source_id,
                 &old.content_hash,
+                &receipt,
                 at,
             )?;
             let from_version = self

@@ -36,7 +36,7 @@ use tokio::sync::broadcast;
 use tokio::task::JoinError;
 use tokio::time::Instant;
 
-use super::{FIRST_BACKOFF, MAX_BACKOFF, MIN_IDLE, until_ready};
+use super::{FIRST_BACKOFF, MAX_BACKOFF, MIN_IDLE, TaggerConfigured, until_ready};
 use crate::oneironer::{DispatchClaim, ProviderTagger};
 use crate::server::core::SyncServer;
 use crate::server::housekeeping::{HousekeepingAdmission, PassControl};
@@ -50,7 +50,7 @@ type Settled = (ExtractionWork, Result<Box<Settlement>, JoinError>);
 /// A settlement on its blocking unit.
 type SettleFuture = Pin<Box<dyn std::future::Future<Output = Settled> + Send>>;
 /// The probe of the tagger between rounds.
-type ProbeFuture = Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+type ProbeFuture = Pin<Box<dyn std::future::Future<Output = TaggerConfigured> + Send>>;
 /// The host's stop: once it resolves, no new claim and no upkeep.
 pub(super) type StopFuture = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
@@ -109,6 +109,15 @@ pub(super) struct Coordinator {
     /// When the loop reads the store again with no wake: the idle or retry
     /// wait.
     idle_until: Option<Instant>,
+    /// When the pacing slice ends while a hold parks the loop: its expiry
+    /// probes the tagger, without ending the round.
+    probe_slice: Option<Instant>,
+    /// The pacing slice's own delay: the next slice lands this long after
+    /// the last arming. It doubles while holds park the loop, capped, and
+    /// returns to the first backoff once no hold is left or the tagger
+    /// answers again, so the first slice of an outage lands before any
+    /// hold longer than the first backoff expires.
+    probe_slice_delay: Duration,
     /// The earliest retry a settled marker was given that no read has
     /// reached since.
     next_retry: Option<u64>,
@@ -116,6 +125,9 @@ pub(super) struct Coordinator {
     dirty: bool,
     upkeep_due: bool,
     probe_due: bool,
+    /// The probe went unanswered since the tagger last answered: its next
+    /// ready answer wakes what waited out the outage.
+    probe_outage: bool,
     /// Claims since the round began.
     claimed: usize,
     /// The tagger is not the configured one, a unit failed or the stop
@@ -166,11 +178,14 @@ impl Coordinator {
             store_backoff: backoff,
             paused_until: None,
             idle_until: None,
+            probe_slice: None,
+            probe_slice_delay: FIRST_BACKOFF,
             next_retry: None,
             dirty: true,
             // The first round starts with the upkeep a pass starts with.
             upkeep_due: true,
             probe_due: false,
+            probe_outage: false,
             claimed: 0,
             stopping: false,
             failed: false,
@@ -203,7 +218,7 @@ impl Coordinator {
                     self.on_settled(work, done);
                 }
                 woke = self.wake.recv(), if self.wake_open => self.on_wake(woke),
-                configured = wait_on(self.probe.as_mut()) => self.on_probe(configured),
+                configured = wait_on(self.probe.as_mut()) => self.on_probe(configured).await,
                 () = sleep_until(deadline) => self.on_timer(),
             }
         }
@@ -482,12 +497,59 @@ impl Coordinator {
 
     /// The probe answered: a tagger that is not the configured one stops new
     /// claims, and what is owned settles under the facts it was prepared
-    /// with; every other marker waits in the store.
-    fn on_probe(&mut self, configured: bool) {
+    /// with; every other marker waits in the store. An unanswered probe
+    /// marks the outage, and the next ready answer after one wakes what
+    /// waited it out: the holds clear and the engine's waiting retries run
+    /// now. A ready answer with no outage behind it does nothing.
+    async fn on_probe(&mut self, configured: TaggerConfigured) {
         self.probe = None;
-        if !configured {
-            self.stopping = true;
-            self.want = None;
+        match configured {
+            TaggerConfigured::Refused => {
+                self.stopping = true;
+                self.want = None;
+            }
+            TaggerConfigured::Unreachable => {
+                self.probe_outage = true;
+            }
+            TaggerConfigured::Ready => {
+                if !self.probe_outage {
+                    return;
+                }
+                self.probe_outage = false;
+                for backoff in &mut self.backoff {
+                    backoff.until = None;
+                    backoff.delay = FIRST_BACKOFF;
+                }
+                self.store_backoff.until = None;
+                self.store_backoff.delay = FIRST_BACKOFF;
+                self.probe_slice = None;
+                self.probe_slice_delay = FIRST_BACKOFF;
+                self.dirty = true;
+                let reconciler = Arc::clone(&self.reconciler);
+                let now = reconciler.now();
+                let done =
+                    tokio::task::spawn_blocking(move || reconciler.wake_tagging_retries(now)).await;
+                match done {
+                    Ok(Ok(0)) => {}
+                    Ok(Ok(woke)) => {
+                        tracing::info!(
+                            woke,
+                            "the tagger recovered; waiting tagging retries run now"
+                        )
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(kind = ?error.kind(), "tagging retries did not wake on the tagger's recovery")
+                    }
+                    // Best-effort: the wake never fails the loop, and the
+                    // commit broadcast re-drives the claims it moved.
+                    Err(error) => {
+                        tracing::warn!(
+                            panicked = error.is_panic(),
+                            "tagging retry wake task ended; retries wait out their backoff"
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -524,10 +586,21 @@ impl Coordinator {
         if self.failed { self.stop } else { None }
     }
 
-    /// A hold or the idle wait ran out. The idle wait's end starts a round,
-    /// as an empty pass's wait did: a probe, the upkeep, a read.
+    /// A hold, the pacing slice or the idle wait ran out. The idle wait's
+    /// end starts a round, as an empty pass's wait did: a probe, the upkeep,
+    /// a read. The slice's end only probes, while a hold still parks the
+    /// loop.
     fn on_timer(&mut self) {
         let now = Instant::now();
+        if passed(&mut self.probe_slice, now) {
+            if self.holds_pending() {
+                self.probe_due = true;
+                self.probe_slice_delay = (self.probe_slice_delay * 2).min(MAX_BACKOFF);
+                self.probe_slice = Some(now + self.probe_slice_delay);
+            } else {
+                self.probe_slice_delay = FIRST_BACKOFF;
+            }
+        }
         if passed(&mut self.idle_until, now) {
             self.end_round();
         }
@@ -618,6 +691,9 @@ impl Coordinator {
             let bulk = &mut self.backoff[lane(ExtractionWork::Bulk)];
             bulk.until = Some(bulk.until.map_or(until, |held| held.max(until)));
         }
+        if self.probe_slice.is_none() {
+            self.probe_slice = Some(now + self.probe_slice_delay);
+        }
         true
     }
 
@@ -633,6 +709,9 @@ impl Coordinator {
         }
         store.until = Some(now + store.delay);
         store.delay = (store.delay * 2).min(MAX_BACKOFF);
+        if self.probe_slice.is_none() {
+            self.probe_slice = Some(now + self.probe_slice_delay);
+        }
         true
     }
 
@@ -665,8 +744,14 @@ impl Coordinator {
             .is_some_and(|until| Instant::now() < until)
     }
 
-    /// When the loop wakes with no event: the end of a hold or of the idle
-    /// wait.
+    /// Whether a failure hold still parks new claims: the pacing slice
+    /// only probes while one does.
+    fn holds_pending(&self) -> bool {
+        self.held(ExtractionWork::Live) || self.held(ExtractionWork::Bulk)
+    }
+
+    /// When the loop wakes with no event: the end of a hold, of the pacing
+    /// slice or of the idle wait.
     fn deadline(&self) -> Option<Instant> {
         [
             self.paused_until,
@@ -674,6 +759,7 @@ impl Coordinator {
             self.backoff[1].until,
             self.store_backoff.until,
             self.idle_until,
+            self.probe_slice,
         ]
         .into_iter()
         .flatten()

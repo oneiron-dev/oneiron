@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1202 facade rows, 4336 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1154.
+// UniFFI census: 1204 facade rows, 4342 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1156.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -4080,6 +4080,79 @@ pub struct GrantAskReceipt {
     pub status: String,
 }
 
+/// `oneiron::memory::people_verbs::GrantAskedRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GrantAskedRequest {
+    #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::verbs::grants::GrantRequestedScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum GrantRequestedScope {
+    #[serde(rename = "messages")]
+    Messages {
+        #[serde(rename = "space_ref")]
+        space_ref: String,
+    },
+    #[serde(rename = "summaries")]
+    Summaries {
+        #[serde(rename = "space_ref")]
+        space_ref: String,
+    },
+    #[serde(rename = "relationship_claims")]
+    RelationshipClaims {
+        #[serde(rename = "space_ref")]
+        space_ref: String,
+    },
+    #[serde(rename = "companion_profile")]
+    CompanionProfile {
+        #[serde(rename = "person_ref")]
+        person_ref: String,
+        #[serde(rename = "facet_ref", default, skip_serializing_if = "Option::is_none")]
+        facet_ref: Option<String>,
+    },
+}
+
+/// `oneiron::memory::people_verbs::GrantAskedRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GrantAskedRow {
+    #[serde(rename = "request")]
+    pub request: String,
+    #[serde(rename = "asker")]
+    pub asker: String,
+    #[serde(rename = "capability")]
+    pub capability: String,
+    #[serde(rename = "scope")]
+    pub scope: GrantRequestedScope,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+}
+
+/// `oneiron::memory::people_verbs::GrantAskedPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GrantAskedPage {
+    #[serde(rename = "requests")]
+    pub requests: Vec<GrantAskedRow>,
+    #[serde(
+        rename = "next_after",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_after: Option<String>,
+}
+
 /// `oneiron::verbs::persona::CompanionAccessRequestAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CompanionAccessRequestAnswer {
@@ -4170,35 +4243,6 @@ pub struct GrantAnswerRequest {
     pub request: String,
     #[serde(rename = "answer")]
     pub answer: GrantAnswer,
-}
-
-/// `oneiron::verbs::grants::GrantRequestedScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-#[serde(deny_unknown_fields)]
-pub enum GrantRequestedScope {
-    #[serde(rename = "messages")]
-    Messages {
-        #[serde(rename = "space_ref")]
-        space_ref: String,
-    },
-    #[serde(rename = "summaries")]
-    Summaries {
-        #[serde(rename = "space_ref")]
-        space_ref: String,
-    },
-    #[serde(rename = "relationship_claims")]
-    RelationshipClaims {
-        #[serde(rename = "space_ref")]
-        space_ref: String,
-    },
-    #[serde(rename = "companion_profile")]
-    CompanionProfile {
-        #[serde(rename = "person_ref")]
-        person_ref: String,
-        #[serde(rename = "facet_ref", default, skip_serializing_if = "Option::is_none")]
-        facet_ref: Option<String>,
-    },
 }
 
 /// `oneiron::verbs::grants::GrantAnswered`.
@@ -13030,6 +13074,29 @@ pub struct TurnProgramRegistration {
 pub struct DisarmTurnProgram {
     #[serde(rename = "registration")]
     pub registration: String,
+}
+
+/// `oneiron::dreamer_runner::program::rebind::TurnProgramRebindRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TurnProgramRebindRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+}
+
+/// `oneiron::dreamer_runner::program::rebind::TurnProgramRebindReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TurnProgramRebindReceipt {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "admission")]
+    pub admission: String,
+    #[serde(rename = "predecessor_slip")]
+    pub predecessor_slip: String,
+    #[serde(rename = "successor_slip")]
+    pub successor_slip: String,
+    #[serde(rename = "owner_work")]
+    pub owner_work: bool,
 }
 
 /// `oneiron::campaign::surface::saved_query::SavedQueryScopeSpec`.
@@ -53541,6 +53608,30 @@ pub enum QuestionAskerClass {
     System,
 }
 
+/// `oneiron::claim::scoped_read::frozen::FrozenReadLane`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenReadLane {
+    #[serde(
+        rename = "credential",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential: Option<Vec<u8>>,
+    #[serde(rename = "authority", default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<Scope>,
+    #[serde(rename = "records", default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<String>>,
+    #[serde(rename = "worlds", default, skip_serializing_if = "Option::is_none")]
+    pub worlds: Option<ScopeAxisScopeId>,
+    #[serde(
+        rename = "room_facets",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub room_facets: Option<String>,
+}
+
 /// `oneiron::llm::decision::questions::records::QuestionRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -53559,6 +53650,8 @@ pub struct QuestionRecord {
         skip_serializing_if = "Option::is_none"
     )]
     pub asker_class: Option<QuestionAskerClass>,
+    #[serde(rename = "read_lane")]
+    pub read_lane: FrozenReadLane,
 }
 
 /// `oneiron::receipt::questions::QuestionEditRequest`.
