@@ -406,7 +406,7 @@ impl PipelineBuilder<'_> {
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
                 let ppr_results = ppr.scores;
                 let deferred_cache_write = ppr.deferred_cache_write;
-                acc.admit_channel(
+                let ppr_channel_index = acc.admit_channel(
                     RetrievalSignal::Ppr,
                     ppr_results,
                     &self.read,
@@ -525,6 +525,7 @@ impl PipelineBuilder<'_> {
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
                     &acc.trace_ranked_lists,
+                    phonetic_channel_index.as_slice(),
                     trace_candidate_limit,
                 ));
             }
@@ -548,6 +549,7 @@ impl PipelineBuilder<'_> {
                     vector: vector_channel_index,
                     text: text_channel_index,
                     phonetic: phonetic_channel_index,
+                    ppr: ppr_channel_index,
                 },
                 &self.read,
                 rtxn,
@@ -608,6 +610,7 @@ impl PipelineBuilder<'_> {
                             vector: vector_channel_index,
                             text: text_channel_index,
                             phonetic: phonetic_channel_index,
+                            ppr: ppr_channel_index,
                         },
                         temporal_now,
                         codebase_scope_active,

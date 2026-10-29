@@ -695,6 +695,7 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
         oneiron::RetrievalSignal::Hyde => "hyde",
         oneiron::RetrievalSignal::HydeRetry => "hyde_retry",
         oneiron::RetrievalSignal::MediaVector => "media_vector",
+        oneiron::RetrievalSignal::Relevance => "relevance",
     }
 }
 

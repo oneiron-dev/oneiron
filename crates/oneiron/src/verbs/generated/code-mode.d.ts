@@ -646,7 +646,7 @@ declare namespace Sdk {
   type RetrievalPolicyDecision = { state: RetrievalState; action: RetrievalPolicyAction; tier: RetrievalPolicyTier };
   type RetrievalPolicyTrace = { identity: RetrievalPolicyIdentity; envelope: RetrievalPolicyEnvelope; bandit_enabled: boolean; decisions: RetrievalPolicyDecision[] };
   type RetrievalReplayInputs = { query_ref?: string | null; config: unknown; corpus_snapshot_ref?: string | null };
-  type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector";
+  type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector" | "relevance";
   type RetrievalScoreComponent = { signal: RetrievalSignal; rank: number; score: number };
   type RetrievalScoreBreakdown = { result_id: number[]; final_rank: number; final_score: number; components: RetrievalScoreComponent[]; access_factor?: number | null };
   type RetrievalTraceForkHash = number[];
@@ -667,10 +667,10 @@ declare namespace Sdk {
   type RetrievalDiagnosticExport = { contract_version: string; runs: RetrievalRunEvidence[] };
   type RetrievalReplayRun = { source_run_id: RetrievalRunId; turn?: RetrievalTurn | null; state: RetrievalState; result_ids: number[][]; pack: RetrievalScoreBreakdown[]; trace?: RetrievalTrace | null };
   type RetrievalDiagnosticReplay = { contract_version: string; runs: RetrievalReplayRun[] };
-  type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number };
+  type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number; relevance: number };
   type RetrievalBlendWeightDataWindow = { run_count: number; outcome_count: number; candidate_count: number; started_at_min?: number | null; started_at_max?: number | null; outcome_updated_at_min?: number | null; outcome_updated_at_max?: number | null };
   type RetrievalBlendWeightTableEntry = { version: number; weights: RetrievalBlendWeights; tuned_at: number; provenance: Record<string, string>; data_window: RetrievalBlendWeightDataWindow };
-  type RetrievalBlendSignal = "recency" | "salience" | "confidence" | "gravity";
+  type RetrievalBlendSignal = "recency" | "salience" | "confidence" | "gravity" | "relevance";
   type RetrievalWeightOrigin = "bootstrap" | "learned" | "owner_pin";
   type RetrievalWeightRow = { signal: RetrievalBlendSignal; weight: number; origin: RetrievalWeightOrigin; pinned: boolean };
   type RetrievalPolicyPin = { signal: RetrievalBlendSignal; value: number };

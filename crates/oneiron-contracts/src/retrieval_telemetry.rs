@@ -28,6 +28,8 @@ pub enum RetrievalSignal {
     /// One declared media embedding space's channel (OF-370): its own
     /// ranked list, never compared raw with another space's scores.
     MediaVector,
+    /// The direct per-channel z-score sum that feeds the learned blend.
+    Relevance,
 }
 
 impl RetrievalSignal {
@@ -38,6 +40,7 @@ impl RetrievalSignal {
             Self::Salience => Some(RetrievalBlendSignal::Salience),
             Self::Confidence => Some(RetrievalBlendSignal::Confidence),
             Self::Gravity => Some(RetrievalBlendSignal::Gravity),
+            Self::Relevance => Some(RetrievalBlendSignal::Relevance),
             Self::Vector
             | Self::Text
             | Self::Phonetic
@@ -58,6 +61,7 @@ pub enum RetrievalBlendSignal {
     Salience,
     Confidence,
     Gravity,
+    Relevance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -66,6 +70,7 @@ pub struct RetrievalBlendWeights {
     pub salience: f32,
     pub confidence: f32,
     pub gravity: f32,
+    pub relevance: f32,
 }
 
 impl RetrievalBlendWeights {
@@ -75,17 +80,25 @@ impl RetrievalBlendWeights {
             recency: 0.35,
             salience: 0.30,
             confidence: 0.20,
-            gravity: 0.15,
+            gravity: 0.075,
+            relevance: 0.50,
         }
     }
 
     #[must_use]
-    pub const fn new(recency: f32, salience: f32, confidence: f32, gravity: f32) -> Self {
+    pub const fn new(
+        recency: f32,
+        salience: f32,
+        confidence: f32,
+        gravity: f32,
+        relevance: f32,
+    ) -> Self {
         Self {
             recency,
             salience,
             confidence,
             gravity,
+            relevance,
         }
     }
 
@@ -96,6 +109,7 @@ impl RetrievalBlendWeights {
             RetrievalBlendSignal::Salience => self.salience,
             RetrievalBlendSignal::Confidence => self.confidence,
             RetrievalBlendSignal::Gravity => self.gravity,
+            RetrievalBlendSignal::Relevance => self.relevance,
         }
     }
 
@@ -110,11 +124,12 @@ impl RetrievalBlendWeights {
             salience: self.salience / sum,
             confidence: self.confidence / sum,
             gravity: self.gravity / sum,
+            relevance: self.relevance / sum,
         })
     }
 
     fn sum(self) -> f32 {
-        self.recency + self.salience + self.confidence + self.gravity
+        self.recency + self.salience + self.confidence + self.gravity + self.relevance
     }
 }
 
@@ -136,6 +151,7 @@ pub fn validate_retrieval_blend_weights(
         ("salience", weights.salience),
         ("confidence", weights.confidence),
         ("gravity", weights.gravity),
+        ("relevance", weights.relevance),
     ];
     for (name, value) in values {
         if !value.is_finite() || value < 0.0 {

@@ -10207,6 +10207,8 @@ pub enum RetrievalSignal {
     HydeRetry,
     #[serde(rename = "media_vector")]
     MediaVector,
+    #[serde(rename = "relevance")]
+    Relevance,
 }
 
 /// `oneiron_contracts::retrieval_telemetry::RetrievalScoreComponent`.
@@ -10549,6 +10551,8 @@ pub struct RetrievalBlendWeights {
     pub confidence: f64,
     #[serde(rename = "gravity")]
     pub gravity: f64,
+    #[serde(rename = "relevance")]
+    pub relevance: f64,
 }
 
 /// `oneiron::store::retrieval_telemetry::types::RetrievalBlendWeightDataWindow`.
@@ -10612,6 +10616,8 @@ pub enum RetrievalBlendSignal {
     Confidence,
     #[serde(rename = "gravity")]
     Gravity,
+    #[serde(rename = "relevance")]
+    Relevance,
 }
 
 /// `oneiron::store::retrieval_telemetry::types::RetrievalWeightOrigin`.
