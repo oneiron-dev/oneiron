@@ -118,10 +118,12 @@ pub(super) struct Coordinator {
     probe_due: bool,
     /// Claims since the round began.
     claimed: usize,
-    /// The tagger is not the configured one, a unit ended for good or the
-    /// stop came: no new claim, and the loop ends once what it owns has
-    /// settled.
+    /// The tagger is not the configured one, a unit failed or the stop
+    /// came: no new claim, and the loop ends once what it owns has settled.
     stopping: bool,
+    /// A claim, settle, upkeep or read unit ended: the supervisor restarts
+    /// the loop once what it owns has settled, unless the stop came too.
+    failed: bool,
 }
 
 impl Coordinator {
@@ -171,20 +173,22 @@ impl Coordinator {
             probe_due: false,
             claimed: 0,
             stopping: false,
+            failed: false,
         })
     }
 
-    /// Runs until the tagger is refused, a unit ends for good or the stop
-    /// comes, and what it owns has settled.
-    pub(super) async fn run(mut self) {
+    /// Runs until the tagger is refused, a unit fails or the stop comes, and
+    /// what it owns has settled. The stop to restart on when a unit failed
+    /// and shutdown was not asked for; `None` on a clean stop.
+    pub(super) async fn run(mut self) -> Option<StopFuture> {
         loop {
             self.read_stop();
             if self.drained() {
-                return;
+                return self.restart();
             }
             self.refill().await;
             if self.drained() {
-                return;
+                return self.restart();
             }
             let deadline = self.deadline();
             tokio::select! {
@@ -263,9 +267,10 @@ impl Coordinator {
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging read task ended; worker stopping"
+                    "tagging read task ended; coordinator restarting"
                 );
                 self.stopping = true;
+                self.failed = true;
                 return;
             }
         };
@@ -334,10 +339,11 @@ impl Coordinator {
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging claim task ended; worker stopping"
+                    "tagging claim task ended; coordinator restarting"
                 );
                 self.resident[lane(work)] -= 1;
                 self.stopping = true;
+                self.failed = true;
                 return;
             }
         };
@@ -425,10 +431,11 @@ impl Coordinator {
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging settlement task ended; worker stopping"
+                    "tagging settlement task ended; coordinator restarting"
                 );
                 self.resident[lane(work)] -= 1;
                 self.stopping = true;
+                self.failed = true;
                 return;
             }
         };
@@ -510,6 +517,13 @@ impl Coordinator {
         self.stopping && self.calls.is_empty() && self.settlements.is_empty()
     }
 
+    /// The stop to restart on: a failed unit hands its still-pending stop
+    /// back to the supervisor, which runs the next loop on it. A clean stop
+    /// took the stop already, and a refused tagger keeps none.
+    fn restart(self) -> Option<StopFuture> {
+        if self.failed { self.stop } else { None }
+    }
+
     /// A hold or the idle wait ran out. The idle wait's end starts a round,
     /// as an empty pass's wait did: a probe, the upkeep, a read.
     fn on_timer(&mut self) {
@@ -557,9 +571,10 @@ impl Coordinator {
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging upkeep task ended; worker stopping"
+                    "tagging upkeep task ended; coordinator restarting"
                 );
                 self.stopping = true;
+                self.failed = true;
             }
         }
     }
