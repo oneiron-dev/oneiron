@@ -193,7 +193,7 @@ pub(super) async fn answered(
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
     if let Some(line) = calling_line() {
-        return ai_media_for_run(server, &line, operation, input).await;
+        return ai_media_for_run(server, &line, operation, None, input).await;
     }
     owner_or_granted(server, auth, operation, MEDIA_OWNERS)?;
     ai_media_as_owner(server, operation, input).await
@@ -246,6 +246,13 @@ fn owner_replay(key: Option<String>, request: &MediaRequest) -> Option<MediaRepl
     MediaReplayKey::caller(OWNER_REPLAY_PARTITION.to_owned(), key, request).ok()
 }
 
+/// The step key of a run's media call in its attempt (FIX 2245), as
+/// call_as_step keys a model call; none with no attempt (a turn program,
+/// a code-mode call), and those go out as any call does.
+fn step_replay(attempt: Option<&str>, request: &MediaRequest) -> Option<MediaReplayKey> {
+    attempt.and_then(|a| MediaReplayKey::step(a.to_owned(), request).ok())
+}
+
 /// One media call of a program's run (FIX 3194, FIX 780, FIX 6083):
 /// prepared as the owner's call is, and spent on `run`, the run's own line,
 /// as its other model calls are. The run's door admitted it; no owner
@@ -254,19 +261,22 @@ pub(crate) async fn ai_media_for_run(
     server: &SyncServer,
     run: &RunAdmission,
     operation: AiOperation,
+    attempt: Option<&str>,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
     let (request, voices) = prepare(server, operation, input)?;
-    rendered(server, operation, request, voices, Some(run), None, None).await
+    let replay = step_replay(attempt, &request);
+    rendered(server, operation, request, voices, Some(run), None, replay).await
 }
 
 /// `ai.speech` for a pumped agent run (FIX 3194): [`ai_media_for_run`]'s.
 pub(crate) async fn ai_speech_for_run(
     server: &SyncServer,
     run: &RunAdmission,
+    attempt: Option<&str>,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
-    ai_media_for_run(server, run, AiOperation::Speech, input).await
+    ai_media_for_run(server, run, AiOperation::Speech, attempt, input).await
 }
 
 /// `ai.image`: one image out; reference images make it an edit. Beside it,
@@ -357,7 +367,7 @@ pub(super) async fn ai_video_answer(
     input: AiCallRequest,
 ) -> MemoryResult<AiVideoTicket> {
     if let Some(line) = calling_line() {
-        return ai_video_for_run(server, &line, input, auth.principal_entity()).await;
+        return ai_video_for_run(server, &line, None, input, auth.principal_entity()).await;
     }
     owner_or_granted(server, auth, AiOperation::Video, MEDIA_OWNERS)?;
     ai_video_as_owner(server, input, auth.principal_entity()).await
@@ -370,15 +380,17 @@ pub(super) async fn ai_video_answer(
 pub(crate) async fn ai_video_for_run(
     server: &SyncServer,
     run: &RunAdmission,
+    attempt: Option<&str>,
     input: AiCallRequest,
     actor: Option<EntityId>,
 ) -> MemoryResult<AiVideoTicket> {
     let (request, _) = prepare(server, AiOperation::Video, input)?;
+    let replay = step_replay(attempt, &request);
     let ticket = server
         .ai
         .model_runtime()
         .media()
-        .submit_run_admitted(run, request, actor)
+        .submit_run_admitted(run, request, actor, replay)
         .await
         .map_err(|error| {
             let mut refusal = failure(AiOperation::Video, &error);

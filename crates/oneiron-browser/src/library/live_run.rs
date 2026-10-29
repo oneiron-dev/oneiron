@@ -5,17 +5,21 @@
 //! and what the library counts of it.
 
 #[cfg(feature = "driver")]
-use super::{LibraryRunInput, LibraryRunOutput, SecretArg, WorkflowLibrary, missed};
+use super::{WorkflowLibrary, missed};
 use super::{WorkflowProgram, WorkflowProof};
 #[cfg(feature = "driver")]
 use crate::{
     BatchInput, BrowserDriver, BrowserError, CheckReceipt, ExpectInput, FailedStepReceipt,
-    FieldWriter, ObserveInput, RoutineDecider, StepStop, SubgoalStatus, stop::elapsed_ms,
+    FieldWriter, ObserveInput, RoutineDecider, StepStop, stop::elapsed_ms,
 };
-use crate::{BatchStopCause, FIELD_WRITER, STRICT_DENIED, StrictDenied};
+use crate::{
+    BatchOutput, BatchStopCause, FIELD_WRITER, ObservationBase, STRICT_DENIED, StrictDenied,
+    SubgoalStatus,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// How a library run takes its routine steps' decisions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -26,6 +30,63 @@ pub enum LibraryRunMode {
     Strict,
     /// The decision ladder answers, a model's rung included.
     Assisted,
+}
+
+/// Runs a library program live with `args`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryRunInput {
+    pub workflow: String,
+    /// A secret slot's argument names a handle this run holds, or is its
+    /// own text.
+    #[serde(default)]
+    pub args: BTreeMap<String, String>,
+    /// The observation the run's last observation edits, as `observe`'s
+    /// `base`; by default the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
+    /// Strict or assisted; by default the program's own ([`default_mode`]).
+    #[serde(default)]
+    pub mode: Option<LibraryRunMode>,
+    /// Secret slots' arguments in typed form (FIX 8346): a name here takes
+    /// the place of the same name in `args`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_args: BTreeMap<String, SecretArg>,
+}
+
+/// A secret slot's argument, typed (FIX 8346): `{"handle": "sc12"}` names
+/// a handle this run holds; `{"text": "sc12"}` is the slot's own text,
+/// typed or checked as text even in a handle's form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum SecretArg {
+    Handle(String),
+    Text(String),
+}
+
+/// A library run: its batch, and the postcondition checks the page missed.
+/// A miss sets `NEEDS_AGENT`: the run goes back to the planner, with the
+/// batch's `failed_receipt` naming each missed check and what the page
+/// showed for it.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LibraryRunOutput {
+    pub workflow: String,
+    pub status: SubgoalStatus,
+    /// The mode the run ran in.
+    pub mode: LibraryRunMode,
+    /// Whether no model answered any of the run's routine decisions, as
+    /// their receipts show ([`model_free`]); never read from the mode.
+    pub model_free: bool,
+    /// The first decision whose record shows neither the rungs that ran nor
+    /// a strict denial: no evidence proves the run model-free, so
+    /// `model_free` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_free_unproven: Option<usize>,
+    /// The postcondition checks the page missed, by index; each, with what
+    /// its read found, is in the batch's `failed_receipt`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmet: Vec<usize>,
+    pub batch: BatchOutput,
 }
 
 /// A filed program as a run reads it: the program, and the proof its
@@ -188,22 +249,8 @@ fn typed_args(
     input: &LibraryRunInput,
 ) -> Result<(std::collections::BTreeMap<String, String>, Vec<String>), BrowserError> {
     let mut args = input.args.clone();
-    let mut text = Vec::new();
-    for (name, arg) in &input.secret_args {
-        let value = match arg {
-            SecretArg::Handle(handle) if super::handle_form(handle) => handle.clone(),
-            SecretArg::Handle(_) => {
-                return Err(BrowserError::Input(format!(
-                    "the secret argument {name}'s handle names no handle"
-                )));
-            }
-            SecretArg::Text(value) => {
-                text.push(name.clone());
-                value.clone()
-            }
-        };
-        args.insert(name.clone(), value);
-    }
+    let (values, text) = super::secret_slots::typed_values(&input.secret_args)?;
+    args.extend(values);
     Ok((args, text))
 }
 

@@ -4,6 +4,8 @@
 //! KS-2 seals every ASSET's bytes, inline or file (the entity getter hands
 //! each ASSET row to it), so nothing here seals them twice. The version
 //! highwater, claim and reference rows hold no payload and stay structure.
+//! It also places the artifact's hosting rows (pointer, publish admission,
+//! serving descriptor) under the artifact (FIX 10436).
 //!
 //! A version's MadeBy names its process's actor: the compartment keeps the
 //! record with the artifact in that place, and the actor is an actor part. A
@@ -66,11 +68,14 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             |version| take_process(version, artifact),
         )?;
     }
+    out.merge(crate::artifact_hosting::checkpoint::capture(dbs, txn)?);
     Ok(out)
 }
 
 fn owns(at: &RowLocator) -> bool {
-    at.in_table(HEAD.decl()) || at.in_table(VERSIONS.decl())
+    at.in_table(HEAD.decl())
+        || at.in_table(VERSIONS.decl())
+        || crate::artifact_hosting::checkpoint::owns(at)
 }
 
 /// The bundle framing of `rows`' version parts.
@@ -83,6 +88,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         rows::check_row(HEAD, at, value)
     } else if at.in_table(VERSIONS.decl()) {
         rows::check_row(VERSIONS, at, value)
+    } else if crate::artifact_hosting::checkpoint::owns(at) {
+        crate::artifact_hosting::checkpoint::check(at, value)
     } else {
         Err(rows::bad_part())
     }
@@ -90,7 +97,7 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 
 /// A record with its actor back; `None` when the actor did not open.
 fn join(
-    _: &RoTxn<'_>,
+    txn: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
     parts: &[&ActorPart],
@@ -108,6 +115,9 @@ fn join(
         }
         let version = rows::join_actors(VERSIONS, value, parts, put_process)?;
         return VERSIONS.encode_value(&version).map(Some);
+    }
+    if crate::artifact_hosting::checkpoint::owns(at) {
+        return crate::artifact_hosting::checkpoint::join(txn, at, value, parts);
     }
     Err(rows::bad_part())
 }

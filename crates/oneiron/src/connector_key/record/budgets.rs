@@ -104,9 +104,10 @@ impl EffectorBudgetOnExhaust {
     }
 }
 
-/// Spend reserve policy. `PreauthorizeEstimateThenSettle` round-trips through
-/// the schema but enforces as `SettleOnly` in v1 (documented limitation,
-/// ratified OF-277 §7 item 9).
+/// Spend reserve policy. `PreauthorizeEstimateThenSettle` reserves the
+/// verb's declared price before the call and keeps it as the call's charge
+/// (FIX 8689, `connector_key::meter::spend_reserve`); `SettleOnly` records a
+/// cost only once it settled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EffectorBudgetReservePolicy {
     SettleOnly,
@@ -130,6 +131,30 @@ impl EffectorBudgetReservePolicy {
             _ => None,
         }
     }
+}
+
+/// A call's declared price (FIX 8689): what one call of a verb costs, in a
+/// Spend row's denomination (an ISO-4217 code in minor units, or a provider
+/// unit as an opaque integer). It is read only where `unit` is the row's own
+/// unit; nothing converts between units.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorSpendEstimate {
+    pub unit: String,
+    pub minor_units: u64,
+}
+
+/// What a send's preauthorized spend stood on (FIX 8689): the verb's
+/// declared price, reserved before the call and kept as its charge unless a
+/// provider reports the actual cost; or no price in the row's unit, so the
+/// call was measured and not refused.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorSpendBasis {
+    Estimated(ConnectorSpendEstimate),
+    Unpriced,
 }
 
 /// One effector-budget row (OF-277 §3.3 schema, ratified names).

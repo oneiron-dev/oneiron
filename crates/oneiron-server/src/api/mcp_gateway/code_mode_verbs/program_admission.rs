@@ -276,6 +276,21 @@ impl RunGuests {
             } => {
                 let auth = kept_auth(server, reference, witness, Some(verb.as_str()))
                     .map_err(|cause| ProgramAdmissionOutcome::CredentialUnavailable { cause })?;
+                // The facade's own row admission, run again at each call
+                // (FIX 10715), as the MCP arm's gates run again: the
+                // credential still binds the writer its door established,
+                // and it holds the verb's dispatch scope (both job verbs
+                // are Write rows, whose require also holds the record
+                // scope unrestricted). Its hooks run in the call below.
+                if auth.principal_ref() != Some(writer.entity_ref().to_hex().as_str())
+                    || auth.actor_class() != Some(writer.actor_class().gate_actor_class())
+                {
+                    return Err(ProgramAdmissionOutcome::CredentialUnavailable {
+                        cause: CallerUnavailable::CredentialChanged,
+                    });
+                }
+                auth.require(crate::auth::CoreScope::Write)
+                    .map_err(|error| refused(error.code().as_str().to_owned()))?;
                 let memory = crate::api::credential_memory(
                     &server.vault,
                     Some(&auth),
