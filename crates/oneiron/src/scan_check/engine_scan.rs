@@ -92,6 +92,18 @@ pub enum EngineScan {
     /// The contact claims naming a party, which an external send reads when
     /// a party-wide opt-out stands for its party and no contact row held it.
     PartyContactClaims,
+    /// One code-memory slot's live values after a write (once refused past 256).
+    CodeMemorySlotValues,
+    /// One code symbol's always-on contract keys (once refused past 8).
+    CodeMemoryAlwaysOnContracts,
+    /// The seed symbols one code-memory pull names (once refused past 256).
+    CodeMemoryPullSeeds,
+    /// The note limit one code-memory pull asks for (once refused past 256).
+    CodeMemoryPullNotes,
+    /// The symbols one code-memory pull expands (once cut short past 256).
+    CodeMemoryPullSymbols,
+    /// One repo diff side's visible text files (once refused past 1024).
+    RepoDiffFiles,
     /// The soft-confirm notice deliveries one retry sweep's page reads,
     /// settled ones included.
     AskSoftConfirmDeliveryRows,
@@ -325,7 +337,7 @@ pub enum EngineScan {
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 119] = [
+    pub const ALL: [Self; 125] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -364,6 +376,12 @@ impl EngineScan {
         Self::ProjectTaskRows,
         Self::PendingCommStops,
         Self::PartyContactClaims,
+        Self::CodeMemorySlotValues,
+        Self::CodeMemoryAlwaysOnContracts,
+        Self::CodeMemoryPullSeeds,
+        Self::CodeMemoryPullNotes,
+        Self::CodeMemoryPullSymbols,
+        Self::RepoDiffFiles,
         Self::AskSoftConfirmDeliveryRows,
         Self::PredicateClaimRows,
         Self::VaultEdgeRows,
@@ -497,6 +515,12 @@ impl EngineScan {
             Self::ProjectTaskRows => "project_task_rows",
             Self::PendingCommStops => "pending_comm_stops",
             Self::PartyContactClaims => "party_contact_claims",
+            Self::CodeMemorySlotValues => "code_memory_slot_values",
+            Self::CodeMemoryAlwaysOnContracts => "code_memory_always_on_contracts",
+            Self::CodeMemoryPullSeeds => "code_memory_pull_seeds",
+            Self::CodeMemoryPullNotes => "code_memory_pull_notes",
+            Self::CodeMemoryPullSymbols => "code_memory_pull_symbols",
+            Self::RepoDiffFiles => "repo_diff_files",
             Self::AskSoftConfirmDeliveryRows => "ask_soft_confirm_delivery_rows",
             Self::PredicateClaimRows => "predicate_claim_rows",
             Self::VaultEdgeRows => "vault_edge_rows",
@@ -585,6 +609,12 @@ impl EngineScan {
     /// once cut its read short at, or the engine-wide default.
     pub(super) const fn default_threshold(self) -> u64 {
         match self {
+            Self::CodeMemorySlotValues
+            | Self::CodeMemoryPullSeeds
+            | Self::CodeMemoryPullNotes
+            | Self::CodeMemoryPullSymbols => 256,
+            Self::CodeMemoryAlwaysOnContracts => 8,
+            Self::RepoDiffFiles => 1024,
             Self::ClaimVadIncidentEdges | Self::TaskAuthorityFactEdges => 100_000,
             Self::RoomRosterMembers
             | Self::DagWalkRecords
@@ -698,6 +728,12 @@ impl EngineScan {
             Self::ProjectTaskRows => 42,
             Self::PendingCommStops => 64,
             Self::PartyContactClaims => 65,
+            Self::CodeMemorySlotValues => 240,
+            Self::CodeMemoryAlwaysOnContracts => 241,
+            Self::CodeMemoryPullSeeds => 242,
+            Self::CodeMemoryPullNotes => 243,
+            Self::CodeMemoryPullSymbols => 244,
+            Self::RepoDiffFiles => 245,
             Self::AskSoftConfirmDeliveryRows => 66,
             Self::PredicateClaimRows => 67,
             Self::VaultEdgeRows => 68,

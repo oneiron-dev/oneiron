@@ -38,12 +38,17 @@ pub const CODE_MEMORY_CONTENT_HASH_LEN: usize = 32;
 /// Maximum encoded slot-name length.
 pub const CODE_MEMORY_SLOT_NAME_MAX_BYTES: usize = 128;
 
-/// Maximum live values retained in one named slot. The 257th DISTINCT value
-/// is a typed capacity error that leaves the stored slot byte-identical.
-pub const CODE_MEMORY_MAX_VALUES_PER_SLOT: usize = 256;
+/// The most live values one named slot body encodes: its value count is one
+/// `u16` field, a field bound and no count refusal. A value past it is a
+/// typed capacity error that leaves the stored slot byte-identical. Past
+/// 256 values a slot write keeps every value and raises the
+/// `code_memory_slot_values` scan check (FIX 8562).
+pub const CODE_MEMORY_MAX_VALUES_PER_SLOT: usize = u16::MAX as usize;
 
-/// Registration-side bound on distinct `(symbol, slot, payload)` always-on
-/// contract keys PER SYMBOL. Pull imposes no second, global cut.
+/// The distinct `(symbol, slot, payload)` always-on contract keys PER SYMBOL
+/// past which a registration or transfer raises the
+/// `code_memory_always_on_contracts` scan check and keeps every contract
+/// (FIX 8562; once refused past it). Pull imposes no global cut.
 pub const CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS: usize = 8;
 
 /// PPR expansion depth for an L2 pull.
@@ -61,8 +66,9 @@ const CODE_MEMORY_PPR_ALPHA: f32 = 0.15;
 /// Default caller note limit.
 pub const CODE_MEMORY_DEFAULT_PULL_LIMIT: usize = 32;
 
-/// Hard ceiling on the caller note limit, on seed cardinality, and on the
-/// number of threshold-passing symbols an L2 pull will expand.
+/// The seed count, note limit and threshold-passing symbol count past which
+/// an L2 pull raises its scan checks and serves the whole request (FIX 9690,
+/// FIX 10008, FIX 10210; once refused or cut past it).
 pub const CODE_MEMORY_MAX_PULL_LIMIT: usize = 256;
 
 /// Named code-memory slot holding the live (possibly conflicting) values
@@ -394,9 +400,10 @@ impl CodeMemorySlot {
     /// `Inserted` appends. `DeduplicatedWithinActor` keeps exactly one
     /// canonical-minimum survivor for the `(actor, content hash)` collision,
     /// replacing the incumbent only when the incoming value is canonically
-    /// smaller — so arrival order cannot change the result. Hitting
-    /// [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] returns the typed capacity error
-    /// and leaves `self` untouched.
+    /// smaller — so arrival order cannot change the result. Only the encoded
+    /// field bound [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] returns the typed
+    /// capacity error, leaving `self` untouched; a slot's count is observed
+    /// where it is written, never refused.
     pub fn insert_multi_value(&mut self, value: CodeMemorySlotValue) -> Result<SlotInsertOutcome> {
         value.validate()?;
         let key = value.dedupe_key();
@@ -534,6 +541,7 @@ pub fn attach_code_memory(
     let outcome = slot.insert_multi_value(value)?;
 
     write_slot(store, txn, &anchor.symbol_id, &slot)?;
+    observe_slot_values(store, txn, &anchor.symbol_id, &slot);
     // Nothing is relabelled by an attach: a payload without a row is new and
     // takes this anchor's locator, and every other payload keeps its own.
     derive_attachment_rows(
@@ -545,4 +553,45 @@ pub fn attach_code_memory(
         &BTreeSet::new(),
     )?;
     Ok(outcome)
+}
+
+/// One written slot's value count against its scan row: past it the write
+/// keeps every value and raises the `code_memory_slot_values` check (FIX
+/// 8562). A threshold row that does not read skips the observation, never
+/// the write.
+fn observe_slot_values(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    symbol_id: &EntityId,
+    slot: &CodeMemorySlot,
+) {
+    if let Ok(mut count) = ScanCount::start(
+        store,
+        txn,
+        EngineScan::CodeMemorySlotValues,
+        symbol_id.as_bytes(),
+    ) {
+        count.rows(slot.values.len());
+        count.defer(store);
+    }
+}
+
+/// One symbol's always-on contract keys, `registered`, against their scan
+/// row: past it the registration or transfer keeps every contract and
+/// raises the `code_memory_always_on_contracts` check (FIX 8562).
+fn observe_always_on_contracts(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    symbol_id: &EntityId,
+    registered: usize,
+) {
+    if let Ok(mut count) = ScanCount::start(
+        store,
+        txn,
+        EngineScan::CodeMemoryAlwaysOnContracts,
+        symbol_id.as_bytes(),
+    ) {
+        count.rows(registered);
+        count.defer(store);
+    }
 }
