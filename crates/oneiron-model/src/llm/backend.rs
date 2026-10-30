@@ -3,7 +3,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
@@ -11,7 +11,7 @@ use futures_core::Stream;
 use super::inference_observation::InferenceObservations;
 use super::{
     InferenceCallObservation, InferenceObservationId, LlmError, LlmRequest, LlmResponse,
-    LlmStreamEvent, RetryableLlmError,
+    LlmStreamEvent, RetryableLlmError, WorkContext,
 };
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
@@ -140,6 +140,10 @@ pub struct BudgetLease {
     /// lease's clones. Not part of its identity: equality and hash stay the
     /// id and the issuing guard.
     observations: Arc<InferenceObservations>,
+    /// The call's effective scheduling context, shared by clones and outside
+    /// id/guard equality, hash, Debug and serde. Set once after dispatch opens;
+    /// the first writer wins. WorkContext itself is never serialized.
+    work_context: Arc<Mutex<Option<WorkContext>>>,
 }
 
 impl fmt::Debug for BudgetLease {
@@ -174,6 +178,7 @@ impl BudgetLease {
             id: id.into(),
             guard_identity,
             observations: Arc::default(),
+            work_context: Arc::default(),
         }
     }
 
@@ -206,6 +211,29 @@ impl BudgetLease {
     #[must_use]
     pub fn inference_observations(&self) -> Vec<InferenceCallObservation> {
         self.observations.snapshot()
+    }
+
+    /// The effective context attached after this call's dispatch opened.
+    #[must_use]
+    pub fn work_context(&self) -> Option<WorkContext> {
+        self.work_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Clone-then-set attachment: the clone shares identity, observations and
+    /// this cell, so no fresh lease or observation collector is issued. The
+    /// first successful dispatch's context wins; later writers change nothing.
+    pub fn attach_work_context(&self, context: WorkContext) {
+        let attached = self.clone();
+        let mut slot = attached
+            .work_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(context);
+        }
     }
 
     /// A lease no guard issued, for tests that need one without a budget. Compiled only

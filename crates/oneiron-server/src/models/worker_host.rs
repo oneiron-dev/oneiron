@@ -308,6 +308,7 @@ pub(super) fn admit_bound_work(
         );
         request.envelope = envelope;
         request.class = context.class;
+        request.physical = context.physical;
         request.priority = context.priority;
         request.deadline = context.deadline;
         request.parent = context.parent;

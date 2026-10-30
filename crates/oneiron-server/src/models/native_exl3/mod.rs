@@ -42,7 +42,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
-use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, SchedulingReceipt, SegmentManifest,
     WorkerBuildEvidence, WorkerFailure,
@@ -126,7 +126,8 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
-        Box::pin(execute(route, body, segments))
+        let context = lease.work_context().unwrap_or_default();
+        Box::pin(execute(route, body, segments, context))
     }
 
     fn stream<'a>(
@@ -139,11 +140,13 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
+        let context = lease.work_context().unwrap_or_default();
         Ok(Box::pin(futures_util::stream::unfold(
             Streaming::Start {
                 route,
                 body,
                 segments,
+                context,
             },
             Streaming::step,
         )))
@@ -195,6 +198,8 @@ impl Tie {
 struct Sent {
     call: Call,
     tie: Tie,
+    /// Host-attested custody from this call's own BoundWork context.
+    physical: WorkPhysical,
     #[expect(
         dead_code,
         reason = "its Drop unregisters the call's device update row"
@@ -230,6 +235,7 @@ async fn begin(
         kv_increment_mib: Some(0),
         workspace_mib: Some(0),
     };
+    let physical = context.physical;
     let mut work = worker_host::admit_bound_work(&route.worker, context, envelope);
     let _foreground = if work.is_foreground() {
         match work.device() {
@@ -339,6 +345,7 @@ async fn begin(
                     manifest_sha256,
                     epoch,
                 },
+                physical,
                 registration,
             }))
         }
@@ -361,24 +368,17 @@ async fn execute(
     route: NativeRoute,
     body: JsonValue,
     segments: Option<Arc<SegmentManifest>>,
+    context: WorkContext,
 ) -> Result<OpenAiCompatHttpResponse, OpenAiCompatTransportError> {
     let target = body
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
-    let mut sent = match begin(
-        &route,
-        &body,
-        false,
-        segments.as_deref(),
-        WorkContext::default(),
-    )
-    .await?
-    {
+    let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
-    let last = loop {
+    let mut last = loop {
         match sent.call.next().await {
             Ok(Event::Final(last)) => break last,
             Ok(Event::Admitted(mark)) => report(&route, &mark),
@@ -389,6 +389,7 @@ async fn execute(
     };
     report(&route, &last);
     record_receipt(&route, &sent, &last);
+    stamp_physical(&mut last, sent.physical);
     Ok(buffered_reply(last, target.as_deref(), Some(&sent.tie)))
 }
 
@@ -502,7 +503,25 @@ fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
         });
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
+        receipt.physical = Some(sent.physical);
         worker_host::report_receipt(&route.worker.spec().worker_id, &sent.tie.epoch, receipt);
+    }
+}
+
+/// Stamps this host's custody into every receipt the reply carries. Any
+/// worker-spelled value is overwritten; worker JSON is never its source.
+fn stamp_physical(last: &mut JsonValue, physical: WorkPhysical) {
+    let Some(calls) = last
+        .get_mut("usage")
+        .and_then(|usage| usage.get_mut(INFERENCE_CALLS_KEY))
+        .and_then(JsonValue::as_array_mut)
+    else {
+        return;
+    };
+    for call in calls {
+        if let Some(call) = call.as_object_mut() {
+            call.insert("physical".to_owned(), json!(physical));
+        }
     }
 }
 
@@ -614,6 +633,7 @@ enum Streaming {
         route: NativeRoute,
         body: JsonValue,
         segments: Option<Arc<SegmentManifest>>,
+        context: WorkContext,
     },
     Live(Box<Live>),
     Done,
@@ -640,20 +660,13 @@ impl Streaming {
                 route,
                 body,
                 segments,
+                context,
             } => {
                 let target = body
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
-                match begin(
-                    &route,
-                    &body,
-                    true,
-                    segments.as_deref(),
-                    WorkContext::default(),
-                )
-                .await
-                {
+                match begin(&route, &body, true, segments.as_deref(), context).await {
                     Ok(Begun::Sent(sent)) => Box::new(Live::over(route, sent, target)).next().await,
                     Ok(Begun::Answered(reply)) => {
                         Some((Ok(OpenAiCompatStreamFrame::Status(reply)), Self::Done))
@@ -724,10 +737,11 @@ impl Live {
                     self.pending
                         .push_back(Ok(OpenAiCompatStreamFrame::Chunk(chunk)));
                 }
-                Ok(Event::Final(last)) => {
+                Ok(Event::Final(mut last)) => {
                     self.finished = true;
                     report(&self.route, &last);
                     record_receipt(&self.route, &self.sent, &last);
+                    stamp_physical(&mut last, self.sent.physical);
                     self.finish(last);
                 }
                 Err(Cut(error)) => {

@@ -339,7 +339,12 @@ impl OfferLadder {
         }
         // The run is live until this call ends: the host stays awake for it.
         let _awake = oneiron_vault_contract::host_adapters::run_awake();
-        let Ok((bound, permit)) = self.admit(run, rung, &request, None, false) else {
+        let rung_run = run.with_work_context({
+            let mut context = run.work_context();
+            context.physical = physical_for(&rung.offer.binding);
+            context
+        });
+        let Ok((bound, permit)) = self.admit(&rung_run, rung, &request, None, false) else {
             return Ok(None);
         };
         // Admission can wait on the run's receipts: the prefix and the world
@@ -353,7 +358,7 @@ impl OfferLadder {
             settle_failed(permit);
             return Ok(None);
         };
-        let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = Sending::of(rung, &bound);
         match gate.generate(bound, permit.lease()).await {
             Ok(mut response) => {
