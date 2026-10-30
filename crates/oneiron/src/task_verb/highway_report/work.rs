@@ -540,6 +540,15 @@ impl Memory<'_> {
                 attempt.map(|handle| handle.attempt_ref),
             )?;
         }
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11807).
+        if settled {
+            crate::edit_distance::routing::refold_task_outcomes_in_txn(
+                self.vault(),
+                wtxn,
+                task_ref,
+            );
+        }
         if let Some(identity) = journal {
             report_journal::put_in(self.vault(), wtxn, identity, &receipt)?;
         }
