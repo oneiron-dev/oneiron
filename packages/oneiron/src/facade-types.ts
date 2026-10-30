@@ -3291,7 +3291,7 @@ export type BranchSnapshot = { attempt: AttemptId; reward: number; expected_gain
 /** `oneiron::autoreason_campaign::research::estimator::SelectionRanking` */
 export type SelectionRanking = { kind: "dgm" } | { kind: "information_gain"; estimator_version: string }
 /** `oneiron::autoreason_campaign::research::SelectionReceipt` */
-export type SelectionReceipt = { root: AttemptId; round: number; step: ResearchStep; branches: BranchSnapshot[]; best_quality: number; best_gain: number; ranking: SelectionRanking; policy_digest: string; budget_available: boolean; oracle_goal_met: boolean; at: number }
+export type SelectionReceipt = { root: AttemptId; round: number; incumbent: AttemptId; step: ResearchStep; branches: BranchSnapshot[]; best_quality: number; best_gain: number; ranking: SelectionRanking; policy_digest: string; budget_available: boolean; oracle_goal_met: boolean; at: number }
 /** `oneiron::autoreason_campaign::archive::ArchiveQualityMetric` */
 export type ArchiveQualityMetric = { metric_id: string; revision: string }
 /** `oneiron::autoreason_campaign::archive::ArchiveOutputRef` */

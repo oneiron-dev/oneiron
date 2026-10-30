@@ -25767,6 +25767,8 @@ pub struct SelectionReceipt {
     pub root: AttemptId,
     #[serde(rename = "round")]
     pub round: u64,
+    #[serde(rename = "incumbent")]
+    pub incumbent: AttemptId,
     #[serde(rename = "step")]
     pub step: ResearchStep,
     #[serde(rename = "branches")]

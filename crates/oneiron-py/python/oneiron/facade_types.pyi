@@ -8327,6 +8327,7 @@ SelectionRanking = SelectionRankingDgm | SelectionRankingInformationGain
 class SelectionReceipt(TypedDict):
     root: AttemptId
     round: int
+    incumbent: AttemptId
     step: ResearchStep
     branches: list[BranchSnapshot]
     best_quality: float
