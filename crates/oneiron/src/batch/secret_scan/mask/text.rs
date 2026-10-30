@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use super::text_log::TextSpans;
 use super::{HANDLE_OPEN, Masker, secret_spans};
 use crate::error::Result;
 
@@ -27,22 +28,24 @@ impl Masker {
     /// its handle. `None` when it holds none. A tracked pass keeps where
     /// each handle went.
     pub(super) fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
-        let known = self.known_spans(text);
-        // The switch is off: no shape span is discovered (FIX 8644). A text
-        // the door's scan read clean holds none.
-        let mut hits: Vec<(Range<usize>, TextHit)> = Vec::new();
-        if !self.known_only && !self.shapes_read {
-            hits.extend(
-                secret_spans(text)
-                    .into_iter()
-                    .filter(|(span, _)| {
-                        !known
-                            .iter()
-                            .any(|(held, _)| held.start < span.end && span.start < held.end)
-                    })
-                    .map(|(span, reason)| (span, TextHit::Shape(reason))),
-            );
-        }
+        let spans = self.text_spans(text);
+        // A value the owner ruled no secret in the record the pass reads
+        // stays as written: that ruling wins over the known-value sweep.
+        let known: Vec<(Range<usize>, String)> = spans
+            .known
+            .into_iter()
+            .filter(|(span, _)| !self.is_kept(&text.as_bytes()[span.clone()]))
+            .collect();
+        let mut hits: Vec<(Range<usize>, TextHit)> = spans
+            .shapes
+            .into_iter()
+            .filter(|(span, _)| {
+                !known
+                    .iter()
+                    .any(|(held, _)| held.start < span.end && span.start < held.end)
+            })
+            .map(|(span, reason)| (span, TextHit::Shape(reason)))
+            .collect();
         hits.extend(
             known
                 .into_iter()
@@ -100,19 +103,32 @@ impl Masker {
         Ok(Some(out))
     }
 
-    /// Each value custody holds in `text`, with its record's handle, but a
-    /// value the owner ruled no secret in the record the pass reads: that
-    /// ruling wins over the known-value sweep.
-    fn known_spans(&self, text: &str) -> Vec<(Range<usize>, String)> {
-        let Some(known) = &self.known else {
-            return Vec::new();
+    /// Each value custody holds in `text`, with its record's handle, and
+    /// each span the door's text rules place, before the record's rulings:
+    /// taken from the plan's log when this pass reads the text the plan read
+    /// at this place (speed), else found and, by a plan, logged.
+    fn text_spans(&mut self, text: &str) -> TextSpans {
+        if let Some(spans) = self.text_log.take(text.as_bytes()) {
+            return spans;
+        }
+        let known = match &self.known {
+            Some(known) => known
+                .spans(text.as_bytes())
+                .into_iter()
+                .map(|hit| (hit.span, hit.handle.to_owned()))
+                .collect(),
+            None => Vec::new(),
         };
-        known
-            .spans(text.as_bytes())
-            .into_iter()
-            .filter(|hit| !self.is_kept(&text.as_bytes()[hit.span.clone()]))
-            .map(|hit| (hit.span, hit.handle.to_owned()))
-            .collect()
+        // The switch is off: no shape span is discovered (FIX 8644). A text
+        // the door's scan read clean holds none.
+        let shapes = if self.known_only || self.shapes_read {
+            Vec::new()
+        } else {
+            secret_spans(text)
+        };
+        let spans = TextSpans { known, shapes };
+        self.text_log.record(text.as_bytes(), &spans);
+        spans
     }
 }
 

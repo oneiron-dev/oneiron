@@ -34,6 +34,7 @@ pub(super) mod side_row;
 pub(super) mod spool;
 pub(super) mod stream_known;
 mod text;
+mod text_log;
 mod text_spans;
 mod wipe;
 
@@ -314,6 +315,8 @@ struct Masker {
     placed_known: bool,
     /// Where a tracked pass put each handle, by the text it masked (FIX 6144).
     traced: Option<text::TextReplacements>,
+    /// The spans of each text a plan read, for its minted pass (speed).
+    text_log: text_log::TextLog,
     /// Each MACHINE claim candidate the minted pass rewrote, with its
     /// pre-mask body, in op order: the candidate apply renews its proof
     /// over what is stored (FIX 11356). A plan pass never fills it.

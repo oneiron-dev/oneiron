@@ -8,6 +8,7 @@ use heed::RwTxn;
 
 use super::super::{SecretScanMode, scan_batch_ops, secret_scan_mode_in_txn};
 use super::known_note;
+use super::text_log::TextLog;
 use super::wipe::PlanOps;
 use super::{MaskedFiles, Masker, marked_files, op_record, put_file_marks_in_txn, scan_screened};
 use crate::batch::BatchOp;
@@ -79,6 +80,7 @@ pub(in crate::batch) fn mask_batch_ops(
         known: known.clone(),
         known_only,
         shapes_read,
+        text_log: TextLog::recording(),
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;
@@ -90,6 +92,7 @@ pub(in crate::batch) fn mask_batch_ops(
     drop(planned);
     let kept = std::mem::take(&mut plan.kept);
     let files = std::mem::take(&mut plan.files);
+    let text_log = std::mem::take(&mut plan.text_log).replayed();
     let masked = MaskedFiles(std::mem::take(&mut plan.file_ids));
     if !masks {
         return Ok((masked, Vec::new()));
@@ -104,7 +107,8 @@ pub(in crate::batch) fn mask_batch_ops(
     // A known value in a file names that file in the found-key notice (FIX 2780).
     known_note::note_known_file_keys_in_txn(store, wtxn, &files, at)?;
     put_file_marks_in_txn(store, wtxn, files, &minted, at)?;
-    // The minted pass places the same values the plan did (FIX 8644).
+    // The minted pass places the same values the plan did (FIX 8644), in
+    // the same texts: it takes their spans from the plan's log.
     let mut minted_pass = Masker {
         handles: minted.map(|(handle, _)| handle),
         minted: true,
@@ -112,6 +116,7 @@ pub(in crate::batch) fn mask_batch_ops(
         known,
         known_only,
         shapes_read,
+        text_log,
         ..Masker::default()
     };
     minted_pass.mask_ops(ops)?;
