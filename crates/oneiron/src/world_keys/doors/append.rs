@@ -20,8 +20,8 @@ use super::frontier::{ChainHead, Parents, WrapPlanInput};
 use super::{FrontierWide, RootRecipient, provenance};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, AuthorityView,
-    FrontierSigner, KeyFrontier, MAX_PARENTS, invalid_authority, next_sequence, scope_head,
-    sign_side_entry, standing_rows,
+    FrontierJoinScope, FrontierSigner, KeyFrontier, MAX_PARENTS, WideFrontier, invalid_authority,
+    next_sequence, scope_head, sign_side_entry, standing_rows,
 };
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
@@ -266,12 +266,14 @@ impl Vault {
     }
 
     /// Joins the main-log heads the first record of `world` would name past
-    /// one record's bound ([`KeyFrontier::wide_heads_in_txn`], FIX 8497),
-    /// signed by `machine`'s install key as its records are, at sequences
-    /// past every row it signed, and `seq` then counts on past the joins.
-    /// The heads are read again in `txn`, which an earlier append of this
+    /// one record's bound ([`KeyFrontier::wide_in_txn`], FIX 8497), signed
+    /// by `machine`'s install key as its records are, at sequences past
+    /// every row it signed, and `seq` then counts on past the joins. Side
+    /// leaves of `world` that alone fill the record are joined first, in the
+    /// world's own scope, into one tip the record then names (FIX 11868).
+    /// The frontier is read again in `txn`, which an earlier append of this
     /// door may have joined already. The fold read back, or `txn`'s when it
-    /// needs no join; `None` when `fold`'s frontier fits or no head admits
+    /// needs no join; `None` when `fold`'s frontier fits or no row admits
     /// the key: today's path, nothing written.
     fn join_wrap_frontier_in_txn(
         &self,
@@ -282,20 +284,34 @@ impl Vault {
         seq: &mut SequenceCounter,
     ) -> Result<Option<AuthorityView>> {
         let chain = seq.chain(fold, signing, world);
-        if KeyFrontier::wide_heads_in_txn(&self.store, txn, fold, world, chain)?.is_none() {
+        if KeyFrontier::wide_in_txn(&self.store, txn, fold, world, chain)?.is_none() {
             return Ok(None);
         }
         let current = self.authority_view_readonly_in_txn(txn)?;
         let chain = seq.chain(&current, signing, world);
-        let Some((heads, room)) =
-            KeyFrontier::wide_heads_in_txn(&self.store, txn, &current, world, chain)?
-        else {
+        let joiner = FrontierSigner::Install(machine, signing);
+        let (current, wide, sided) =
+            match KeyFrontier::wide_in_txn(&self.store, txn, &current, world, chain)? {
+                Some(WideFrontier::Leaves(leaves)) => {
+                    let scoped = (&leaves, FrontierJoinScope::World(world));
+                    let Some(joined) =
+                        self.join_scoped_heads_in_txn(txn, &current, scoped, joiner, 1)?
+                    else {
+                        return Ok(None);
+                    };
+                    seq.follow(&joined, signing)?;
+                    let chain = seq.chain(&joined, signing, world);
+                    let wide = KeyFrontier::wide_in_txn(&self.store, txn, &joined, world, chain)?;
+                    (joined, wide, true)
+                }
+                wide => (current, wide, false),
+            };
+        let Some(WideFrontier::Heads(heads, room)) = wide else {
             return Ok(Some(current));
         };
-        let joiner = FrontierSigner::Install(machine, signing);
         let Some(joined) = self.join_authority_heads_in_txn(txn, &current, &heads, joiner, room)?
         else {
-            return Ok(None);
+            return Ok(sided.then_some(current));
         };
         seq.follow(&joined, signing)?;
         Ok(Some(joined))

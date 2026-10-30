@@ -252,11 +252,12 @@ fn validate_window_rows(snapshot: &CanonicalSnapshot) -> Result<()> {
             }
         } else if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
             && let Ok(entry) = crate::authority::decode_authority_log_entry_body(body)
-            && let crate::authority::AuthorityOp::WorldKeyWraps(record) = &entry.op
+            && let Some(side) = crate::authority::side_world(&entry.op)
         {
-            // A world's key wraps ride its window of the month they were
+            // A world's side rows, its key wraps and the joins of their
+            // leaves (FIX 11868), ride its window of the month they were
             // learned (`sync::types::entity_world`); its settings stay base.
-            if Some(record.key.world) != world
+            if Some(side) != world
                 || crate::deletion::window_label_from_timestamp(header.learned_at)
                     != snapshot.window[..7]
             {

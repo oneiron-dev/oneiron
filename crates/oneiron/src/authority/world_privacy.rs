@@ -510,7 +510,8 @@ pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevis
 }
 
 /// The world a per-world side entry belongs to; `None` for a main-log entry.
-/// Only a world's key records ride a side branch, recipient-filtered. Its
+/// Only a world's key records ride a side branch, recipient-filtered, with
+/// the joins a carrier stages over the branch's leaves (FIX 11868). Its
 /// settings edits are main-log metadata every linked machine folds (the
 /// Engine call "OwnerAct world metadata to every linked machine"), so the
 /// main-log heads, sequence scopes, refold, retired-signer walk, import order
@@ -518,6 +519,10 @@ pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevis
 pub(crate) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
     match op {
         AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            scope: FrontierJoinScope::World(world),
+            ..
+        }) => Some(*world),
         _ => None,
     }
 }
