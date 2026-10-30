@@ -431,7 +431,7 @@ where
         };
         let landed = match result {
             RepoProjectionDiffResult::Unchanged => None,
-            RepoProjectionDiffResult::Applied(bytes) => match String::from_utf8(bytes) {
+            RepoProjectionDiffResult::Applied(applied) => match String::from_utf8(applied) {
                 Ok(text) => Some(text),
                 Err(_) => {
                     let cause = RepoProjectionDiffResult::ProjectionEditConflict;
