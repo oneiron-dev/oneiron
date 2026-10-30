@@ -696,7 +696,7 @@ fn next_step(connection: &PackSetupConnection, state: &PackSetupConnectionState)
     if !allowed {
         return "Review and allow its permissions".to_owned();
     }
-    if !state.secrets.iter().all(|secret| secret.stored) {
+    if !connection.required_secrets_stored(&state.secrets) {
         return "Store its credentials in the secrets form".to_owned();
     }
     match &state.check {
