@@ -103,6 +103,7 @@ fn cause_code(cause: &LeafKeyFailureCause) -> (u8, &str) {
         LeafKeyFailureCause::Expired => (2, ""),
         LeafKeyFailureCause::Replayed => (3, ""),
         LeafKeyFailureCause::HolderRefused(reason) => (4, reason),
+        LeafKeyFailureCause::HolderFault => (5, ""),
     }
 }
 
@@ -115,6 +116,7 @@ fn cause_from_code(code: u8, reason: &str) -> Result<LeafKeyFailureCause, Transp
         2 => LeafKeyFailureCause::Expired,
         3 => LeafKeyFailureCause::Replayed,
         4 => return Ok(LeafKeyFailureCause::HolderRefused(reason.to_owned())),
+        5 => LeafKeyFailureCause::HolderFault,
         _ => {
             return Err(TransportError::InvalidPayload(
                 "unknown leaf key failure cause",

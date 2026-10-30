@@ -320,7 +320,9 @@ impl Vault {
     ) -> Result<()> {
         let mut session = self.custody_leaves();
         match cause {
-            LeafKeyFailureCause::HolderOffline | LeafKeyFailureCause::ExecutorOffline => {}
+            LeafKeyFailureCause::HolderOffline
+            | LeafKeyFailureCause::ExecutorOffline
+            | LeafKeyFailureCause::HolderFault => {}
             LeafKeyFailureCause::Expired | LeafKeyFailureCause::Replayed => {
                 session.asks.remove(&request_id);
             }

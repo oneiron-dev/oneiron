@@ -61,9 +61,9 @@ impl SyncClient {
                         }
                         Err(error) => LeafKeyFailureCause::HolderRefused(error.to_string()),
                     },
-                    // A fault, not a refusal: HolderOffline until L02's flip adds HolderFault.
+                    // A fault, not a refusal: HolderFault keeps the ask pending (FIX 12131).
                     Err(error) => LeafKeyFailureCause::of_refusal(&error)
-                        .unwrap_or(LeafKeyFailureCause::HolderOffline),
+                        .unwrap_or(LeafKeyFailureCause::HolderFault),
                 };
                 logged(tag, &id, holder, executor, "not_answered");
                 Ok(vec![encode_leaf_key_failure(&id, &cause).into_result()?])
