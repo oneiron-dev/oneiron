@@ -58,6 +58,7 @@ pub use text_ref::{
     RetainedProposal, TextRead, TextUnavailable, finalized_proposal_text,
     put_finalized_proposal_text, retained_proposal,
 };
+pub(crate) use text_ref::joined_in_txn;
 pub(crate) use text_ref::{StoredProposal, erase_proposal_texts_in_txn, put_imported_endpoints};
 
 use std::io::Cursor;

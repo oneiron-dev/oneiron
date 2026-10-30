@@ -445,7 +445,7 @@ fn resolve_candidates(
 ) -> Result<Vec<TrainingPair>> {
     let mut pairs = Vec::new();
     for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, rtxn, &[])? {
-        let retained = RetainedProposal::open(entry?.1);
+        let retained = RetainedProposal::open(super::joined_in_txn(&vault.store, rtxn, entry?.1)?);
         // THE TRIPWIRE, at the enumeration source and ahead of every filter.
         // Probing before the eligibility, pair and scope filters is deliberate:
         // a filter that ran first could hide an inertness bug behind a narrow
