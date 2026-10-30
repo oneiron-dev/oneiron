@@ -7,7 +7,9 @@ use super::*;
 impl Vault {
     /// Review one artifact head through the host's decide() ladder. Keep/discard
     /// through the existing consume-once edit-settle door; a changed head is
-    /// retained as a stale preview.
+    /// retained as a stale preview. A deck with a live body has each unit's
+    /// text read on its projection at its head, as a wake reads it; the
+    /// images stay the caller's (FIX 12019).
     pub fn review_blob_artifact_slides(
         &self,
         artifact: &EntityId,
@@ -25,16 +27,21 @@ impl Vault {
         let (bytes, read_rows) = self
             .read_blob_artifact_version_listing(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
-        let run =
-            self.review_blob_artifact_slides_at(artifact, head.version, &bytes, None, request)?;
+        let live = self.live_head_deck(artifact)?;
+        let run = self.review_blob_artifact_slides_at(
+            artifact,
+            head.version,
+            &bytes,
+            live.as_ref().map(|(pin, deck)| (pin, deck.as_slice())),
+            request,
+        )?;
         Ok(SlideReviewRun { read_rows, ..run })
     }
 
-    /// [`Self::review_blob_artifact_slides`] over one version's `bytes`, which
-    /// the units' images were rendered from; or, with `shown`, over a live
-    /// deck's projection at its head and the pin read before it, which the
-    /// images and texts are of, the comments still landing on `bytes` (FIX
-    /// 11981).
+    /// [`Self::review_blob_artifact_slides`] over one version's `bytes`; or,
+    /// with `shown`, over a live deck's projection at its head and the pin
+    /// read before it, where the units' texts are read (FIX 11981, 12019),
+    /// the comments still landing on `bytes`.
     pub(crate) fn review_blob_artifact_slides_at(
         &self,
         artifact: &EntityId,
