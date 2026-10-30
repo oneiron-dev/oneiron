@@ -91,6 +91,7 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
+mod removal_archive_routes;
 pub(super) mod room_thread_setting_routes;
 pub(super) mod root_routes;
 pub(super) mod schema;
@@ -194,6 +195,7 @@ fn owner_tables() -> OwnerTable {
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
+        removal_archive_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
         carrier_table(),

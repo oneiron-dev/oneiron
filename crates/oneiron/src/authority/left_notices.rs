@@ -381,7 +381,7 @@ impl Vault {
     /// The person whose slip, minted here whatever its standing since, the
     /// request proves: its holder signed the request challenge, and the
     /// nonce is spent in the caller's writer.
-    pub(crate) fn left_person_in_txn(
+    fn left_person_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         slip: &CapabilitySlip,
