@@ -14,7 +14,7 @@ use oneiron::world_keys::{HybridSecretKey, VaultKeyUnlock, existing_machine_secr
 use oneiron_keystore::DeviceKeystore;
 use serde::Serialize;
 
-use super::super::recovery_kit::kit_custody_root;
+use super::super::recovery_kit::{kit_custody_root, kit_custody_seed};
 use super::super::{base_vault_config, emit, open_stopped_vault_with, vault_key};
 use crate::cli::RestoreArgs;
 use crate::config::ServeConfig;
@@ -103,6 +103,8 @@ pub(super) fn open_pads(
     if let Some((machine, secret)) = &machine {
         custody = custody.with_machine(*machine, secret);
     }
+    let seed = kit_custody_seed(unlock);
+    custody = backup::custody_from_home(custody, backup, args.custody_home.as_deref(), seed)?;
     let owner = local_owner(&vault)?;
     let report = vault.reopen_restore_pads_as(&owner, None, backup, &key, &custody)?;
     let faults = report.faults.len();

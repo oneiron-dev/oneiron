@@ -22,16 +22,13 @@ use oneiron::skill_attribution::{
 use oneiron::{EntityId, LlmMessageRole, Vault};
 use serde::Deserialize;
 
-use super::code_fix::{HostModels, clip, message};
+use super::code_fix::{HostModels, message};
 use crate::server::SyncServer;
 
 /// Attempts one job reads; the vault's attribution policy may narrow it.
 const RECEIPTS: usize = 32;
 /// What one job's calls may spend.
 const BUDGET_UNITS: u64 = 1 << 20;
-/// Most bytes of a deviation's reason kept: the evidence door's policy reason
-/// budget refuses a longer one.
-const REASON_BYTES: usize = 1024;
 /// The note writer's instruction. The outcome goes as data.
 const NOTE_SYSTEM: &str = "You write the Coach's note on one attribution the decision ladder \
     could not settle. The data you get is a finished attempt's routing facts, the label the \
@@ -331,15 +328,14 @@ fn parse_facts(text: &str, trace: &ReceiptTrace) -> Option<Vec<ReceiptAttributio
                 "partly" => FollowedState::Partly,
                 "ignored" => FollowedState::Ignored,
                 "deviated" => FollowedState::DeviatedWithReason {
-                    reason: clip(
-                        answer
-                            .reason
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|reason| !reason.is_empty())?,
-                        REASON_BYTES,
-                    )
-                    .to_owned(),
+                    // The reason is kept whole; the evidence door measures it
+                    // against the engine's text row (FIX 5465).
+                    reason: answer
+                        .reason
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|reason| !reason.is_empty())?
+                        .to_owned(),
                     cause: match answer.cause.as_deref() {
                         Some("incorrect_instruction") => Some(DeviationCause::IncorrectInstruction),
                         Some("missing_instruction") => Some(DeviationCause::MissingInstruction),

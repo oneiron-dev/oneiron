@@ -232,12 +232,12 @@ pub fn record_weave(
         return Err(invalid("merge crossover stays off until a held-out win"));
     }
     let distinct: BTreeSet<[u8; 16]> = input.parents.iter().map(|p| *p.as_bytes()).collect();
-    if input.parents.len() < 2
-        || input.parents.len() > MAX_WEAVE_PARENTS
-        || distinct.len() != input.parents.len()
-    {
-        return Err(invalid("a weave has two to eight distinct parents"));
+    // Two distinct parents are what a weave is; how many more it names is
+    // measured, never refused (FIX 9121, rule 5).
+    if input.parents.len() < 2 || distinct.len() != input.parents.len() {
+        return Err(invalid("a weave has two or more distinct parents"));
     }
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, input.parents.len() as u64);
     if !input.validation_overlap.is_finite()
         || input.validation_overlap < crossover.min_validation_overlap
         || input.validation_overlap > 1.0
@@ -359,7 +359,7 @@ pub fn record_search_measurement(
         &evidence.estimator_version,
         "search evidence names its estimator",
     )?;
-    bounded_refs(&evidence.receipt_refs, true)?;
+    bounded_refs(vault, &evidence.receipt_refs, true)?;
     if !evidence.confirmed_hits.is_finite()
         || evidence.confirmed_hits < 0.0
         || !evidence.attribution.is_finite()
@@ -403,7 +403,7 @@ pub fn record_held_out_measurement(
         &measurement,
         &binding.config.splits.held_out,
     )?;
-    bounded_refs(&receipt_refs, true)?;
+    bounded_refs(vault, &receipt_refs, true)?;
     update_node(vault, root, attempt, |node| {
         if node.held_out.is_some() || node.invalid.is_some() {
             return Err(invalid("the node is already held out or buggy"));
@@ -437,7 +437,7 @@ pub fn record_invalid_experiment(
         ));
     }
     bounded(reason, "a buggy node names a bounded reason")?;
-    bounded_refs(&evidence_refs, true)?;
+    bounded_refs(vault, &evidence_refs, true)?;
     update_node(vault, root, attempt, |node| {
         if node.search.is_some() || node.invalid.is_some() {
             return Err(invalid("the node is already measured or buggy"));
@@ -469,7 +469,7 @@ pub fn prune_branch(
     if attempt == root {
         return Err(invalid("the incumbent root is never pruned"));
     }
-    bounded_refs(&evidence_refs, true)?;
+    bounded_refs(vault, &evidence_refs, true)?;
     let txn = vault.store.env.read_txn()?;
     let nodes = nodes_in_txn(vault, &txn, root)?;
     drop(txn);

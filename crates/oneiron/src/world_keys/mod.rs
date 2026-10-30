@@ -24,7 +24,9 @@ mod content_landed;
 mod content_window;
 mod doors;
 mod kit;
+mod kit_piece;
 mod machine;
+mod owner_signing;
 mod owner_work;
 mod pad_custody;
 mod pad_erase;
@@ -53,7 +55,7 @@ pub(crate) use self::bundle::PadEraseSubject;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
-    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload,
+    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport,
     retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
@@ -68,6 +70,7 @@ pub use self::kit::{
 };
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
+pub use self::owner_signing::OwnerRootSigner;
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead,
     OwnerWorkCancelNote, OwnerWorkCancelState, OwnerWorkDiagnostics, OwnerWorkDrain,
@@ -114,11 +117,13 @@ pub(crate) use self::pads::{
     world_pad_windows_in_txn,
 };
 pub(crate) use self::page_seal::{
-    OpenedDataKey, admit_new_vault, page_seal_open_error, read_sealed, seal_read_only,
+    OpenedDataKey, admit_new_vault, discard_creation_record, page_seal_open_error, read_sealed,
+    seal_read_only,
 };
 pub use self::page_seal::{
     PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
-    page_seal_custody_path, page_seal_vault_id, reopen_delivered_page_seal, unlock_page_seal,
+    page_seal_custody_path, page_seal_vault_id, refuse_unfinished_sealed_creation,
+    remove_unfinished_sealed_creation, reopen_delivered_page_seal, unlock_page_seal,
     vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};

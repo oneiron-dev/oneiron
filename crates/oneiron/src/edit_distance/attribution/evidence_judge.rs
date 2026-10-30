@@ -324,6 +324,9 @@ fn persist_amendment_split(
     hunks: &[EditHunk<'_>],
     judge: Option<&JudgeTrace>,
 ) -> Result<Option<AmendmentJudgment>> {
+    // The split keeps every unclear note whole; the longest is measured
+    // against the engine's text row (OF-520, FIX 5465).
+    crate::skill_attribution::measure_split_notes(vault, &split);
     let shares: Vec<AmendmentShare> = split
         .shares
         .iter()

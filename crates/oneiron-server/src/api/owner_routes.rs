@@ -68,6 +68,7 @@ pub(super) mod embedding_space_routes;
 mod export_audit_routes;
 pub(super) mod federation_connect_routes;
 mod feedback_triage_routes;
+mod folder_source_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
@@ -144,6 +145,7 @@ fn owner_tables() -> OwnerTable {
         embedding_space_routes::owner_table(),
         export_audit_routes::owner_table(),
         history_routes::owner_table(),
+        folder_source_routes::owner_table(),
         house_routes::owner_table(),
         inbox_routes::owner_table(),
         intent_routes::owner_table(),

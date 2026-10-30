@@ -187,4 +187,11 @@ pub(super) fn merge(spec: &mut Value) {
         enroll_receipt_schema(),
         &[],
     );
+    super::bind_answer(
+        spec,
+        "/v1/owner/owner-signing-keys/enroll-this-install",
+        "post",
+        enroll_receipt_schema(),
+        &[],
+    );
 }

@@ -280,8 +280,9 @@ pub struct LlmCatalogCost {
     pub cache_write_per_million: Option<String>,
     /// The currency the provider quotes these rates in, as its three-letter
     /// code (`USD`); `null` when it named none, which is a fact and never
-    /// read as any currency (FIX 9534). Required, `null` included.
-    #[serde(deserialize_with = "Option::deserialize")]
+    /// read as any currency (FIX 9534). Missing reads as `None` (unknown,
+    /// FIX 11778); writers always emit the key.
+    #[serde(default)]
     pub currency: Option<String>,
 }
 
