@@ -12,11 +12,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::canonical::{ByteBudget, CanonicalSnapshot, id};
+use super::super::canonical::{ByteBudget, CanonicalSnapshot, RecoveryBudgetOverrun, id};
 use super::{CanonicalDocument, NOTE_FORK, NOTE_RECEIPT};
 use crate::Vault;
 use crate::entity_id::EntityId as Id;
-use crate::error::{ArtifactError, Result};
+use crate::error::Result;
 use crate::note::NoteVerdict;
 
 /// One (note, head) a pending fork's parent names.
@@ -129,7 +129,7 @@ pub(super) fn capture_note(
     needed: &BTreeSet<Place>,
     birth: (Option<[u8; 16]>, u64),
     budget: &mut ByteBudget,
-    overrun: &mut Option<ArtifactError>,
+    overrun: &mut Option<RecoveryBudgetOverrun>,
 ) -> Result<Vec<CanonicalDocument>> {
     let owner = id(note)?;
     let mut rows = Vec::new();

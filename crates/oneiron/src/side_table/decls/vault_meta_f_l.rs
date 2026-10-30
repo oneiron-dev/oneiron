@@ -485,8 +485,8 @@ side_tables! {
     /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
     /// pack refreshes until the owner clears it. Key: string(model id).
     LLM_REGISTRY_STALE_MARK: VaultMeta b"llm:registry_stale:v1:" Named Engine;
-    /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
-    /// ().
+    /// Per-vault narrow-only resident route overrides: those the new manifest
+    /// still admits stay, the others clear in the manifest txn. Key: ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;
     /// One routed seat selected and pinned by caller-chosen bounded seat id.
     LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson Authored;

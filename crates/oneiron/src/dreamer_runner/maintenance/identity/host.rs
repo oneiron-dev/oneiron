@@ -16,10 +16,9 @@ use crate::claim::{ClaimSource, ScopedRead};
 use crate::consent::AuthenticatedOwner;
 use crate::identity_topology::TopologySeal;
 use crate::lens::GeneratedUiCard;
+use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::IDENTITY_SETTLE;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, MAX_DECISION_STATE_BYTES, Reversibility, cut_text, fit_state,
-};
+use crate::llm::decision::{AnswerContract, DecisionAnswer, Reversibility};
 use crate::{Result, Vault};
 
 impl Vault {
@@ -88,11 +87,11 @@ impl Vault {
 
     /// Asks one open ask on the host's ladder: a Choice over its listed
     /// candidates ([`MAX_CANDIDATES`], its own provisional entity among them)
-    /// and [`SOMEONE_NEW`]. Every candidate rides in the state by id, listed
-    /// or not; past the ladder's state bound each still does, with its texts
-    /// cut to fit, and an ask whose ids alone pass it is not called. Only a
-    /// listed candidate can be chosen. A choice settles the mention and saves
-    /// the hint.
+    /// and [`SOMEONE_NEW`]. Every candidate rides in the state whole, listed
+    /// or not, with its full name and hint words; the row
+    /// `limits.identity_decision_state_bytes` observes the state's bytes and
+    /// never cuts it or skips the call. Only a listed candidate can be
+    /// chosen. A choice settles the mention and saves the hint.
     /// Anything else keeps a nightly ask's names separate for now, with the
     /// Dreamer's receipt, and sends an act-now ask to the person. A failed
     /// call waits [`RETRY_SECS`]. An act-now ask is an outbound effect's
@@ -132,19 +131,18 @@ impl Vault {
             .zip(&options)
             .map(|(id, option)| {
                 let token = listed.contains(id).then_some(option.choice.as_str());
-                let known = hints.get(id).map(|hint| hint.context.join(" "));
-                (id.to_hex(), token, option, hints.get(id), known)
+                (id.to_hex(), token, option, hints.get(id))
             })
             .collect();
         let effect = match held.reason {
             IdentityAskReason::ActNow { effect } => Some(effect),
             IdentityAskReason::Unsettled => None,
         };
-        // Whole, each candidate rides with its name and hint words; past the
-        // bound, by id with its texts cut to fit, never one left out.
+        // Whole: every candidate rides with its full name and hint words,
+        // with the mention's source ids and byte span.
         let candidates: Vec<serde_json::Value> = rows
             .iter()
-            .map(|(id, token, option, hint, _)| {
+            .map(|(id, token, option, hint)| {
                 json!({
                     "id": id,
                     "option": token,
@@ -154,53 +152,24 @@ impl Vault {
                 })
             })
             .collect();
-        let whole = json!({
+        let state = json!({
             "name": held.name,
             "excerpt": held.excerpt,
             "context": held.context,
             "act_now": effect,
             "someone_new": SOMEONE_NEW,
             "candidates": candidates,
+            "mention": {
+                "turn": held.turn.to_hex(),
+                "message": held.message.to_hex(),
+                "start": held.start,
+                "end": held.end,
+            },
         });
-        let context = held.context.join(" ");
-        let longest = rows
-            .iter()
-            .map(|(_, _, option, _, known)| {
-                let known = known.as_ref().map_or(0, String::len);
-                option.label.len().max(known)
-            })
-            .chain([held.name.len(), held.excerpt.len(), context.len()])
-            .max()
-            .unwrap_or(0);
-        let state = fit_state(longest, |cut| {
-            if cut.is_none() {
-                return whole.clone();
-            }
-            let candidates: Vec<serde_json::Value> = rows
-                .iter()
-                .map(|(id, token, option, _, known)| {
-                    json!({
-                        "id": id,
-                        "option": token,
-                        "name": cut_text(&option.label, cut),
-                        "provisional": option.provisional,
-                        "known_context": known.as_deref().map(|words| cut_text(words, cut)),
-                    })
-                })
-                .collect();
-            json!({
-                "name": cut_text(&held.name, cut),
-                "excerpt": cut_text(&held.excerpt, cut),
-                "context": cut_text(&context, cut),
-                "act_now": effect,
-                "someone_new": SOMEONE_NEW,
-                "candidates": candidates,
-                "cut_at_bytes": cut,
-            })
-        });
-        let fits = |state: &serde_json::Value| {
-            serde_json::to_vec(state).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES)
-        };
+        let state_bytes = serde_json::to_vec(&state)
+            .map_err(|_| invalid("decision state encoding"))?
+            .len() as u64;
+        let _ = self.measure_limit(EngineLimit::IdentityDecisionStateBytes, state_bytes);
         let mut choices: Vec<String> = rows
             .iter()
             .filter_map(|(_, token, ..)| token.map(str::to_owned))
@@ -217,39 +186,35 @@ impl Vault {
         } else {
             Reversibility::ReversibleRead
         };
-        let answer = if fits(&state) {
-            match decisions.ladder.run(
-                &question,
-                decisions.principal,
-                &evidence,
-                &state,
-                decisions.dial,
-                &decisions.bands,
-                reversibility,
-                decisions.deadline,
-            ) {
-                Ok(decision) => match &decision.answer {
-                    DecisionAnswer::Choice(choice) => {
-                        parse_choice(&held, choice).filter(|answer| match answer {
-                            Answer::Is(id) => listed.contains(id),
-                            Answer::SomeoneNew => true,
-                        })
-                    }
-                    _ => None,
-                },
-                Err(_) => {
-                    self.with_write_txn_grouped(|txn| {
-                        if let Some(mut row) = ASKS.get(&self.store, txn, &key)? {
-                            row.retry_at = now.saturating_add(RETRY_SECS);
-                            ASKS.put(&self.store, txn, &key, &row)?;
-                        }
-                        Ok(())
-                    })?;
-                    return Ok(IdentityRuling::Retry);
+        let answer = match decisions.ladder.run(
+            &question,
+            decisions.principal,
+            &evidence,
+            &state,
+            decisions.dial,
+            &decisions.bands,
+            reversibility,
+            decisions.deadline,
+        ) {
+            Ok(decision) => match &decision.answer {
+                DecisionAnswer::Choice(choice) => {
+                    parse_choice(&held, choice).filter(|answer| match answer {
+                        Answer::Is(id) => listed.contains(id),
+                        Answer::SomeoneNew => true,
+                    })
                 }
+                _ => None,
+            },
+            Err(_) => {
+                self.with_write_txn_grouped(|txn| {
+                    if let Some(mut row) = ASKS.get(&self.store, txn, &key)? {
+                        row.retry_at = now.saturating_add(RETRY_SECS);
+                        ASKS.put(&self.store, txn, &key, &row)?;
+                    }
+                    Ok(())
+                })?;
+                return Ok(IdentityRuling::Retry);
             }
-        } else {
-            None
         };
         self.with_write_txn_grouped(|txn| {
             // Against the ask as stored, not as `read` saw it, and only while

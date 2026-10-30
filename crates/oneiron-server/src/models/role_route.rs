@@ -195,6 +195,7 @@ impl ModelRuntime {
                     binding: HostInferenceBinding::Advertised {
                         model: route.model,
                         locality: route.locality,
+                        keyless: false,
                     },
                     extraction_egress: None,
                 },
@@ -244,6 +245,7 @@ impl ModelRuntime {
                     binding: HostInferenceBinding::Advertised {
                         model: model.clone(),
                         locality: served,
+                        keyless: false,
                     },
                     extraction_egress: None,
                 },
