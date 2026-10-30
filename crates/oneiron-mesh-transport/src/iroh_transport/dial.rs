@@ -13,8 +13,7 @@ pub(super) const ADMISSION: &[u8] = b"oneiron/mesh-admitted/1";
 /// MACHINE row, however many, read under the owner's proof, where the
 /// lookup any key may make stops at its bound. One lookup serves a dial's
 /// receipt and the receipts earlier lookups left unattributed (FIX 11153).
-pub type OwnerMachineLookup =
-    Box<dyn Fn([u8; 32]) -> Result<Option<MachineId>, MeshError> + Send>;
+pub type OwnerMachineLookup = Box<dyn Fn([u8; 32]) -> Result<Option<MachineId>, MeshError> + Send>;
 
 /// The receipts a failed lookup left with an unknown MACHINE, each with the
 /// endpoint key it names, oldest first, for the owner's next lookup to
@@ -27,7 +26,10 @@ const UNATTRIBUTED_KEPT: usize = 64;
 
 impl PathRecorder {
     fn keep_unattributed(&self, receipts: impl IntoIterator<Item = ([u8; 32], MeshPathReceipt)>) {
-        let mut kept = self.unattributed.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut kept = self
+            .unattributed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         kept.extend(receipts);
         while kept.len() > UNATTRIBUTED_KEPT {
             kept.pop_front();
@@ -35,7 +37,12 @@ impl PathRecorder {
     }
 
     fn take_unattributed(&self) -> VecDeque<([u8; 32], MeshPathReceipt)> {
-        std::mem::take(&mut *self.unattributed.lock().unwrap_or_else(PoisonError::into_inner))
+        std::mem::take(
+            &mut *self
+                .unattributed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 }
 
