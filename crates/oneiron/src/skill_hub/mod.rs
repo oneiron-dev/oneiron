@@ -44,10 +44,10 @@ pub(crate) use claim_refinement::{
 };
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_replay_filled_state};
 pub use default_hub::{
-    DefaultSkillHub, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit,
-    default_skill_hub_id,
+    DefaultSkillHub, MODEL_PACK_NAME, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
+    default_skill_hub_commit, default_skill_hub_id,
 };
-pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
+pub(crate) use default_hub::{MODEL_PACK_SUBTREE, seed_default_skill_hub};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
