@@ -24,9 +24,9 @@ mod timeline;
 mod tombstone;
 pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
-// A withdrawn reply copy's Shell generation (FIX 931). Its own-device cutoff
-// is its one caller until the scope-summary withdrawal calls it too.
-#[cfg(feature = "sync")]
+// A withdrawn reply copy's Shell generation (FIX 931): the scope-summary
+// withdrawal stages it on this device (FIX 11804), and a carried cutoff on
+// another machine of the vault.
 mod withdrawn;
 
 #[cfg(test)]
@@ -144,6 +144,7 @@ pub(crate) use tombstone::{
     stage_engine_row_hard_erasure_in_txn,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
+pub(crate) use withdrawn::scrub_withdrawn_record_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use withdrawn::{holds_withdrawn_record_in, withdraw_received_record_in_txn};
 // The replay outcome is read by sync production (`sync::quarantine`) and by
