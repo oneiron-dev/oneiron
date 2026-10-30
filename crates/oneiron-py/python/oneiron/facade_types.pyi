@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4398 declarations.
+Census: 1211 facade rows, 4399 declarations.
 Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -18931,6 +18931,11 @@ class XlsxConditionalFormat(TypedDict):
 class BodyConditionalFormat(TypedDict):
     id: str
     format: XlsxConditionalFormat
+class XlsxLines(TypedDict):
+    first: int
+    last: int
+    size: NotRequired[float | None]
+    style: NotRequired[int | None]
 class XlsxSheetView(TypedDict):
     name: str
     cells: list[BodyCell]
@@ -18938,6 +18943,8 @@ class XlsxSheetView(TypedDict):
     tables: list[XlsxTable]
     visibility: XlsxSheetVisibility
     conditional_formats: list[BodyConditionalFormat]
+    rows: list[XlsxLines]
+    columns: list[XlsxLines]
 class BodyName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
@@ -19721,6 +19728,8 @@ class XlsxSheet(TypedDict):
     locked: list[XlsxArea]
     tables: list[XlsxTable]
     visibility: XlsxSheetVisibility
+    rows: NotRequired[list[XlsxLines]]
+    columns: NotRequired[list[XlsxLines]]
 class XlsxName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
