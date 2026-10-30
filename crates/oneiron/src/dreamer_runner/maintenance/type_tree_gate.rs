@@ -503,7 +503,18 @@ pub(super) fn drive(
     // A revision the owner approved on an agent-health card settles on that
     // card on the gate's ruling, a refusal's included, through its
     // approval's checks and in place of this pass's own admission (FIX 3725).
-    let approved = vault.settle_approved_skill_edit_by_candidate(&proposal)?;
+    // One that does not settle (its bytes moved since the approval) stays
+    // pending on its card, said here; the pass then admits as it did before.
+    let approved = match vault.settle_approved_skill_edit_by_candidate(&proposal) {
+        Ok(approved) => approved,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "an approved team-shape revision did not settle on the gate's ruling; its card stays pending"
+            );
+            None
+        }
+    };
     let verdict = match scored {
         Ok(verdict) => verdict,
         Err(Error::Artifact(ArtifactError::SkillEditGateRetry(_))) => {

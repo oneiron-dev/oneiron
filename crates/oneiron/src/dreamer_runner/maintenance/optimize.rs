@@ -277,7 +277,14 @@ fn optimize(
         // An edit the owner approved on an agent-health card settles on that
         // card on the gate's ruling, a refusal's included, as the owner's
         // re-apply would (FIX 3725).
-        vault.settle_approved_skill_edit_by_candidate(&proposal)?;
+        // One that does not settle (its bytes moved since the approval) stays
+        // pending on its card, said here; the pass goes on.
+        if let Err(error) = vault.settle_approved_skill_edit_by_candidate(&proposal) {
+            tracing::warn!(
+                %error,
+                "an approved skill edit did not settle on the gate's ruling; its card stays pending"
+            );
+        }
         let verdict = scored?;
         // A scored edit is a held-out outcome for the improver revision that
         // drafted it, a resumed proposal's included: did the edited
