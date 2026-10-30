@@ -557,8 +557,10 @@ pub(crate) fn remove_step_sources_in_txn(
 /// An erase of `actor` takes, in the erase's own writer, each receipt row of
 /// a report witnessed for it (its request is that actor's run's) and each
 /// step row that stamps it as an owner (FIX 6659): a call it made, a step
-/// about it, or one its terminal claim logged, with the request each keeps.
-/// A row that does not decode names no owner and stays as it is.
+/// about it, or one its terminal claim logged, with the request each keeps,
+/// and revokes each custody record the side-row wall minted from a row it
+/// takes (FIX 6710). A row that does not decode names no owner and stays as
+/// it is.
 pub(crate) fn erase_blocked_source_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -582,12 +584,23 @@ pub(crate) fn erase_blocked_source_actor_in_txn(
         }
     }
     for receipt in &receipts {
+        revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt))?;
         SOURCE.delete(&vault.store, wtxn, receipt)?;
     }
     for step in &steps {
+        revoke_lifted_in_txn(vault, wtxn, &STEPS.key_bytes(step))?;
         STEPS.delete(&vault.store, wtxn, step)?;
     }
     Ok(())
+}
+
+/// Revokes each custody record the side-row wall minted from the row this
+/// table stores under `key`, its full stored key, in `wtxn` (FIX 6710): the
+/// wall names the row by the table's place and that key.
+fn revoke_lifted_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, key: &[u8]) -> Result<()> {
+    let place = format!("side:{}", SOURCE.decl().name);
+    let origin = crate::batch::secret_scan::side_row_origin(&place, key)?;
+    crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin)
 }
 
 /// A hard non-erase delete of `entity` takes the requests kept for it (FIX

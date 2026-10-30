@@ -20,8 +20,14 @@
 //! had, so a surface that seals its own input needs nothing new; the
 //! numbered form carries two envelopes or more, and a surface may seal one
 //! too. Those are an input's only two forms.
+//!
+//! A holder reads either form as it lies in the kept rows (FIX 11140): one
+//! envelope whole, or a frame's envelopes one at a time, each opened at its
+//! place as it completes; the frame is never joined.
 
-use oneiron_crypto::{HybridPublicKey, MAX_PLAINTEXT_LEN};
+use std::io::Read;
+
+use oneiron_crypto::{HybridPublicKey, MAX_PLAINTEXT_LEN, ONEV_HEADER_PREFIX_MAX, TAG_LEN};
 use zeroize::Zeroizing;
 
 use super::{INPUT_LABEL, InputBinding, refused};
@@ -35,15 +41,13 @@ const ENVELOPES_END: &[u8] = b"oneiron/custody-input-envelopes-end/v1\0";
 /// The most body bytes one envelope holds: the codec's own bound on one
 /// plaintext, less the input label each one opens with.
 const ENVELOPE_BODY_BYTES: usize = MAX_PLAINTEXT_LEN - INPUT_LABEL.len();
+/// The most bytes one envelope takes: its longest header, then the most
+/// ciphertext its codec seals. A longer one never parses, so none is read.
+const MAX_ENVELOPE_BYTES: u64 = (ONEV_HEADER_PREFIX_MAX + MAX_PLAINTEXT_LEN + TAG_LEN) as u64;
 
 /// Whether `body` seals as one envelope.
 pub(super) fn fits_one(body: &[u8]) -> bool {
     body.len() <= ENVELOPE_BODY_BYTES
-}
-
-/// A numbered input's frame after its label; `None` for one envelope.
-pub(super) fn numbered_frame(input: &[u8]) -> Option<&[u8]> {
-    input.strip_prefix(ENVELOPES_LABEL)
 }
 
 impl InputBinding<'_> {
@@ -78,46 +82,62 @@ impl InputBinding<'_> {
         Ok(frame)
     }
 
-    /// The body a numbered input's `frame` holds, opened with the holder's
-    /// `secret`: every envelope opened and verified at its place, in order,
-    /// then the body joined. `None` for a malformed frame or any envelope
-    /// that does not open at its place.
-    pub(super) fn open_numbered(
+    /// The body the input of `len` bytes `reader` holds, for
+    /// [`Self::open`]: one envelope read whole, or a numbered frame's count,
+    /// two at least, then each envelope's length and bytes, each read and
+    /// opened at its place before the next is read, then the closing mark
+    /// with nothing after it. `None` for anything else, or an envelope that
+    /// does not open at its place.
+    pub(super) fn open_read(
         &self,
-        frame: &[u8],
+        reader: impl Read,
+        len: u64,
         secret: &MachineSecret,
     ) -> Option<Zeroizing<Vec<u8>>> {
-        let envelopes = split_frame(frame)?;
-        let count = u32::try_from(envelopes.len()).ok()?;
+        let mut reader = reader.take(len);
+        let mut label = vec![0; usize::try_from(len.min(ENVELOPES_LABEL.len() as u64)).ok()?];
+        reader.read_exact(&mut label).ok()?;
+        if label != ENVELOPES_LABEL {
+            if len > MAX_ENVELOPE_BYTES {
+                return None;
+            }
+            let mut envelope = label;
+            let read = envelope.len();
+            envelope.resize(usize::try_from(len).ok()?, 0);
+            reader.read_exact(envelope.get_mut(read..)?).ok()?;
+            return self.open_one(&envelope, secret, &self.key_id());
+        }
+        let count = u32::from_be_bytes(read_array(&mut reader)?);
+        if count < 2 {
+            return None;
+        }
         // Each run is shorter than its envelope, so the joined body never
         // moves and leaves no unwiped copy behind.
-        let mut body = Zeroizing::new(Vec::with_capacity(
-            envelopes.iter().copied().map(<[u8]>::len).sum(),
-        ));
-        for (envelope, index) in envelopes.into_iter().zip(0_u32..) {
-            let run = self.open_one(envelope, secret, &self.numbered_key_id(index, count))?;
+        let mut body = Zeroizing::new(Vec::with_capacity(usize::try_from(len).ok()?));
+        for index in 0..count {
+            let size = u64::from(u32::from_be_bytes(read_array(&mut reader)?));
+            if size > MAX_ENVELOPE_BYTES {
+                return None;
+            }
+            let mut envelope = vec![0; usize::try_from(size).ok()?];
+            reader.read_exact(&mut envelope).ok()?;
+            let run = self.open_one(&envelope, secret, &self.numbered_key_id(index, count))?;
             body.extend_from_slice(&run);
         }
-        Some(body)
+        // The closing mark ends the frame: one byte past it is malformed.
+        let mut end = Vec::new();
+        reader
+            .by_ref()
+            .take(ENVELOPES_END.len() as u64 + 1)
+            .read_to_end(&mut end)
+            .ok()?;
+        (end == ENVELOPES_END).then_some(body)
     }
 }
 
-/// Each envelope a numbered frame holds, in order: its count, two at least,
-/// each envelope's length and bytes, then the closing mark with nothing
-/// after it. `None` for anything else.
-fn split_frame(frame: &[u8]) -> Option<Vec<&[u8]>> {
-    let (count, mut rest) = frame.split_first_chunk::<4>()?;
-    let count = u32::from_be_bytes(*count);
-    if count < 2 {
-        return None;
-    }
-    let mut envelopes = Vec::new();
-    for _ in 0..count {
-        let (len, after) = rest.split_first_chunk::<4>()?;
-        let (envelope, after) =
-            after.split_at_checked(usize::try_from(u32::from_be_bytes(*len)).ok()?)?;
-        envelopes.push(envelope);
-        rest = after;
-    }
-    (rest == ENVELOPES_END).then_some(envelopes)
+/// The next `N` bytes `reader` holds; `None` when it ends first.
+fn read_array<const N: usize>(reader: &mut impl Read) -> Option<[u8; N]> {
+    let mut bytes = [0; N];
+    reader.read_exact(&mut bytes).ok()?;
+    Some(bytes)
 }

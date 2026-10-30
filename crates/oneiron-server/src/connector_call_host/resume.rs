@@ -286,6 +286,7 @@ impl ServedConnectorCallHost {
             state,
             credential,
             grant,
+            run,
             original,
             ..
         } = opened;
@@ -311,6 +312,7 @@ impl ServedConnectorCallHost {
         // The credential the call presents, through its own door again.
         self.credential = credential;
         self.grant = grant;
+        self.run = run;
         let route = self
             .vault
             .route_connector_call(&binding.server)

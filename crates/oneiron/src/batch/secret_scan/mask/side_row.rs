@@ -636,7 +636,8 @@ fn bare_handle(text: &str) -> bool {
 }
 
 /// The record a custody origin names for a row no entity holds: derived from
-/// where the row is and its key.
-fn origin(place: &str, key: &[u8]) -> Result<EntityId> {
+/// where the row is and its key. An erase of the row revokes the custody
+/// records minted under it (FIX 6710).
+pub(crate) fn origin(place: &str, key: &[u8]) -> Result<EntityId> {
     EntityId::derive(SIDE_ROW_MASK, &[place.as_bytes(), key])
 }

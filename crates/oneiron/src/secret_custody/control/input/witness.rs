@@ -19,7 +19,9 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
-use super::{INPUTS, MAX_INPUT_BYTES, RelayedInput, held_input_in_txn, part_key};
+use super::{
+    INPUTS, InputDigests, MAX_INPUT_BYTES, RelayedInput, SealedFrame, held_input_in_txn, part_key,
+};
 use crate::Vault;
 use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, OwnerWorkBody, authority_entry_hash,
@@ -304,8 +306,10 @@ impl RelayedInput {
     }
 }
 
-/// Keeps `input`, whose witness is its request's whole signed entry, as
-/// [`super::keep_input_in_txn`] does. A witness past one row's bound
+/// Keeps the input `frame` holds, whose request names `digests`, row by row
+/// as [`SealedFrame::each_row`] reads it, never joined (FIX 11140): each row
+/// carries `input`'s sealing second, request and witness, the request's
+/// whole signed entry, beside its bytes. A witness past one row's bound
 /// travels in numbered parts instead, each signed with `signing`, the key
 /// that signed the request, and each input row carries a signed reference to
 /// them (FIX 8088). A request another key signed keeps today's inline form.
@@ -313,6 +317,8 @@ pub(crate) fn keep_witnessed_input_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     mut input: RelayedInput,
+    frame: &SealedFrame<'_>,
+    digests: &InputDigests,
     signing: &SigningKey,
 ) -> Result<()> {
     match CUSTODY_INPUT_WITNESS_FORM {
@@ -324,7 +330,9 @@ pub(crate) fn keep_witnessed_input_in_txn(
             |entry| matches!(entry.signer_key(), AuthorityKey::Ed25519(key) if *key == signer),
         );
     if !signed {
-        return super::keep_input_in_txn(vault, wtxn, &input);
+        return frame.each_row(&input, digests, |row| {
+            INPUTS.put(&vault.store, wtxn, &row.row_key(), &row.encode())
+        });
     }
     let witness = std::mem::take(&mut input.witness);
     let count =
@@ -334,7 +342,7 @@ pub(crate) fn keep_witnessed_input_in_txn(
     let group = WitnessGroup {
         sealed_at: input.sealed_at,
         request: input.request,
-        input: input.digest(),
+        input: digests.digest,
         commitment: digest(COMMIT_DOMAIN, &witness),
         count,
         signer,
@@ -353,15 +361,10 @@ pub(crate) fn keep_witnessed_input_in_txn(
         };
         WITNESSES.put(&vault.store, wtxn, &part.row_key(), &part.encode())?;
     }
-    let rows = match input.parts()? {
-        Some(parts) => parts,
-        None => vec![input],
-    };
-    for mut row in rows {
+    frame.each_row(&input, digests, |mut row| {
         row.witness = row.reference(&group, signing);
-        INPUTS.put(&vault.store, wtxn, &row.row_key(), &row.encode())?;
-    }
-    Ok(())
+        INPUTS.put(&vault.store, wtxn, &row.row_key(), &row.encode())
+    })
 }
 
 /// What the holder's join of an input's witness found.
@@ -388,14 +391,21 @@ pub(crate) fn witness_joined_in_txn(
     txn: &heed::RoTxn<'_>,
     digest_named: &[u8; 32],
 ) -> Result<WitnessJoin> {
-    let mut rows = Vec::new();
+    // Each input row is read, noted and let go: the input is never joined
+    // here (FIX 11140).
+    let mut rows = RowWitnesses {
+        seen: 0,
+        inline: true,
+        first: None,
+        agree: true,
+    };
     match held_input_in_txn(store, txn, digest_named)? {
-        Some(whole) if whole.part.is_none() => rows.push(whole),
+        Some(whole) if whole.part.is_none() => rows.note(&whole),
         _ => {
             let mut index = 0_u32;
             while let Some(row) = held_input_in_txn(store, txn, &part_key(digest_named, index))? {
                 let count = row.part.as_ref().map_or(0, |part| part.digests.len());
-                rows.push(row);
+                rows.note(&row);
                 index = index.saturating_add(1);
                 if usize::try_from(index).map_or(true, |done| done >= count) {
                     break;
@@ -403,17 +413,16 @@ pub(crate) fn witness_joined_in_txn(
             }
         }
     }
-    if rows.is_empty() {
+    if rows.seen == 0 {
         return Ok(WitnessJoin::Missing);
     }
-    if rows.iter().all(|row| !row.references_witness()) {
+    if rows.inline {
         return Ok(WitnessJoin::Inline);
     }
-    let mut groups = rows.iter().map(RelayedInput::witness_group);
-    let Some(Some(group)) = groups.next() else {
+    let (Some(Some(group)), true) = (rows.first, rows.agree) else {
         return Ok(WitnessJoin::Missing);
     };
-    if groups.any(|other| other != Some(group)) || group.input != *digest_named {
+    if group.input != *digest_named {
         return Ok(WitnessJoin::Missing);
     }
     let mut whole = Vec::new();
@@ -446,6 +455,30 @@ pub(crate) fn witness_joined_in_txn(
     } else {
         WitnessJoin::Missing
     })
+}
+
+/// What the input rows of one witness join say, each noted as it is read.
+struct RowWitnesses {
+    /// How many rows were noted.
+    seen: usize,
+    /// Every row noted carries its witness inline.
+    inline: bool,
+    /// The group the first row's reference names, when it verifies.
+    first: Option<Option<WitnessGroup>>,
+    /// Every later row names the same.
+    agree: bool,
+}
+
+impl RowWitnesses {
+    fn note(&mut self, row: &RelayedInput) {
+        self.seen += 1;
+        self.inline &= !row.references_witness();
+        let group = row.witness_group();
+        match self.first {
+            None => self.first = Some(group),
+            Some(first) => self.agree &= group == first,
+        }
+    }
 }
 
 /// The witness part kept under `key`, when it decodes.
