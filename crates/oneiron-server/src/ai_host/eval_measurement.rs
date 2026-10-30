@@ -5,7 +5,9 @@
 //! estimator reads the card. One clock and one budget per job. A job that
 //! cannot run yet (no judge, an arm this host does not serve exactly)
 //! leaves the row Pending and spends nothing. A gap after the claim settles
-//! it Partial at once: survivors of a failed set are never estimated.
+//! it Partial at once: survivors of a failed set are never estimated. A
+//! skill arm answers under the exact skill content it pins, loaded on the
+//! job's own attempt through the pinned-pack load (FIX 10677).
 
 use std::time::Duration;
 
@@ -21,10 +23,12 @@ use oneiron::{BudgetExhaustionPolicy, Vault};
 use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
 
+mod helper;
 mod legs;
 mod offer;
 mod score;
 
+pub(super) use helper::request_helper_measurements;
 pub(super) use offer::attach_measured_card;
 
 use legs::{Arms, Generated, Opened};
@@ -73,9 +77,6 @@ struct Job<'a> {
 /// Partial at once, with nothing counted or paid.
 fn refusal(judge: &ServeReplayJudge, row: &EvalMeasurement) -> Option<MeasurementUnavailable> {
     let request = &row.request;
-    if request.incumbent.skill_digest.is_some() || request.candidate.skill_digest.is_some() {
-        return Some(MeasurementUnavailable::SkillArm);
-    }
     if seat_model_role(&request.seat).is_none() {
         return Some(MeasurementUnavailable::NoModelRole);
     }
@@ -107,7 +108,7 @@ pub(super) fn run(
         vault.fail_eval_measurement(&digest, &[reason], now)?;
         return Ok(());
     }
-    let arms = match legs::open(server, vault, &row)? {
+    let arms = match legs::open(server, vault, &row, &admitted.status.attempt, now)? {
         Opened::Ready(arms) => arms,
         Opened::Unserved => return Ok(()),
         Opened::Refused(reason) => {

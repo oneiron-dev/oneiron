@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1211 facade rows, 4390 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
+// UniFFI census: 1213 facade rows, 4399 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1165.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -17565,6 +17565,12 @@ pub struct SkillTradeoffAsk {
     pub jev: Option<JevTradeoffVerdict>,
     #[serde(rename = "rung")]
     pub rung: u32,
+    #[serde(
+        rename = "judge_rubric_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judge_rubric_digest: Option<String>,
 }
 
 /// `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffAskView`.
@@ -17590,6 +17596,20 @@ pub struct SkillOptimizeTradeoffPickRequest {
     pub proposal: String,
     #[serde(rename = "question_digest")]
     pub question_digest: String,
+    #[serde(rename = "choice")]
+    pub choice: TradeoffChoice,
+}
+
+/// `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillOptimizeTradeoffResolveRequest {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "pending")]
+    pub pending: String,
+    #[serde(rename = "evidence")]
+    pub evidence: String,
     #[serde(rename = "choice")]
     pub choice: TradeoffChoice,
 }
@@ -27568,6 +27588,45 @@ pub struct OfferAnswerRecord {
     pub at: u64,
 }
 
+/// `oneiron::skill_optimize::offer::snapshot::OfferCheckOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OfferCheckOutcome {
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "broken")]
+    Broken,
+    #[serde(rename = "currency_mismatch")]
+    CurrencyMismatch,
+    #[serde(rename = "promised_score_unknown")]
+    PromisedScoreUnknown,
+    #[serde(rename = "promised_cost_unknown")]
+    PromisedCostUnknown,
+    #[serde(rename = "unverifiable_no_calls")]
+    UnverifiableNoCalls,
+    #[serde(rename = "unverifiable_no_meter")]
+    UnverifiableNoMeter,
+    #[serde(rename = "unverifiable_not_bound")]
+    UnverifiableNotBound,
+    #[serde(rename = "unverifiable_no_model_role")]
+    UnverifiableNoModelRole,
+    #[serde(rename = "unverifiable_mixed_model")]
+    UnverifiableMixedModel,
+    #[serde(rename = "unverifiable_no_usage")]
+    UnverifiableNoUsage,
+    #[serde(rename = "unverifiable_unpriced_model")]
+    UnverifiableUnpricedModel,
+    #[serde(rename = "unverifiable_unknown_currency")]
+    UnverifiableUnknownCurrency,
+    #[serde(rename = "unverifiable_unpriced_cache")]
+    UnverifiableUnpricedCache,
+    #[serde(rename = "unverifiable_mixed_currency")]
+    UnverifiableMixedCurrency,
+    #[serde(rename = "unverifiable_sum_overflow")]
+    UnverifiableSumOverflow,
+    #[serde(rename = "unverifiable_unclassified")]
+    UnverifiableUnclassified,
+}
+
 /// `oneiron::skill_optimize::offer::snapshot::OfferCheck`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -27592,6 +27651,8 @@ pub struct OfferCheck {
     pub observed_score: Option<f64>,
     #[serde(rename = "held", default, skip_serializing_if = "Option::is_none")]
     pub held: Option<bool>,
+    #[serde(rename = "outcome")]
+    pub outcome: OfferCheckOutcome,
     #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     #[serde(rename = "at")]
@@ -29191,6 +29252,11 @@ pub enum BundleHomeWarning {
     HomeDoesNotKeepSealedBundles,
     #[serde(rename = "home_profile_unknown")]
     HomeProfileUnknown,
+    #[serde(rename = "awaiting_reader")]
+    AwaitingReader {
+        #[serde(rename = "worlds")]
+        worlds: Vec<String>,
+    },
 }
 
 /// `oneiron::world_keys::owner_work::OwnerWorkCancelState`.
@@ -30239,6 +30305,8 @@ pub struct CourtesyDeleteSendRequest {
 pub struct CourtesyDeleteSent {
     #[serde(rename = "request")]
     pub request: String,
+    #[serde(rename = "pages")]
+    pub pages: Vec<String>,
     #[serde(rename = "pact")]
     pub pact: String,
     #[serde(rename = "recipient")]
@@ -50521,6 +50589,8 @@ pub struct ProposalDeltaSettleRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub attempt_receipt: Option<String>,
+    #[serde(rename = "executor", default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
     #[serde(
         rename = "artifact_ref",
         default,
@@ -50630,6 +50700,22 @@ pub struct AmendmentJudgmentView {
     pub engine_ver: String,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(rename = "rejected")]
+    pub rejected: bool,
+    #[serde(rename = "executor", default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<CellTypeRef>,
+    #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<String>,
+    #[serde(
+        rename = "judge_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judge_model: Option<String>,
+    #[serde(rename = "on_judge_model")]
+    pub on_judge_model: bool,
 }
 
 /// `oneiron::verbs::skill_attribution::ProposalDeltaSettlement`.
@@ -52545,7 +52631,7 @@ pub struct LlmCatalogCost {
         skip_serializing_if = "Option::is_none"
     )]
     pub cache_write_per_million: Option<String>,
-    #[serde(rename = "currency", default)]
+    #[serde(rename = "currency", default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
 }
 
@@ -53590,6 +53676,8 @@ pub struct VoiceTargetReceipt {
     pub cloned_at: u64,
     #[serde(rename = "revision")]
     pub revision: String,
+    #[serde(rename = "awaiting_verification")]
+    pub awaiting_verification: bool,
 }
 
 /// `oneiron::verbs::voice_bank::VoiceTargetEvictRequest`.
@@ -62668,6 +62756,93 @@ pub struct ConsolidationLineageView {
     pub steps: Vec<ConsolidationStepRef>,
     #[serde(rename = "next_step", default, skip_serializing_if = "Option::is_none")]
     pub next_step: Option<String>,
+}
+
+/// `oneiron::memory::conflict_settle::candidate_decisions::DreamerCandidateDecisionsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerCandidateDecisionsRequest {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+}
+
+/// `oneiron::dreamer_consolidation::kept_ask::KeptRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct KeptRole {
+    #[serde(rename = "rank")]
+    pub rank: RoleRank,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+}
+
+/// `oneiron::dreamer_consolidation::kept_ask::KeptRoute`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct KeptRoute {
+    #[serde(rename = "role")]
+    pub role: KeptRole,
+    #[serde(rename = "ceiling")]
+    pub ceiling: RoleRank,
+    #[serde(rename = "act")]
+    pub act: AskAct,
+}
+
+/// `oneiron::dreamer_consolidation::kept_ask::KeptAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct KeptAnswer {
+    #[serde(rename = "answer")]
+    pub answer: DecisionAnswer,
+    #[serde(rename = "answered_at")]
+    pub answered_at: u64,
+    #[serde(rename = "role")]
+    pub role: KeptRole,
+    #[serde(rename = "kind")]
+    pub kind: HolderKind,
+    #[serde(rename = "changed")]
+    pub changed: bool,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "rule", default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<HostRuleRef>,
+}
+
+/// `oneiron::dreamer_consolidation::kept_ask::KeptAsk`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct KeptAsk {
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "to")]
+    pub to: KeptRoute,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<KeptAnswer>,
+}
+
+/// `oneiron::dreamer_consolidation::provenance::KeptDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct KeptDecision {
+    #[serde(rename = "decision")]
+    pub decision: TypedDecision,
+    #[serde(rename = "ask", default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<KeptAsk>,
+}
+
+/// `oneiron::memory::conflict_settle::candidate_decisions::DreamerDecidedCandidateView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DreamerDecidedCandidateView {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "position")]
+    pub position: u64,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "corrects", default)]
+    pub corrects: Option<String>,
+    #[serde(rename = "decisions")]
+    pub decisions: Vec<KeptDecision>,
 }
 
 /// `oneiron::claim::core_types::evidence_refs::EvidenceKind`.

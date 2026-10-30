@@ -8,6 +8,8 @@ use std::time::Instant;
 
 use rmpv::Value;
 
+use super::assembly::tournament_claim_of_verified;
+use super::evidence::VerifiedCandidate;
 use super::executor::{ConsolidationExecutor, PartitionRun, extraction};
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{self, Stage};
@@ -19,11 +21,31 @@ use super::stage_log::{PartitionStages, ms_since};
 use super::step_charge::StepChargeTally;
 use super::thing_agent::{ThingPass, ThingPassEnd};
 use crate::attempt_queue::{AttemptId, ReadSetProducer};
-use crate::dreamer_runner::DreamerRunnerStore;
-use crate::dreamer_wake::WakeAttemptContext;
+use crate::autoreason_campaign::authoring::{ClaimAuthoringChoice, authoring_campaign};
+use crate::autoreason_campaign::beam_promotion::default_strategy;
+use crate::autoreason_campaign::research::bound_research_roots;
+use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::critic::{
+    CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict, LensCatalog,
+};
+use crate::dreamer_runner::{
+    DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringGateDecision,
+    DreamerClaimAuthoringStrategy, DreamerRunnerStore,
+};
+use crate::dreamer_tournament::{
+    DreamerTournamentAuthorFork, DreamerTournamentBordaBallot, DreamerTournamentBranch,
+    DreamerTournamentCandidate, DreamerTournamentJudgeClaim, DreamerTournamentRound,
+    DreamerTournamentRun, DreamerTournamentSynthesisArtifact, run_dreamer_claim_tournament,
+};
+use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
+use crate::entity_id::bytes_to_hex_lower;
+use crate::learning::{LearningCell, LearningPredicate, TypeRef};
 use crate::llm::{
     DurableStepContext, DurableStepError, DurableStepResult, StepEffectBinding, StepOutcome,
 };
+use crate::temporal::TimeRange;
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+use crate::{Result, Vault};
 
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
@@ -342,6 +364,13 @@ impl ConsolidationExecutor<'_> {
             .await;
         stages.resolve_ms = ms_since(resolve_started).saturating_sub(stages.gap_ms);
         let run = run?;
+        // The tournament arm (FIX 9009) refines survivors only when the
+        // executor's strategy names it; single-pass returns unchanged.
+        let run = if matches!(self.strategy, DreamerClaimAuthoringStrategy::Tournament) {
+            self.tournament_refine_run(run, ctx.vault, ctx.now_ms, attempt_id)
+        } else {
+            run
+        };
         // A candidate whose correction waits on a role's answer is read again
         // when the attempt comes back; what the pass took is kept.
         Ok(if waiting {
@@ -350,4 +379,262 @@ impl ConsolidationExecutor<'_> {
             run
         })
     }
+
+    /// The tournament arm's survivor refinement (FIX 9008, FIX 9009): every
+    /// survivor's per-claim tournament admission, and one deterministic
+    /// single-round tournament among the admitted string-valued claims,
+    /// written through `run_dreamer_claim_tournament`. The winner lands
+    /// there; losers and the inadmissible stay for the sink. Any failure
+    /// falls back to the survivors unchanged, never failing the partition.
+    fn tournament_refine_run(
+        &self,
+        run: PartitionRun,
+        vault: &Vault,
+        now_ms: u64,
+        attempt_id: AttemptId,
+    ) -> PartitionRun {
+        match run {
+            PartitionRun::Completed { candidates } => PartitionRun::Completed {
+                candidates: self
+                    .tournament_refine_candidates(candidates, vault, now_ms, attempt_id),
+            },
+            PartitionRun::Held {
+                candidates,
+                retry_at_ms,
+            } => PartitionRun::Held {
+                candidates: self
+                    .tournament_refine_candidates(candidates, vault, now_ms, attempt_id),
+                retry_at_ms,
+            },
+            run => run,
+        }
+    }
+
+    /// The survivors with the tournament winner removed, or unchanged when
+    /// no tournament ran (fewer than two admitted claims, no bound campaign,
+    /// or any build or run failure).
+    fn tournament_refine_candidates(
+        &self,
+        candidates: Vec<VerifiedCandidate>,
+        vault: &Vault,
+        now_ms: u64,
+        attempt_id: AttemptId,
+    ) -> Vec<VerifiedCandidate> {
+        if candidates.len() < 2 {
+            return candidates;
+        }
+        let selector = match tournament_selector(vault) {
+            Ok(Some(selector)) => selector,
+            Ok(None) => return candidates,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "tournament survivors stay single-pass; the bound campaign was not read"
+                );
+                return candidates;
+            }
+        };
+        let mut eligible = Vec::new();
+        for candidate in &candidates {
+            if let Some(confidence) = self.tournament_admitted(vault, &selector, candidate) {
+                eligible.push((candidate, confidence));
+            }
+        }
+        if eligible.len() < 2 {
+            return candidates;
+        }
+        let run = match self.tournament_run_of_eligible(&eligible, attempt_id, now_ms) {
+            Ok(run) => run,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "tournament survivors stay single-pass; the tournament run did not build"
+                );
+                return candidates;
+            }
+        };
+        let result = match run_dreamer_claim_tournament(vault, run) {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "tournament survivors stay single-pass; the tournament run did not land"
+                );
+                return candidates;
+            }
+        };
+        let Some(winner) = result.winner else {
+            return candidates;
+        };
+        tracing::info!(
+            claim_id = %winner.claim_id.to_hex(),
+            "tournament winner landed through the tournament gate"
+        );
+        candidates
+            .into_iter()
+            .filter(|candidate| candidate.claim_id != winner.claim_id)
+            .collect()
+    }
+
+    /// The incumbent confidence when `candidate` is admitted to the
+    /// tournament and carries a string value the judges can read; `None`
+    /// when it stays single-pass. Contested is the conflict loop's outcome
+    /// (FIX 12084), never invented: an accumulated member or a merged head.
+    fn tournament_admitted(
+        &self,
+        vault: &Vault,
+        selector: &BoundClaimAuthoringSelector,
+        candidate: &VerifiedCandidate,
+    ) -> Option<f32> {
+        let claim = tournament_claim_of_verified(candidate, candidate.contested).ok()?;
+        let admission = selector
+            .claim_admission(vault, ClaimAuthoringChoice::Tournament, &claim)
+            .ok()?;
+        let gate = admission
+            .gate_decision(DreamerClaimAuthoringBatchTier::batch())
+            .ok()?;
+        if !matches!(gate, DreamerClaimAuthoringGateDecision::Tournament(_)) {
+            return None;
+        }
+        let text = candidate.candidate.value_str()?;
+        if text.is_empty() || text.len() > 8192 {
+            return None;
+        }
+        Some(claim.incumbent_confidence)
+    }
+
+    /// One deterministic single-round tournament over the admitted survivors
+    /// (FIX 9009): each survivor authors one branch, four deterministic
+    /// carryover critiques accept it, and one confidence-ordered blind
+    /// ballot ranks them. Model-driven critiques and ballots are future
+    /// work; the provenance names the deterministic carryover.
+    fn tournament_run_of_eligible(
+        &self,
+        eligible: &[(&VerifiedCandidate, f32)],
+        attempt_id: AttemptId,
+        now_ms: u64,
+    ) -> Result<DreamerTournamentRun> {
+        let catalog = LensCatalog::of366_seed()?;
+        let run_id = format!("tournament-{}", bytes_to_hex_lower(attempt_id.as_bytes()));
+        let at = now_ms / 1_000;
+        let mut branches = Vec::with_capacity(eligible.len());
+        let mut branch_attempts = Vec::with_capacity(eligible.len());
+        for (candidate, _) in eligible {
+            let branch_attempt = AttemptId::from_bytes(candidate.claim_id.as_bytes())?;
+            let judge_refs = candidate
+                .evidence
+                .refs()
+                .into_iter()
+                .take(64)
+                .map(|id| id.to_hex())
+                .collect::<Vec<_>>();
+            let judge_text = candidate.candidate.value_str().ok_or_else(|| {
+                crate::error::Error::InvalidClaimBody("tournament candidate has no judge text")
+            })?;
+            let author = DreamerTournamentCandidate::new(
+                candidate.claim_id.to_hex(),
+                branch_attempt,
+                candidate.claim_id,
+                candidate.candidate.clone(),
+                DreamerTournamentJudgeClaim::new(judge_text, judge_refs.clone())?,
+                self.strategy.as_str(),
+                1,
+            )?;
+            let provenance = CritiqueProvenance::new(
+                self.actor,
+                "deterministic-tournament-carryover-v1",
+                Some("v1".to_owned()),
+            )?;
+            let executor = provenance.executor()?;
+            let mut critiques = Vec::with_capacity(4);
+            for (lens_id, domain) in [
+                ("groundedness", "claim_authoring"),
+                ("overreach", "claim_authoring"),
+                ("temporal", "claim_authoring"),
+                ("redundancy", "claim_authoring"),
+            ] {
+                let lens = catalog.lens(lens_id, domain).ok_or_else(|| {
+                    crate::error::Error::InvalidConfig("OF-366 seed catalog lost a lens".into())
+                })?;
+                critiques.push(CritiqueArtifact::new(
+                    format!("t_{}_{}", candidate.claim_id.to_hex(), lens.id),
+                    run_id.clone(),
+                    branch_attempt,
+                    author.candidate_ref.clone(),
+                    lens,
+                    provenance.clone(),
+                    LearningCell::new(LearningPredicate::Reliability, candidate.claim_id)
+                        .executor(executor.clone())
+                        .type_ref(TypeRef {
+                            node_id: "claim_authoring".to_owned(),
+                            tree_version: 1,
+                        })
+                        .axis("quality"),
+                    CritiqueVerdict::Accept,
+                    CritiqueSeverity::Info,
+                    lens.hard_check.then_some(true),
+                    judge_refs.clone(),
+                    None,
+                    at,
+                )?);
+            }
+            let synthesis = DreamerTournamentSynthesisArtifact::survivor(
+                format!("t_{}_synthesis", candidate.claim_id.to_hex()),
+                &author,
+            )?;
+            branch_attempts.push(branch_attempt);
+            branches.push(DreamerTournamentBranch::new(author, critiques, synthesis)?);
+        }
+        let mut ranking: Vec<usize> = (0..eligible.len()).collect();
+        ranking.sort_by(|&left, &right| {
+            eligible[right]
+                .1
+                .total_cmp(&eligible[left].1)
+                .then_with(|| left.cmp(&right))
+        });
+        let round = DreamerTournamentRound::new(
+            branches,
+            None,
+            vec![DreamerTournamentBordaBallot::new(
+                "deterministic-confidence-order",
+                ranking,
+            )?],
+        )?;
+        let fork = DreamerTournamentAuthorFork::new(run_id.clone(), attempt_id, branch_attempts)?;
+        DreamerTournamentRun::new(
+            run_id,
+            fork,
+            eligible.len() as u16,
+            1,
+            vec![round],
+            Vec::new(),
+            WriteEnvelope::new(
+                self.actor,
+                ClaimSource::Generated,
+                WriteProvenance::new(Value::from("dreamer-tournament-carryover-v1"))?,
+                ClaimApprovalStatus::Proposed,
+            ),
+            TimeRange { start: at, end: at },
+            at,
+        )
+    }
+}
+
+/// The single bound claim-authoring campaign pinning the promoted default,
+/// if exactly one does (FIX 9008): `None` while no default is promoted,
+/// none is bound, or several bind (ambiguous campaigns stay single-pass).
+fn tournament_selector(vault: &Vault) -> Result<Option<BoundClaimAuthoringSelector>> {
+    let Some(default) = default_strategy(vault)? else {
+        return Ok(None);
+    };
+    let mut bound = Vec::new();
+    for root in bound_research_roots(vault)? {
+        if authoring_campaign(vault, root)?.is_some_and(|campaign| campaign.strategy == default) {
+            bound.push(root);
+        }
+    }
+    Ok(match bound.as_slice() {
+        [root] => Some(BoundClaimAuthoringSelector::new(*root)),
+        _ => None,
+    })
 }
