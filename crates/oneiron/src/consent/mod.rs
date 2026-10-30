@@ -40,12 +40,13 @@
 //!
 //! # Folding existing shapes
 //!
-//! Four grant-shaped records predate this contract. They fold through
+//! Three grant-shaped records predate this contract. They fold through
 //! ADAPTERS ([`disclosure_grant_from_access_grant`],
-//! [`action_grant_from_standing_outbound_grant`],
 //! `action_grant_from_policy_scoped_grant`,
 //! [`disclosure_grant_from_disclosure_scope`]) — never a migration, a
-//! rewrite, or a byte/status/codec change to the source record.
+//! rewrite, or a byte/status/codec change to the source record. A standing
+//! outbound grant needs none: it is a standing grant row
+//! ([`crate::outbound_grant::StandingOutboundGrant`]).
 
 mod adapters;
 mod ask_holders;
@@ -68,8 +69,8 @@ mod bypass;
 mod tests;
 
 pub use self::adapters::{
-    access_grant_projection_is_active, action_grant_from_standing_outbound_grant,
-    disclosure_grant_from_access_grant, disclosure_grant_from_disclosure_scope,
+    access_grant_projection_is_active, disclosure_grant_from_access_grant,
+    disclosure_grant_from_disclosure_scope,
 };
 pub use self::bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
@@ -143,8 +144,9 @@ pub(crate) use self::bound::bound_exceeded;
 pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
     OwnerAuthoredWrite, approve_once_authorization_in_txn, approve_once_decision_in_txn,
-    person_is_live_for_store_in_txn, person_is_live_in_txn, revoke_standing_grant_in_txn,
-    spend_approve_once_in_txn, standing_grant_is_active_in_txn,
+    person_is_live_for_store_in_txn, person_is_live_in_txn,
+    record_standing_grant_use_for_store_in_txn, revoke_standing_grant_in_txn,
+    spend_approve_once_in_txn, standing_grant_is_active_in_txn, standing_grant_rows_in_txn,
 };
 pub(crate) use self::effect::{
     ApproveOnceAuthorization, classify_composed_effect, evaluate_consent,
@@ -170,7 +172,7 @@ use crate::outbound_grant::StandingOutboundGrantScope;
 use crate::store::GateDecisionId;
 
 #[cfg(test)]
-use self::adapters::{action_grant_from_policy_scoped_grant, outbound_scope_axes};
+use self::adapters::action_grant_from_policy_scoped_grant;
 #[cfg(test)]
 use self::bound::DOMAIN_ACTION;
 #[cfg(test)]
