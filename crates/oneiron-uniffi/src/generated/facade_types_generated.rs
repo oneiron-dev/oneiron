@@ -36098,6 +36098,11 @@ pub enum ArtifactPublishVerbStatus {
     Proposed,
     #[serde(rename = "published")]
     Published,
+    #[serde(rename = "paced")]
+    Paced {
+        #[serde(rename = "retry_at")]
+        retry_at: u64,
+    },
 }
 
 /// `oneiron::artifact_hosting::vocabulary::ArtifactPointer`.
