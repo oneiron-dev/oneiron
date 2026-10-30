@@ -16,7 +16,6 @@ use crate::edit_distance::escalation::{
 use crate::entity_id::EntityId;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryResult, verify_actor_binding,
-    verify_actor_binding_in_txn,
 };
 use crate::outbound_chokepoint::{
     FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow, FanoutPlan,
@@ -24,20 +23,6 @@ use crate::outbound_chokepoint::{
 };
 
 impl Memory<'_> {
-    /// [`Self::reauthenticate_fanout_owner`] in a resume's own write
-    /// transaction (FIX 11354): no read transaction opens while it is open,
-    /// and the owner is judged in the snapshot the resume commits in. The
-    /// door's preflight before it stays.
-    pub(super) fn reauthenticate_fanout_owner_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        owner: &AuthenticatedOwner,
-    ) -> MemoryResult<EntityId> {
-        let actor = owner.revalidate_in_txn(self.vault(), txn)?;
-        verify_actor_binding_in_txn(self.vault(), txn, actor, crate::EdgeActorClass::Human)?;
-        Ok(actor)
-    }
-
     /// Reads the durable run, including a denial parked across restart.
     pub fn consult_fanout_status(
         &self,
@@ -95,14 +80,8 @@ impl Memory<'_> {
         self.vault()
             .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                // In the writer's own snapshot (FIX 11354).
-                self.reauthenticate_fanout_owner_in_txn(txn, owner)?;
-                verify_actor_binding_in_txn(
-                    self.vault(),
-                    txn,
-                    self.actor(),
-                    self.actor_class(),
-                )?;
+                self.reauthenticate_fanout_owner(owner)?;
+                verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
                 let mut run = load_run(self.vault(), txn, correlation)?;
                 if run.plan.actor_ref != self.actor().to_hex() {
                     return Err(consult_refusal(

@@ -84,8 +84,7 @@ impl Memory<'_> {
             .vault()
             .memory(owner_actor, EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                // In the writer's own snapshot (FIX 11354).
-                self.reauthenticate_fanout_owner_in_txn(txn, owner)?;
+                self.reauthenticate_fanout_owner(owner)?;
                 self.resume_task_fanout_in(
                     txn,
                     launch_ref,
@@ -285,8 +284,7 @@ impl Memory<'_> {
         self.vault()
             .memory(owner_actor, EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                // In the writer's own snapshot (FIX 11354).
-                self.reauthenticate_fanout_owner_in_txn(txn, owner)?;
+                self.reauthenticate_fanout_owner(owner)?;
                 let (mut launch, plan) = self.frozen_launch_in(txn, launch_ref, expected_digest)?;
                 let Some(row) = launch
                     .check_row
