@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer_thing/profile.rs` | src | s | 5 crate-vis | — | The served agent's own generation and the session its parent waits on (FIX 7508, 11449) |
 | `src/ai_host/eval_authoring.rs` | src | s | 1 crate-vis | — | The Coach's eval authoring (ARCH-0053 "Eval authoring", OF-578): each night it keeps each seat's test set… |
 | `src/ai_host/eval_measurement.rs` | src | s | 2 crate-vis | — | The Coach's paired eval measurement (FIX 574, OF-578) |
-| `src/ai_host/eval_measurement/legs.rs` | src | s | 7 crate-vis | — | The legs' exact-model calls: each arm on its own one-model ladder, as a call of the seat's role, under one… |
+| `src/ai_host/eval_measurement/legs.rs` | src | m | 7 crate-vis | — | The legs' exact-model calls: each arm on its own one-model ladder, as a call of the seat's role, under one… |
 | `src/ai_host/eval_measurement/offer.rs` | src | s | 1 crate-vis | — | A training offer's measured card: the paired measurement of exactly the offer's incumbent and stock… |
 | `src/ai_host/eval_measurement/score.rs` | src | s | 2 crate-vis | — | A leg's blind score: the replay judge's `response_score` question on the task, the answer, the case's… |
 | `src/ai_host/failure_signals.rs` | src | s | 3 crate-vis | — | The host's failure-signal sender (OF-380) |
@@ -1296,7 +1296,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/http/never_sent.rs` | src | s | 1 crate-vis | — | A request that never reached its upstream goes once more, on a fresh connection (FIX 7113) |
 | `src/models/http/reply_line.rs` | src | s | 6 crate-vis | — | The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
-| `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 1 re-export · 25 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
+| `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 1 re-export · 27 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/ladder/cache_warmth.rs` | src | m | 6 crate-vis | — | Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route… |
 | `src/models/ladder/call_deadline.rs` | src | s | 1 enum · 7 fn · 7 crate-vis | CallDeadline | One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait… |
 | `src/models/ladder/decision_posture.rs` | src | s | 1 crate-vis | — | A decision call whose question's posture keeps its unit text on the host (FIX 9525): it goes down only the… |

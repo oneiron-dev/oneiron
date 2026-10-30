@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5753 | 902 | 107 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5759 | 902 | 108 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 52 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 152 | 18 | 0 |
@@ -135,7 +135,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `dreamer_promotion` | file+dir | 10 | m | — | Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7) |
 | `dreamer_runner` | dir | 179 | L | yes | Private Dreamer runner store plus atomic admission |
 | `dreamer_tournament` | dir | 6 | m | — | OF-366 tournament claim-authoring runner primitives |
-| `dreamer_wake` | dir | 66 | m | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
+| `dreamer_wake` | dir | 67 | m | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `edge` | file+dir | 3 | m | — | Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo` |
 | `edit_distance` | file+dir | 86 | m | yes | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
 | `edit_roundtrip` | dir | 39 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
@@ -198,7 +198,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `own_rate` | file | 1 | s | yes | Node-local OF-520 own-rate windows |
 | `panic_report` | file | 1 | s | — | The content-free panic report a host installs before it opens a vault |
 | `persona_snapshot` | dir | 9 | m | yes | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
-| `pipeline` | dir | 68 | L | — | — |
+| `pipeline` | dir | 69 | L | — | — |
 | `policy_model` | dir | 60 | m | yes | Policy classification over two planes |
 | `policy_setting_doors` | file | 1 | m | yes | The app's policy actions as host verbs (OF-181) |
 | `ports` | dir | 49 | m | yes | Transaction-composable storage ports |
@@ -238,12 +238,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `share` | file+dir | 7 | L | yes | Revocable brief read grants |
 | `share_travel` | file+dir | 6 | L | yes | What travels with a body when it leaves the vault (OF-491) |
 | `side_table` | dir | 15 | L | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
-| `skill` | dir | 22 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
-| `skill_attribution` | dir | 31 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `skill` | dir | 23 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
+| `skill_attribution` | dir | 32 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 7 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
 | `skill_hub` | dir | 95 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
-| `skill_optimize` | dir | 67 | L | yes | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
-| `skill_reliability` | dir | 18 | m | yes | Bayesian skill retrieval over the shared learning.reliability projection |
+| `skill_optimize` | dir | 68 | L | yes | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
+| `skill_reliability` | dir | 19 | m | yes | Bayesian skill retrieval over the shared learning.reliability projection |
 | `skill_scan` | file+dir | 2 | m | — | Deterministic static skill scanning and the activation risk consult |
 | `slim` | file+dir | 6 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `speculative` | file+dir | 2 | m | — | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
