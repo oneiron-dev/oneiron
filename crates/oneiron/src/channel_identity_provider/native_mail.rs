@@ -1,5 +1,7 @@
 //! Native mail fulfillment adapter. MTA, JMAP, DNS and DKIM stay in the host.
+mod host_pass;
 pub mod pack;
+pub use host_pass::NativeMailInboxPass;
 pub use pack::{NativeMailPack, PreparedNativeMailSend};
 
 use super::shared_validate::{

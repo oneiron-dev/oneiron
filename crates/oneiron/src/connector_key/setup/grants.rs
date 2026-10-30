@@ -393,6 +393,26 @@ impl Vault {
             .ok_or_else(|| invalid("the connection names no credential"))
     }
 
+    /// One named credential of a checked connection: the one `name` names
+    /// among those it declares, which a served send reads only through the
+    /// credential door for the declared effector, as it reads the first.
+    pub fn verified_pack_connection_named_secret(
+        &self,
+        pack: &str,
+        connection: &str,
+        name: &str,
+    ) -> Result<PackSetupSecret> {
+        self.require_pack_connection_verified(pack, connection)?;
+        let txn = self.store.env.read_txn()?;
+        let (setup, _) = self.installed_pack_setup_in_txn(&txn, pack)?;
+        declared_connection(&setup.connections, connection)?
+            .secrets
+            .iter()
+            .find(|secret| secret.name == name)
+            .cloned()
+            .ok_or_else(|| invalid("the connection declares no such credential"))
+    }
+
     /// Every grant a run asks for that a setup connection serves needs one
     /// such connection checked. A pack without setup, and a grant no
     /// connection serves, ask nothing more.
@@ -525,7 +545,7 @@ impl Vault {
         let session = self.require_pack_setup_in_txn(&txn, &binding)?;
         let declared = declared_connection(&binding.setup.connections, connection)?.clone();
         let state = self.connection_state_in_txn(&txn, &declared, &session)?;
-        if !state.secrets.iter().all(|secret| secret.stored) {
+        if !declared.required_secrets_stored(&state.secrets) {
             return Err(invalid(
                 "store the connection's credentials through the owner secrets door first",
             ));

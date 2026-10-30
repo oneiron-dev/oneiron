@@ -207,6 +207,11 @@ pub struct Vault {
     /// memory only.
     pub(crate) managed_owner_check:
         std::sync::OnceLock<std::sync::Arc<dyn crate::authority::ManagedOwnerCheck>>,
+    /// The served host's provider APIs and mail server its served sinks send
+    /// through (OF-187), installed once per open vault
+    /// ([`Vault::install_served_transports`]). In memory only.
+    pub(crate) served_transports:
+        std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
