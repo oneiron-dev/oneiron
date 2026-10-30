@@ -68,3 +68,22 @@ pub(super) fn mask_crossing_runs(keys: &LiftedKeys, view: &mut OfficeBodyView) {
         block.runs = canonical_runs(std::mem::take(&mut block.runs));
     }
 }
+
+/// Each DOCX paragraph of a masked `view` whose runs no longer join to its
+/// masked `text` reads one run of that text, with its first run's marks
+/// (FIX 12311): the run masks judge each run alone, so an unplaceable or
+/// split key across a mark edge could still show its parts there.
+pub(super) fn join_unmasked_runs(view: &mut OfficeBodyView) {
+    let OfficeBodyView::Docx { body } = view else {
+        return;
+    };
+    for block in &mut body.blocks {
+        if block.runs.is_empty()
+            || block.runs.iter().map(|run| run.text.as_str()).collect::<String>() == block.text
+        {
+            continue;
+        }
+        block.runs.truncate(1);
+        block.runs[0].text = block.text.clone();
+    }
+}
