@@ -29,8 +29,9 @@
 //!
 //! A review whose reply names the note's topic keeps it on the record as
 //! its topic membership, and that write also declares the topic group's
-//! summary (`note_topics.rs`, FIX 907). A reply that names none, or names
-//! one malformed, keeps none and declares nothing.
+//! summary (`note_topics.rs`, FIX 907) and moves the NOTE's topic index row
+//! (FIX 7457). A reply that names none, or names one malformed, keeps none
+//! and declares nothing.
 
 use std::ops::Range;
 
@@ -40,7 +41,8 @@ use super::extracted_people::{MintNamespace, NoteSource, bind_people, mint_note_
 use super::neighbourhood::{Neighbourhood, Passage, discover_in};
 use super::note_classification::{PadAsk, note_classification_reply};
 use super::note_topics::{
-    NoteTopicLineage, NoteTopicMembership, queue_note_topic_summaries_in_txn,
+    NoteTopicLineage, NoteTopicMembership, index_note_topic_in_txn,
+    queue_note_topic_summaries_in_txn,
 };
 use super::residency::spent_or_deferred;
 use super::roles::DREAMER_EXTRACTION_ROLE;
@@ -483,6 +485,7 @@ impl ConsolidationExecutor<'_> {
                     topic,
                 },
             )?;
+            index_note_topic_in_txn(ctx.vault, txn, note.id, left.as_ref(), topic.as_ref())?;
             // The membership and its topic's summary commit together (FIX
             // 907): a replay never finds this NOTE reviewed and the summary
             // unqueued.
@@ -503,23 +506,6 @@ impl ConsolidationExecutor<'_> {
         }
         Ok(None)
     }
-}
-
-/// Every reviewed NOTE whose review record keeps `topic`, in id order: the
-/// record is the one membership, kept in no other index (FIX 907).
-pub(super) fn topic_members_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    topic: &NoteTopicMembership,
-) -> Result<Vec<EntityId>> {
-    let mut members = Vec::new();
-    for row in SEEN.iter_from(&vault.store, txn, &[])? {
-        let (note, record) = row?;
-        if record.topic.as_ref() == Some(topic) {
-            members.push(note);
-        }
-    }
-    Ok(members)
 }
 
 /// The topic `note`'s review record keeps, read in `txn`; `None` when the

@@ -188,6 +188,10 @@ side_tables! {
     /// unchanged NOTE is not read again, its verdict and importance, and a sealed pad's missed
     /// keep lines with the re-asks spent on them (FIX 2240). Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
+    /// The NOTE review's topic index (FIX 7457): one row per reviewed NOTE under the topic
+    /// membership its review record keeps, written in that record's own write. Key: topic
+    /// digest(32) + id16(facet) + id16(project) + id16(note).
+    DREAMER_NOTE_REVIEW_TOPIC: VaultMeta b"dreamer:note-review:topic:v1:" Named;
     /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
     DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
