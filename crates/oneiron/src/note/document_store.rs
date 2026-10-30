@@ -587,6 +587,7 @@ impl Memory<'_> {
                 };
                 self.vault()
                     .put_text_purge_receipt_in_txn(txn, &note, receipt_id, &receipt)?;
+                self.vault().store.roll_checkpoint_payload_for_purge_in_txn(txn, &note)?;
                 Ok(receipt)
             })
         })
