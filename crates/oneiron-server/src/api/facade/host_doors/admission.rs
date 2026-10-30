@@ -716,7 +716,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.off_record.rooms.export" => {
             crate::api::facade::off_record_room_doors::off_record_room_admits(auth, verb)
         }
-        "vault.guests.export_envelope" => {
+        "vault.guests.export_envelope" | "vault.guests.propose" => {
             crate::api::facade::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
         "execute_code" => crate::api::facade::foreign_code_doors::foreign_code_admits(server, auth),

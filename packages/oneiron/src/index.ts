@@ -1523,6 +1523,8 @@ export class Oneiron {
       share: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsShare(input) as Facade.GuestDocumentEnvelope),
       /** The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket. */
       export_envelope: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsExportEnvelope(input) as Facade.GuestDocumentEnvelope),
+      /** A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault. */
+      propose: (input: Facade.ConnectProposeRequest): Facade.ConnectProposalLanded => this.#call(() => this.#client.vaultGuestsPropose(input) as Facade.ConnectProposalLanded),
       /** The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused. */
       reshare: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsReshare(input) as Facade.GuestDocumentEnvelope),
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
