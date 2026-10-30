@@ -17,8 +17,9 @@ pub(super) struct ConnState {
     pub(super) promoted_windows: std::collections::HashMap<WindowKey, SyncSelector>,
     /// The filtered copy of each window this federation socket was last
     /// sent, with the selector that admitted it: the rows whose by-reference
-    /// bodies it is served (FIX 12118).
-    pub(super) admitted_windows: HashMap<WindowKey, (SyncSelector, loro::LoroDoc)>,
+    /// bodies it is served (FIX 12118). Its copies are bounded; a dropped
+    /// one is filtered again on its next use.
+    pub(super) admitted_windows: super::admitted_windows::AdmittedWindows,
     /// Each promoted window's baseline: the home's version when this socket promoted it. A
     /// vector behind it never receives older history. It only rises.
     pub(super) promotion_baselines: std::collections::HashMap<WindowKey, loro::VersionVector>,
@@ -73,7 +74,7 @@ impl ConnState {
             subscribed_windows: SubscribedWindows::default(),
             limit_asked: false,
             promoted_windows: std::collections::HashMap::new(),
-            admitted_windows: HashMap::new(),
+            admitted_windows: super::admitted_windows::AdmittedWindows::default(),
             promotion_baselines: std::collections::HashMap::new(),
             documents: std::collections::HashMap::new(),
             owner_documents: std::collections::HashMap::new(),
