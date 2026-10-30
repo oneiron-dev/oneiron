@@ -5,7 +5,7 @@ use oneiron::task_verb::sdk::{
     WIRE_THRESHOLDS_MANIFEST as MANIFEST, WireThresholdsReceipt,
     set_wire_thresholds_as_owner_in_txn,
 };
-use oneiron::{Error, Result, Vault};
+use oneiron::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -105,6 +105,10 @@ pub struct WireLimitQuestion {
     pub observed: u64,
     pub raised_at: u64,
     pub crossings: u64,
+    /// Every vault owner or co-owner, by entity id, whose own work crossed
+    /// the row in the window, when the host knew whose it was (FIX 5702).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub owners: BTreeSet<String>,
 }
 /// Where crossed rows ask. Each crossing counts in its row's question for
 /// the window; the first is logged at once, and the question is kept on this
@@ -165,6 +169,23 @@ impl LimitQuestions {
     pub(crate) fn ask(&self, row: LimitRow, bound: u64, observed: u64) {
         self.ask_at(row, bound, observed, oneiron_vault_contract::now_ts());
     }
+    /// [`Self::ask`] for work `owner` ran (FIX 5702): the window's question
+    /// names that owner beside every other one whose work crossed the row in
+    /// it. Nothing waits on the answer, and the answer is the same.
+    pub(crate) fn ask_for_owner(&self, row: LimitRow, bound: u64, observed: u64, owner: EntityId) {
+        let now = oneiron_vault_contract::now_ts();
+        self.ask_at(row, bound, observed, now);
+        let window = now / LIMIT_QUESTION_WINDOW_SECS * LIMIT_QUESTION_WINDOW_SECS;
+        let mut asked = lock(&self.asked);
+        if let Some(open) = asked
+            .get_mut(&row)
+            .and_then(VecDeque::back_mut)
+            .filter(|open| open.window == window)
+        {
+            open.question.owners.insert(owner.to_hex());
+            open.kept = false;
+        }
+    }
     fn ask_at(&self, row: LimitRow, bound: u64, observed: u64, now: u64) {
         let window = now / LIMIT_QUESTION_WINDOW_SECS * LIMIT_QUESTION_WINDOW_SECS;
         let mut asked = lock(&self.asked);
@@ -189,6 +210,7 @@ impl LimitQuestions {
                 observed,
                 raised_at: now,
                 crossings: 1,
+                owners: BTreeSet::new(),
             },
             kept: false,
             restored: false,
@@ -242,6 +264,7 @@ impl LimitQuestions {
                 question.crossings = question.crossings.saturating_add(earlier.crossings);
                 question.observed = question.observed.max(earlier.observed);
                 question.raised_at = question.raised_at.min(earlier.raised_at);
+                question.owners.extend(earlier.owners);
             }
         }
         Some(open.question.clone())
@@ -272,6 +295,9 @@ impl LimitQuestions {
 impl LimitAsk for LimitQuestions {
     fn crossed(&self, row: EngineLimit, bound: u64, measured: u64) {
         self.ask(LimitRow::Engine(row), bound, measured);
+    }
+    fn crossed_for_owner(&self, row: EngineLimit, bound: u64, measured: u64, owner: EntityId) {
+        self.ask_for_owner(LimitRow::Engine(row), bound, measured, owner);
     }
 }
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
