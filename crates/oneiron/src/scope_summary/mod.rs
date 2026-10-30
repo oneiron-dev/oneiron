@@ -15,7 +15,8 @@ mod request;
 mod status;
 pub use derivation::{ScopeSummaryMetadata, SummaryDerivation, SummarySourceVersion};
 pub(crate) use derivation::{
-    defer_rederive, rederive_changed_in_txn, rederive_deferred, roll_back_summary_in_txn,
+    defer_rederive, rederive_changed_in_txn, rederive_deferred, rederive_owed_in_txn,
+    roll_back_summary_in_txn,
 };
 pub use purpose::SummaryPurpose;
 pub use status::{ScopeSummaryResult, ScopeSummaryStatus};

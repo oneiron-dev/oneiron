@@ -311,6 +311,15 @@ pub(crate) fn rederive_deferred() -> bool {
     REDERIVE_DEFERRED.with(std::cell::Cell::get)
 }
 
+/// Whether a scope summary is owed its rederive, read through `txn`: what
+/// [`rederive_changed_in_txn`] walks at the next write's commit.
+pub(crate) fn rederive_owed_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(PROJECTION
+        .iter_from(&vault.store, txn, b"")?
+        .next()
+        .is_some())
+}
+
 /// Called once at the commit boundary, after all source/HEAD/document edits.
 /// An exact unchanged input is the impact gate: it queues and spends nothing.
 /// A changed scope queues an ordinary Dreamer attempt, never writes prose.

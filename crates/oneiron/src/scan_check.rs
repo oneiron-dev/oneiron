@@ -473,6 +473,15 @@ impl PendingScanChecks {
             .or_insert(check);
     }
 
+    /// Whether a crossing waits to be kept (FIX 11664).
+    pub(crate) fn any_waiting(&self) -> bool {
+        !self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    }
+
     fn waiting(&self) -> BTreeMap<CheckKey, ScanCheck> {
         self.0
             .lock()
