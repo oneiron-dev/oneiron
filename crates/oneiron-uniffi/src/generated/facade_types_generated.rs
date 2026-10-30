@@ -29252,6 +29252,11 @@ pub enum BundleHomeWarning {
     HomeDoesNotKeepSealedBundles,
     #[serde(rename = "home_profile_unknown")]
     HomeProfileUnknown,
+    #[serde(rename = "awaiting_reader")]
+    AwaitingReader {
+        #[serde(rename = "worlds")]
+        worlds: Vec<String>,
+    },
 }
 
 /// `oneiron::world_keys::owner_work::OwnerWorkCancelState`.

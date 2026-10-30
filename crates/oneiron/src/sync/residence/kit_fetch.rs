@@ -23,8 +23,12 @@
 //! root the same way, through its own signed door (`pad_index`, FIX 7106), a
 //! page at a time (FIX 9364).
 
+mod custody;
 mod pad_index;
 
+pub use self::custody::{
+    KIT_CUSTODY_FETCH_PATH, KIT_CUSTODY_REPLY_MAX, KitCustodyFetch, kit_custody_page,
+};
 pub use self::pad_index::{
     KIT_PAD_INDEX_FETCH_PATH, KIT_PAD_INDEX_REPLY_MAX, KitPadIndexFetch, KitPadIndexPage,
     kit_sealed_bundle_index,

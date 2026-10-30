@@ -141,6 +141,9 @@ impl Vault {
         // A Connect guest's PERSON leaves its pacts in the first local tear
         // when nothing published (FIX 3875).
         revoke_guest_grants_in_txn(self, gate, &mut wtxn, id)?;
+        // The custody revokes the actor sweeps make reach the owner's other
+        // machines under the act the delete carries out (FIX 11883).
+        let owner_act = gate.and_then(GatedDeletion::owner_act);
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -190,7 +193,9 @@ impl Vault {
                     crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                     crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 }
-                crate::deletion::actor_fields::erase_actor_fields_in_txn(self, &mut wtxn, id)?;
+                crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                    self, &mut wtxn, id, owner_act,
+                )?;
             }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
@@ -235,6 +240,7 @@ impl Vault {
             id,
             Some(&tombstone.request_id),
             erase,
+            owner_act,
         )?;
         affected.extend(citing);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.

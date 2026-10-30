@@ -11,6 +11,7 @@ use crate::deletion::{
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::ArchiveDeleteAuthority;
+use crate::secret_custody::EraseOwnerAct;
 use crate::write_envelope::WriteActor;
 
 impl Memory<'_> {
@@ -136,7 +137,12 @@ impl Memory<'_> {
             .owner_authorship()
             .zip(self.host_slip_issuer)
             .map(|(owner, issuer)| GuestRevokeAuthority { owner, issuer });
-        self.safe_delete_gated(
+        // The owner deleting in person carries out his own act: each custody
+        // record his erase revokes goes to his other machines too (FIX 11883).
+        let owner_act = self
+            .owner_authorship()
+            .map(|owner| EraseOwnerAct::new(owner, self.owner_surface()));
+        let deleted = self.safe_delete_gated(
             &id,
             reason,
             gate,
@@ -145,7 +151,12 @@ impl Memory<'_> {
             stop_check_after_soft_scrub,
             claim,
             guest_revoke,
-        )
+            owner_act.as_ref(),
+        );
+        if let Some(act) = owner_act.as_ref().filter(|_| deleted.is_ok()) {
+            act.mirror_after_commit(self.vault);
+        }
+        deleted
     }
 
     /// The archive delete's checked execution (OF-449 L4): a user hard
@@ -182,6 +193,7 @@ impl Memory<'_> {
             false,
             None,
             None,
+            None,
         )?;
         Ok((receipt, admitted))
     }
@@ -203,6 +215,7 @@ impl Memory<'_> {
         stop_check_after_soft_scrub: bool,
         claim: Option<crate::deletion::DeletionClaim<'_>>,
         guest_revoke: Option<GuestRevokeAuthority<'_>>,
+        owner_act: Option<&EraseOwnerAct<'_>>,
     ) -> MemoryResult<DeleteReceipt> {
         // Keep the exact binding-layer refusal while the engine sees a typed
         // concurrent-write stand-in. Both callbacks are invoked only under
@@ -227,7 +240,8 @@ impl Memory<'_> {
             crate::deletion::GatedDeletion::new(gate, &both)
         }
         .with_claim(claim)
-        .with_guest_revoke(guest_revoke);
+        .with_guest_revoke(guest_revoke)
+        .with_owner_act(owner_act);
         let outcome = self
             .vault
             .delete_entity_with_reason_gated(id, reason.delete_reason(), gated);
