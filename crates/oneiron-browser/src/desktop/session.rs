@@ -103,6 +103,7 @@ impl DesktopSession {
             guest: lease,
             manifest,
             policy: config.policy.clone(),
+            press_holds: super::press_holds::PressHolds::default(),
             receipts: Vec::new(),
             receipt_seq: 0,
             decider: None,

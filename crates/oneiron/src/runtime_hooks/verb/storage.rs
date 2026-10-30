@@ -43,6 +43,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::code_run::{
@@ -132,7 +133,7 @@ enum HooksTarget<'s> {
 /// [`VerbHookPre`]: the runs it holds, what it notes beside them, and the
 /// in-memory keep's key when it ran on one, so a post on another thread
 /// finds the same store.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SessionCarry {
     key: Option<SessionHookKey>,
     runs: Vec<HeldRun>,
@@ -141,7 +142,7 @@ pub(crate) struct SessionCarry {
 
 /// One run as a session keeps it: its receipt and its saved copy under its
 /// run key, and what the call's answer says of it, but for its receipt.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HeldRun {
     pub(super) key: RunKey,
     pub(super) receipt: ReceiptRecord,
@@ -184,7 +185,7 @@ impl HookRecordsKept {
 
 /// What a session-only call with no room overlay keeps its hook records
 /// under (Engine 10-19): its session, or the process.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum SessionHookKey {
     /// A session, by its registry key and when it was entered: a ref
     /// entered again keeps apart.

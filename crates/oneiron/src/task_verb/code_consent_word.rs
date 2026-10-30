@@ -50,9 +50,10 @@ pub(super) fn is_code_consent_ask_intent(intent_key: &str) -> bool {
     intent_key.starts_with(INTENT_PREFIX)
 }
 
-/// The label one choice's option carries. A held browser act's names the
-/// act itself, its row as the page showed it (FIX 10423); a connector
-/// call's speaks of the call and its tool.
+/// The label one choice's option carries. A held act's names the act
+/// itself (a desktop act by its own verb, FIX 11499), its row as the page
+/// showed it (FIX 10423); a connector call's speaks of the call and its
+/// tool.
 fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
     let Some(action) = row.binding.pending.browser_action() else {
         return match choice {
@@ -64,7 +65,17 @@ fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
         }
         .to_owned();
     };
-    let act = format!("the click on {} \"{}\"", action.role, action.name);
+    let act = if action.act.ends_with(".type") {
+        format!("the typing into {} \"{}\"", action.role, action.name)
+    } else if action.act.ends_with(".key") || action.act.ends_with(".hotkey") {
+        if action.role == "key" {
+            format!("the \"{}\" key press", action.name)
+        } else {
+            format!("the key press on {} \"{}\"", action.role, action.name)
+        }
+    } else {
+        format!("the click on {} \"{}\"", action.role, action.name)
+    };
     match choice {
         CodeConsentChoice::ApproveOnce | CodeConsentChoice::ApproveAndStopAsking => {
             format!("Approve once: {act}, this time only")
