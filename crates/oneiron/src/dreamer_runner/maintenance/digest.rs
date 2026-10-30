@@ -68,6 +68,8 @@ pub const NOTE_TOMBSTONE_GROUP: &str = "note.tombstone";
 /// The NOTE tombstone line's view: the owner's tombstone review, where each
 /// proposal is accepted or declined.
 pub const NOTE_TOMBSTONE_VIEW: &str = "/v1/owner/notes/tombstones";
+/// The derived group the recipient's judge asks (OF-420) render under.
+pub const JUDGE_ASK_GROUP: &str = "coach.judge_ask";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -275,8 +277,9 @@ pub struct ProactivityDigest {
     /// view rebuilds its text with (FIX 6411).
     pub presentation: ProactivityPresentation,
     /// The witness an urgent digest was delivered under (FIX 8955): the
-    /// `dreamer.digest.urgent` job whose input keeps the ladder's answer with
-    /// its full receipt. `None` for every other digest.
+    /// `dreamer.digest.urgent` job whose input keeps the ladder's or the
+    /// host-built answer with its full receipt (FIX 10942). `None` for every
+    /// other digest.
     pub witness: Option<crate::attempt_queue::AttemptId>,
 }
 #[derive(Default, Serialize, Deserialize)]

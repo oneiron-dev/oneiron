@@ -133,6 +133,7 @@ fn restore_unlocked(
             pins,
             anchor,
             args.pad_machine.as_deref(),
+            args.custody_home.as_deref(),
         )?);
     }
     let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)?;

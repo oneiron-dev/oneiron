@@ -19,7 +19,10 @@
 mod candidate_decisions;
 mod decision_context;
 
-pub use candidate_decisions::DreamerDecidedCandidateView;
+pub use candidate_decisions::{
+    DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
+    read_dreamer_candidate_decisions_as,
+};
 
 use std::cell::Cell;
 
