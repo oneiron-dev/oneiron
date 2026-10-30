@@ -133,6 +133,7 @@ impl Vault {
             created_at: input.created_at,
             run: None,
             actor_class: Some(EdgeActorClass::System as u8),
+            opener_lineage: Vec::new(),
         };
         PreparedRepoProposal::new(row, base.encoded).map(Ok)
     }

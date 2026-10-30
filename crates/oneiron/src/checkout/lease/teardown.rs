@@ -52,7 +52,17 @@ pub(crate) fn prepare_teardown_in_txn<L: CheckoutLiveness, R: CheckoutRepoOps>(
     let mut act = fenced_in_txn(vault, txn, fence)?;
     require_not_regressed(&act, now)?;
     if act.state == CheckoutLeaseState::Settling {
-        return Ok((act, None));
+        // Collection was authorised under this fence. A tree it already
+        // removed resumes to completion; a tree still present is checked
+        // again, so a retry never force-removes one that has since turned
+        // dirty, occupied or unreceipted. The lease stays Settling, so a
+        // later retry resumes once the tree is gone (FIX 8654).
+        let reason = if ops.tree_present(&act)? {
+            teardown_reason(&act, receipt, ops, liveness)?
+        } else {
+            None
+        };
+        return Ok((act, reason));
     }
     let reason = teardown_reason(&act, receipt, ops, liveness)?;
     act.state = if reason.is_some() {

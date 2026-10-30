@@ -9,8 +9,8 @@ use crate::repo_mutation::mount::RepoMountRef;
 impl Memory<'_> {
     /// `vault.code.merge_queue.enqueue`: queues stored repository proposals
     /// as one batch through the unchanged `MergeQueue::enqueue`, which keeps
-    /// its one to six proposal bound, size limit and green-base check. No
-    /// proposal is reviewed, checked or landed here.
+    /// its size limit and green-base check and speculates six proposals at a
+    /// time (FIX 9948). No proposal is reviewed, checked or landed here.
     pub fn merge_queue_enqueue_as(
         &self,
         owner: &AuthenticatedOwner,
