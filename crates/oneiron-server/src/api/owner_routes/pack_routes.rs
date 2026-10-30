@@ -1,45 +1,47 @@
 //! `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1).
 //! The owner installs a pack from a folder on this host or from its files,
-//! lists what is installed, and binds or dials its hooks. Hub refs sync at
-//! their stored policy, and hub skills import, sync, restore and read their
-//! receipts here (OF-213). The organ inventory and the owner's organ build
-//! upload live here too (OF-575), and so do the Slack app's manifest and
-//! install link (OF-519).
+//! lists what is installed, activates a held hub Candidate, and binds or
+//! dials its hooks. Hub refs sync at their stored policy, and hub skills
+//! import, sync, restore and read their receipts here (OF-213). The organ
+//! inventory and the owner's organ build upload live here too (OF-575), and
+//! so do the Slack app's manifest and install link (OF-519).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Path as UrlPath, Query, State};
+use axum::extract::{Query, State};
 use axum::response::Json;
 use oneiron::EntityId;
-use oneiron::consent::ConsentReceipt;
 use oneiron::skill_hub::pack_catalog::{
-    MAX_ORGAN_BUILD_BYTES, PackInstallDisposition, PackInstallReceipt, PackOrganBuild,
-    PackOrganEntry, hub_pin,
+    PackInstallDisposition, PackInstallReceipt, PackOrganBuild, PackOrganEntry, hub_pin,
 };
-use oneiron::skill_hub::{
-    HubAdmissionReceipt, HubAskSurface, HubFile, HubImportReceipt, HubPin, HubRef,
-    HubSyncDisposition, HubSyncPolicy, TrackedHubRef,
-};
+use oneiron::skill_hub::{HubFile, HubPin, HubRef, HubSyncPolicy, MODEL_PACK_NAME, TrackedHubRef};
 use oneiron::task_verb::sdk::{HubHookBindingRow, PackFileInput, decode_pack_files};
 use serde::{Deserialize, Serialize};
-
-use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
-use oneiron::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
-use crate::builtin_host::{
-    HostConnectionChecks, ProviderSetup, public_origin, slack_app_manifest, start_slack_install,
-};
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
 mod line_chats;
 pub(crate) mod schema;
+mod setup_routes;
+mod skill_routes;
+
+use setup_routes::{
+    PackSetupAnswerRequest, PackSetupKey, PackSetupReply, PackSetupVerifyRequest,
+    SlackInstallRequest, setup_answer, setup_prepare, setup_verify, setup_view, slack_install,
+    slack_manifest,
+};
+use skill_routes::{
+    ActivationAskView, ActivationRequest, ConsentRow, ImportSkill, RestoreSkill, SkillRow,
+    SkillSync, approve_skill_activation, approve_skill_permissions, import_skill,
+    prepare_skill_activation, restore_default_skills, restore_skill, skill_receipts, sync_skill,
+};
 
 mod table;
 pub(super) use self::table::owner_table;
@@ -86,6 +88,7 @@ async fn put(
 ) -> OwnerReply<PackPut> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
+    let host = Arc::clone(&server);
     let put = blocking(move || {
         let files = match (request.path, request.files) {
             (Some(path), None) => read_folder(&path)?,
@@ -101,6 +104,7 @@ async fn put(
         Ok(PackPut::from(server.vault().put_pack(&owner, files)?))
     })
     .await?;
+    measure_catalog_token_ratios(&host, &put);
     Ok(Json(put))
 }
 
@@ -128,6 +132,7 @@ async fn install_from_hub(
 ) -> OwnerReply<PackPut> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
+    let host = Arc::clone(&server);
     let put = blocking(move || {
         let hub = oneiron::EntityId::from_hex(&request.hub)
             .map_err(|_| OwnerError::Invalid("hub is not an entity id".to_owned()))?;
@@ -142,6 +147,7 @@ async fn install_from_hub(
         Ok(PackPut::from(disposition))
     })
     .await?;
+    measure_catalog_token_ratios(&host, &put);
     Ok(Json(put))
 }
 
@@ -164,6 +170,26 @@ impl From<PackInstallDisposition> for PackPut {
                 receipt: None,
             },
         }
+    }
+}
+
+/// Each row an install of the first-party model catalog brought in or
+/// changed is counted on the fixed passage, in the background, as
+/// `/v1/owner/model-catalog/sync` counts them (OF-577).
+fn measure_catalog_token_ratios(server: &SyncServer, put: &PackPut) {
+    if put.outcome == "installed"
+        && put
+            .receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.pack_name == MODEL_PACK_NAME)
+        && let Some(ratios) = server.ai.model_runtime().token_ratios()
+    {
+        let vault = Arc::clone(server.vault());
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = ratios.measure_missing_blocking(&vault) {
+                tracing::warn!(%error, "catalog token ratios were not measured");
+            }
+        });
     }
 }
 
@@ -346,6 +372,36 @@ async fn place_agent_world(
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct ActivateCandidate {
+    /// The Candidate pack's source, as 32 hex (its receipt's `source_id`).
+    source: String,
+}
+
+/// `POST /v1/owner/packs/activate`: the owner activates a hub Candidate held
+/// for its advisories, or for code that is organs only. The pack installs
+/// unless another hold or a rule keeps it; its receipt's `owner_activated`
+/// names the holds the owner lifted.
+async fn activate_candidate(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<ActivateCandidate>,
+) -> OwnerReply<PackPut> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let host = Arc::clone(&server);
+    let put = blocking(move || {
+        let source = entity_id(&request.source, "source")?;
+        Ok(PackPut::from(
+            server.vault().activate_pack_candidate(&owner, source)?,
+        ))
+    })
+    .await?;
+    measure_catalog_token_ratios(&host, &put);
+    Ok(Json(put))
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct HookEnabled {
     /// The binding claim, as 32 hex.
     binding: String,
@@ -421,14 +477,6 @@ async fn put_organ_build(
         if !request.path.is_absolute() {
             return Err(OwnerError::Invalid(
                 "a build path must be absolute".to_owned(),
-            ));
-        }
-        let length = std::fs::metadata(&request.path)
-            .map_err(|error| OwnerError::Host(error.into()))?
-            .len();
-        if length > MAX_ORGAN_BUILD_BYTES {
-            return Err(OwnerError::Invalid(
-                "the organ build is too large".to_owned(),
             ));
         }
         let bytes = std::fs::read(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
@@ -562,633 +610,13 @@ async fn sync_pack(
 ) -> OwnerReply<PackPut> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
+    let host = Arc::clone(&server);
     let put = blocking(move || {
         Ok(PackPut::from(
             server.vault().sync_pack_from_hub(&owner, &request.name)?,
         ))
     })
     .await?;
+    measure_catalog_token_ratios(&host, &put);
     Ok(Json(put))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ImportSkill {
-    /// A shipped library subtree, imported at the released commit.
-    #[serde(default)]
-    subtree: Option<String>,
-    /// Else a configured hub, as 32 hex, with the fields below.
-    #[serde(default)]
-    hub: Option<String>,
-    #[serde(default)]
-    folder: Option<String>,
-    #[serde(default)]
-    pin_type: Option<String>,
-    #[serde(default)]
-    pin_value: Option<String>,
-    #[serde(default)]
-    publisher: Option<String>,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-struct SkillRow {
-    /// The skill, as 32 hex.
-    entity: String,
-}
-
-fn skill_row(entity: EntityId) -> SkillRow {
-    SkillRow {
-        entity: entity.to_hex(),
-    }
-}
-
-/// `POST /v1/owner/packs/skills/import`: import a shipped library skill, or
-/// a hub skill at a pin. A hub skill lands Candidate behind one permission
-/// ask; its dependency advisories land with it.
-async fn import_skill(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<ImportSkill>,
-) -> OwnerReply<SkillRow> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let row = blocking(move || {
-        let vault = server.vault();
-        let at = vault.now_recorded_at();
-        let occurred = oneiron::TimeRange { start: at, end: at };
-        let entity = match request {
-            ImportSkill {
-                subtree: Some(subtree),
-                hub: None,
-                folder: None,
-                pin_type: None,
-                pin_value: None,
-                publisher: None,
-            } => vault.import_default_hub_skill(&subtree, occurred, at)?,
-            ImportSkill {
-                subtree: None,
-                hub: Some(hub),
-                folder: Some(folder),
-                pin_type: Some(pin_type),
-                pin_value: Some(pin_value),
-                publisher: Some(publisher),
-            } => vault.import_skill_from_hub_ref(
-                &owner,
-                entity_id(&hub, "hub")?,
-                &folder,
-                hub_pin(&pin_type, &pin_value)?,
-                &publisher,
-            )?,
-            _ => {
-                return Err(OwnerError::Invalid(
-                    "send a subtree, or hub, folder, pin_type, pin_value and publisher".to_owned(),
-                ));
-            }
-        };
-        Ok(skill_row(entity))
-    })
-    .await?;
-    Ok(Json(row))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct RestoreSkill {
-    subtree: String,
-}
-
-/// `POST /v1/owner/packs/skills/restore`: re-import a deleted or retired
-/// library skill as a fresh Candidate; an unchanged one is left alone.
-async fn restore_skill(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<RestoreSkill>,
-) -> OwnerReply<SkillRow> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let row = blocking(move || {
-        let at = server.vault().now_recorded_at();
-        let occurred = oneiron::TimeRange { start: at, end: at };
-        Ok(skill_row(server.vault().restore_default_hub_skill(
-            &owner,
-            &request.subtree,
-            occurred,
-            at,
-        )?))
-    })
-    .await?;
-    Ok(Json(row))
-}
-
-/// `POST /v1/owner/packs/skills/restore-defaults`: restore missing or retired
-/// bootstrap and pinned first-hub defaults as fresh Candidates.
-async fn restore_default_skills(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Vec<SkillRow>> {
-    let owner = owner(&auth, &server)?;
-    let rows = blocking(move || {
-        let at = server.vault().now_recorded_at();
-        let occurred = oneiron::TimeRange { start: at, end: at };
-        Ok(server
-            .vault()
-            .restore_default_skills(&owner, occurred, at)?
-            .into_iter()
-            .map(skill_row)
-            .collect())
-    })
-    .await?;
-    Ok(Json(rows))
-}
-
-/// What one skill sync did.
-#[derive(Serialize, schemars::JsonSchema)]
-struct SkillSync {
-    /// `applied`, `proposed` or `refused_by_policy`.
-    outcome: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    proposal: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    approval: Option<&'static str>,
-}
-
-/// `POST /v1/owner/packs/skills/{entity}/sync`: refetch a hub skill at its
-/// ref's stored policy. Same or narrower bytes apply; widening proposes.
-async fn sync_skill(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    UrlPath(entity): UrlPath<String>,
-) -> OwnerReply<SkillSync> {
-    let owner = owner(&auth, &server)?;
-    let sync = blocking(move || {
-        let entity = entity_id(&entity, "entity")?;
-        Ok(
-            match server.vault().sync_skill_from_hub_ref(&owner, &entity)? {
-                HubSyncDisposition::Applied => SkillSync {
-                    outcome: "applied",
-                    proposal: None,
-                    approval: None,
-                },
-                HubSyncDisposition::Proposed {
-                    proposal_id,
-                    approval,
-                } => SkillSync {
-                    outcome: "proposed",
-                    proposal: Some(proposal_id.to_hex()),
-                    approval: Some(approval.as_str()),
-                },
-                HubSyncDisposition::RefusedByPolicy => SkillSync {
-                    outcome: "refused_by_policy",
-                    proposal: None,
-                    approval: None,
-                },
-            },
-        )
-    })
-    .await?;
-    Ok(Json(sync))
-}
-
-/// The owner's consent as it landed.
-#[derive(Serialize, schemars::JsonSchema)]
-struct ConsentRow {
-    outcome: &'static str,
-    /// The gate decision, as 32 hex.
-    decision: String,
-}
-
-impl From<ConsentReceipt> for ConsentRow {
-    fn from(receipt: ConsentReceipt) -> Self {
-        Self {
-            outcome: receipt.gate_outcome(),
-            decision: receipt
-                .decision_id()
-                .as_bytes()
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-        }
-    }
-}
-
-/// The skill's first hub source: the ref its import or sync named.
-fn skill_source(vault: &oneiron::Vault, entity: &EntityId) -> Result<HubRef, OwnerError> {
-    vault
-        .skill_hub_sources(entity)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| OwnerError::Invalid("the skill has no hub source".to_owned()))
-}
-
-/// `POST /v1/owner/packs/skills/{entity}/permissions/approve`: the owner's
-/// answer to a hub skill's permission ask; it activates the Candidate.
-async fn approve_skill_permissions(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    UrlPath(entity): UrlPath<String>,
-) -> OwnerReply<ConsentRow> {
-    let owner = owner(&auth, &server)?;
-    let row = blocking(move || {
-        let vault = server.vault();
-        let entity = entity_id(&entity, "entity")?;
-        let source = skill_source(vault, &entity)?;
-        let at = vault.now_recorded_at();
-        let occurred = oneiron::TimeRange { start: at, end: at };
-        Ok(ConsentRow::from(vault.approve_marketplace_permission_ask(
-            &owner, &entity, &source, occurred, at,
-        )?))
-    })
-    .await?;
-    Ok(Json(row))
-}
-
-/// A hub skill's receipts: one import receipt per hub source, and the
-/// held-out activation ruling once one landed.
-#[derive(Serialize)]
-struct SkillReceipts {
-    imports: Vec<HubImportReceipt>,
-    admission: Option<HubAdmissionReceipt>,
-}
-
-/// `GET /v1/owner/packs/skills/{entity}/receipts`
-async fn skill_receipts(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    UrlPath(entity): UrlPath<String>,
-) -> OwnerReply<SkillReceipts> {
-    owner(&auth, &server)?;
-    let receipts = blocking(move || {
-        let vault = server.vault();
-        let entity = entity_id(&entity, "entity")?;
-        let mut imports = Vec::new();
-        for source in vault.skill_hub_sources(&entity)? {
-            if let Some(receipt) = vault.hub_import_receipt(&entity, &source)? {
-                imports.push(receipt);
-            }
-        }
-        Ok(SkillReceipts {
-            imports,
-            admission: vault.hub_admission_receipt(&entity)?,
-        })
-    })
-    .await?;
-    Ok(Json(receipts))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ActivationRequest {
-    /// The publisher admitted for the skill's hub.
-    publisher: String,
-    /// An active local skill whose attributed outcomes are the baseline.
-    evidence_skill: String,
-    /// On approve: the digest the owner was shown.
-    #[serde(default)]
-    effect_digest: Option<String>,
-}
-
-/// The activation ask as the owner reads it.
-#[derive(Serialize, schemars::JsonSchema)]
-struct ActivationAskView {
-    candidate: String,
-    content_hash: String,
-    effect_digest: String,
-    /// `one_tap`, `summarized_review` or `full_review`.
-    surface: &'static str,
-}
-
-fn prepare_activation(
-    server: &SyncServer,
-    owner: &oneiron::consent::AuthenticatedOwner,
-    entity: &str,
-    request: &ActivationRequest,
-) -> Result<oneiron::skill_hub::HubActivationAsk, OwnerError> {
-    let vault = server.vault();
-    let candidate = entity_id(entity, "entity")?;
-    let evidence = entity_id(&request.evidence_skill, "evidence_skill")?;
-    let source = skill_source(vault, &candidate)?;
-    let publisher = vault.admit_skill_publisher(owner, &request.publisher, source.hub_id)?;
-    Ok(vault.prepare_marketplace_activation(candidate, &source, &publisher, evidence)?)
-}
-
-/// `POST /v1/owner/packs/skills/{entity}/activation/prepare`: the immutable
-/// held-out activation ask for a hub Candidate.
-async fn prepare_skill_activation(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    UrlPath(entity): UrlPath<String>,
-    payload: OwnerJsonBody<ActivationRequest>,
-) -> OwnerReply<ActivationAskView> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let view = blocking(move || {
-        let ask = prepare_activation(&server, &owner, &entity, &request)?;
-        Ok(ActivationAskView {
-            candidate: ask.candidate().to_hex(),
-            content_hash: ask.content_hash().to_hex(),
-            effect_digest: ask.effect_digest().to_hex(),
-            surface: match ask.surface() {
-                HubAskSurface::OneTap => "one_tap",
-                HubAskSurface::SummarizedReview => "summarized_review",
-                HubAskSurface::FullReview => "full_review",
-            },
-        })
-    })
-    .await?;
-    Ok(Json(view))
-}
-
-/// `POST /v1/owner/packs/skills/{entity}/activation/approve`: the owner's
-/// consent to the ask they were shown. The ask is rebuilt and must carry
-/// the same digest. Admission itself needs the host's held-out scorer.
-async fn approve_skill_activation(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    UrlPath(entity): UrlPath<String>,
-    payload: OwnerJsonBody<ActivationRequest>,
-) -> OwnerReply<ConsentRow> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let row = blocking(move || {
-        let shown = request
-            .effect_digest
-            .clone()
-            .ok_or_else(|| OwnerError::Invalid("send the effect_digest shown".to_owned()))?;
-        let ask = prepare_activation(&server, &owner, &entity, &request)?;
-        if ask.effect_digest().to_hex() != shown {
-            return Err(OwnerError::Invalid(
-                "the activation ask moved; prepare it again".to_owned(),
-            ));
-        }
-        Ok(ConsentRow::from(
-            server
-                .vault()
-                .approve_marketplace_activation(&ask, &owner)?,
-        ))
-    })
-    .await?;
-    Ok(Json(row))
-}
-
-/// One pack's setup: by name, and by content hash when several sources wait.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct PackSetupKey {
-    pack: String,
-    /// One exact source; else the Active one, or the pack's one Candidate.
-    #[serde(default)]
-    source: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct PackSetupAnswerRequest {
-    pack: String,
-    #[serde(default)]
-    source: Option<String>,
-    /// A typed answer.
-    #[serde(default)]
-    answer: Option<PackSetupAnswer>,
-    /// Or one action from the setup's cards, with the card's `$state`.
-    #[serde(default)]
-    card_action: Option<PackSetupCardActionRequest>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct PackSetupCardActionRequest {
-    action_id: String,
-    #[serde(default)]
-    state: GeneratedUiStateSnapshot,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct PackSetupVerifyRequest {
-    pack: String,
-    #[serde(default)]
-    source: Option<String>,
-    connection: String,
-}
-
-/// The setup, its GenUI cards and its plain text.
-#[derive(Serialize, schemars::JsonSchema)]
-struct PackSetupReply {
-    setup: PackSetupView,
-    cards: Vec<GeneratedUiCard>,
-    text: String,
-    /// A built-in channel's provider URLs at this host, and Slack's manifest.
-    #[serde(flatten)]
-    provider: ProviderSetup,
-    /// Set when a card asked to store a credential: the owner secrets door
-    /// takes the value, then a `secret_stored` answer pins its record.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    store_secret: Option<PackSetupStoreSecret>,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-struct PackSetupStoreSecret {
-    door: &'static str,
-    connection: String,
-    name: String,
-    /// The binding the stored credential needs, with the read scope.
-    effector: String,
-}
-
-impl PackSetupReply {
-    fn new(setup: PackSetupView, server: &SyncServer) -> Result<Self, OwnerError> {
-        let provider = ProviderSetup::for_pack(
-            &setup.pack_name,
-            server.config.oauth_resource_indicator.as_deref(),
-        )?;
-        Ok(Self {
-            cards: setup.cards()?,
-            text: setup.text() + &provider.text(),
-            setup,
-            provider,
-            store_secret: None,
-        })
-    }
-}
-
-/// `GET /v1/owner/packs/setup?pack=&source=`: the owner's guided setup of one
-/// pack (OF-378), readable while the pack is still a Candidate.
-async fn setup_view(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    query: Result<Query<PackSetupKey>, QueryRejection>,
-) -> OwnerReply<PackSetupReply> {
-    let owner = owner(&auth, &server)?;
-    let key = query_params(query)?;
-    let reply = blocking(move || {
-        PackSetupReply::new(
-            server
-                .vault()
-                .pack_setup(&owner, &key.pack, key.source.as_deref())?,
-            &server,
-        )
-    })
-    .await?;
-    Ok(Json(reply))
-}
-
-/// `POST /v1/owner/packs/setup/prepare`: open, or resume, the setup. Opening
-/// grants nothing.
-async fn setup_prepare(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<PackSetupKey>,
-) -> OwnerReply<PackSetupReply> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let reply = blocking(move || {
-        PackSetupReply::new(
-            server
-                .vault()
-                .prepare_pack_setup(&owner, &request.pack, request.source.as_deref())?,
-            &server,
-        )
-    })
-    .await?;
-    Ok(Json(reply))
-}
-
-/// `POST /v1/owner/packs/setup/answer`: one typed answer, or one card action.
-/// A credential value never comes here: a card's store button answers with
-/// the owner secrets door to open.
-async fn setup_answer(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<PackSetupAnswerRequest>,
-) -> OwnerReply<PackSetupReply> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let reply = blocking(move || {
-        let vault = server.vault();
-        let source = request.source.as_deref();
-        let answer = match (request.answer, request.card_action) {
-            (Some(answer), None) => answer,
-            (None, Some(card)) => {
-                let view = vault.pack_setup(&owner, &request.pack, source)?;
-                match view.card_action(&card.action_id, &card.state)? {
-                    PackSetupCardAction::Answer(answer) => answer,
-                    PackSetupCardAction::Verify { connection } => {
-                        let checks = HostConnectionChecks::new(&server)?;
-                        return PackSetupReply::new(
-                            vault.verify_pack_connection(
-                                &owner,
-                                &request.pack,
-                                source,
-                                &connection,
-                                &checks,
-                            )?,
-                            &server,
-                        );
-                    }
-                    PackSetupCardAction::StoreSecret {
-                        connection,
-                        secret,
-                        effector,
-                    } => {
-                        let mut reply = PackSetupReply::new(view, &server)?;
-                        reply.store_secret = Some(PackSetupStoreSecret {
-                            door: "/v1/owner/secrets/register",
-                            connection,
-                            name: secret,
-                            effector,
-                        });
-                        return Ok(reply);
-                    }
-                }
-            }
-            _ => {
-                return Err(OwnerError::Invalid(
-                    "send exactly one of answer or card_action".to_owned(),
-                ));
-            }
-        };
-        PackSetupReply::new(
-            vault.answer_pack_setup(&owner, &request.pack, source, &answer)?,
-            &server,
-        )
-    })
-    .await?;
-    Ok(Json(reply))
-}
-
-/// `POST /v1/owner/packs/setup/verify`: check one connection before the pack
-/// uses it. The check is the engine's fixed read-only provider call for the
-/// declared check name; a pack never names a URL.
-async fn setup_verify(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<PackSetupVerifyRequest>,
-) -> OwnerReply<PackSetupReply> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let reply = blocking(move || {
-        let checks = HostConnectionChecks::new(&server)?;
-        PackSetupReply::new(
-            server.vault().verify_pack_connection(
-                &owner,
-                &request.pack,
-                request.source.as_deref(),
-                &request.connection,
-                &checks,
-            )?,
-            &server,
-        )
-    })
-    .await?;
-    Ok(Json(reply))
-}
-
-/// `GET /v1/owner/packs/slack/manifest`: the Slack app manifest at this
-/// host's public origin, to paste at api.slack.com/apps (OF-519). It needs
-/// no checked connection, since the app is made first.
-async fn slack_manifest(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<serde_json::Value> {
-    owner(&auth, &server)?;
-    let manifest = blocking(move || {
-        let origin =
-            public_origin(server.config.oauth_resource_indicator.as_deref()).ok_or_else(|| {
-                OwnerError::Invalid(
-                    "this host has no public https origin; set oauth_resource_indicator to it first"
-                        .to_owned(),
-                )
-            })?;
-        Ok(slack_app_manifest(&origin)?)
-    })
-    .await?;
-    Ok(Json(manifest))
-}
-
-/// The Slack setup to install for: by content hash when several wait.
-#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct SlackInstallRequest {
-    #[serde(default)]
-    source: Option<String>,
-}
-
-/// `POST /v1/owner/packs/slack/install`: one link that installs the Slack
-/// app to the owner's workspace (OF-519). Slack's redirect redeems it once,
-/// within ten minutes, and the host stores and checks the bot token under
-/// this owner's proof, recording where this request reached it (FIX 4650).
-async fn slack_install(
-    auth: CoreAuth,
-    headers: axum::http::HeaderMap,
-    extensions: axum::http::Extensions,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<SlackInstallRequest>,
-) -> OwnerReply<crate::builtin_host::SlackInstallLink> {
-    let owner = owner(&auth, &server)?;
-    let surface =
-        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
-    let request = payload.read(&server).await?;
-    let link =
-        blocking(move || start_slack_install(&server, owner, surface, request.source)).await?;
-    Ok(Json(link))
 }
