@@ -76,6 +76,7 @@ static SESSION_OVERLAY_TEST_ALLOCATOR: session_overlay::hygiene_tests::ObservedA
     session_overlay::hygiene_tests::ObservedAllocator;
 pub(crate) mod side_table;
 pub mod slim;
+pub mod stage_timing;
 pub mod store;
 pub(crate) mod sweep;
 pub mod temporal;

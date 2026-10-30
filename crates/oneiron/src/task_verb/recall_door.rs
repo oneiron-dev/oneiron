@@ -121,6 +121,7 @@ pub fn recall_at_door_seeded(
     // Every stage of this recall shares the deletion states it reads in one
     // committed snapshot (L15 recall speed).
     let _deletion_memo = crate::ports::deletion_memo_scope();
+    let _l15 = crate::stage_timing::stage("recall.door");
     recall_with_whole_limit(memory, input, embed, door)
 }
 

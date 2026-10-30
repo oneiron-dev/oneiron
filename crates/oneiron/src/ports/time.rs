@@ -124,6 +124,7 @@ impl crate::store::Store {
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
+        let _l15 = crate::stage_timing::stage("recall.grant_clock_write");
         let journal = if self.opened_with_writer_lease() {
             clock.lease_journal()
         } else {
