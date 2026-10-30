@@ -41,6 +41,7 @@ impl BrowserDriver for DesktopSession {
     /// Opens an app of the guest's set, `app:<name>`, and reads its window.
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         self.live()?;
         let app = input
             .url
@@ -173,6 +174,7 @@ impl BrowserDriver for DesktopSession {
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         self.live()?;
         let snapshot = self.reach(&input.target)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
@@ -202,6 +204,7 @@ impl BrowserDriver for DesktopSession {
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         let entry = entry(input.text.as_deref(), input.secret.as_deref())?;
         self.live()?;
         let snapshot = self.reach(&input.target)?;
@@ -255,6 +258,7 @@ impl BrowserDriver for DesktopSession {
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         self.live()?;
         let snapshot = self.reach(&input.target)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
@@ -518,6 +522,7 @@ impl BrowserDriver for DesktopSession {
 
     fn press_key(&mut self, input: KeyInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         self.live()?;
         let snapshot = match input.target.as_deref() {
             Some(target) => self.reach(target)?,
@@ -557,6 +562,7 @@ impl BrowserDriver for DesktopSession {
 
     fn hotkey(&mut self, input: HotkeyInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         self.live()?;
         if input.keys.len() < 2 {
             return Err(BrowserError::Input(
@@ -586,6 +592,7 @@ impl BrowserDriver for DesktopSession {
 
     /// A scroll moves the view, not the world: it lands no receipt.
     fn scroll(&mut self, input: ScrollInput) -> Result<Observation, BrowserError> {
+        self.begin_verb();
         self.live()?;
         let snapshot = match input.target.as_deref() {
             Some(target) => self.reach(target)?,

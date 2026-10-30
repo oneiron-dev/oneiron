@@ -29,6 +29,7 @@ impl DesktopSession {
     /// row under it on the final read, which the image's check reads too.
     pub(super) fn click_point(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         self.live()?;
         let (_, frame) = self.held(&input.image)?;
         if !(0.0..=1.0).contains(&input.x) || !(0.0..=1.0).contains(&input.y) {

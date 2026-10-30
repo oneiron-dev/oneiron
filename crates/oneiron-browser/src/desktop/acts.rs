@@ -33,6 +33,14 @@ pub(super) fn desktop_scroll_proof_policy(snapshot: &Snapshot) -> Option<[u8; 32
 }
 
 impl DesktopSession {
+    /// A new effect verb keeps no earlier verb's unread receipt (FIX
+    /// 12134), as a browser session's verb entry clears it: a stale one is
+    /// never stamped on this verb's stop.
+    pub(super) fn begin_verb(&mut self) {
+        self.unread = None;
+        self.input_sent = false;
+    }
+
     /// Runs `act` on the desktop as `read` saw it, then returns the settled
     /// window as an edit of `base`, or whole when the act opened a window in
     /// front: that window is where the next step reads, and the move is kept
@@ -45,9 +53,7 @@ impl DesktopSession {
         base: &Base,
         act: impl FnOnce(&Self) -> Result<(), BrowserError>,
     ) -> Result<Observation, BrowserError> {
-        // A new act keeps no earlier verb's unread receipt (FIX 12134).
-        self.unread = None;
-        self.input_sent = false;
+        self.begin_verb();
         let windows: Vec<WindowKey> = self.listed()?.into_iter().map(|w| w.key).collect();
         let before = print_of(read)?;
         let start = Instant::now();
