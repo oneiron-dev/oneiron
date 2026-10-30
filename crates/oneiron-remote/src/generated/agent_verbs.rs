@@ -1205,6 +1205,9 @@ impl OneironClient {
                 "vault.guests.export_envelope" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GuestDocumentEnvelope,
                 >(client, verb, &input),
+                "vault.guests.propose" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectProposalLanded,
+                >(client, verb, &input),
                 "vault.guests.reshare" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GuestDocumentEnvelope,
                 >(client, verb, &input),
@@ -8525,6 +8528,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.guests.export_envelope", value)
+    }
+    pub fn vault_guests_propose(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectProposeRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectProposalLanded, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.guests.propose", value)
     }
     pub fn vault_guests_reshare(
         &self,

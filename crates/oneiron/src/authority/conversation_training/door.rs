@@ -169,7 +169,10 @@ impl Vault {
 }
 
 /// `person`'s opt-out as `fold` reads it.
-fn opt_out_view(fold: &AuthorityFold, person: EntityId) -> ConversationTrainingView {
+pub(in crate::authority) fn opt_out_view(
+    fold: &AuthorityFold,
+    person: EntityId,
+) -> ConversationTrainingView {
     let training = &fold.conversation_training;
     ConversationTrainingView {
         person,

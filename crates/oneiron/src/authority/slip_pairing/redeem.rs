@@ -40,8 +40,17 @@ impl Vault {
         binding_key: [u8; 32],
         signature: &[u8],
     ) -> Result<CapabilitySlip> {
-        self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, None, None)
-            .map(|redeemed| redeemed.slip)
+        self.redeem_pairing_link_in(
+            issuer,
+            code,
+            holder_ref,
+            binding_key,
+            signature,
+            None,
+            None,
+            None,
+        )
+        .map(|redeemed| redeemed.slip)
     }
     /// Redeems any link, a machine's with its `request`, and returns the
     /// checkpoint pin the link kept as well, for the joining device to check
@@ -62,6 +71,7 @@ impl Vault {
             binding_key,
             signature,
             request,
+            None,
             None,
         )
     }
@@ -91,7 +101,59 @@ impl Vault {
             signature,
             request,
             possession,
+            None,
         )
+    }
+    /// [`Self::redeem_pairing_link_with_possession`] with the joining machine's
+    /// mesh `identity` beside its `request` (FIX 3374, L02 04:5x): the
+    /// machine the redemption enrols has that endpoint bound and `alpn`
+    /// granted in the same transaction ([`MeshEnrolment`]); an identity
+    /// that does not bind leaves the pairing as it stands without one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn redeem_pairing_link_with_mesh(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+        binding_key: [u8; 32],
+        signature: &[u8],
+        request: &MachineEnrolmentRequest,
+        possession: Option<&[u8; 64]>,
+        mesh: (&MeshBindingIdentity, &[u8]),
+    ) -> Result<PairingRedeemed> {
+        self.redeem_pairing_link_in(
+            issuer,
+            code,
+            holder_ref,
+            binding_key,
+            signature,
+            Some(request),
+            possession,
+            Some(mesh),
+        )
+    }
+    /// The checkpoint pin the outstanding link `code` keeps, only read (FIX
+    /// 3375, L02 04:5x): what a device joining from an empty vault checks
+    /// against its link's digest before it redeems. A code redeem refuses
+    /// (unknown, spent, expired, another host's) is refused here alike, and
+    /// so is a link that keeps no pin. The link and its lifetime stay as
+    /// they are.
+    pub fn pending_pairing_pin(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+    ) -> Result<AuthorityCheckpointPin> {
+        let row_key = pairing_row_key(issuer, code)?;
+        let txn = self.store.env.read_txn()?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let pending = PAIRING_PENDING
+            .get(&self.store, &txn, &row_key)
+            .map_err(|_| invalid_authority())?
+            .ok_or_else(invalid_authority)?;
+        if now >= pending.expires_at || pending.host_key != issuer.binding_key() {
+            return Err(invalid_authority());
+        }
+        pending.pin.ok_or_else(invalid_authority)
     }
     /// Redeems a link that adds a machine: the slip and the owner's profile
     /// for `request` land in one transaction, under the answer the owner gave
@@ -113,6 +175,7 @@ impl Vault {
             signature,
             Some(request),
             None,
+            None,
         )?;
         Ok((
             redeemed.slip,
@@ -129,6 +192,7 @@ impl Vault {
         signature: &[u8],
         request: Option<&MachineEnrolmentRequest>,
         possession: Option<&[u8; 64]>,
+        mesh: Option<(&MeshBindingIdentity, &[u8])>,
     ) -> Result<PairingRedeemed> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
@@ -230,6 +294,14 @@ impl Vault {
             }
             _ => (None, false),
         };
+        // The machine this redemption enrols, and no other, has its mesh
+        // endpoint bound with the pairing, or not at all (FIX 3374).
+        let mesh = match (mesh, request, &machine) {
+            (Some((identity, alpn)), Some(request), Some(_)) => {
+                Some(self.bind_enrolled_mesh_in_txn(&mut txn, issuer, request, identity, alpn))
+            }
+            _ => None,
+        };
         PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
         // A machine admitted here changed the roster: seal the portable
@@ -253,6 +325,7 @@ impl Vault {
             pin: pending.pin,
             link_owner: pending.owner,
             re_paired,
+            mesh,
         })
     }
     /// Enrols the machine a link adds under the approval it kept (C2): this

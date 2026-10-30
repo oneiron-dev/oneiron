@@ -2,7 +2,9 @@
 //! over it. The entry point is `Vault::seal_plan`.
 //! `super` owns the frame codec and the carrier.
 
+use super::frame_seal::BodySource;
 use super::publication_grant::{PublicationGrantee, publication_grantees, seal_slots_granting};
+use super::sections::FreshSection;
 use super::*;
 
 /// What one seal reads from the vault, in one snapshot.
@@ -29,7 +31,7 @@ impl Vault {
         &self,
         secret: &MachineSecret,
         holder: Destination,
-        keys: &[(Arc<WorldKey>, &[u8])],
+        fresh: &[FreshSection],
         carry: &BundleCarry<'_>,
     ) -> Result<SealPlan> {
         let txn = self.store.env.read_txn()?;
@@ -55,8 +57,8 @@ impl Vault {
                  holder",
             ));
         }
-        for (key, _) in keys {
-            let world = key.id().world;
+        for section in fresh {
+            let world = section.key.world;
             if !bundle_carries(&fold, world, holder) {
                 return Err(refused(
                     "the world's sealed copies may not rest on the holder",
@@ -64,7 +66,7 @@ impl Vault {
             }
             if fold
                 .current_world_key(world)
-                .is_none_or(|current| current.id != *key.id())
+                .is_none_or(|current| current.id != section.key)
             {
                 return Err(refused(
                     "the world's key changed while its section was sealed",
@@ -147,12 +149,12 @@ impl Vault {
 }
 
 /// A fresh outer key, its capsules to the plan's readers and its grants to
-/// the plan's grantees, and `body` framed under it.
+/// the plan's grantees, and `body` framed under it as it streams.
 pub(super) fn seal_object(
     kind: Kind,
     plan: &SealPlan,
     generation: SealedBundleGeneration,
-    body: Zeroizing<Vec<u8>>,
+    body: impl BodySource,
 ) -> Result<SealedObject> {
     let mut outer = Zeroizing::new([0u8; 32]);
     os_fill(&mut outer[..])?;

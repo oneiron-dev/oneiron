@@ -3,21 +3,25 @@
 //! other owner route. Each host signs its half with its root key; the owner
 //! carries the halves between the two hosts. Each route runs its
 //! `vault.federation.connect.*` row's verb hooks once around the call, as
-//! the owner in person (FIX 8201).
+//! the owner in person (FIX 8201). The owner's review of a Connect guest's
+//! proposals (FIX 3684) has no SDK row: list, accept and reject take the
+//! owner's door alone.
 
 use std::sync::Arc;
 
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::task_verb::sdk::{ConnectAccepted, ConnectGrant, EmptyRequest, Offer};
+use oneiron::task_verb::sdk::{
+    ConnectAccepted, ConnectGrant, ConnectProposal, ConnectProposalRef, EmptyRequest, Offer,
+};
 use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::federation_connect::{self, AcceptConnect, MintConnectGrant, OfferConnect};
-use crate::owner::hooked_row;
+use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn owner_table() -> OwnerTable {
@@ -58,6 +62,33 @@ pub(super) fn owner_table() -> OwnerTable {
             },
             post(accept),
         ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/federation/connect/proposals",
+                summary: "Every pending proposal Connect guests sent this vault (FIX 3684): the proposer and its grant, the world and record it names, its update's length and BLAKE3, and the record's text as accepting it would leave it. A guest's proposal never writes the vault.",
+                row: None,
+            },
+            get(proposals),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/proposals/accept",
+                summary: "Accepts one pending proposal: its update joins the record's text as the owner's own act, and its record names the proposer, the grant and whether that grant still stood; the accept applies either way.",
+                row: None,
+            },
+            post(accept_proposal),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/proposals/reject",
+                summary: "Rejects one pending proposal: nothing is written to the vault, and its record names the proposer and the grant.",
+                row: None,
+            },
+            post(reject_proposal),
+        ),
     ]
 }
 
@@ -95,6 +126,24 @@ pub(crate) fn accept_connect_body_schema() -> serde_json::Value {
 /// (FIX 11611): [`ConnectAccepted`].
 pub(crate) fn connect_accepted_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<ConnectAccepted>()
+}
+
+/// The OpenAPI schema of `GET /v1/owner/federation/connect/proposals`'s
+/// answer (FIX 3684): every pending [`ConnectProposal`].
+pub(crate) fn connect_proposals_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Vec<ConnectProposal>>()
+}
+
+/// The OpenAPI schema of the body `POST /v1/owner/federation/connect/proposals/accept`
+/// and `/reject` take (FIX 3684): [`ConnectProposalRef`].
+pub(crate) fn connect_proposal_ref_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConnectProposalRef>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/proposals/accept`'s
+/// and `/reject`'s answer (FIX 3684): the decided [`ConnectProposal`].
+pub(crate) fn connect_proposal_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConnectProposal>()
 }
 
 /// `GET /v1/owner/federation/connect`: this vault's id and host key, what a
@@ -179,4 +228,62 @@ async fn accept(
     })
     .await?;
     Ok(Json(accepted))
+}
+
+/// `GET /v1/owner/federation/connect/proposals`: every pending proposal
+/// Connect guests sent this vault (FIX 3684).
+async fn proposals(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<ConnectProposal>> {
+    let owner = owner(&auth, &server)?;
+    let proposals = blocking(move || -> OwnerResult<Vec<ConnectProposal>> {
+        Ok(oneiron::sync::selector::connect_proposals_as_owner(
+            server.vault(),
+            &owner,
+        )?)
+    })
+    .await?;
+    Ok(Json(proposals))
+}
+
+/// `POST /v1/owner/federation/connect/proposals/accept`: the owner accepts
+/// one pending proposal; its update joins the record's text in the writer
+/// that records the decision.
+async fn accept_proposal(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<ConnectProposalRef>,
+) -> OwnerReply<ConnectProposal> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let decided = blocking(move || -> OwnerResult<ConnectProposal> {
+        Ok(oneiron::sync::selector::accept_connect_proposal_as_owner(
+            &server.reassert_manager,
+            &owner,
+            &request,
+        )?)
+    })
+    .await?;
+    Ok(Json(decided))
+}
+
+/// `POST /v1/owner/federation/connect/proposals/reject`: the owner rejects
+/// one pending proposal; nothing is written to the vault.
+async fn reject_proposal(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<ConnectProposalRef>,
+) -> OwnerReply<ConnectProposal> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let decided = blocking(move || -> OwnerResult<ConnectProposal> {
+        Ok(oneiron::sync::selector::reject_connect_proposal_as_owner(
+            server.vault(),
+            &owner,
+            &request,
+        )?)
+    })
+    .await?;
+    Ok(Json(decided))
 }

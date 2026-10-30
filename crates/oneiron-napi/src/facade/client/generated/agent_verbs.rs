@@ -3318,6 +3318,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_guests_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.guests.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_guests_reshare(
         &self,
         input: serde_json::Value,

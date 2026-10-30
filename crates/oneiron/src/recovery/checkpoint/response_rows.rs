@@ -461,13 +461,9 @@ fn erased_by(
 /// authority carry put `current`'s row in the image's place, absent when
 /// `current` holds none, and `current`'s binding with it, so the image's
 /// copy is passed over, never required, retired or landed. Its stream keeps
-/// its place among the artifact's.
-///
-/// # Errors
-///
-/// Storage errors reading `current`'s classes.
-pub(super) fn supersede_live(image: &mut CheckpointImage, current: &crate::Vault) -> Result<()> {
-    let classes = Classes::new(current, &image.databases)?;
+/// its place among the artifact's. `classes` are the ones the carry used
+/// (FIX 6994).
+pub(super) fn supersede_live(image: &mut CheckpointImage, classes: &Classes) {
     for carried in &mut image.inline_bodies {
         if carried.retired.is_some()
             && classes.row(&carried.database, &carried.key, &[]).0 == Class::Live
@@ -475,7 +471,6 @@ pub(super) fn supersede_live(image: &mut CheckpointImage, current: &crate::Vault
             carried.superseded = true;
         }
     }
-    Ok(())
 }
 
 /// The value of the row `key` among sorted `rows`.

@@ -6019,6 +6019,21 @@
       "openapi": true
     },
     {
+      "name": "vault.guests.propose",
+      "description": "A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault.",
+      "input": "crate::task_verb::sdk::ConnectProposeRequest",
+      "output": "crate::task_verb::sdk::ConnectProposalLanded",
+      "call": "crate::task_verb::sdk::guest_document_host_only(memory, \"vault.guests.propose\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.guests.reshare",
       "description": "The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused.",
       "input": "crate::task_verb::sdk::GuestDocumentShareRequest",

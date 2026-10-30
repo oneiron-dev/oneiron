@@ -109,6 +109,23 @@ impl EntityDocument {
         })
     }
 
+    /// The writer of a Connect guest's proposal the owner accepts (FIX
+    /// 3684): `settle` decides the proposal in the transaction that joins its
+    /// update, as a peer's update joins; then the update goes out as a local
+    /// edit's frame does.
+    pub(in crate::sync) fn import_accepted_proposal(
+        &self,
+        update: &[u8],
+        settle: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.import_admitted(document_sub_tags::UPDATE, update, settle)?;
+        if let Ok(frame) = encode_document(self.id, document_sub_tags::UPDATE, update).into_result()
+        {
+            let _ = self.notices.send(frame);
+        }
+        Ok(())
+    }
+
     /// STATE replaces, never merges a shallow copy: the state, with each
     /// pending local update replayed on it, must cover the durable text, or
     /// nothing changes.

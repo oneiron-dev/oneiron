@@ -37,6 +37,17 @@ pub struct DeckBody {
 /// One export of the live body, and whether it may act as the truth.
 pub type DeckExport = crate::office_body::PptxExport;
 
+/// The office bodies' side of a typed body's document frame (FIX 2458): the
+/// import facts that ride beside a body, and the office merge preflight its
+/// carried operations pass before they land.
+#[cfg(feature = "sync")]
+pub(crate) const OFFICE_BODY_OWNER: crate::typed_body::sync_frame::BodyOwner =
+    crate::typed_body::sync_frame::BodyOwner {
+        record: Vault::office_frame_record_in_txn,
+        adopt: Vault::adopt_office_frame_record_in_txn,
+        preflight: Vault::preflight_carried_office_body,
+    };
+
 impl Vault {
     /// The deck entity's live body at its head, or at an earlier frontier
     /// `at` of its history.

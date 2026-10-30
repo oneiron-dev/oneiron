@@ -2787,6 +2787,9 @@ class Oneiron:
         def export_envelope(self, spec):
             """The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."""
             return json.loads(_translate(lambda: self._client.vault_guests_export_envelope(json.dumps(spec))))
+        def propose(self, spec):
+            """A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault."""
+            return json.loads(_translate(lambda: self._client.vault_guests_propose(json.dumps(spec))))
         def reshare(self, spec):
             """The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."""
             return json.loads(_translate(lambda: self._client.vault_guests_reshare(json.dumps(spec))))

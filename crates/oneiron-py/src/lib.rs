@@ -3802,6 +3802,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_guests_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.guests.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.guests.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_reshare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.reshare")?;
         let output = py
