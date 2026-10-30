@@ -31,8 +31,9 @@ const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v1";
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
 /// `connector.call`; a browser click, click at a point or batch binds the
-/// act its grant's press held (FIX 10423). Every other verb keeps its own
-/// wait.
+/// act its grant's press held (FIX 10423), as do a library run's steps and
+/// every desktop verb that can press (FIX 11499). Every other verb keeps
+/// its own wait.
 pub(crate) fn code_consent_binds(verb: AgentVerb) -> bool {
     matches!(
         verb,
@@ -40,6 +41,13 @@ pub(crate) fn code_consent_binds(verb: AgentVerb) -> bool {
             | AgentVerb::SelfBrowserClick
             | AgentVerb::SelfBrowserClickAt
             | AgentVerb::SelfBrowserBatch
+            | AgentVerb::SelfBrowserLibraryRun
+            | AgentVerb::SelfDesktopClick
+            | AgentVerb::SelfDesktopClickAt
+            | AgentVerb::SelfDesktopType
+            | AgentVerb::SelfDesktopKey
+            | AgentVerb::SelfDesktopHotkey
+            | AgentVerb::SelfDesktopBatch
     )
 }
 
