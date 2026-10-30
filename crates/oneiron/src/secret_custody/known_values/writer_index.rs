@@ -61,10 +61,17 @@ pub(crate) fn known_index_scope() -> KnownIndexScope {
 
 impl Drop for KnownIndexScope {
     fn drop(&mut self) {
-        SCOPES.with(|scopes| scopes.set(scopes.get().saturating_sub(1)));
-        // An inner write's scope ends with its own writer: what it kept goes,
-        // and an outer write reads custody again.
-        forget_kept();
+        let depth = SCOPES.with(|scopes| {
+            let depth = scopes.get().saturating_sub(1);
+            scopes.set(depth);
+            depth
+        });
+        // The outermost write's scope ends: what it kept goes. An inner scope
+        // leaves the outer write's index kept; every reuse checks it against
+        // the writer, so an inner write's change reloads it.
+        if depth == 0 {
+            forget_kept();
+        }
     }
 }
 
