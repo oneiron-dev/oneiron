@@ -120,7 +120,9 @@ impl PatternLaunchRunner for ActionPatternRunner {
     ) -> Result<PatternLaunchSpec> {
         let Some(scope) = &self.spend else {
             let line = self.provider.host_meter().map(|guard| (guard, None));
-            return self.agent_runner(line)?.run(skill, asked, prompt, plan, caller);
+            return self
+                .agent_runner(line)?
+                .run(skill, asked, prompt, plan, caller);
         };
         // The open's own error can name the payer the scope bills, who may
         // not be the caller: the host log keeps it, the refusal names the
