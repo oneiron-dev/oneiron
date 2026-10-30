@@ -462,6 +462,16 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// field: a supervisor sends and reads them only with engines and vault VM
 /// images at or after it, no reader without them is kept, the restore input
 /// and receipt schemas stay 1, and this version stays 3.
+///
+/// A vault's deletion on `Ping` (FIX 11710,
+/// [`PingDeletion`](crate::PingDeletion)): an optional `deletion`, present
+/// once the vault's Owners deleted it, with `deleted_at` and
+/// `backup_retain_until`. It carries a build floor, at the engine revision
+/// it merged in, with no revision field: a vault built before it sends
+/// none, so a supervisor reads an absent `deletion` as a standing vault
+/// only from installed engines at or after the floor, and as unknown from
+/// one before it. A block that does not read is unknown too, never a failed
+/// `Ping`. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
