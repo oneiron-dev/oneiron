@@ -56,6 +56,12 @@ pub const REPO_REVIEW_POLICY_REQUIRED: &str = "repo_review_policy_required";
 /// model request the run is serving. No author is made up.
 pub const REPO_PROVENANCE_REQUIRED: &str = "repo_provenance_required";
 
+/// The code a run's proposal answers when its work's pinned base no longer
+/// captures as it did at open: the host's snapshot custody changed between
+/// them, so the base's hash moved (FIX 7070). The work is kept; a fresh
+/// work opens at the base as custody keeps it now.
+pub const REPO_WORK_BASE_CHANGED: &str = "repo_work_base_changed";
+
 /// The host's review policy for a run's proposals. A host binds it; no
 /// guest field reaches it. The stock one holds every proposal to the
 /// vault's review policy (FIX 8268); a host catalog is an explicit
@@ -242,6 +248,14 @@ impl Memory<'_> {
         };
         let green = GitOid::parse_hex(own.stamp.base_green.as_str())?;
         let base = self.vault.capture_repo_snapshot_at_commit(&repo, &green)?;
+        if base.fork_hash != own.stamp.base_snapshot {
+            return Err(MemoryError::new(
+                REPO_WORK_BASE_CHANGED,
+                "this work's pinned base no longer captures as it did at open: snapshot custody \
+                 changed since",
+                &["Open a fresh work at the current green and propose the change there."],
+            ));
+        }
         let sources = sources(&own.stamp)?;
         let request = RepoMutationRequest::new(
             RepoRef::LocalFolder {
