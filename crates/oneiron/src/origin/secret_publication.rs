@@ -354,6 +354,27 @@ impl Vault {
         holds
     }
 
+    /// Every object a blocking mark marks, in any store: what an exact
+    /// publish review's freeze-time advisory names a history by (FIX
+    /// 10969). `None`, with a warning, when the marks cannot be read whole;
+    /// the send-time gate reads them again either way.
+    pub(crate) fn publication_blocking_objects(&self) -> Option<BTreeSet<GitOid>> {
+        let read = || -> Result<BTreeSet<GitOid>> {
+            let txn = self.store.env.read_txn()?;
+            let (facts, _) =
+                RepoMarkFacts::read_scoped_in_txn(self, &txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
+            Ok(facts.blob_oids(|mark: &RepoSecretMark| repo_secret_liveness(mark).blocks_public()))
+        };
+        read()
+            .inspect_err(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "secret marks could not be read whole; a publish review carries no advisory"
+                );
+            })
+            .ok()
+    }
+
     /// What a public send's history is joined against, read once through
     /// the per-blob mark reader; `None` for a destination that does not
     /// hold, or a vault with no mark. A mark that does not decode and names
