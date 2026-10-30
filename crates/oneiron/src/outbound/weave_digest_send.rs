@@ -187,7 +187,8 @@ impl Vault {
 
     /// The route `reader`'s digest takes: none when its notice is not live,
     /// the owner turned the send off, or no companion agent reaches the
-    /// reader on the identity the row names, or on any.
+    /// reader on the identity the row names, or on any. A row naming a
+    /// deleted identity counts as no row.
     fn weave_digest_route(
         &self,
         reader: EntityId,
@@ -201,7 +202,20 @@ impl Vault {
             return Ok(None);
         }
         let companions = self.companion_agents_in(&txn)?;
-        match OVERRIDES.get(&self.store, &txn, &reader)? {
+        // A row naming an identity since deleted reads as no row, so the
+        // send takes the primary route and never a dead identity.
+        let route = match OVERRIDES.get(&self.store, &txn, &reader)? {
+            Some(WeaveDigestChannelOverride::Identity {
+                channel_identity_ref,
+            }) if self
+                .get_channel_identity_in_txn(&txn, &channel_identity_ref)?
+                .is_none() =>
+            {
+                None
+            }
+            route => route,
+        };
+        match route {
             Some(WeaveDigestChannelOverride::Off) => Ok(None),
             Some(WeaveDigestChannelOverride::Identity {
                 channel_identity_ref,
