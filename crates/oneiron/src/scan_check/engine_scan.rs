@@ -70,6 +70,12 @@ pub enum EngineScan {
     RoomThreadTasks,
     /// The rows one session's read set holds.
     ReadSetRows,
+    /// One code symbol manifest's chunks or symbols, the more (once refused past 100,000).
+    SymbolManifestRows,
+    /// The longest producing-operation chain one symbol manifest carries (once refused past 1,024).
+    SymbolOperationChain,
+    /// One codebase snapshot's file manifest (once refused past 100,000).
+    CodebaseFileRows,
     /// One room's history rows a message page passes over.
     RoomPageRows,
     /// One room's history rows a liveness snapshot reads.
@@ -325,7 +331,7 @@ pub enum EngineScan {
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 119] = [
+    pub const ALL: [Self; 122] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -355,6 +361,9 @@ impl EngineScan {
         Self::AskWordRows,
         Self::RoomThreadTasks,
         Self::ReadSetRows,
+        Self::SymbolManifestRows,
+        Self::SymbolOperationChain,
+        Self::CodebaseFileRows,
         Self::RoomPageRows,
         Self::RoomHistoryRows,
         Self::TaskBoardRows,
@@ -488,6 +497,9 @@ impl EngineScan {
             Self::AskWordRows => "ask_word_rows",
             Self::RoomThreadTasks => "room_thread_tasks",
             Self::ReadSetRows => "read_set_rows",
+            Self::SymbolManifestRows => "symbol_manifest_rows",
+            Self::SymbolOperationChain => "symbol_operation_chain",
+            Self::CodebaseFileRows => "codebase_file_rows",
             Self::RoomPageRows => "room_page_rows",
             Self::RoomHistoryRows => "room_history_rows",
             Self::TaskBoardRows => "task_board_rows",
@@ -611,8 +623,8 @@ impl EngineScan {
             Self::AgentDefinitionListEntries => 64,
             Self::AgentBirthSkillRows | Self::AgentBirthClaimOfRows => 100_000,
             Self::SpendAncestorScopes => 256,
-            Self::SpendRetryAttempts => 1024,
-            Self::AttemptKindRows => 100_000,
+            Self::SpendRetryAttempts | Self::SymbolOperationChain => 1024,
+            Self::AttemptKindRows | Self::SymbolManifestRows | Self::CodebaseFileRows => 100_000,
             Self::AttemptEventActorBytes => 128,
             Self::AttemptEventNoteBytes => 2048,
             Self::AttendeeIdentityCandidates => 32,
@@ -689,6 +701,9 @@ impl EngineScan {
             Self::AskWordRows => 33,
             Self::RoomThreadTasks => 34,
             Self::ReadSetRows => 35,
+            Self::SymbolManifestRows => 230,
+            Self::SymbolOperationChain => 231,
+            Self::CodebaseFileRows => 232,
             Self::RoomPageRows => 36,
             Self::RoomHistoryRows => 37,
             Self::TaskBoardRows => 38,

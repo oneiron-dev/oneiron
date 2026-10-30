@@ -33,10 +33,6 @@ pub const CODE_SYMBOL_KIND_MAX_BYTES: usize = 128;
 
 pub const CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES: usize = 512;
 
-pub const CODE_SYMBOL_MANIFEST_MAX_CHUNKS: usize = 100_000;
-
-pub const CODE_SYMBOL_MANIFEST_MAX_SYMBOLS: usize = 100_000;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CodeChunk {

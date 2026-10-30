@@ -19,6 +19,8 @@ pub const CODEBASE_FORK_HASH_LEN: usize = 32;
 
 pub const CODEBASE_SCOPE_KEY_LEN: usize = 32;
 
+/// The file count past which a snapshot's write asks whether everything is
+/// okay: the count it once refused past (FIX 8678). Never a refusal.
 pub const CODEBASE_SNAPSHOT_MAX_FILES: usize = 100_000;
 
 pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 6] = [
@@ -245,17 +247,27 @@ impl RawValue for CodebaseSnapshot {
     }
 }
 
-/// What a snapshot body may unfold into before its schema is read: a root
-/// map of six fields whose `files` array holds entry maps of four, and no
-/// field longer than a path.
-const SNAPSHOT_SHAPE: ShapeBudget = ShapeBudget {
-    max_values: 9 * CODEBASE_SNAPSHOT_MAX_FILES as u64 + 64,
-    max_depth: 4,
-    max_scalar_bytes: CODEBASE_FILE_PATH_MAX_BYTES,
-};
+/// Fewer bytes than any file entry encodes in: its four keys, a one-byte
+/// path, a 32-byte hash and two one-byte integers take 73.
+const FILE_ENTRY_MIN_BYTES: usize = 64;
+
+/// What a snapshot body of `body_bytes` may unfold into before its schema is
+/// read: a root map of six fields whose `files` array holds entry maps of
+/// four, as many as its bytes could spell (a memory floor, never a file
+/// count: FIX 8678), and no field longer than a path.
+fn snapshot_shape(body_bytes: usize) -> ShapeBudget {
+    ShapeBudget {
+        max_values: u64::try_from(body_bytes / FILE_ENTRY_MIN_BYTES)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(9)
+            .saturating_add(64),
+        max_depth: 4,
+        max_scalar_bytes: CODEBASE_FILE_PATH_MAX_BYTES,
+    }
+}
 
 pub fn decode_codebase_snapshot(bytes: &[u8]) -> Result<CodebaseSnapshot> {
-    if let Some(over) = over_budget(bytes, SNAPSHOT_SHAPE) {
+    if let Some(over) = over_budget(bytes, snapshot_shape(bytes.len())) {
         return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             match over {
                 OverBudget::Values => "snapshot holds more values than its manifest allows",
@@ -529,12 +541,6 @@ pub(super) fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<
             "scope_key must match project_id and repo_ref",
         )));
     }
-    if snapshot.files.len() > CODEBASE_SNAPSHOT_MAX_FILES {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "file manifest exceeds 100000 entries",
-        )));
-    }
-
     let mut previous: Option<&str> = None;
     for entry in &snapshot.files {
         validate_manifest_path(&entry.path)?;
