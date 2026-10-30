@@ -1,16 +1,21 @@
 use super::*;
 
 /// Whether an act's input whose call failed, after the browser was sent
-/// one of its calls, has an unknown outcome (`unknown_outcome_policy`,
+/// `calls` of its calls, has an unknown outcome (`unknown_outcome_policy`,
 /// CALLS row, FIX 10426): its call ran out of time, the guest went, or the
-/// browser answered an error, so the input may have taken effect, wholly
-/// or in part. The driver's own refusals (a cover, a missing option) are
+/// browser answered an error past its first call, so the input may have
+/// taken effect, wholly or in part. An answered error on the input's
+/// first call is the browser refusing it: nothing took effect (FIX
+/// 11582). The driver's own refusals (a cover, a missing option) are
 /// answers about the page, and land no receipt.
-fn unknown_outcome_policy(error: &BrowserError) -> bool {
-    matches!(
-        error,
-        BrowserError::CallTimeout(_) | BrowserError::GuestLost | BrowserError::Protocol(_)
-    )
+fn unknown_outcome_policy(error: &BrowserError, calls: u64) -> bool {
+    match error {
+        BrowserError::Answered(_) => calls > 1,
+        BrowserError::CallTimeout(_) | BrowserError::GuestLost | BrowserError::Protocol(_) => {
+            calls > 0
+        }
+        _ => false,
+    }
 }
 
 impl CdpDriver {
@@ -348,9 +353,10 @@ impl CdpDriver {
         self.sent = acted.is_ok();
         // A call of the input failed once the browser was sent part of it:
         // the effect may stand, its outcome unknown (FIX 10426).
-        self.unknown = acted.as_ref().is_err_and(|error| {
-            unknown_outcome_policy(error) && crate::cdp::written_here() > written
-        });
+        let calls = crate::cdp::written_here().saturating_sub(written);
+        self.unknown = acted
+            .as_ref()
+            .is_err_and(|error| unknown_outcome_policy(error, calls));
         let fact = match (&acted, mark) {
             (Ok(()), Some(mark)) => self.no_effect(&mark, watch, Instant::now()),
             _ => None,

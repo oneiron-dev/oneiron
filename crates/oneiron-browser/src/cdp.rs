@@ -266,7 +266,7 @@ impl Pipe {
         match rx.recv_timeout(wait) {
             // A parsed reply's charge goes back as its result is handed on.
             Ok(Ok((result, _charged))) => Ok(result),
-            Ok(Err(message)) => Err(BrowserError::Protocol(format!("{method}: {message}"))),
+            Ok(Err(message)) => Err(BrowserError::Answered(format!("{method}: {message}"))),
             Err(RecvTimeoutError::Disconnected) => Err(BrowserError::GuestLost),
             Err(RecvTimeoutError::Timeout) => {
                 if let Ok(mut routes) = self.pending.lock()
