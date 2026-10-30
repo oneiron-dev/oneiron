@@ -58,6 +58,7 @@ mod creation;
 mod read_only;
 mod sealed_swap;
 use self::creation::{begin_creation, finish_creation};
+pub(crate) use self::creation::discard_creation_record;
 pub use self::creation::{refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation};
 pub(crate) use self::read_only::{page_seal_open_error, read_sealed, seal_read_only};
 pub use self::sealed_swap::SealedSwap;

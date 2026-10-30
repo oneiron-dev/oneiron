@@ -179,6 +179,8 @@ pub(in crate::commands::owner) fn restore_fresh(
     // A handle for the machine opener below: unlocking the backup moves the
     // install's keystore into the key it opens.
     let machine_keystore = keystore.clone();
+    // An unfinished creation at this path never served: remove it first (FIX 11948).
+    oneiron::world_keys::remove_unfinished_sealed_creation(&config.vault_path)?;
     let key = match backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
         Some(key) => key,
         None => match keystore {

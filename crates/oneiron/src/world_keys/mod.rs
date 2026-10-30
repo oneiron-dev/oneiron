@@ -117,7 +117,8 @@ pub(crate) use self::pads::{
     world_pad_windows_in_txn,
 };
 pub(crate) use self::page_seal::{
-    OpenedDataKey, admit_new_vault, page_seal_open_error, read_sealed, seal_read_only,
+    OpenedDataKey, admit_new_vault, discard_creation_record, page_seal_open_error, read_sealed,
+    seal_read_only,
 };
 pub use self::page_seal::{
     PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
