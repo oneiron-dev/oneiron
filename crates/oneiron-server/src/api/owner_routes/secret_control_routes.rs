@@ -20,7 +20,6 @@ mod sealed_spool;
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
@@ -36,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::owner_work_routes::OwnerWorkReceiptView;
-use super::{OwnerReply, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{has_json_content_type, query_params};
 use crate::auth::CoreAuth;
@@ -49,14 +48,65 @@ use crate::server::SyncServer;
 /// envelopes (FIX 5521) is read whatever its length, as the engine carries
 /// an input past one row's bound in numbered parts and refuses none for its
 /// length (FIX 5445).
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/secrets/register", post(register_secret))
-        .route("/secrets/rotate", post(rotate_secret))
-        .route("/secrets/revoke", post(revoke_secret))
-        .route("/secrets/rewrap", post(rewrap_secret))
-        .route("/secrets/custody", get(custody_view).post(sealed_change))
-        .merge(pending::routes())
+pub(super) fn owner_table() -> OwnerTable {
+    let mut table = vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/register",
+                summary: "The body is read by RegisterSecret::read, as rotation's is: the owner door runs first, so a refused caller's body is never read.",
+                row: None,
+            },
+            post(register_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/rotate",
+                summary: "The body is read by RotateSecret::read, not Json: the extractor's body copy and parser scratch would outlive the request unwiped.",
+                row: None,
+            },
+            post(rotate_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/revoke",
+                summary: "The record goes terminal and every lease over it is revoked (OF-422); a portable one's revoke is carried to the owner's other machines.",
+                row: None,
+            },
+            post(revoke_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/rewrap",
+                summary: "Seals a portable secret again, same generation, to the installs the owner names, by its holder.",
+                row: None,
+            },
+            post(rewrap_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/custody",
+                summary: "A secret's custody record id, generation, custody revision and live requests, and every linked install a surface may offer as holder or recipient, value-free (WILL L04 row 04).",
+                row: None,
+            },
+            get(custody_view),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/custody",
+                summary: "A register or rotate whose protected input the surface sealed to the holder itself: this install takes only the ciphertext.",
+                row: None,
+            },
+            post(sealed_change),
+        ),
+    ];
+    table.extend(pending::owner_table());
+    table
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/rewrap`'s body (FIX 11611): [`RewrapBody`].

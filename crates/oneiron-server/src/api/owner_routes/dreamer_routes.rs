@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -16,7 +15,7 @@ use oneiron::EdgeActorClass;
 use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -26,12 +25,45 @@ use crate::server::SyncServer;
 /// The most changes one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/dreamer/changes", get(changes))
-        .route("/dreamer/revert", post(revert))
-        .route("/dreamer/pause", post(pause_dreamer))
-        .route("/dreamer/resume", post(resume_dreamer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/changes",
+                summary: "The Dreamer's standing changes, newest first, and the people whose about it wrote.",
+                row: None,
+            },
+            get(changes),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/revert",
+                summary: "The owner's revert of one Dreamer change, with one receipt.",
+                row: None,
+            },
+            post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/pause",
+                summary: "Sets the owner's own Dreamer pause: no new pass starts, and the running attempt parks at its next boundary. Answers the pause and the owner's cause of it.",
+                row: None,
+            },
+            post(pause_dreamer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/resume",
+                summary: "Clears the owner's own Dreamer pause; a managed freeze still holds it. Answers the pause and the owner's cause of it.",
+                row: None,
+            },
+            post(resume_dreamer),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

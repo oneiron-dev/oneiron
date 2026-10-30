@@ -1,7 +1,7 @@
 //! Base-apply claim arms: candidates and lexical-hint reconciliation.
 
-use super::*;
 use super::validation::consume_preflight_decisions;
+use super::*;
 use crate::ppr;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
@@ -24,7 +24,8 @@ pub(super) fn apply_claim_candidate_arm(
     text_index_trusted: bool,
 ) -> Result<()> {
     let preflight_decision_id = if !internal_lexical_query_hint {
-        state.preflight_gate_decision_ids
+        state
+            .preflight_gate_decision_ids
             .get_mut(&id)
             .and_then(VecDeque::pop_front)
             .flatten()
@@ -34,7 +35,10 @@ pub(super) fn apply_claim_candidate_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
-    let pre_mask = state.masked_claims.get_mut(&id).and_then(VecDeque::pop_front);
+    let pre_mask = state
+        .masked_claims
+        .get_mut(&id)
+        .and_then(VecDeque::pop_front);
     let applied = apply_claim_candidate(
         store,
         config,
@@ -63,7 +67,8 @@ pub(super) fn apply_claim_candidate_arm(
     if let Some(token) = applied.pending_embedding_token {
         state.pending_embedding_tokens_written.insert(id, token);
         #[cfg(feature = "sync")]
-        state.pending_embedding_enqueue_priorities
+        state
+            .pending_embedding_enqueue_priorities
             .entry(id)
             .and_modify(|priority| {
                 *priority = (*priority).min(crate::embed::EMBED_PRIORITY_DEVICE);
@@ -88,12 +93,13 @@ pub(super) fn apply_reconcile_lexical_arm(
     keep: Vec<EntityId>,
 ) -> Result<()> {
     let keep: HashSet<EntityId> = keep.into_iter().collect();
-    let deleted =
-        delete_lexical_query_hint_claims_for_target(store, wtxn, &source, &keep)?;
+    let deleted = delete_lexical_query_hint_claims_for_target(store, wtxn, &source, &keep)?;
     for (deleted_id, neighbors) in &deleted.deleted {
         state.pending_embedding_tokens_written.remove(deleted_id);
         #[cfg(feature = "sync")]
-        state.pending_embedding_enqueue_priorities.remove(deleted_id);
+        state
+            .pending_embedding_enqueue_priorities
+            .remove(deleted_id);
         ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
     }
     state.had_graph_mutation |= deleted.had_graph_mutation;

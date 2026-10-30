@@ -6,7 +6,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -18,7 +17,7 @@ use oneiron::training_pack::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::super::{OwnerReply, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use super::{hex_id, now_secs};
 use crate::ai_host::training_pack::{trainer_binding, training_declaration};
 use crate::api::body_spool::OwnerJsonBody;
@@ -26,11 +25,36 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/coach/training-offers/prepare", post(prepare))
-        .route("/coach/training-offers/authorize", post(authorize))
-        .route("/coach/training-offers/training", post(training))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-offers/prepare",
+                summary: "The owner's run for a Train offer's seat and base on a trainer connector this host names; nothing runs.",
+                row: None,
+            },
+            post(prepare),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-offers/authorize",
+                summary: "The owner's yes on a prepared run after their train approval, at the exact spec they saw.",
+                row: None,
+            },
+            post(authorize),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-offers/training",
+                summary: "A Train offer's handed-off run: its state, why it waits, the owner's authorization, its held-out summary and the plan the recipe suggests.",
+                row: None,
+            },
+            post(training),
+        ),
+    ]
 }
 
 /// A train approval's prepared run and the spec the owner saw.

@@ -4,6 +4,14 @@
 
 use super::*;
 
+mod admission;
+mod enqueue;
+mod gate;
+mod replay;
+
+use self::admission::{admit_outbound_schedule, outbound_trigger};
+use self::gate::{ScheduledSend, dispatch_receipt};
+
 impl Memory<'_> {
     /// The single scheduling implementation.
     ///
@@ -25,48 +33,8 @@ impl Memory<'_> {
         calendar_invite: Option<&crate::calendar::CalendarInvitePayload>,
         counterparty_ref: Option<&str>,
     ) -> MemoryResult<(OutboundIntentReceipt, Option<EntityId>)> {
-        schedule_context.validate()?;
-        if let Some(party) = counterparty_ref {
-            crate::comm::validate_comm_party_key(party).map_err(|_| {
-                MemoryError::bad_request("counterparty_ref is not a valid comm party key")
-            })?;
-            // A capability lookup accepts aliases such as " email ", but a
-            // counterparty-bound receipt is a projector source. Refuse those
-            // aliases before any gate, TASK, or provider delivery can persist
-            // a channel/verb the comm projector cannot decode.
-            if outbound_verb_contract(&draft.channel, &draft.verb).is_ok()
-                && !crate::outbound::is_canonical_outbound_verb(&draft.channel, &draft.verb)
-            {
-                return Err(MemoryError::bad_request(
-                    "counterparty-bound channel and verb must use manifest spellings",
-                ));
-            }
-        }
-        if schedule_context.apns_interruption_level.is_some()
-            && !(draft.channel == "apns" && draft.verb == "push")
-        {
-            return Err(MemoryError::bad_request_with(
-                "APNs interruption level requires an APNs push",
-                &["Do not attach APNs levels to chat, email, voice, or ring sends."],
-            ));
-        }
-        let trigger = match draft.trigger.as_str() {
-            "commitment" | "commitment_timer_wake" => {
-                OutboundIntentTrigger::commitment_timer_wake(draft.trigger_ref.clone())
-            }
-            "gap_queue" => OutboundIntentTrigger::gap_queue(draft.trigger_ref.clone()),
-            "agent_immediate" => OutboundIntentTrigger::agent_immediate(draft.trigger_ref.clone()),
-            other => {
-                return Err(MemoryError::bad_request_with(
-                    format!("unknown outbound trigger {other:?}"),
-                    &["Use one of: commitment_timer_wake, gap_queue, agent_immediate."],
-                ));
-            }
-        };
-        let trigger = match &draft.job_ref {
-            Some(job_ref) => trigger.job_ref(job_ref.clone()),
-            None => trigger,
-        };
+        admit_outbound_schedule(draft, schedule_context, counterparty_ref)?;
+        let trigger = outbound_trigger(draft)?;
         let originating_session_ref =
             (draft.trigger == "agent_immediate").then(|| draft.trigger_ref.clone());
         let now = draft
@@ -77,58 +45,8 @@ impl Memory<'_> {
         // Consult the additive delivered-only index before any new gate or
         // enqueue work so a client retry cannot charge or send twice.
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-        if let Some(idempotency_key) = draft.idempotency_key.as_deref()
-            && let Some(task_ref) = self
-                .vault
-                .store
-                .get_delivered_send_task_by_idempotency(&self.actor, idempotency_key)?
-        {
-            let receipt =
-                delivered_send_receipt_for_task(self.vault, task_ref)?.ok_or_else(|| {
-                    MemoryError::from(Error::CorruptedIndex("send idempotency index"))
-                })?;
-            let actor_ref = self.actor.to_hex();
-            if receipt.actor.as_deref() != Some(actor_ref.as_str())
-                || receipt.fields.get("idempotency_key").map(String::as_str)
-                    != Some(idempotency_key)
-            {
-                return Err(MemoryError::from(Error::CorruptedIndex(
-                    "send idempotency index",
-                )));
-            }
-            return Ok((
-                OutboundIntentReceipt {
-                    intent_ref: receipt
-                        .fields
-                        .get("intent_ref")
-                        .cloned()
-                        .unwrap_or_else(|| format!("intent:task:{}", task_ref.to_hex())),
-                    outcome: "already_sent".to_owned(),
-                    gate_outcome: receipt.fields.get("gate_outcome").cloned(),
-                    gate_decision_ref: receipt.fields.get("gate_decision_ref").cloned(),
-                    gate_reason_codes: receipt
-                        .fields
-                        .get("gate_reason_codes")
-                        .map(|codes| {
-                            codes
-                                .split(',')
-                                .filter(|code| !code.is_empty())
-                                .map(str::to_owned)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    approval_digest: receipt
-                        .fields
-                        .get(crate::outbound::APPROVAL_DIGEST_FIELD)
-                        .cloned(),
-                    deduped: true,
-                },
-                receipt
-                    .fields
-                    .get("channel_identity_ref")
-                    .map(|value| EntityId::from_hex(value))
-                    .transpose()?,
-            ));
+        if let Some(replayed) = self.replay_delivered_send(draft)? {
+            return Ok(replayed);
         }
 
         // Pre-validate the channel/verb capability before either the gate or
@@ -136,28 +54,7 @@ impl Memory<'_> {
         outbound_verb_contract(&draft.channel, &draft.verb)
             .map_err(|capability| facade_error_from_unsupported_capability(&capability))?;
 
-        let mut intent_draft = OutboundIntentDraft::new(
-            self.actor.to_hex(),
-            draft.verb.clone(),
-            draft.channel.clone(),
-            draft.target.clone(),
-        );
-        if let Some(on_behalf_of) = &draft.on_behalf_of {
-            intent_draft = intent_draft.on_behalf_of(on_behalf_of.clone());
-        }
-        if let Some(content_ref) = &draft.content_ref {
-            intent_draft = intent_draft.content_ref(content_ref.clone());
-        }
-        if let Some(idempotency_key) = &draft.idempotency_key {
-            intent_draft = intent_draft.idempotency_key(idempotency_key.clone());
-        }
-        if let Some(dedupe_key) = &draft.dedupe_key {
-            intent_draft = intent_draft.dedupe_key(dedupe_key.clone());
-        }
-        if let Some(mention) = &draft.mention {
-            intent_draft = intent_draft.mention(mention.clone());
-        }
-        let intent = OutboundIntent::from_trigger(intent_draft, trigger);
+        let intent = self.outbound_intent(draft, trigger);
 
         let task_ref = self.vault.store.clock.entity_id()?;
         let payload = connector_send_attempt_payload(task_ref)?;
@@ -168,76 +65,28 @@ impl Memory<'_> {
         // preflight and the durable enqueue below cannot disagree by a byte.
         let dedupe_actor_ref = self.actor.to_hex();
 
+        let send = ScheduledSend {
+            draft,
+            schedule_context,
+            continuation,
+            calendar_invite,
+            counterparty_ref,
+            originating_session_ref: originating_session_ref.as_deref(),
+            intent: &intent,
+            task_ref,
+            now,
+        };
         // Abort-only enqueue preflight validates queue inputs and recovers an
         // existing live schedule without appending a second Gate decision. A
         // missing key writes only inside this uncommitted transaction and is
         // therefore neither durable nor claimable.
-        let mut preflight_txn = self.vault.store.env.write_txn()?;
-        verify_actor_binding_in_txn(self.vault, &preflight_txn, self.actor, self.actor_class)?;
-        let preflight = crate::ports::JobQueue::port_job_enqueue_scoped(
-            self.vault,
-            &mut preflight_txn,
-            EnqueueAttempt {
-                kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
-                payload: payload.clone(),
-                dedupe_key: draft.idempotency_key.clone(),
-                run_id: draft.job_ref.clone(),
-                now,
-            },
-            crate::ports::JobScope {
-                task_ref: None,
-                dedupe_actor_ref: Some(dedupe_actor_ref.as_str()),
-            },
-        )?;
-        drop(preflight_txn);
+        let preflight = self.preflight_outbound_enqueue(&send, &payload, &dedupe_actor_ref)?;
         if let EnqueueOutcome::Existing(attempt) = preflight {
             return Ok((self.already_scheduled_outbound_receipt(attempt.id), None));
         }
 
         let gate_intent_ref = format!("intent:task:{}", task_ref.to_hex());
-        let actor = OutboundDispatchActor {
-            actor_class: self.actor_class.gate_actor_class().to_owned(),
-            actor_ref: Some(self.actor.to_hex()),
-            actor_entity_ref: Some(self.actor),
-        };
-        let mut request = OutboundDispatchRequest::new(
-            format!("outbound:{gate_intent_ref}"),
-            gate_intent_ref.clone(),
-            intent.clone(),
-            actor,
-            OutboundDispatchGate::allow_when_policy_grants(),
-            now,
-            OutboundDeliveryWindowDecision::Hold {
-                reason: "bridge_scheduled".to_owned(),
-                retry_at: None,
-            },
-        );
-        if let Some(session_ref) = originating_session_ref.as_deref() {
-            request = request.originating_session(session_ref);
-        }
-        if let Some(party) = counterparty_ref {
-            request = request.counterparty_ref(party);
-        }
-        if let Some(payload) = calendar_invite {
-            request = request.calendar_invite(payload.clone());
-        }
-        // FIX 6424: the ask names the logical send the executor will run
-        // this TASK under, so a press on it pins the send that spends it.
-        request.approval_identity_ref = Some(crate::outbound::connector_logical_send_ref(
-            self.actor,
-            intent.idempotency_key.as_deref(),
-            task_ref,
-        ));
-        let mut sink = ScheduleOnlySink;
-        let result = self
-            .vault
-            .dispatch_outbound_intent_with_verified_actor(
-                request,
-                &mut sink,
-                self.actor,
-                self.actor_class,
-            )
-            .map_err(facade_error_from_outbound_dispatch)?;
+        let result = self.dispatch_outbound_schedule(&send, &gate_intent_ref)?;
         let sender_ref = result
             .receipt
             .fields
@@ -249,66 +98,11 @@ impl Memory<'_> {
         // becomes executable. Under the schedule-only Hold window, Held is the
         // sole outcome admitted to the durable queue.
         if result.outcome != OutboundDispatchOutcome::Held {
-            return Ok((
-                OutboundIntentReceipt {
-                    intent_ref: gate_intent_ref,
-                    outcome: dispatch_outcome_str(&result.outcome).to_owned(),
-                    gate_outcome: Some(result.gate_outcome),
-                    gate_decision_ref: result.gate_decision_id,
-                    gate_reason_codes: result.gate_reason_codes,
-                    approval_digest: result.approval_digest,
-                    deduped: false,
-                },
-                sender_ref,
-            ));
+            return Ok((dispatch_receipt(gate_intent_ref, result), sender_ref));
         }
 
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
-            let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
-                self.vault,
-                wtxn,
-                EnqueueAttempt {
-                    kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
-                    payload,
-                    dedupe_key: draft.idempotency_key.clone(),
-                    run_id: draft.job_ref.clone(),
-                    now,
-                },
-                crate::ports::JobScope {
-                    task_ref: Some(task_ref.to_hex()),
-                    dedupe_actor_ref: Some(dedupe_actor_ref.as_str()),
-                },
-            )?;
-            if matches!(&outcome, EnqueueOutcome::Enqueued(_)) {
-                put_connector_send_task_in_txn(
-                    self.vault,
-                    wtxn,
-                    task_ref,
-                    &intent,
-                    self.actor,
-                    self.actor_class,
-                    originating_session_ref.as_deref(),
-                    schedule_context,
-                    continuation,
-                    calendar_invite,
-                    counterparty_ref,
-                    now,
-                )?;
-                // The SEQUENCE bump joins the SAME transaction as the ready
-                // attempt and the connector TASK that will replay it. No
-                // bumped sequence can survive without its frozen intent,
-                // because both commit here or neither does.
-                if let Some(payload) = calendar_invite {
-                    let admission = crate::calendar::invite::admit_calendar_invite_in_txn(
-                        self.vault, wtxn, self.actor, payload, now,
-                    )
-                    .map_err(facade_error_from_calendar)?;
-                    admission
-                        .commit_in_txn(self.vault, wtxn, now)
-                        .map_err(facade_error_from_calendar)?;
-                }
-            }
-            Ok(outcome)
+            self.enqueue_scheduled_send_in_txn(wtxn, &send, payload, &dedupe_actor_ref)
         })?;
         let attempt = match outcome {
             EnqueueOutcome::Enqueued(attempt) => attempt,
@@ -327,17 +121,6 @@ impl Memory<'_> {
             &result.gate_reason_codes,
             result.approval_digest.as_deref(),
         );
-        Ok((
-            OutboundIntentReceipt {
-                intent_ref,
-                outcome: dispatch_outcome_str(&result.outcome).to_owned(),
-                gate_outcome: Some(result.gate_outcome),
-                gate_decision_ref: result.gate_decision_id,
-                gate_reason_codes: result.gate_reason_codes,
-                approval_digest: result.approval_digest,
-                deduped: false,
-            },
-            sender_ref,
-        ))
+        Ok((dispatch_receipt(intent_ref, result), sender_ref))
     }
 }

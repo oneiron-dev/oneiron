@@ -26,11 +26,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
     ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
@@ -68,18 +66,8 @@ const CATALOG_CALL_CLASS: ConnectorCallClass = ConnectorCallClass::ScopedMcp;
 /// Why an owner's off switch suspends a connector's key.
 const OWNER_OFF_REASON: &str = "switched off by the owner";
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/connectors/register", post(register))
-        .route("/connectors/setup", get(setup))
-        .route("/connectors/slate/accept", post(accept))
-        .route("/connectors/qualify", post(qualify))
-        .route("/connectors/attest", post(attest))
-        .route("/connectors/refresh", post(refresh))
-        .route("/connectors/enabled", post(enabled))
-        .route("/connectors/proxy", post(proxy))
-        .route("/connectors/proxy/revoke-write", post(revoke_proxy_write))
-}
+mod table;
+pub(super) use self::table::owner_table;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
