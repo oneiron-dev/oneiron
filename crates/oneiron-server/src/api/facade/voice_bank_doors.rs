@@ -34,7 +34,10 @@ use oneiron::voice_identity::ref_bank::VoiceBankActor;
 use super::clock_ingress;
 use super::host_doors::support::{MaybeListed, internal};
 use super::shared_act_doors::{as_person_naming, person};
-use crate::api::ai::{VoiceBankRefusal, evict_answer, provision_clone, render_consent_answer};
+use crate::api::ai::{
+    CloneRequest, VoiceBankRefusal, clone_payer, evict_answer, provision_clone_funded,
+    render_consent_answer,
+};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -181,7 +184,9 @@ pub(crate) async fn vault_voices_render_consent(
 
 /// `vault.voices.targets.provision`: the actor's own voice cloned at a
 /// configured hosted target, or its current clone there. The render consent
-/// must reach the target's locality before any provider call.
+/// must reach the target's locality before any provider call. The clone's
+/// vendor calls bill the calling live run's scope funding, when one funds
+/// them, and run on the vault's run otherwise (FIX 10630).
 pub(crate) async fn vault_voices_targets_provision(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -193,13 +198,16 @@ pub(crate) async fn vault_voices_targets_provision(
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
     let named = acting(server, &actor);
-    let answer = provision_clone(
+    let answer = provision_clone_funded(
         server,
         Some(&actor),
-        &input.voice_id,
-        &input.target,
-        input.include_generated,
-        input.language.as_deref(),
+        clone_payer(),
+        CloneRequest {
+            voice_id: &input.voice_id,
+            target: &input.target,
+            include_generated: input.include_generated,
+            language: input.language.as_deref(),
+        },
     )
     .await
     .map_err(memory_refusal);
