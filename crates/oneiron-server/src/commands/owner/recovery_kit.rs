@@ -362,6 +362,10 @@ struct BundleRestored {
     /// Sections or windows not taken: a world this machine may not read
     /// waits for its re-home.
     skipped: usize,
+    /// Worlds whose keys the kit does not open yet: each restores once a
+    /// reader of it publishes again (FIX 4496).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    awaiting_reader: Vec<String>,
 }
 
 /// `recovery-kit restore --sealed-bundle` or `--sealed-home`: the kit alone
@@ -468,6 +472,11 @@ fn restore_from_bundle(
         merged: take.merged,
         unchanged: take.unchanged,
         skipped: take.skipped,
+        awaiting_reader: restored
+            .awaiting_reader
+            .iter()
+            .map(|world| world.to_hex())
+            .collect(),
     })
 }
 

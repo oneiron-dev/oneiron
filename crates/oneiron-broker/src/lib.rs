@@ -36,6 +36,7 @@ mod peer;
 mod serve;
 
 pub use call::{CallHeader, Outcome, ReplyHeader};
+pub use deadline::FRAME_DEADLINE;
 pub use digest::{is_auth_header, request_digest};
 pub use error::{BrokerError, Failure, Refusal};
 pub use form::FormData;
