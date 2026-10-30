@@ -330,6 +330,9 @@ side_tables! {
     /// DOOR-141: the waking actor one turn program attempt runs as, never a base-agent stamp, and
     /// the admission that bound it. Key: id16(attempt).
     DREAMER_TURN_PROGRAM_ATTEMPT: VaultMeta b"dreamer:turn_program:attempt:v1:" Named;
+    /// FIX 6062: each try the turn program runtime holds, by its hold's kind, written and deleted
+    /// beside its DREAMER_PARKED row. Key: u8(hold) + id16(attempt).
+    DREAMER_TURN_PROGRAM_HOLD: VaultMeta b"dreamer:turn_program:hold:v1:" Named Engine;
     /// DOOR-141 PR2: one turn program's code run: the try that entered it, the admission that
     /// fixed it, its lifecycle and result, and the checkpoint frontier it last committed.
     /// Key: id16(code run).
