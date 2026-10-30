@@ -16,6 +16,7 @@
 //! the approved words, a version of the same artifact under its own run
 //! prefix, and never sent (FIX 12167).
 
+use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -29,7 +30,9 @@ use crate::temporal::TimeRange;
 
 use super::reminder::{ReminderRef, civil_time, quoted_promise, reminder_text};
 use super::wake_approval::approved_commitment_wake;
-use super::wake_event::{CommitmentWakePhase, validate_wake_string};
+use super::wake_event::{
+    CommitmentWakePhase, KEY_CONTENT_REF, PREDICATE_COMMITMENT_WAKE_PROPOSAL, validate_wake_string,
+};
 
 /// Attempt kind for one reminder's queued wording.
 pub const COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND: &str = "commitment.reminder.wording";
@@ -321,6 +324,48 @@ impl Vault {
             Some(record) => self.wording_text(&artifact_id, record.version),
             None => Ok(None),
         }
+    }
+
+    /// The wording filed for the reminder the proposal `proposal` sends,
+    /// with the BLAKE3 hash of its text: `None` for any other proposal, or
+    /// a reminder with no wording filed yet (FIX 12319). The hash is the
+    /// filed version's content hash, the value an approval names to pin
+    /// these words.
+    ///
+    /// # Errors
+    ///
+    /// The claim or the wording artifact could not be read.
+    pub fn filed_commitment_reminder_wording_for_proposal(
+        &self,
+        proposal: &EntityId,
+    ) -> Result<Option<(String, [u8; 32])>> {
+        let Some(body) = self.get_claim(proposal)? else {
+            return Ok(None);
+        };
+        if body.predicate != PREDICATE_COMMITMENT_WAKE_PROPOSAL {
+            return Ok(None);
+        }
+        let Value::Map(entries) = &body.value else {
+            return Ok(None);
+        };
+        let Some(content_ref) = entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(KEY_CONTENT_REF))
+            .and_then(|(_, value)| value.as_str())
+        else {
+            return Ok(None);
+        };
+        if ReminderRef::parse(content_ref).is_none() {
+            return Ok(None);
+        }
+        let artifact_id = wording_artifact_id(content_ref)?;
+        let Some(record) = self.filed_wording_version(&artifact_id)? else {
+            return Ok(None);
+        };
+        let Some(text) = self.wording_text(&artifact_id, record.version)? else {
+            return Ok(None);
+        };
+        Ok(Some((text, record.content_hash)))
     }
 
     /// The words an approved send of the reminder `content_ref` pins: the
