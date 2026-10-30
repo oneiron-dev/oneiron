@@ -78,6 +78,9 @@ pub struct SyncClient {
     /// Started again at every connect. Only the client's own `&mut` takes
     /// it; the mutex keeps the client `Sync`.
     pub(crate) asset_bodies: Mutex<crate::sync::AssetBodySession>,
+    /// This connection's custody carrier leaf-key requests (FIX 11785).
+    /// Started again at every connect.
+    pub(super) leaf_key_sends: super::leaf_keys::LeafKeySends,
     /// The machine the home proved on this connection's upgrade (OF-534
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
@@ -189,6 +192,7 @@ impl SyncClient {
             last_lfs_download: None,
             artifact_publication_resend: HashMap::new(),
             asset_bodies: Default::default(),
+            leaf_key_sends: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
             status: SyncStatus::Disconnected,
             event_tx,

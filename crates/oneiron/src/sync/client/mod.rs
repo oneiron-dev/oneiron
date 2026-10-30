@@ -49,6 +49,7 @@ mod endpoint;
 mod federated;
 mod federation_replay;
 mod inbound;
+mod leaf_keys;
 mod lfs;
 mod note_session;
 mod own_device;
@@ -60,6 +61,7 @@ mod window_pads;
 
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
+pub(crate) use self::leaf_keys::send_leaf_key_requests;
 pub(in crate::sync) use self::own_device::OwnDeviceImport;
 pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
