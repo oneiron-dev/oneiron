@@ -331,3 +331,76 @@ impl Vault {
             .collect())
     }
 }
+
+/// The re-measure's digest domain (FIX 12175).
+const REMEASURE_DOMAIN: &[u8] = b"skill_optimize:eval_measurement:remeasure:v1\0";
+
+/// Where the request `digest` keys is measured again while its Partial
+/// `row` stands: one digest per Partial row, so each settled row opens a
+/// new one.
+fn remeasure_digest(digest: &[u8; 32], row: &EvalMeasurement) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(REMEASURE_DOMAIN);
+    hash.update(digest);
+    hash.update(&row.requested_at.to_be_bytes());
+    hash.update(&row.settled_at.unwrap_or_default().to_be_bytes());
+    *hash.finalize().as_bytes()
+}
+
+impl Vault {
+    /// Measures a Partial row's request again, for a reader that reads
+    /// Partial as not yet measured: the helper gate (FIX 12175). The
+    /// request is measured beside the row, under its own digest, and the
+    /// Partial row stays readable as it is until that measurement settles.
+    /// The next call then puts the settled row in the Partial's place,
+    /// under `digest`; one that settled Partial again is measured again.
+    /// An open re-measure's job is queued again; the queue's dedupe keeps
+    /// one. A Pending, Claimed or Final row, or a Partial whose cohort
+    /// moved since its request, is returned as it stands.
+    /// # Errors
+    /// A missing measurement or cohort, or storage errors.
+    pub fn remeasure_partial_eval_measurement(
+        &self,
+        digest: &[u8; 32],
+        now: u64,
+    ) -> Result<EvalMeasurement> {
+        self.with_write_txn_grouped(|txn| {
+            let mut row = MEASUREMENTS
+                .get(&self.store, &*txn, digest)?
+                .ok_or(Error::EntityNotFound)?;
+            if !matches!(row.state, MeasurementState::Partial { .. }) {
+                return Ok(row);
+            }
+            let mut again = remeasure_digest(digest, &row);
+            if let Some(mut remeasured) = MEASUREMENTS.get(&self.store, &*txn, &again)? {
+                if matches!(
+                    remeasured.state,
+                    MeasurementState::Pending | MeasurementState::Claimed
+                ) {
+                    enqueue_coach_eval_measurement_in_txn(self, txn, &again, now)?;
+                    return Ok(row);
+                }
+                MEASUREMENTS.delete(&self.store, txn, &again)?;
+                remeasured.digest = digest_hex(digest);
+                MEASUREMENTS.put(&self.store, txn, digest, &remeasured)?;
+                if !matches!(remeasured.state, MeasurementState::Partial { .. }) {
+                    return Ok(remeasured);
+                }
+                again = remeasure_digest(digest, &remeasured);
+                row = remeasured;
+            }
+            let cohort = cohort_in_txn(self, &*txn, &row.request.cohort)?;
+            if cohort.seat != row.request.seat || cohort_moved(&cohort, &row.request) {
+                return Ok(row);
+            }
+            MEASUREMENTS.put(
+                &self.store,
+                txn,
+                &again,
+                &pending(&again, &row.request, now),
+            )?;
+            enqueue_coach_eval_measurement_in_txn(self, txn, &again, now)?;
+            Ok(row)
+        })
+    }
+}

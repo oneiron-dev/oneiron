@@ -54,6 +54,7 @@ pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
     let (homes, passphrase) = issue_inputs(&args)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_with_unlock(&config, &unlock, KeyNeed::Open, INSTEAD)?;
+    refuse_this_machine_without_keystore(&vault, &homes)?;
     let owner = host_owner(&vault)?;
     let vault_id = vault
         .world_kit_status()?
@@ -123,6 +124,7 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
     let (homes, passphrase) = issue_inputs(&args)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
+    refuse_this_machine_without_keystore(&vault, &homes)?;
     let owner = host_owner(&vault)?;
     if vault.vault_key_status()? == VaultKeyStatus::NoKey {
         anyhow::bail!("the vault has no data key yet: there is nothing to put in a kit")
@@ -238,12 +240,23 @@ fn parse_home(text: &str) -> anyhow::Result<PieceHome> {
             "trusted-person" => PieceHome::TrustedPerson,
             "security-key" => PieceHome::SecurityKey,
             "passphrase" => PieceHome::Passphrase,
-            "this-machine" => anyhow::bail!(
-                "--home this-machine waits for device-piece custody; pick another home"
-            ),
+            "this-machine" => PieceHome::ThisMachine,
             _ => anyhow::bail!("--home {text} is not a kit home"),
         },
     })
+}
+
+/// A `this-machine` home's piece stays in this install's keystore (FIX 2063):
+/// refused as before while the host installed none.
+fn refuse_this_machine_without_keystore(
+    vault: &oneiron::Vault,
+    homes: &[PieceHome; 3],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !homes.contains(&PieceHome::ThisMachine) || vault.device_keystore_assurance().is_some(),
+        "--home this-machine waits for device-piece custody; pick another home"
+    );
+    Ok(())
 }
 
 /// `dir` and its parents; a directory it makes is owner-only.

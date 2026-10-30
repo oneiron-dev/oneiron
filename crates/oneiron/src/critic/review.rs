@@ -13,16 +13,22 @@ pub use dissent::{
 };
 mod persistence;
 mod questions;
+pub(crate) use outcomes::rewrite_outcome_artifact_ids_in_txn;
 pub use outcomes::{record_review_outcome, recurring_findings};
 use persistence::*;
 pub(crate) use persistence::{
-    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn, trusted_review_in_txn,
+    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
+    erase_review_session_in_txn, rewrite_verdict_artifact_ids_in_txn, trusted_review_in_txn,
 };
 pub use questions::{
     REVIEW_DIAL, ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording,
 };
 mod submit;
 pub use submit::{CriticBinding, CriticReviewOutcome, CriticReviewSubmit};
+mod team_outcome;
+pub(crate) use team_outcome::{
+    name_deliverable_critics_in_txn, record_deliverable_outcomes_in_txn,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

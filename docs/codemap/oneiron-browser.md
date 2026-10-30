@@ -19,7 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cdp/parsed.rs` | src | s | 7 crate-vis | — | A reply read past the pipe's framing threshold, once parsed (FIX 7988): its raw bytes were charged to the… |
 | `src/cdp/paused.rs` | src | s | 4 crate-vis | — | Each paused request's host worker (FIX 7651, FIX 6302) |
 | `src/cdp/recorder.rs` | src | m | 20 crate-vis | — | The road a demonstration's page events take to the host (CUA E9): the recorder's own binding, never the… |
-| `src/cdp/requests.rs` | src | s | 7 crate-vis | — | Each paused request's custody (FIX 7122), on the routing of both transports |
+| `src/cdp/requests.rs` | src | s | 8 crate-vis | — | Each paused request's custody (FIX 7122), on the routing of both transports |
 | `src/cdp/state.rs` | src | m | 21 crate-vis | — | What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each… |
 | `src/cdp/storage.rs` | src | s | 8 crate-vis | — | What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the… |
 | `src/cdp/websocket.rs` | src | m | 1 crate-vis | — | CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT) |
@@ -76,10 +76,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/progress.rs` | src | s | 1 fn · 1 const · 6 crate-vis | — | A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]… |
 | `src/receipt_evidence.rs` | src | s | 1 enum · 1 trait | ReceiptEvidence, ReceiptEvidenceSink | An effect receipt's screenshot kept past its session (FIX 2150) |
 | `src/replay.rs` | src | s | 1 struct · 3 enum · 1 fn | OperandGap, ReplayAction, StepStop, TypeOperand | What an effect's receipt keeps for a replay program (CUA E7): the act's own operands as its verb took them… |
-| `src/request.rs` | src | s | 2 struct · 1 trait · 6 crate-vis | BrowserRequestHandler, DestinationRefusal, RenderedDocument | A host's custody of a browser session's requests (FIX 7122) |
+| `src/request.rs` | src | s | 3 struct · 2 trait · 6 crate-vis | BrowserBody, BrowserRequestHandler, DestinationRefusal, RenderedDocument, SpooledResponse | A host's custody of a browser session's requests (FIX 7122) |
 | `src/retention.rs` | src | s | 1 trait · 1 crate-vis | HandleRetention | The host's memory floor, as a browser session's live-handle registry meets it (C013) |
 | `src/row.rs` | src | s | 2 struct · 2 enum | Row, RowFieldGap, RowGapField, RowGapReason | A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX… |
-| `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 13 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
+| `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 14 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
 | `src/secret_fields.rs` | src | m | 1 struct · 2 enum · 11 crate-vis | RowSecret, SecretKind, SecretNote | One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card… |
 | `src/session.rs` | src | m | 2 struct · 5 re-export · 6 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
 | `src/session/demonstration.rs` | src | m | 3 fn · 11 crate-vis | — | `demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs… |

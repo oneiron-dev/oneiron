@@ -42,8 +42,8 @@ pub(crate) const SETTLEMENT_ANCHOR_REVIEW: &str = "review";
 /// A bound try's typed pin proved the TASK's goal on the page.
 pub(crate) const SETTLEMENT_ANCHOR_WORLD_PROOF: &str = "world_proof";
 
-/// The call a settled row an anchor keeps records: a report, as every
-/// settled row's does.
+/// The call a settled row an anchor keeps records: a report, as a
+/// reporter's settled row does.
 const SETTLED_CALL: &str = "report";
 /// The outcome of a review decision the owner approved.
 const APPROVED_OUTCOME: &str = "approved";

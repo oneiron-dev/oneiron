@@ -143,6 +143,12 @@ impl Memory<'_> {
         self.host_origin.as_ref()?.code_consent.as_ref()
     }
 
+    /// The code-mode step the bound origin's call is, if any (FIX 11683):
+    /// only the dispatcher puts one there.
+    pub(crate) fn host_step(&self) -> Option<crate::runtime_hooks::InvocationId> {
+        self.host_origin.as_ref()?.step
+    }
+
     /// The original caller a code consent wait keeps (DOOR-079 1a): this
     /// surface's actor and, when its host bound one, the exact instrument its
     /// request was admitted on, with the door it came in by. Every caller

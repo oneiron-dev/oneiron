@@ -182,7 +182,13 @@ impl SyncConnection {
                 None
             };
             let members = client
-                .window_send_frames(&ready, &update.window_key, sub_tag, seq, &update.update_bytes)
+                .window_send_frames(
+                    &ready,
+                    &update.window_key,
+                    sub_tag,
+                    seq,
+                    &update.update_bytes,
+                )
                 .map_err(|error| error.to_string())?;
             for frame in members {
                 *size += 4 + frame.len();
