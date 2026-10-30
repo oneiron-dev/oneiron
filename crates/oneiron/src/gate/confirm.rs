@@ -4,11 +4,10 @@ use sha2::Sha256;
 
 use crate::authority::{CRITICAL_WRITE_CONFIRM_DOMAIN, CriticalWriteConfirmDisposition};
 
-use crate::batch::{BatchOp, EntityMetadataHeader, apply_session_bundle_claim_puts};
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, encode_claim_body};
+use crate::batch::EntityMetadataHeader;
+use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -16,6 +15,12 @@ use crate::vault::Vault;
 use super::ceiling::PolicyCriticality;
 use super::decision::GateReasonCode;
 use super::input::{GateContentKind, GateEvaluatorInput};
+
+mod status_grant;
+
+pub(super) use self::status_grant::{
+    PreauthorizedClaimStatusGrant, put_preauthorized_claim_status_in_txn,
+};
 
 pub const CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS: u64 = 300;
 // A public listing uses one expiry pass plus one listing pass: at most 512 rows total.
@@ -67,86 +72,6 @@ pub(crate) fn critical_confirm_has_no_deadline(row: &PendingGateConsentRecord) -
         row.reason_codes.as_slice(),
         [reason] if reason == GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM
             || reason == GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED
-    )
-}
-
-/// A private, single-use authority for a settlement status rewrite.
-///
-/// Its fields are deliberately not caller supplied at the materialization door:
-/// only the verified timeout/sweep and authority-fold paths below can construct it.
-#[derive(Clone, Copy)]
-pub(super) enum PreauthorizedClaimStatusGrant {
-    TimeoutDemotion,
-    FoldDecline,
-    FoldClear,
-}
-
-#[cfg(test)]
-impl PreauthorizedClaimStatusGrant {
-    // Test-only access verifies the materialization door's row/header binding.
-    pub(super) fn test_timeout_demotion() -> Self {
-        Self::TimeoutDemotion
-    }
-}
-
-pub(super) fn put_preauthorized_claim_status_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    expected: &ClaimBody,
-    grant: PreauthorizedClaimStatusGrant,
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<()> {
-    let current = vault
-        .get_claim_in_txn(&*wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    let raw = vault
-        .store
-        .port_entity_record(&*wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    if raw.entity_type != ENTITY_TYPE_CLAIM
-        || raw.occurred.start != occurred.start
-        || raw.occurred.end != occurred.end
-        || raw.learned_at != learned_at
-        || current != *expected
-    {
-        return Err(Error::InvariantViolation(
-            "preauthorized claim status update does not bind current claim row",
-        ));
-    }
-    let mut updated = current;
-    match grant {
-        PreauthorizedClaimStatusGrant::TimeoutDemotion => {
-            updated.approval = ClaimApprovalStatus::Proposed;
-        }
-        PreauthorizedClaimStatusGrant::FoldClear => {
-            updated.approval = ClaimApprovalStatus::Auto;
-        }
-        PreauthorizedClaimStatusGrant::FoldDecline => {
-            updated.lifecycle = ClaimLifecycleStatus::Retracted;
-        }
-    }
-    let data = encode_claim_body(&updated)?;
-    crate::claim::validate_claim_body_bytes(&data, false)?;
-    apply_session_bundle_claim_puts(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        wtxn,
-        vec![BatchOp::Put {
-            id: *id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred,
-            learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }],
-        vault
-            .text_index_trusted
-            .load(std::sync::atomic::Ordering::Acquire),
     )
 }
 
