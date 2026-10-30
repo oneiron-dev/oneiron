@@ -8,7 +8,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   `import`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
 - [Owner custody commands](owner-custody.md) — `--unlock` for every vault-key command, a
   restore's `--wrap-to`, `secrets bind`/`unbind`, the kit push on a running server, credentials a
-  restore left pending, and a stopped-vault guest revoke's `--peer`.
+  restore left pending, `secrets import-supplement` for an export's secret supplements, and a
+  stopped-vault guest revoke's `--peer`.
 - [Key custody beside your backups](key-custody.md) — the custody head and keyless log each
   backup leaves beside it, the residence and hosted members, the anchor (`custody_anchor_root`,
   `custody_anchor_url`, `/v1/owner/custody-anchor`), the status names, and what a restore says.
