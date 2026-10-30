@@ -74,7 +74,9 @@ pub use review_policy::{
 };
 pub use reviewed::ReviewedProposalLanding;
 pub use run::{RepoQueueOrder, RepoQueuePredecessor};
-// The served import's queue source (FIX 6869).
+// The served import's queue source (FIX 6869); its root, for GitWire's
+// crash settlement (FIX 7706).
+pub(crate) use source::queue_source_root;
 pub use source_types::ServedQueueSource;
 // The tested-revision seal at green (FIX 6868, G2 PR3).
 pub(crate) use tested_types::QueueRevisionSeal;

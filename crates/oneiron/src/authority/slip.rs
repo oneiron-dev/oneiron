@@ -114,13 +114,7 @@ impl VerifiedSlip {
     /// (FIX 3899): it could otherwise mint itself a wider reach.
     #[must_use]
     pub fn is_full_vault_owner_grade(&self) -> bool {
-        self.unattenuated
-            && self.comm() == super::CommReach::Vault
-            && self.claims.scope == Scope::top()
-            && self.claims.org_ref.is_none()
-            && self.claims.records.is_empty()
-            && self.claims.channels.is_empty()
-            && !self.claims.single_use
+        self.unattenuated && self.claims.is_full_vault_owner_grade()
     }
     /// A caveat handed the slip to another key (`attenuate_to`): whoever
     /// proves it now is not the holder the mint names, whatever

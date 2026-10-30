@@ -289,8 +289,8 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
             (id, true)
         }
     };
-    let task = match vault.repo_reconciliation_task_in_txn(&wtxn, claim_id)? {
-        Some(task) => Some(task),
+    let (task, held) = match vault.repo_reconciliation_task_in_txn(&wtxn, claim_id)? {
+        Some(task) => (Some(task), None),
         None if open => {
             let conflict = RepoConflictClaim {
                 claim_id,
@@ -303,16 +303,19 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
                 conflicted_paths: value.conflicted_paths,
                 proposals: value.proposals,
             };
-            vault.create_queue_reconciliation_task_in_txn(
+            match vault.create_queue_reconciliation_task_in_txn(
                 &mut wtxn, &conflict, admission, learned_at,
-            )?
+            )? {
+                Ok(task) => (Some(task), None),
+                Err(held) => (None, Some(held)),
+            }
         }
-        None => None,
+        None => (None, None),
     };
     let link = QueueConflictLink {
         conflict: claim_id,
         branch_subject: subject,
-        held: (task.is_none() && open).then(|| QueueReconciliationAdmission::TASK_HELD.to_owned()),
+        held,
         task,
         sources: overlap.sources.clone(),
         batches: overlap.batches.clone(),
@@ -328,7 +331,9 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
 impl Vault {
     /// Asks again for the TASK of a held queue handoff, under its admission
     /// as current policy reads it now: the same open claim and the same
-    /// index, never a second claim. Nothing is written while it stays held.
+    /// index, never a second claim. Nothing is written while it stays held
+    /// for the same reason; a hold whose reason moved (a Grant that no
+    /// longer covers it, FIX 7308) is written on every batch's link.
     ///
     /// # Errors
     /// A store failure or an admission that no longer answers the overlap.
@@ -363,14 +368,22 @@ impl Vault {
             conflicted_paths: value.conflicted_paths,
             proposals: value.proposals,
         };
-        let Some(task) = self.create_queue_reconciliation_task_in_txn(
+        let task = match self.create_queue_reconciliation_task_in_txn(
             &mut wtxn,
             &conflict,
             admission,
             now_secs(),
-        )?
-        else {
-            return Ok(link.clone());
+        )? {
+            Ok(task) => task,
+            Err(held) if link.held.as_deref() == Some(held.as_str()) => return Ok(link.clone()),
+            Err(held) => {
+                let mut moved = link.clone();
+                moved.held = Some(held);
+                attach(&mut wtxn, &moved)?;
+                wtxn.commit()?;
+                self.store.notify_attempt_observers();
+                return Ok(moved);
+            }
         };
         let mut retried = link.clone();
         retried.task = Some(task);

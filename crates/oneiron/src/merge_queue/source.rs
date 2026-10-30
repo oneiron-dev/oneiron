@@ -62,11 +62,12 @@ pub(super) fn served_store_folder(repo_ref: &RepoRef) -> Option<&str> {
 }
 
 /// The engine-derived root of `store`'s queue source (CALL 1). Creates
-/// nothing; a store name that is not a hex identity has no root.
+/// nothing; a store name that is not a hex identity has no root. GitWire
+/// reads it to settle a crashed add of this root (FIX 7706).
 ///
 /// # Errors
 /// A vault environment path that does not resolve, or a malformed store.
-pub(super) fn queue_source_root(vault: &Vault, store: &str) -> Result<PathBuf> {
+pub(crate) fn queue_source_root(vault: &Vault, store: &str) -> Result<PathBuf> {
     if store.is_empty() || !store.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(Error::CorruptedIndex(
             "a queue source store is not a hex identity",
