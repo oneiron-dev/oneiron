@@ -93,7 +93,14 @@ impl Vault {
                 return Ok((moved, failed, Some(artifact.as_bytes().to_vec())));
             }
             match self.settle_body_anchors(artifact, actor) {
-                Ok(written) => moved = moved.saturating_add(written),
+                Ok((written, unread)) => {
+                    moved = moved.saturating_add(written);
+                    // A body or version that did not read keeps its comments'
+                    // heads for the next pass, as a failed body does.
+                    if unread > 0 {
+                        failed = failed.saturating_add(1);
+                    }
+                }
                 Err(error) => {
                     failed = failed.saturating_add(1);
                     tracing::warn!(
@@ -109,13 +116,14 @@ impl Vault {
 
     /// Plans one artifact's comments in a read, then writes the heads that
     /// changed in one write, each only while its head is the one planned on.
-    fn settle_body_anchors(&self, artifact: &EntityId, actor: WriteActor) -> Result<u64> {
-        let plans = {
+    /// Returns the heads written and how many reads failed in the plan.
+    fn settle_body_anchors(&self, artifact: &EntityId, actor: WriteActor) -> Result<(u64, u64)> {
+        let (plans, unread) = {
             let rtxn = self.store.env.read_txn()?;
             self.plan_body_anchors_in_txn(&rtxn, artifact)?
         };
         if plans.is_empty() {
-            return Ok(0);
+            return Ok((0, unread));
         }
         let now = self.now_recorded_at();
         let occurred = TimeRange {
@@ -157,7 +165,7 @@ impl Vault {
                 self.supersede_claim_in_txn(wtxn, &new_head, &plan.thread.head_claim_id, now)?;
                 written = written.saturating_add(1);
             }
-            Ok(written)
+            Ok((written, unread))
         })
     }
 
@@ -165,7 +173,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         artifact: &EntityId,
-    ) -> Result<Vec<Planned>> {
+    ) -> Result<(Vec<Planned>, u64)> {
         // A body with no attached comment reads no body.
         let threads: Vec<AnnotationThread> = self
             .effect_annotation_threads_for_artifact_in_txn(txn, artifact)?
@@ -173,19 +181,26 @@ impl Vault {
             .filter(|thread| !thread.is_drifted())
             .collect();
         if threads.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
         let Some(head) = self.office_body_frontier_in_txn(txn, artifact)? else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         };
         let export = self.office_body_latest_export_in_txn(txn, artifact)?;
         let (mut units, mut filed) = (UnitsAt::new(), FiledAt::new());
+        let mut unread = 0_u64;
         let mut plans = Vec::new();
         for thread in threads {
             let stamp = match &thread.anchor.body {
                 Some(body) => Some((body.clone(), false)),
                 None => self
-                    .stamp_in_txn(txn, artifact, &thread.anchor, &mut units, &mut filed)
+                    .stamp_in_txn(
+                        txn,
+                        artifact,
+                        &thread.anchor,
+                        (&mut units, &mut filed),
+                        &mut unread,
+                    )
                     .map(|body| (body, true)),
             };
             let Some((body, stamped)) = stamp else {
@@ -194,16 +209,21 @@ impl Vault {
             let landing = export
                 .as_ref()
                 .filter(|(version, _)| thread.anchor.version < *version);
-            self.load_units(txn, artifact, &body.frontier, &mut units);
-            self.load_units(txn, artifact, &head, &mut units);
+            // A comment already at the body's head with no export to land on
+            // has nothing to follow: the pass reads no body for it.
+            if !stamped && body.frontier == head && landing.is_none() {
+                continue;
+            }
+            self.load_units(txn, artifact, &body.frontier, &mut units, &mut unread);
+            self.load_units(txn, artifact, &head, &mut units, &mut unread);
             if let Some((version, frontier)) = landing {
-                self.load_units(txn, artifact, frontier, &mut units);
-                self.load_filed(txn, artifact, *version, &mut filed);
+                self.load_units(txn, artifact, frontier, &mut units, &mut unread);
+                self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
             }
             let plan = plan_thread(thread, body, stamped, &head, landing, &units, &filed);
             plans.extend(plan);
         }
-        Ok(plans)
+        Ok((plans, unread))
     }
 
     /// The body anchor of a version anchor: the same unit in the live body,
@@ -214,19 +234,19 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         artifact: &EntityId,
         anchor: &Anchor,
-        units: &mut UnitsAt,
-        filed: &mut FiledAt,
+        (units, filed): (&mut UnitsAt, &mut FiledAt),
+        unread: &mut u64,
     ) -> Option<BodyAnchor> {
         let frontier = self
             .office_body_frontier_of_version_in_txn(txn, artifact, anchor.version)
             .unwrap_or_else(|error| {
-                warn_unread(artifact, &error);
+                warn_unread(artifact, &error, unread);
                 None
             })?;
-        self.load_units(txn, artifact, &frontier, units);
+        self.load_units(txn, artifact, &frontier, units, unread);
         let held = match (units_at(units, &frontier), &anchor.locator) {
             (Some(OfficeBodyUnits::Docx(blocks)), Locator::Docx { para_path, .. }) => {
-                self.load_filed(txn, artifact, anchor.version, filed);
+                self.load_filed(txn, artifact, anchor.version, filed, unread);
                 let filed = filed
                     .get(&anchor.version)
                     .and_then(Option::as_deref)
@@ -251,6 +271,7 @@ impl Vault {
         artifact: &EntityId,
         frontier: &[u8],
         units: &mut UnitsAt,
+        unread: &mut u64,
     ) {
         if units.contains_key(frontier) {
             return;
@@ -258,7 +279,7 @@ impl Vault {
         let read = self
             .office_body_units_in_txn(txn, artifact, frontier)
             .unwrap_or_else(|error| {
-                warn_unread(artifact, &error);
+                warn_unread(artifact, &error, unread);
                 None
             });
         units.insert(frontier.to_vec(), read);
@@ -270,6 +291,7 @@ impl Vault {
         artifact: &EntityId,
         version: u64,
         filed: &mut FiledAt,
+        unread: &mut u64,
     ) {
         if filed.contains_key(&version) {
             return;
@@ -281,14 +303,15 @@ impl Vault {
             docx_blocks(&bytes, &self.text_limits_in_txn(txn)?)
         })()
         .unwrap_or_else(|error| {
-            warn_unread(artifact, &error);
+            warn_unread(artifact, &error, unread);
             None
         });
         filed.insert(version, read);
     }
 }
 
-fn warn_unread(artifact: &EntityId, error: &crate::error::Error) {
+fn warn_unread(artifact: &EntityId, error: &crate::error::Error, unread: &mut u64) {
+    *unread = unread.saturating_add(1);
     tracing::warn!(
         artifact = %artifact.to_hex(),
         error = ?error,
