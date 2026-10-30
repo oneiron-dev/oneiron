@@ -282,8 +282,16 @@ impl Memory<'_> {
                     Ok(Ok(()))
                 })?;
         let proposal = proposed.map_err(refusal_error)?;
+        // The answer names the proposal (its `repo.proposed_diff` journal
+        // claim's id), its session and its provenance claim: send-time
+        // admission judges each of them (FIX 7069).
         Ok(RepoRunAnswer {
-            rows: vec![own.stamp.repo],
+            rows: vec![
+                own.stamp.repo,
+                proposal.id,
+                proposal.session,
+                proposal.provenance_claim,
+            ],
             output: RepoProposalSubmitOutput {
                 proposal: proposal.id,
                 work: input.work,
@@ -397,7 +405,12 @@ impl Memory<'_> {
         let batch = formed.map_err(refusal_error)?;
         let (entry, blockers) =
             self.repo_entry_view(binding, &queue, batch, self.vault.now_recorded_at())?;
+        // Each queued proposal, its session and its provenance claim are
+        // served rows too, so send-time admission judges them (FIX 7069).
         let mut answer_rows = vec![own.stamp.repo];
+        for row in &rows {
+            answer_rows.extend([row.id, row.session, row.provenance_claim]);
+        }
         answer_rows.extend(blockers);
         Ok(RepoRunAnswer {
             rows: answer_rows,
