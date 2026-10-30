@@ -98,9 +98,9 @@ pub(super) fn open_kit(
 /// The pieces of data-key kits `keystore` keeps for the vault `vault_id` (FIX
 /// 11976): a sealed vault's machine id is read only once its pages open, so
 /// the slots read are those of each install a device wrap in `carried` names,
-/// every current pair first, then every pending pair, as
-/// [`Vault::restore_kit_here`] reads them. And whether a pair held a piece
-/// that did not read: it is logged and left out.
+/// each one's current pair: a data-key kit has no pending pair (FIX 12046).
+/// And whether a pair held a piece that did not read: it is logged and left
+/// out.
 fn kept_pieces(
     keystore: &Arc<dyn DeviceKeystore>,
     vault_id: &[u8; 32],
@@ -116,20 +116,18 @@ fn kept_pieces(
         .collect();
     let mut kept = Vec::new();
     let mut unreadable = false;
-    for pair in [KitPiecePair::Current, KitPiecePair::Pending] {
-        for install in &installs {
-            let store = KitPieceStore::new(Arc::clone(keystore), *vault_id, *install.as_bytes());
-            match store.get(KitSecretKind::VaultKey, pair) {
-                Ok(Some(piece)) => kept.push(piece),
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        kind = ?keystore_error(error).kind(),
-                        "this machine's data-key kit piece did not read; unlocking with the \
-                         pieces given"
-                    );
-                    unreadable = true;
-                }
+    for install in &installs {
+        let store = KitPieceStore::new(Arc::clone(keystore), *vault_id, *install.as_bytes());
+        match store.get(KitPiecePair::Current(KitSecretKind::VaultKey)) {
+            Ok(Some(piece)) => kept.push(piece),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?keystore_error(error).kind(),
+                    "this machine's data-key kit piece did not read; unlocking with the \
+                     pieces given"
+                );
+                unreadable = true;
             }
         }
     }
@@ -255,8 +253,8 @@ impl Vault {
         )
         .map_err(kit_refused)?;
         let manifest = kit.manifest().clone();
-        let pieces =
-            keep_this_machine_piece(store.as_ref(), KitPiecePair::Current, kit.into_pieces())?;
+        let pair = KitPiecePair::Current(KitSecretKind::VaultKey);
+        let pieces = keep_this_machine_piece(store.as_ref(), pair, kit.into_pieces())?;
         // The pieces never depend on the row: a write refused here (a vault
         // that takes none, a proof gone since the snapshot) is said, and the
         // kit is handed over all the same.

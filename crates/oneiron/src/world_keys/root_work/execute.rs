@@ -31,7 +31,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{KitIssue, KitPassphrase, KitPiece};
+use crate::recovery::{KitId, KitIssue, KitPassphrase, KitPiece};
 use crate::{EntityId, Vault};
 
 /// One pending root request this install answers, as the door read it.
@@ -283,7 +283,8 @@ impl Vault {
     /// An activation's first step: a kit for a fresh root, drawn before the
     /// transaction, and its pending row listed in it, naming the request
     /// (FIX 5585). The pieces go to this caller only, and the request stays
-    /// pending.
+    /// pending. A kit whose row did not commit keeps no piece pending here
+    /// (FIX 12046).
     fn run_kit_issue(
         &self,
         owner: &AuthenticatedOwner,
@@ -293,11 +294,14 @@ impl Vault {
         let kit = self.draw_world_kit(owner, issue)?;
         let listed = self.answer_root_request(asked, Answer::Pending, |txn| {
             self.list_issued_kit_in_txn(txn, owner, &kit, Some(asked.hash))
-        })?;
-        Ok(match listed.done() {
-            Ok(()) => RootWorkDone::KitIssued(Box::new(kit)),
-            Err(report) => report,
-        })
+        });
+        let report = match listed.map(Answered::done) {
+            Ok(Ok(())) => return Ok(RootWorkDone::KitIssued(Box::new(kit))),
+            Ok(Err(report)) => Ok(report),
+            Err(error) => Err(error),
+        };
+        self.drop_unlisted_kit_piece(&kit.manifest);
+        report
     }
 
     /// An activation's second step: the pieces rebuild a pending kit's
@@ -328,9 +332,13 @@ impl Vault {
                 escrow,
             })
         })?;
-        // A kit the answer made current: its piece leaves the pending key
-        // slots (FIX 11977).
-        self.settle_pending_kit_piece();
+        // A kit the answer made current: its piece leaves its pending key
+        // slots, and the kits it replaced keep none pending (FIX 11977, 12046).
+        let replaced: &[KitId] = match &confirmed {
+            Answered::Done(kit) => kit.replaced.as_slice(),
+            Answered::Refused(_) | Answered::AwaitsBasis => &[],
+        };
+        self.settle_pending_kit_pieces(replaced);
         let mirror_pending = match transition.finish() {
             Ok(()) => false,
             Err(error) => {

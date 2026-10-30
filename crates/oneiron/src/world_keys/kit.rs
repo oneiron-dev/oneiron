@@ -9,9 +9,10 @@
 //! transaction. No seed, point or passphrase is ever stored, and no piece but
 //! this machine's own, in its device-only key slots (FIX 2063); a restore
 //! here reads that piece back, and a confirm never rebuilds from it. A draw
-//! keeps it in the pending pair, and the confirm's commit moves it to the
-//! current pair (FIX 11977): a drawn kit the owner never confirms leaves the
-//! current kit's piece in place.
+//! keeps it in that kit's own pending pair, and the confirm's commit moves it
+//! to the current pair (FIX 11977, 12046): a drawn kit the owner never
+//! confirms leaves the current kit's piece in place, and a second draw leaves
+//! the first draw's piece in place for the first kit's confirm.
 //!
 //! The escrow wrap runs one way: the kit's root opens the vault key, so a kit
 //! restore on a new host opens a sealed backup. Nothing wraps the root under
@@ -300,16 +301,21 @@ impl Vault {
         issue: &KitIssue<'_>,
     ) -> Result<IssuedWorldKit> {
         let kit = self.draw_world_kit(owner, issue)?;
-        self.with_write_txn(|txn| self.list_issued_kit_in_txn(txn, owner, &kit, None))?;
+        if let Err(error) =
+            self.with_write_txn(|txn| self.list_issued_kit_in_txn(txn, owner, &kit, None))
+        {
+            self.drop_unlisted_kit_piece(&kit.manifest);
+            return Err(error);
+        }
         Ok(kit)
     }
 
     /// Kit issue's draw: a fresh root's seed split over the homes, held in
     /// memory only. Nothing is written to the vault; a `ThisMachine` home's
-    /// piece goes to this install's pending key slots, replacing only an
-    /// earlier draw's piece there, and the other homes' pieces are returned
-    /// (FIX 2063, 11977). The current kit's piece stays until this kit's
-    /// confirm; a confirmed kit's piece still pending moves first.
+    /// piece goes to this kit's own pending key slots, and the other homes'
+    /// pieces are returned (FIX 2063, 11977, 12046). The current kit's piece
+    /// and every other drawn kit's stay; a confirmed kit's piece still
+    /// pending moves first.
     pub(super) fn draw_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -348,11 +354,11 @@ impl Vault {
         .map_err(kit_refused)?;
         drop(prepared);
         if store.is_some() {
-            self.settle_pending_kit_piece();
+            self.settle_pending_kit_pieces(&[]);
         }
         let manifest = kit.manifest().clone();
-        let pieces =
-            keep_this_machine_piece(store.as_ref(), KitPiecePair::Pending, kit.into_pieces())?;
+        let pair = KitPiecePair::Pending(manifest.kit_id);
+        let pieces = keep_this_machine_piece(store.as_ref(), pair, kit.into_pieces())?;
         Ok(IssuedWorldKit {
             vault_id,
             root,
@@ -431,8 +437,9 @@ impl Vault {
     /// escrow wrap commit in the activation's transaction. A vault with a
     /// data key needs it held on this handle: the new wrap replaces the old
     /// kit's, so a locked key refuses the confirm before anything is written.
-    /// Once it commits, this machine's piece of the kit leaves the pending
-    /// key slots for the current ones (FIX 11977).
+    /// Once it commits, this machine's piece of the kit leaves its pending
+    /// key slots for the current ones, and the kits it replaced keep none
+    /// pending (FIX 11977, 12046).
     pub fn confirm_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -449,7 +456,7 @@ impl Vault {
             self.activate_owner_root_with(owner, prepared, carry, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
-        self.settle_pending_kit_piece();
+        self.settle_pending_kit_pieces(&replaced);
         transition.finish()?;
         Ok(ConfirmedWorldKit {
             kit: row.kit,
@@ -574,13 +581,15 @@ impl Vault {
         kit_seed_of(&vault_id, secret)
     }
 
-    /// Whether `kit` is this vault's current world kit, read from this
-    /// install's inventory (FIX 11977).
-    pub(super) fn world_kit_current(&self, kit: KitId) -> Result<bool> {
+    /// This vault's current world kit, read from this install's inventory
+    /// (FIX 11977, 12046): confirmed, and no later kit replaced it.
+    pub(super) fn current_world_kit(&self) -> Result<Option<KitId>> {
         let txn = self.store.env.read_txn()?;
         Ok(KITS
-            .get(&self.store, &txn, &kit_key(kit))?
-            .is_some_and(|row| row.current()))
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .find(|(_, kit)| kit.current())
+            .map(|(_, kit)| kit.kit_id))
     }
 
     /// Whether a kit this install issued for `root` still waits for its

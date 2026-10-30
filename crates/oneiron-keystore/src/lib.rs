@@ -26,6 +26,8 @@
 //! hardware one, refused where this platform has none: never a silent downgrade
 //! to software (identity, signature suites).
 
+use std::borrow::Cow;
+
 use zeroize::Zeroizing;
 
 #[cfg(target_vendor = "apple")]
@@ -84,16 +86,17 @@ pub enum SlotKind {
     /// One of the slots that keep this machine's own piece of a vault's
     /// recovery kit (FIX 2063). A piece is longer than one slot, so it spans
     /// a head and a tail slot, and each kit kind has its own pair: issuing
-    /// one kind of kit replaces only that kind's piece. Each kind also has a
-    /// pending pair, the piece of a kit drawn and not yet confirmed (FIX 11977).
+    /// one kind of kit replaces only that kind's piece. Each recovery-root kit
+    /// drawn and not yet confirmed also has a pending pair of its own, named
+    /// by its kit id (FIX 11977, 12046).
     KitPiece(KitPieceSlot),
 }
 
 impl SlotKind {
     /// Stable name in the backend: part of the keychain account or the file name.
     #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> Cow<'static, str> {
+        let label = match self {
             Self::MachineEncryption => "machine-encryption",
             Self::DeviceSigning => "device-signing",
             Self::VaultUnlock => "vault-unlock",
@@ -101,13 +104,15 @@ impl SlotKind {
             Self::HostRoot => "host-root",
             Self::HostIssuerSeed => "host-issuer-seed",
             Self::OwnerSigning => "owner-signing",
-            Self::KitPiece(slot) => slot.label(),
-        }
+            Self::KitPiece(slot) => return slot.label(),
+        };
+        Cow::Borrowed(label)
     }
 }
 
-/// Which slot of this machine's kit pieces: the kit kind, the current or the
-/// pending pair, then the piece's first 32 bytes (head) or the rest (tail).
+/// Which slot of this machine's kit pieces: the kit kind, the current pair or
+/// one drawn kit's pending pair, then the piece's first 32 bytes (head) or the
+/// rest (tail).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KitPieceSlot {
     /// The data-key kit's piece, its first 32 bytes.
@@ -118,33 +123,37 @@ pub enum KitPieceSlot {
     RecoveryRootHead,
     /// The recovery-root kit's piece, its remaining bytes.
     RecoveryRootTail,
-    /// The data-key kit's pending pair, its first 32 bytes (FIX 11977). A
-    /// data-key kit has no confirm, so its issue fills the current pair.
-    VaultKeyPendingHead,
-    /// The data-key kit's pending pair, its remaining bytes.
-    VaultKeyPendingTail,
-    /// The piece of a recovery-root kit drawn and not yet confirmed, its
-    /// first 32 bytes (FIX 11977).
-    RecoveryRootPendingHead,
-    /// The piece of a recovery-root kit drawn and not yet confirmed, its
-    /// remaining bytes.
-    RecoveryRootPendingTail,
+    /// The piece of the recovery-root kit whose 4-byte id this holds, drawn
+    /// and not yet confirmed, its first 32 bytes (FIX 11977, 12046): each
+    /// drawn kit keeps its own. A data-key kit has no confirm, so its issue
+    /// fills the current pair and it has no pending one.
+    RecoveryRootPendingHead([u8; 4]),
+    /// The piece of the recovery-root kit whose id this holds, drawn and not
+    /// yet confirmed, its remaining bytes.
+    RecoveryRootPendingTail([u8; 4]),
 }
 
 impl KitPieceSlot {
-    /// Stable name in the backend, as [`SlotKind::label`].
+    /// Stable name in the backend, as [`SlotKind::label`]. A pending slot's
+    /// name carries its kit's id: `kit-piece-recovery-root-pending-<kit id
+    /// hex>-head|tail`.
     #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::VaultKeyHead => "kit-piece-vault-key-head",
-            Self::VaultKeyTail => "kit-piece-vault-key-tail",
-            Self::RecoveryRootHead => "kit-piece-recovery-root-head",
-            Self::RecoveryRootTail => "kit-piece-recovery-root-tail",
-            Self::VaultKeyPendingHead => "kit-piece-vault-key-pending-head",
-            Self::VaultKeyPendingTail => "kit-piece-vault-key-pending-tail",
-            Self::RecoveryRootPendingHead => "kit-piece-recovery-root-pending-head",
-            Self::RecoveryRootPendingTail => "kit-piece-recovery-root-pending-tail",
+    pub fn label(self) -> Cow<'static, str> {
+        let (kit, half) = match self {
+            Self::VaultKeyHead => return Cow::Borrowed("kit-piece-vault-key-head"),
+            Self::VaultKeyTail => return Cow::Borrowed("kit-piece-vault-key-tail"),
+            Self::RecoveryRootHead => return Cow::Borrowed("kit-piece-recovery-root-head"),
+            Self::RecoveryRootTail => return Cow::Borrowed("kit-piece-recovery-root-tail"),
+            Self::RecoveryRootPendingHead(kit) => (kit, "head"),
+            Self::RecoveryRootPendingTail(kit) => (kit, "tail"),
+        };
+        let mut label = String::from("kit-piece-recovery-root-pending-");
+        for byte in kit {
+            push_hex(&mut label, byte);
         }
+        label.push('-');
+        label.push_str(half);
+        Cow::Owned(label)
     }
 }
 
@@ -165,7 +174,8 @@ impl KeystoreSlot {
     /// carries no secret.
     #[must_use]
     pub fn name(&self) -> String {
-        let mut name = String::with_capacity(64 + 1 + 32 + 1 + self.kind.label().len());
+        let label = self.kind.label();
+        let mut name = String::with_capacity(64 + 1 + 32 + 1 + label.len());
         for byte in self.vault_id {
             push_hex(&mut name, byte);
         }
@@ -174,7 +184,7 @@ impl KeystoreSlot {
             push_hex(&mut name, byte);
         }
         name.push('.');
-        name.push_str(self.kind.label());
+        name.push_str(&label);
         name
     }
 }
