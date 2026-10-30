@@ -17,20 +17,14 @@
 //! this module. The seed is read from its home into guarded memory, the key
 //! is wiped on drop, and neither leaves this install.
 //!
-//! With `[keystore] backend = "off"` there is no slot to hold it. The host
-//! then holds the seed in an owner-only file beside the vault (FIX 843,
-//! [`owner_signing_key_path`]), made only by the owner's explicit enrollment
-//! act while no keystore is installed
-//! ([`Vault::enrol_host_held_owner_signing_key`]), never in place of a
-//! keystore that would not open. Its enrollment records the Software tier,
-//! as a keystore-held key's does.
+//! With `[keystore] backend = "off"` this install holds no device keys, so it
+//! has no owner signing key either (FIX 843, Engine 21:35): the explicit home
+//! for a host-held key is the platform backend, never a file beside the vault.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
-use zeroize::Zeroizing;
 
 use crate::authority::{
     ActAuthority, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
@@ -40,19 +34,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
 
-mod host_file;
-
-pub use self::host_file::owner_signing_key_path;
-
 /// The context the signing key is derived under from its seed.
 const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";
-
-/// The host-held form is the owner's choice for a host with no keystore; a
-/// host with one keeps the key in its slot.
-const KEYSTORE_INSTALLED: &str = "this install holds a keystore: its owner signing key lives in \
-                                  its keystore slot, never in a host-held file";
-/// The key is enrolled for a machine: this install has minted none.
-const NO_MACHINE: &str = "this install has no machine identity to hold an owner signing key";
 
 /// This install's owner signing key as a checkpoint root signer: the root is
 /// the key's own Ed25519 public half, and it signs nothing but a checkpoint
@@ -76,14 +59,6 @@ impl OwnerRootSigner {
         Self {
             signing: SigningKey::from_bytes(&derived),
         }
-    }
-
-    /// The host-held form (FIX 843): the key whose seed the host holds in
-    /// the owner-only file beside the vault at `vault_path`; `None` while
-    /// there is no file. It never makes one.
-    pub fn host_held(vault_path: &Path) -> Result<Option<Self>> {
-        let path = owner_signing_key_path(vault_path)?;
-        Ok(host_file::read(&path)?.map(|seed| Self::from_seed(&seed)))
     }
 
     /// The key's Ed25519 public half: what the roster names.
@@ -110,39 +85,6 @@ impl CheckpointRootSigner for OwnerRootSigner {
             return Err(invalid_authority());
         }
         Ok(self.signing.sign(statement).to_bytes().to_vec())
-    }
-}
-
-/// Where this install's owner signing seed rests.
-enum SeedHome<'a> {
-    /// Its keystore slot.
-    Slot(&'a dyn DeviceKeystore, KeystoreSlot),
-    /// The owner-only file beside the vault, at this path (FIX 843).
-    HostFile(&'a Path),
-}
-
-impl SeedHome<'_> {
-    /// The seed, made on first use.
-    fn seed(&self) -> Result<Zeroizing<[u8; 32]>> {
-        match self {
-            Self::Slot(keystore, slot) => super::slot_seed(*keystore, slot),
-            Self::HostFile(path) => host_file::seed(path),
-        }
-    }
-
-    /// A fresh seed in place of one whose key the roster revoked: a revoked
-    /// key is never enrolled again.
-    fn renew(&self) -> Result<Zeroizing<[u8; 32]>> {
-        match self {
-            Self::Slot(keystore, slot) => {
-                keystore.delete(slot).map_err(super::keystore_error)?;
-                super::slot_seed(*keystore, slot)
-            }
-            Self::HostFile(path) => {
-                host_file::remove(path)?;
-                host_file::seed(path)
-            }
-        }
     }
 }
 
@@ -182,37 +124,40 @@ impl Vault {
     ) -> Result<OwnerKeyEnrollmentReceipt> {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
-        let home = SeedHome::Slot(keystore.as_ref(), self.owner_signing_slot(machine));
-        self.enrol_owner_signing_seed(authority, issuer, machine, &home)
-    }
-
-    /// [`Vault::enrol_device_owner_signing_key`] in the host-held form, for
-    /// a host whose `[keystore] backend = "off"` (FIX 843): the seed rests in
-    /// the owner-only file beside the vault at `vault_path`
-    /// ([`owner_signing_key_path`]), made here on first use. The host calls
-    /// it only on the owner's explicit act with its keystore off, never for
-    /// a keystore that would not open.
-    ///
-    /// # Errors
-    /// A refusal while a keystore is installed, or while this install has
-    /// no machine identity; the file's own errors; the enrollment's own
-    /// refusals.
-    pub fn enrol_host_held_owner_signing_key(
-        &self,
-        authority: &ActAuthority,
-        issuer: &HostSlipIssuer,
-        vault_path: &Path,
-    ) -> Result<OwnerKeyEnrollmentReceipt> {
-        if self.device_keystore_assurance().is_some() {
-            return Err(super::refused(KEYSTORE_INSTALLED));
+        let slot = self.owner_signing_slot(machine);
+        let mut signer = OwnerRootSigner::from_seed(&super::slot_seed(keystore.as_ref(), &slot)?);
+        // The owner's proof is revalidated before the roster is read.
+        let mut challenge =
+            self.owner_key_enrollment_challenge_as(authority, machine, &signer.public_key())?;
+        match self.listed_owner_key(&signer.public_key())? {
+            Some(listed) if listed.live => {
+                self.hold_checkpoint_root_signer(Arc::new(signer));
+                return Ok(OwnerKeyEnrollmentReceipt {
+                    entry: listed.entry,
+                    machine: listed.machine,
+                    public_key: listed.public_key,
+                });
+            }
+            // A revoked key is never enrolled again: a fresh seed takes its slot.
+            Some(_) => {
+                DeviceKeystore::delete(keystore.as_ref(), &slot).map_err(super::keystore_error)?;
+                signer = OwnerRootSigner::from_seed(&super::slot_seed(keystore.as_ref(), &slot)?);
+                challenge = self.owner_key_enrollment_challenge_as(
+                    authority,
+                    machine,
+                    &signer.public_key(),
+                )?;
+            }
+            None => {}
         }
-        let machine = {
-            let txn = self.store.env.read_txn()?;
-            crate::identity::read_machine_id_in_txn(self, &txn)?
-        }
-        .ok_or_else(|| super::refused(NO_MACHINE))?;
-        let path = owner_signing_key_path(vault_path)?;
-        self.enrol_owner_signing_seed(authority, issuer, machine, &SeedHome::HostFile(&path))
+        let input = OwnerKeyEnrollment {
+            machine,
+            public_key: signer.public_key(),
+            proof: signer.sign_possession(&challenge),
+        };
+        let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
+        self.hold_checkpoint_root_signer(Arc::new(signer));
+        Ok(receipt)
     }
 
     /// Holds this install's owner signing key as a checkpoint root signer
@@ -232,59 +177,6 @@ impl Vault {
             }
         });
         held_logged(held)
-    }
-
-    /// [`Vault::hold_device_owner_signer_logged`] for the host-held form
-    /// (FIX 843): the call where the vault opens with its keystore off. With
-    /// no file beside the vault at `vault_path` it holds nothing.
-    pub fn hold_host_held_owner_signer_logged(&self, vault_path: &Path) -> bool {
-        let held = OwnerRootSigner::host_held(vault_path).and_then(|signer| match signer {
-            Some(signer) => self.hold_owner_signer_if_enrolled(signer),
-            None => Ok(false),
-        });
-        held_logged(held)
-    }
-
-    /// Enrols the key whose seed rests in `home` for `machine` as
-    /// `authority`, with `issuer`'s root as the predecessor, then holds it.
-    fn enrol_owner_signing_seed(
-        &self,
-        authority: &ActAuthority,
-        issuer: &HostSlipIssuer,
-        machine: EntityId,
-        home: &SeedHome<'_>,
-    ) -> Result<OwnerKeyEnrollmentReceipt> {
-        let mut signer = OwnerRootSigner::from_seed(&home.seed()?);
-        // The owner's proof is revalidated before the roster is read.
-        let mut challenge =
-            self.owner_key_enrollment_challenge_as(authority, machine, &signer.public_key())?;
-        match self.listed_owner_key(&signer.public_key())? {
-            Some(listed) if listed.live => {
-                self.hold_checkpoint_root_signer(Arc::new(signer));
-                return Ok(OwnerKeyEnrollmentReceipt {
-                    entry: listed.entry,
-                    machine: listed.machine,
-                    public_key: listed.public_key,
-                });
-            }
-            Some(_) => {
-                signer = OwnerRootSigner::from_seed(&home.renew()?);
-                challenge = self.owner_key_enrollment_challenge_as(
-                    authority,
-                    machine,
-                    &signer.public_key(),
-                )?;
-            }
-            None => {}
-        }
-        let input = OwnerKeyEnrollment {
-            machine,
-            public_key: signer.public_key(),
-            proof: signer.sign_possession(&challenge),
-        };
-        let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
-        self.hold_checkpoint_root_signer(Arc::new(signer));
-        Ok(receipt)
     }
 
     /// Holds `signer` when the roster names its key live as an enrolled

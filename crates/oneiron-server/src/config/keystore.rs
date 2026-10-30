@@ -122,7 +122,6 @@ impl KeystoreConfig {
                 tracing::info!(
                     "keystore backend is off; signing and world-key doors are unavailable"
                 );
-                vault.hold_host_held_owner_signer_logged(vault_path);
                 KeystoreInstall::Off
             }
             Err(error) => {

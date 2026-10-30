@@ -271,7 +271,7 @@ pub fn page_seal_custody_path(vault_path: &Path) -> Result<PathBuf> {
 
 /// The vault path a mirror sits beside: canonical, or absolute where nothing
 /// is there yet.
-pub(super) fn custody_root(vault_path: &Path) -> Result<PathBuf> {
+fn custody_root(vault_path: &Path) -> Result<PathBuf> {
     match vault_path.canonicalize() {
         Ok(root) => Ok(root),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
