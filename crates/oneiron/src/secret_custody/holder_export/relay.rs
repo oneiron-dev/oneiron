@@ -128,17 +128,16 @@ impl KeptExportOutput {
     }
 
     /// Decodes a kept or relayed copy strictly; `None` without its label, for
-    /// a short frame, a zero request, a witness past its bound or an empty
-    /// copy. The copy and its witness are read, not judged: `Self::stands`
-    /// judges them.
+    /// a short frame, a zero request or an empty copy. The copy and its
+    /// witness are read, not judged: `Self::stands` judges them, a witness
+    /// past its bound among them, so such a row is admitted, never kept and
+    /// pruned, never a refused update (L03 06:5x).
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let rest = bytes.strip_prefix(LABEL)?;
         let (sealed_at, rest) = rest.split_first_chunk::<8>()?;
         let (request, rest) = rest.split_first_chunk::<32>()?;
         let (witness_len, rest) = rest.split_first_chunk::<4>()?;
-        let witness_len = usize::try_from(u32::from_be_bytes(*witness_len))
-            .ok()
-            .filter(|len| *len <= MAX_EXPORT_OUTPUT_WITNESS_BYTES)?;
+        let witness_len = usize::try_from(u32::from_be_bytes(*witness_len)).ok()?;
         let (witness, sealed) = rest.split_at_checked(witness_len)?;
         if *request == [0; 32] || sealed.is_empty() {
             return None;
@@ -240,13 +239,17 @@ fn names_copy(output: &SealedWorkOutput, sealed: &[u8]) -> bool {
 /// admits one (the one carrier rule, [`owner_act_signer_admits`], read on
 /// `fold`), or the very result `fold` folds. While `fold` folds a result for
 /// `request`, the witness must name the copy that result names. `None` for
-/// a witness that names no copy so.
+/// a witness that names no copy so, or one past
+/// [`MAX_EXPORT_OUTPUT_WITNESS_BYTES`].
 #[cfg(feature = "sync")]
 pub(crate) fn witnessed_output(
     fold: &AuthorityFold,
     request: &AuthorityEntryHash,
     witness: &[u8],
 ) -> Option<SealedWorkOutput> {
+    if witness.len() > MAX_EXPORT_OUTPUT_WITNESS_BYTES {
+        return None;
+    }
     let entry = decode_authority_log_entry_body(witness).ok()?;
     let (AuthorityOp::OwnerWorkResult(result), AuthorityKey::Ed25519(key)) =
         (&entry.op, entry.signer_key())
