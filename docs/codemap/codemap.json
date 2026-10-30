@@ -1423,7 +1423,7 @@
      "path": "src/agent_dispatch/spend_handoff.rs",
      "purpose": "FIX 5661 seam (L09's spend tree, Engine-approved 10-20 11:5x): a home move carries each free-time cycle's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -72895,16 +72895,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/task_verb/consult_party_backfill.rs",
-     "purpose": "One-time open migration for consults minted before ConsultAssignee facts existed",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "ConsultPayload",
       "ConsultPayloadRef",
@@ -83912,7 +83902,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 159,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84096,7 +84086,7 @@
    },
    "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5641,
+   "source_files": 5640,
    "test_files": 902
   },
   "oneiron-android": {
