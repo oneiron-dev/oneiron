@@ -1,47 +1,32 @@
-//! The home's half of a device's mesh enrolment (FIX 3374). When a machine
-//! link's redemption enrols a machine, the home binds that machine's mesh
-//! endpoint and grants it the sync ALPN, through the engine operations the
-//! owner's mesh doors call (`vault.mesh.bind_machine`,
-//! `vault.mesh.set_alpn_grant`), and answers its own mesh address for the
-//! device to dial.
-//!
-//! The binding stands on a pairing slip the home mints for the MACHINE
-//! itself: the enrolment slip cannot serve, as its holder is the link's actor
-//! and its key the connection key, where the binding needs the MACHINE as
-//! holder and the machine key its enrolment request proved. The slip carries
-//! the sync ALPN alone. The device's own two proofs bind its endpoint key.
+//! The home's half of a device's mesh enrolment (FIX 3374, L02 04:5x). When
+//! a machine link's redemption enrols a machine that sent its mesh identity,
+//! the engine binds that endpoint and grants it the sync ALPN in the
+//! redemption's own transaction (`Vault::redeem_pairing_link_with_mesh`).
+//! This leaf names the ALPN, reads the home's own mesh address for the
+//! device to dial, and words the receipt the redeem answer carries: the
+//! binding it made, or the reason it made none. The pairing stands either
+//! way.
 
-use oneiron::authority::{MachineEnrolmentRequest, MeshBindingIdentity, MeshMachineAddress};
+use oneiron::authority::{MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress};
+use serde::Serialize;
 
 use crate::server::SyncServer;
 
-/// How long the pairing an enrolled machine's mesh binding stands on runs:
-/// the longest a mesh ALPN grant runs, so the sync grant it carries is never
-/// cut short by it.
+/// The ALPN an enrolled machine is granted: sync.
 #[cfg(feature = "mesh")]
-const ENROLLED_PAIRING_SECS: u64 = 365 * 24 * 60 * 60;
+pub(crate) fn enrolment_alpn() -> Option<&'static [u8]> {
+    Some(oneiron_mesh_transport::SYNC_ALPN)
+}
 
-/// Binds the mesh endpoint `identity` names for the machine `request`
-/// enrolled, and grants it the sync ALPN; a machine already granted keeps its
-/// grant. Returns this home's own mesh address when its listener runs. A
-/// binding that fails is logged, and the enrolment stands without it.
+/// A build without the `mesh` feature runs no listener and binds nothing.
+#[cfg(not(feature = "mesh"))]
+pub(crate) fn enrolment_alpn() -> Option<&'static [u8]> {
+    None
+}
+
+/// This home's own mesh address while its listener runs.
 #[cfg(feature = "mesh")]
-pub(crate) fn bind_enrolled_machine(
-    server: &SyncServer,
-    request: &MachineEnrolmentRequest,
-    identity: &MeshBindingIdentity,
-) -> Option<MeshMachineAddress> {
-    let bound = match server.host_issuer() {
-        Some(issuer) => bind(server.vault(), issuer, request, identity),
-        None => Err(anyhow::anyhow!("this host holds no slip issuer")),
-    };
-    if let Err(error) = bound {
-        tracing::warn!(
-            machine = %request.machine.to_hex(),
-            error = %format!("{error:#}"),
-            "pairing: the enrolled machine's mesh endpoint was not bound"
-        );
-    }
+pub(crate) fn home_mesh_address(server: &SyncServer) -> Option<MeshMachineAddress> {
     let transport = server.mesh_transport.get()?;
     let addr = transport.addr();
     Some(MeshMachineAddress {
@@ -51,104 +36,125 @@ pub(crate) fn bind_enrolled_machine(
     })
 }
 
-/// A build without the `mesh` feature runs no listener: it binds nothing.
+/// A build without the `mesh` feature has no listener and no address.
 #[cfg(not(feature = "mesh"))]
-pub(crate) fn bind_enrolled_machine(
-    _server: &SyncServer,
-    _request: &MachineEnrolmentRequest,
-    _identity: &MeshBindingIdentity,
-) -> Option<MeshMachineAddress> {
+pub(crate) fn home_mesh_address(_server: &SyncServer) -> Option<MeshMachineAddress> {
     None
 }
 
-/// [`bind_enrolled_machine`]'s engine writes: the grant again on a binding
-/// that stands, else a fresh pairing, its binding and the grant. A pairing
-/// whose binding is refused is revoked, as it serves nothing.
-#[cfg(feature = "mesh")]
-fn bind(
-    vault: &oneiron::Vault,
-    issuer: &oneiron::authority::HostSlipIssuer,
-    request: &MachineEnrolmentRequest,
-    identity: &MeshBindingIdentity,
-) -> anyhow::Result<()> {
-    use std::collections::BTreeSet;
-
-    use oneiron::federation::{Scope, ScopeAxis};
-    use oneiron_mesh_transport::SYNC_ALPN;
-    use rand_core::RngCore;
-
-    anyhow::ensure!(
-        identity.machine == request.machine && identity.device_key == request.machine_key,
-        "the mesh identity is not the enrolled machine's"
-    );
-    let (machine, endpoint_key) = (request.machine, identity.endpoint_key);
-    if vault.mesh_grant_permits(machine, endpoint_key, SYNC_ALPN)? {
-        return Ok(());
-    }
-    let regranted = vault
-        .mesh_machine(machine)?
-        .is_some_and(|row| row.endpoint_key == endpoint_key)
-        && vault
-            .set_mesh_alpn_grant(issuer, machine, endpoint_key, SYNC_ALPN, true)
-            .is_ok();
-    if regranted {
-        return Ok(());
-    }
-    let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from([mesh_alpn_verb(SYNC_ALPN)]));
-    let mut slip_id = [0; 32];
-    rand_core::OsRng.fill_bytes(&mut slip_id);
-    let now = vault.capability_slip_now()?;
-    let pairing = vault.mint_capability_slip(
-        issuer,
-        oneiron::authority::SlipClaims {
-            slip_id,
-            vault_id: request.vault_id,
-            parent_id: None,
-            holder_ref: machine.to_hex(),
-            binding_key: request.machine_key,
-            scope,
-            issued_at: now,
-            expires_at: now.saturating_add(ENROLLED_PAIRING_SECS),
-            ttl_secs: ENROLLED_PAIRING_SECS,
-            single_use: false,
-            records: Default::default(),
-            channels: Default::default(),
-            actor_class: None,
-            org_ref: None,
-            grant_ref: None,
-            invitation_ref: None,
-            delegation: None,
-            comm: None,
-        },
-    )?;
-    let address = MeshMachineAddress {
-        endpoint_key,
-        direct_addrs: Vec::new(),
-        relay_url: None,
-    };
-    if let Err(error) = vault.bind_mesh_machine(
-        issuer,
-        machine,
-        address,
-        request.machine_key,
-        pairing.claims.slip_id,
-        [
-            identity.device_proof.as_slice(),
-            identity.transport_proof.as_slice(),
-        ],
-    ) {
-        let _ = vault.revoke_capability_slip(issuer, pairing.claims.slip_id);
-        return Err(error.into());
-    }
-    vault.set_mesh_alpn_grant(issuer, machine, endpoint_key, SYNC_ALPN, true)?;
-    Ok(())
+/// The mesh identity a redeem body carries, read apart from the rest of it,
+/// with the ALPN it is granted.
+pub(crate) fn read_mesh_identity(
+    raw: &serde_json::Value,
+) -> Result<(MeshBindingIdentity, &'static [u8]), MeshRefusedReason> {
+    let identity = serde_json::from_value(raw.clone()).map_err(|_| MeshRefusedReason::Malformed)?;
+    let alpn = enrolment_alpn().ok_or(MeshRefusedReason::Unavailable)?;
+    Ok((identity, alpn))
 }
 
-/// The verb a mesh ALPN grant carries, as the engine spells it
-/// (`authority::mesh_machine`): `mesh:alpn:` and the ALPN in lower-case hex.
-#[cfg(feature = "mesh")]
-fn mesh_alpn_verb(alpn: &[u8]) -> String {
-    let hex: String = alpn.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("mesh:alpn:{hex}")
+/// Why the home bound no mesh endpoint for the machine it enrolled.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MeshRefusedReason {
+    /// The `mesh` field does not read as a mesh identity.
+    Malformed,
+    /// The identity names another MACHINE or key than the enrolled one.
+    NotTheEnrolledMachine,
+    /// A binding proof does not verify.
+    BadProof,
+    /// The binding or its grant was refused where it would land.
+    BindRefused,
+    /// This home runs no mesh.
+    Unavailable,
+}
+
+impl From<MeshBindRefusal> for MeshRefusedReason {
+    fn from(refusal: MeshBindRefusal) -> Self {
+        match refusal {
+            MeshBindRefusal::NotTheEnrolledMachine => Self::NotTheEnrolledMachine,
+            MeshBindRefusal::BadProof => Self::BadProof,
+            MeshBindRefusal::BindRefused => Self::BindRefused,
+        }
+    }
+}
+
+/// The mesh binding as the redeem answer names it.
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub(crate) enum MeshBindReceipt {
+    /// The endpoint is bound and holds the ALPN: on a fresh pairing slip,
+    /// named here, or on the binding an earlier pairing made.
+    Bound {
+        machine: String,
+        endpoint_key: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pairing_slip_id: Option<String>,
+        alpn: String,
+    },
+    Refused {
+        reason: MeshRefusedReason,
+    },
+}
+
+impl MeshBindReceipt {
+    /// The receipt of what the engine did for `alpn`.
+    pub(crate) fn of(outcome: &MeshEnrolment, alpn: &[u8]) -> Self {
+        match outcome {
+            MeshEnrolment::Bound {
+                machine,
+                endpoint_key,
+                pairing_slip_id,
+            } => Self::granted(*machine, endpoint_key, Some(pairing_slip_id), alpn),
+            MeshEnrolment::Regranted {
+                machine,
+                endpoint_key,
+            }
+            | MeshEnrolment::AlreadyGranted {
+                machine,
+                endpoint_key,
+            } => Self::granted(*machine, endpoint_key, None, alpn),
+            MeshEnrolment::Refused(refusal) => Self::Refused {
+                reason: (*refusal).into(),
+            },
+        }
+    }
+
+    fn granted(
+        machine: oneiron::EntityId,
+        endpoint_key: &[u8; 32],
+        pairing_slip_id: Option<&[u8; 32]>,
+        alpn: &[u8],
+    ) -> Self {
+        Self::Bound {
+            machine: machine.to_hex(),
+            endpoint_key: hex(endpoint_key),
+            pairing_slip_id: pairing_slip_id.map(|slip| hex(slip.as_slice())),
+            alpn: String::from_utf8_lossy(alpn).into_owned(),
+        }
+    }
+
+    /// The receipt of a redemption whose mesh identity `read` gave, and of
+    /// what the engine did with it: a redemption that carried it to the
+    /// engine always names an outcome.
+    pub(crate) fn read(
+        read: Result<(MeshBindingIdentity, &'static [u8]), MeshRefusedReason>,
+        outcome: Option<&MeshEnrolment>,
+    ) -> Self {
+        match (read, outcome) {
+            (Ok((_, alpn)), Some(outcome)) => Self::of(outcome, alpn),
+            (Ok(_), None) => Self::Refused {
+                reason: MeshRefusedReason::BindRefused,
+            },
+            (Err(reason), _) => Self::Refused { reason },
+        }
+    }
+
+    /// Whether the endpoint is bound and holds the ALPN.
+    pub(crate) fn bound(&self) -> bool {
+        matches!(self, Self::Bound { .. })
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

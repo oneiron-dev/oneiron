@@ -316,8 +316,8 @@ pub use machine_write::machine_claim_transcript;
 pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub use mesh_machine::{
-    MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
-    MeshMachineBinding,
+    MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
+    MeshMachineAddressEnvelope, MeshMachineBinding,
 };
 pub use observation_policy::*;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};

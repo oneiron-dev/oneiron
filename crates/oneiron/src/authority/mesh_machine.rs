@@ -25,7 +25,9 @@ use std::{
 use crate::temporal::TimeRange;
 
 mod doors;
+mod enrolment;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
+pub use enrolment::{MeshBindRefusal, MeshEnrolment};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
@@ -238,7 +240,11 @@ impl Vault {
             && pair.holder_ref == claims.machine.to_hex()
             && pair.binding_key == claims.device_key
             && pair.parent_id.is_none()
-            && fold.vault_id == Some(pair.vault_id))
+            && fold.vault_id == Some(pair.vault_id)
+            // A removed MACHINE's binding admits nothing (FIX 3374).
+            && !fold
+                .machine(claims.machine)
+                .is_some_and(enrolment::machine_removed))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(

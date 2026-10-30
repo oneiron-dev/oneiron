@@ -296,6 +296,16 @@ async fn remove(
             MachineRole::Removed,
             seen,
         )?;
+        // The removed MACHINE's mesh pairing and grants are revoked in the
+        // log as well (FIX 3374, L02 04:5x); its binding admits nothing
+        // already, so a revocation that fails is logged.
+        crate::api::pairing::with_host_issuer(&server, |issuer| {
+            if let Some(issuer) = issuer
+                && let Err(error) = server.vault().revoke_removed_machine_mesh(issuer, machine)
+            {
+                tracing::warn!(%error, "machine removal: its mesh grants were not revoked");
+            }
+        });
         Ok(answer_of(machine, Some(&folded)))
     })
     .await?;

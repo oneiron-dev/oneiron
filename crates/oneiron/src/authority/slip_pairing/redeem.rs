@@ -40,8 +40,17 @@ impl Vault {
         binding_key: [u8; 32],
         signature: &[u8],
     ) -> Result<CapabilitySlip> {
-        self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, None, None)
-            .map(|redeemed| redeemed.slip)
+        self.redeem_pairing_link_in(
+            issuer,
+            code,
+            holder_ref,
+            binding_key,
+            signature,
+            None,
+            None,
+            None,
+        )
+        .map(|redeemed| redeemed.slip)
     }
     /// Redeems any link, a machine's with its `request`, and returns the
     /// checkpoint pin the link kept as well, for the joining device to check
@@ -62,6 +71,7 @@ impl Vault {
             binding_key,
             signature,
             request,
+            None,
             None,
         )
     }
@@ -91,6 +101,35 @@ impl Vault {
             signature,
             request,
             possession,
+            None,
+        )
+    }
+    /// [`Self::redeem_pairing_link_with_possession`] with the joining machine's
+    /// mesh `identity` beside its `request` (FIX 3374, L02 04:5x): the
+    /// machine the redemption enrols has that endpoint bound and `alpn`
+    /// granted in the same transaction ([`MeshEnrolment`]); an identity
+    /// that does not bind leaves the pairing as it stands without one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn redeem_pairing_link_with_mesh(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+        binding_key: [u8; 32],
+        signature: &[u8],
+        request: &MachineEnrolmentRequest,
+        possession: Option<&[u8; 64]>,
+        mesh: (&MeshBindingIdentity, &[u8]),
+    ) -> Result<PairingRedeemed> {
+        self.redeem_pairing_link_in(
+            issuer,
+            code,
+            holder_ref,
+            binding_key,
+            signature,
+            Some(request),
+            possession,
+            Some(mesh),
         )
     }
     /// Redeems a link that adds a machine: the slip and the owner's profile
@@ -113,6 +152,7 @@ impl Vault {
             signature,
             Some(request),
             None,
+            None,
         )?;
         Ok((
             redeemed.slip,
@@ -129,6 +169,7 @@ impl Vault {
         signature: &[u8],
         request: Option<&MachineEnrolmentRequest>,
         possession: Option<&[u8; 64]>,
+        mesh: Option<(&MeshBindingIdentity, &[u8])>,
     ) -> Result<PairingRedeemed> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
@@ -230,6 +271,14 @@ impl Vault {
             }
             _ => (None, false),
         };
+        // The machine this redemption enrols, and no other, has its mesh
+        // endpoint bound with the pairing, or not at all (FIX 3374).
+        let mesh = match (mesh, request, &machine) {
+            (Some((identity, alpn)), Some(request), Some(_)) => {
+                Some(self.bind_enrolled_mesh_in_txn(&mut txn, issuer, request, identity, alpn))
+            }
+            _ => None,
+        };
         PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
         // A machine admitted here changed the roster: seal the portable
@@ -253,6 +302,7 @@ impl Vault {
             pin: pending.pin,
             link_owner: pending.owner,
             re_paired,
+            mesh,
         })
     }
     /// Enrols the machine a link adds under the approval it kept (C2): this
