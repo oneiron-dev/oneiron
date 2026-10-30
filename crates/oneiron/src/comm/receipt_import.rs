@@ -1,6 +1,8 @@
 //! The projector's import of delivered connector send receipts as source
 //! events.
 
+use serde::{Deserialize, Serialize};
+
 use super::claims::{CommError, CommResult, KEY_PARTY_KEY};
 use super::parties::resolve_or_create_party_in_txn;
 use super::projector::storage_failure;
@@ -11,12 +13,27 @@ use super::records::{
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
+use crate::error::Error;
 use crate::ports::{EntityStoreRead, TombstoneStore};
 use crate::receipt::{FIELD_TASK_REF, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Named, SideTable};
+
+const SKIPPED_RECEIPTS: SideTable<EntityId, SkippedSendReceipt, Named> =
+    SideTable::new(&side_table::COMM_SKIPPED_SEND_RECEIPT);
+
+/// A durable send receipt the import skipped, keyed by its TASK: why, and
+/// when the import first skipped it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SkippedSendReceipt {
+    reason: String,
+    skipped_at: u64,
+}
 
 /// One delivered message send a durable connector receipt states.
 struct DeliveredSend {
+    task_ref: EntityId,
     receipt_id: String,
     event_id: EntityId,
     channel: String,
@@ -32,19 +49,29 @@ struct DeliveredSend {
 /// can be group channels.
 ///
 /// One read transaction finds the receipts not imported yet, so a call with
-/// none opens no write. A receipt that cannot be imported is logged and
-/// skipped, and the receipts after it still import; it is tried again on the
-/// next call. Only a storage failure ends the call.
+/// none opens no write. A receipt that does not decode, or cannot be
+/// imported, is skipped, and the receipts after it still import; it is tried
+/// again on the next call, and its first skip alone is logged. Only a storage
+/// failure ends the call.
 pub(super) fn import_delivered_send_receipts(vault: &Vault, max_imports: usize) -> CommResult<()> {
-    let receipts = crate::receipt::durable_send_receipts(vault)?;
+    let (receipts, undecodable) = crate::receipt::durable_send_receipts_lenient(vault)?;
+    for task_ref in undecodable {
+        skip_receipt(
+            vault,
+            task_ref,
+            "",
+            CommError::Engine(Error::CorruptedIndex("send receipt ledger")),
+        )?;
+    }
+    let mut skipped = Vec::new();
     let fresh = {
         let rtxn = vault.store.env.read_txn()?;
         let mut fresh = Vec::new();
-        for receipt in &receipts {
+        for (task_ref, receipt) in &receipts {
             if fresh.len() >= max_imports {
                 break;
             }
-            let found = delivered_send(receipt).and_then(|send| match send {
+            let found = delivered_send(*task_ref, receipt).and_then(|send| match send {
                 Some(send) => {
                     imported_in_txn(vault, &rtxn, &send).map(|imported| (!imported).then_some(send))
                 }
@@ -53,11 +80,18 @@ pub(super) fn import_delivered_send_receipts(vault: &Vault, max_imports: usize) 
             match found {
                 Ok(Some(send)) => fresh.push(send),
                 Ok(None) => {}
-                Err(error) => skip_receipt(&receipt.receipt_id, error)?,
+                Err(CommError::Engine(error)) if storage_failure(&error) => {
+                    return Err(CommError::Engine(error));
+                }
+                Err(error) => skipped.push((*task_ref, receipt.receipt_id.as_str(), error)),
             }
         }
         fresh
     };
+    // The skip markers are written after the read transaction closes.
+    for (task_ref, receipt_id, error) in skipped {
+        skip_receipt(vault, task_ref, receipt_id, error)?;
+    }
     for send in fresh {
         let imported = vault.try_with_write_txn_grouped(|txn| {
             // A peer pass may have imported it since the read.
@@ -82,15 +116,18 @@ pub(super) fn import_delivered_send_receipts(vault: &Vault, max_imports: usize) 
             )
         });
         if let Err(error) = imported {
-            skip_receipt(&send.receipt_id, error)?;
+            skip_receipt(vault, send.task_ref, &send.receipt_id, error)?;
         }
     }
     Ok(())
 }
 
-/// The message send `receipt` states, or `None` when it states none the
-/// projector imports.
-fn delivered_send(receipt: &ReceiptRecord) -> CommResult<Option<DeliveredSend>> {
+/// The message send `receipt`, stored under TASK `task_ref`, states, or `None`
+/// when it states none the projector imports.
+fn delivered_send(
+    task_ref: EntityId,
+    receipt: &ReceiptRecord,
+) -> CommResult<Option<DeliveredSend>> {
     if receipt.outcome != "delivered_to_channel" {
         return Ok(None);
     }
@@ -107,7 +144,7 @@ fn delivered_send(receipt: &ReceiptRecord) -> CommResult<Option<DeliveredSend>> 
     };
     validate_channel_class(channel).map_err(|_| CommError::InvalidRecord)?;
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
-    let task_ref = EntityId::from_hex(
+    let receipt_task = EntityId::from_hex(
         receipt
             .fields
             .get(FIELD_TASK_REF)
@@ -116,10 +153,11 @@ fn delivered_send(receipt: &ReceiptRecord) -> CommResult<Option<DeliveredSend>> 
     .map_err(|_| CommError::InvalidRecord)?;
     let event_id = EntityId::derive(
         crate::entity_id::derived_domains::COMM_CONNECTOR_SEND_EVENT,
-        &[task_ref.as_bytes()],
+        &[receipt_task.as_bytes()],
     )
     .map_err(|_| CommError::InvalidRecord)?;
     Ok(Some(DeliveredSend {
+        task_ref,
         receipt_id: receipt.receipt_id.clone(),
         event_id,
         channel: channel.clone(),
@@ -176,19 +214,49 @@ fn imported_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, send: &DeliveredSend) -
     }
 }
 
-/// Logs a receipt the import skips; a storage failure is returned instead.
-fn skip_receipt(receipt_id: &str, error: CommError) -> CommResult<()> {
-    match error {
-        CommError::Engine(error) if storage_failure(&error) => Err(CommError::Engine(error)),
-        error => {
-            tracing::warn!(
-                receipt_id,
-                %error,
-                "communication projector skipped a delivered send receipt; it is tried again on the next pass"
-            );
-            Ok(())
+/// Notes a receipt, stored under TASK `task_ref`, that the import skips: the
+/// first skip writes the receipt's marker and logs it, a later one reads the
+/// marker and stays quiet without opening a write. A storage failure is
+/// returned instead.
+fn skip_receipt(
+    vault: &Vault,
+    task_ref: EntityId,
+    receipt_id: &str,
+    error: CommError,
+) -> CommResult<()> {
+    let reason = match error {
+        CommError::Engine(error) if storage_failure(&error) => {
+            return Err(CommError::Engine(error));
         }
+        error => error.to_string(),
+    };
+    let marked = {
+        let rtxn = vault.store.env.read_txn()?;
+        SKIPPED_RECEIPTS.contains(&vault.store, &rtxn, &task_ref)?
+    };
+    if marked {
+        return Ok(());
     }
+    let first = vault.try_with_write_txn_grouped(|txn| {
+        if SKIPPED_RECEIPTS.contains(&vault.store, txn, &task_ref)? {
+            return Ok::<_, Error>(false);
+        }
+        let marker = SkippedSendReceipt {
+            reason: reason.clone(),
+            skipped_at: vault.store.clock.now_recorded_at(),
+        };
+        SKIPPED_RECEIPTS.put(&vault.store, txn, &task_ref, &marker)?;
+        Ok(true)
+    })?;
+    if first {
+        tracing::warn!(
+            task_ref = %task_ref.to_hex(),
+            receipt_id,
+            reason,
+            "communication projector skipped a delivered send receipt; it is tried again on each pass, and this warning is not repeated"
+        );
+    }
+    Ok(())
 }
 
 /// A message operation projects one delivered receipt into comm history.

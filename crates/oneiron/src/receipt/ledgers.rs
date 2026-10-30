@@ -368,6 +368,25 @@ pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>>
         .collect()
 }
 
+/// Every durable send receipt that decodes, each with its TASK id, and the
+/// TASK id of each row that does not, so one bad row never hides the
+/// receipts beside it. Only a store failure fails the scan.
+pub(crate) fn durable_send_receipts_lenient(
+    vault: &Vault,
+) -> Result<(Vec<(EntityId, ReceiptRecord)>, Vec<EntityId>)> {
+    let mut receipts = Vec::new();
+    let mut undecodable = Vec::new();
+    for (task_id, raw) in vault.store.send_receipt_rows()? {
+        // The row's key is the TASK id the ledger stored it under.
+        let task_ref = EntityId::from_bytes_unchecked(task_id);
+        match decode_durable_send_receipt(&task_id, &raw) {
+            Ok(durable) => receipts.push((task_ref, durable.receipt)),
+            Err(_) => undecodable.push(task_ref),
+        }
+    }
+    Ok((receipts, undecodable))
+}
+
 /// Builds an outbound receipt row from the OF-327 intent spine.
 ///
 /// The helper keeps `job_ref` propagation explicit for brief-rooted runs while
