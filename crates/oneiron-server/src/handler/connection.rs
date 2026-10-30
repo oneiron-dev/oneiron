@@ -16,6 +16,7 @@ use crate::protocol::{self, ProtocolError, SyncMessage};
 use crate::server::SyncServer;
 
 // The connection loop itself, apart so each file stays under the size bar.
+mod dispatch_error;
 mod run;
 
 /// Builds the WebSocket routes for the sync server.
