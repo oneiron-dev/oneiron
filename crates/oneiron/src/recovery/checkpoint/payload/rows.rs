@@ -208,6 +208,9 @@ families! {
     // audience, the verified subject, a phase and a generation; its tokens
     // stay in the slot's sealed custody record.
     Class::Structure => CLOUD_REGISTRATION;
+    // A tested queue revision's kept chain root: two ids, no payload (FIX
+    // 7390, 7391).
+    Class::Structure => CODE_REVISION_QUEUE_ROOT;
     // A code run's response owner and wait holder hold ids, status and an
     // actor's id or its erasure, never the reply (FIX 6589).
     Class::Structure => CODE_RUN_RESPONSE_OWNER CODE_RUN_WAIT_HOLDER;
@@ -488,6 +491,7 @@ families! {
         ORIGIN_LFS_REF ORIGIN_LFS_UPLOAD_JOURNAL ORIGIN_MIRROR_TARGET ORIGIN_MIRROR_WORK
         ORIGIN_PUBLICATION_RECORD
         ORIGIN_PUBLISH_REQUEST ORIGIN_RECEIVE_PACK_EVIDENCE ORIGIN_RECEIVE_PACK_INTENT ORIGIN_RECEIVE_PACK_PROGRESS
+        ORIGIN_RECEIVED_UPDATE
         ORIGIN_SCAN_CHECK ORIGIN_SCAN_POLICY ORIGIN_VISIBLE_REF OUTBOUND_CONNECTOR_CALL_PENDING
         OUTBOUND_CONNECTOR_CALL_CALLER OUTBOUND_DEDUPE_RESERVATION OUTBOUND_DEDUPE_INTENT
         OUTBOUND_INTENT_SETTLEMENT OUTBOUND_PINNED_APPROVAL

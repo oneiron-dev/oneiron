@@ -2518,7 +2518,7 @@ declare namespace Sdk {
   type CodeImportManifestFile = { git_oid: string; file: CodeSnapshotFile };
   type CodeImportManifestView = { manifest_ref: EntityId; digest: string; anchor: CodeImportAnchor; inventory_digest: string; files: CodeImportManifestFile[] };
   type CodeRepoImportState = "manifest_ready" | "held_baseline" | "held_review" | "promoted";
-  type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null };
+  type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null; hold?: string | null };
   type CodeRepoGetRequest = { repo: EntityId };
   type CodeRepoImportLink = { manifest: EntityId; anchor: CodeImportAnchor };
   type MergeQueuePointersView = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[] };
@@ -2727,7 +2727,7 @@ declare namespace Sdk {
   type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
   type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
   type RepoViewsGetInput = { work: EntityId };
-  type RepoWorkFile = { path: string; content_hash_blake3: string };
+  type RepoWorkFile = { path: string; content_hash_blake3: string; projection?: RepoFileProjectionView | null };
   type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] };
   type RepoViewsGetOutput = RepoWorkView;
   type RepoViewsReadInput = { work: EntityId; path: string; why?: string | null };

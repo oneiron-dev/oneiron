@@ -477,6 +477,18 @@ impl GitWire<'_> {
         Ok(true)
     }
 
+    /// Reads each of `oids` that is a blob into `visit`, sized and read in
+    /// bounded batches: a few `cat-file` children for a whole tree's files,
+    /// never two a file (FIX 6946). `Ok(false)` when one was gone.
+    pub(crate) fn read_blobs(
+        &self,
+        repo: &GitWireRepo,
+        oids: &[GitOid],
+        visit: &mut impl FnMut(&GitOid, &[u8]),
+    ) -> Result<bool> {
+        self.visit_small_blobs(repo, oids, u64::MAX, visit)
+    }
+
     /// Reads one batch of blobs into `visit`; `Ok(false)` when one was gone.
     fn read_blob_batch(
         &self,

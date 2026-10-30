@@ -5,27 +5,36 @@
 //! cached and no view is shared between runs, the same agent's included.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use super::{CodeViewSet, VIEW_RECEIPTS, ViewReceipt, relative};
 use crate::error::{Error, Result};
 use crate::memory::repo_doors::RepoRunStamp;
+use crate::origin::secret_projection::RepoFileProjectionView;
 use crate::{EntityId, Vault};
 
 impl CodeViewSet<'_> {
     /// A run's work (FIX 6867): a fresh view of `contents` whose receipt
     /// binds the stamp `admit` builds from the admission it judges in the
-    /// receipt's own writer, under the new view id. A refusal writes no
-    /// receipt and removes the view's directory.
+    /// receipt's own writer, under the new view id, and keeps how each
+    /// masked file differs from its stored blob (`projections`, FIX 8965).
+    /// A refusal writes no receipt and removes the view's directory.
     pub(crate) fn materialize_tree_for_run<R>(
         &self,
         actor: EntityId,
         fork_hash: [u8; 32],
         contents: &BTreeMap<String, Vec<u8>>,
+        projections: BTreeMap<String, RepoFileProjectionView>,
         admit: impl FnOnce(&heed::RoTxn<'_>, EntityId) -> Result<std::result::Result<RepoRunStamp, R>>,
     ) -> Result<std::result::Result<ViewReceipt, R>> {
-        self.materialize_checked(actor, fork_hash, None, contents, |txn, view_id| {
-            Ok(admit(txn, view_id)?.map(Some))
-        })
+        self.materialize_checked(
+            actor,
+            fork_hash,
+            None,
+            contents,
+            projections,
+            |txn, view_id| Ok(admit(txn, view_id)?.map(Some)),
+        )
     }
 
     /// The materializer both callers share: allocates the view, copies each
@@ -37,6 +46,7 @@ impl CodeViewSet<'_> {
         fork_hash: [u8; 32],
         base: Option<(EntityId, EntityId)>,
         contents: &BTreeMap<String, Vec<u8>>,
+        projections: BTreeMap<String, RepoFileProjectionView>,
         admit: impl FnOnce(
             &heed::RoTxn<'_>,
             EntityId,
@@ -49,70 +59,97 @@ impl CodeViewSet<'_> {
         let view_id = EntityId::now();
         let destination = self.root.join("views").join(view_id.to_hex());
         std::fs::create_dir(&destination)?;
-        let mut files = BTreeMap::new();
-        for (path, bytes) in contents {
-            relative(path)?;
-            let content_hash = *blake3::hash(bytes).as_bytes();
-            let blob = self
-                .root
-                .join("blobs")
-                .join(crate::entity_id::bytes_to_hex_lower(&content_hash));
-            match std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&blob)
-            {
-                Ok(mut output) => {
-                    use std::io::Write;
-                    output.write_all(&bytes)?;
-                    output.sync_all()?;
-                    let mut permissions = output.metadata()?.permissions();
-                    permissions.set_readonly(true);
-                    output.set_permissions(permissions)?;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if std::fs::symlink_metadata(&blob)?.file_type().is_symlink()
-                        || std::fs::read(&blob)?.as_slice() != bytes.as_slice()
-                    {
-                        return Err(Error::CorruptedIndex("view blob was modified"));
+        // The blob copies this open made: a refused or failed open removes
+        // them with its view directory (FIX 6953). Under the materialization
+        // lock no other open can have come to hold one since.
+        let mut created = Vec::new();
+        let written = (|| -> Result<std::result::Result<ViewReceipt, R>> {
+            let mut files = BTreeMap::new();
+            for (path, bytes) in contents {
+                relative(path)?;
+                let content_hash = *blake3::hash(bytes).as_bytes();
+                let blob = self
+                    .root
+                    .join("blobs")
+                    .join(crate::entity_id::bytes_to_hex_lower(&content_hash));
+                match std::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&blob)
+                {
+                    Ok(mut output) => {
+                        use std::io::Write;
+                        created.push(blob.clone());
+                        output.write_all(&bytes)?;
+                        output.sync_all()?;
+                        let mut permissions = output.metadata()?.permissions();
+                        permissions.set_readonly(true);
+                        output.set_permissions(permissions)?;
                     }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        if std::fs::symlink_metadata(&blob)?.file_type().is_symlink()
+                            || std::fs::read(&blob)?.as_slice() != bytes.as_slice()
+                        {
+                            return Err(Error::CorruptedIndex("view blob was modified"));
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
                 }
-                Err(error) => return Err(error.into()),
+                let target = destination.join(path);
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                // Same-user tools can chmod read-only files. Never share an inode
+                // with the canonical blob or another view. fs::copy may use CoW.
+                if target.try_exists()? {
+                    return Err(Error::InvalidClaimBody("duplicate view path"));
+                }
+                std::fs::copy(&blob, &target)?;
+                files.insert(path.clone(), content_hash);
             }
-            let target = destination.join(path);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
+            let written = self.vault.with_write_txn_grouped(|txn| {
+                let run = match admit(txn, view_id)? {
+                    Ok(run) => run,
+                    Err(refused) => return Ok(Err(refused)),
+                };
+                let receipt = ViewReceipt {
+                    view_id,
+                    actor,
+                    fork_hash,
+                    base,
+                    files,
+                    run,
+                    projections,
+                };
+                VIEW_RECEIPTS.put(&self.vault.store, txn, &view_id, &receipt)?;
+                Ok(Ok(receipt))
+            })?;
+            Ok(written)
+        })();
+        match written {
+            Ok(Ok(receipt)) => Ok(Ok(receipt)),
+            Ok(Err(refused)) => {
+                // A refused run leaves no work behind it.
+                remove_unrecorded_open(&destination, &created)?;
+                Ok(Err(refused))
             }
-            // Same-user tools can chmod read-only files. Never share an inode
-            // with the canonical blob or another view. fs::copy may use CoW.
-            if target.try_exists()? {
-                return Err(Error::InvalidClaimBody("duplicate view path"));
+            Err(error) => {
+                // Nor does a failed open; its own error is the answer.
+                let _ = remove_unrecorded_open(&destination, &created);
+                Err(error)
             }
-            std::fs::copy(&blob, &target)?;
-            files.insert(path.clone(), content_hash);
         }
-        let written = self.vault.with_write_txn_grouped(|txn| {
-            let run = match admit(txn, view_id)? {
-                Ok(run) => run,
-                Err(refused) => return Ok(Err(refused)),
-            };
-            let receipt = ViewReceipt {
-                view_id,
-                actor,
-                fork_hash,
-                base,
-                files,
-                run,
-            };
-            VIEW_RECEIPTS.put(&self.vault.store, txn, &view_id, &receipt)?;
-            Ok(Ok(receipt))
-        })?;
-        if written.is_err() {
-            // A refused run leaves no work behind it.
-            std::fs::remove_dir_all(&destination)?;
-        }
-        Ok(written)
     }
+}
+
+/// Removes an open that wrote no receipt: its view directory and the blob
+/// copies it alone made.
+fn remove_unrecorded_open(destination: &Path, created: &[PathBuf]) -> Result<()> {
+    std::fs::remove_dir_all(destination)?;
+    for blob in created {
+        std::fs::remove_file(blob)?;
+    }
+    Ok(())
 }
 
 /// One view's receipt, read in the caller's snapshot `txn`.

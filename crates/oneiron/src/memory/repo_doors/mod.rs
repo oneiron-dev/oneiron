@@ -31,7 +31,8 @@ pub use custody::{
 };
 pub use host::repo_provenance_unwitnessed;
 pub use proposals::{
-    REPO_PROVENANCE_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, RepoReviewPolicy, RepoRunSources,
+    REPO_PROVENANCE_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, REPO_WORK_BASE_CHANGED,
+    RepoReviewPolicy, RepoRunSources,
 };
 pub use review_policy::OwnerProposalReviewPolicy;
 pub use types::*;
@@ -194,6 +195,12 @@ impl Vault {
     }
 }
 
+/// The code a run door answers when the run's Grant admits the repo but
+/// the run's own read lane does not read a row the door needs (FIX 6947):
+/// a lane whose world axis leaves out base reality reads no codebase row,
+/// and a Grant's repo bounds never widen what a lane reads.
+pub const REPO_LANE_UNREADABLE: &str = "repo_lane_unreadable";
+
 /// The door error a refusal answers: its stable public code and message.
 pub(crate) fn refusal_error(refusal: RepoAccessRefusal) -> MemoryError {
     MemoryError::new(refusal.public_code(), refusal.message(), &[])
@@ -215,6 +222,8 @@ pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
             REPO_REVIEW_POLICY_REQUIRED,
             REPO_PROVENANCE_REQUIRED,
             REPO_PUBLICATION_POLICY_REQUIRED,
+            REPO_LANE_UNREADABLE,
+            REPO_WORK_BASE_CHANGED,
         ]
         .contains(&code)
 }
@@ -278,8 +287,9 @@ impl Memory<'_> {
     }
 
     /// Whether the run's read lane reads every one of `refs`, bodies
-    /// included, in one snapshot. A row it does not read is no membership:
-    /// the Grant's bounds never widen what the run's lane reads.
+    /// included, in one snapshot. A row it does not read is the typed
+    /// [`REPO_LANE_UNREADABLE`] (FIX 6947): the Grant's bounds never widen
+    /// what the run's lane reads.
     fn repo_lane_reads(&self, binding: &RepoRunBinding, refs: &[EntityId]) -> MemoryResult<()> {
         let points: Vec<_> = refs.iter().copied().map(PointRead::id).collect();
         let checked = self
@@ -294,6 +304,13 @@ impl Memory<'_> {
         {
             return Ok(());
         }
-        Err(refusal_error(RepoAccessRefusal::NoMembership))
+        Err(MemoryError::new(
+            REPO_LANE_UNREADABLE,
+            "this run's Grant names the repo, but the run's read lane does not read its rows",
+            &[
+                "A repo row sits in base reality: the run's lane must read base reality \
+               for its repo doors to answer.",
+            ],
+        ))
     }
 }

@@ -355,29 +355,13 @@ impl Vault {
             else {
                 return Ok(Err(format!("{} is no stored proposal", candidate.id)));
             };
-            let open = matches!(
-                row.status,
-                RepoProposalStatus::Proposed | RepoProposalStatus::Approved
-            ) && row.operation_seq.is_none()
-                && row
-                    .merge_stack
-                    .as_deref()
-                    .is_none_or(|stack| stack == batch.id);
-            if !open {
-                return Ok(Err(format!(
-                    "proposal {} lacks an unused unanimous critic approval",
-                    candidate.id
-                )));
-            }
+            // The admission's own member rule, one already bound to this
+            // batch included (FIX 7309).
             let txn = self.store.env.read_txn()?;
-            let requirement =
-                crate::merge_queue::queue_review_requirement_in_txn(self, &txn, &row.review)?;
-            if let Err(wait) = row.queue_review_admission(&requirement, &batch.id)? {
-                return Ok(Err(wait.hold(&candidate.id)));
-            }
-            // A masked copy's uncleared typed cause holds it (FIX 7608).
-            if let Some(cause) = super::received_file::projected_hold_in_txn(self, &txn, &row)? {
-                return Ok(Err(cause.to_owned()));
+            if let Err(held) =
+                super::reviewed_file::stack_member_rule_in_txn(self, &txn, &row, &batch.id, true)?
+            {
+                return Ok(Err(held.hold));
             }
         }
         Ok(Ok(()))
@@ -668,28 +652,16 @@ impl Vault {
             let mut current = PROPOSAL
                 .get(&self.store, &txn, &row.id)?
                 .ok_or(Error::EntityNotFound)?;
-            if current.merge_stack.is_some()
-                || current.operation_seq.is_some()
-                || !matches!(
-                    current.status,
-                    RepoProposalStatus::Proposed | RepoProposalStatus::Approved
-                )
-            {
-                return Err(invalid(
-                    "every stack member needs unused unanimous critic approval",
-                ));
-            }
-            if let Some(cause) = super::received_file::projected_hold_in_txn(self, &txn, &current)?
-            {
-                return Err(invalid(cause));
-            }
-            let requirement =
-                crate::merge_queue::queue_review_requirement_in_txn(self, &txn, &current.review)?;
-            current.queue_review = Some(
-                current
-                    .queue_review_admission(&requirement, &stack.batch)?
-                    .map_err(|wait| wait.refusal())?,
-            );
+            // The member rule the driver's readiness shares (FIX 7309).
+            let review = super::reviewed_file::stack_member_rule_in_txn(
+                self,
+                &txn,
+                &current,
+                &stack.batch,
+                false,
+            )?
+            .map_err(|held| held.refusal)?;
+            current.queue_review = Some(review);
             current.merge_stack = Some(stack.batch.clone());
             current.status = RepoProposalStatus::Approved;
             proposal::store(self, &mut txn, &current)?;

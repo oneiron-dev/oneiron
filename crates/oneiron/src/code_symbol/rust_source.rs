@@ -87,6 +87,7 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
             &mut source_symbol_indexes,
         )?;
         parsed_sources.push(ParsedRustSource {
+            path: source.path,
             text: source.text,
             tree,
             symbol_indexes: source_symbol_indexes,
@@ -141,6 +142,67 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
 }
 
 impl PreparedCodeSymbolGraph<'_> {
+    /// Fills each symbol's producing-operation chain from its file document,
+    /// read in `txn` (FIX 342): the operations that wrote surviving text of
+    /// the symbol's lines, in sequence order, when the document's head holds
+    /// exactly the text the symbol was parsed from. A symbol whose document
+    /// holds another text, or none, keeps an empty chain, and an operation
+    /// with no recorded turn, activity or intent is left out of it.
+    ///
+    /// # Errors
+    /// A corrupt document head or a store failure.
+    pub(crate) fn fill_producing_operations_in_txn(
+        &mut self,
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        let mut by_document = BTreeMap::<[u8; 32], Vec<usize>>::new();
+        for (index, symbol) in self.manifest.symbols.iter().enumerate() {
+            if let Some(document) = symbol.document {
+                by_document.entry(document).or_default().push(index);
+            }
+        }
+        for (document, indexes) in by_document {
+            let path = self.manifest.symbols[indexes[0]].path.as_str();
+            let Some(source) = self
+                .parsed_sources
+                .iter()
+                .find(|source| source.path == path)
+            else {
+                continue;
+            };
+            let ranges: Vec<(u32, u32)> = indexes
+                .iter()
+                .map(|&index| {
+                    let chunks = self.manifest.symbols[index]
+                        .chunk_indexes
+                        .iter()
+                        .filter_map(|&chunk| self.manifest.chunks.get(chunk as usize));
+                    chunks.fold((u32::MAX, 0), |(start, end), chunk| {
+                        (start.min(chunk.start_line), end.max(chunk.end_line))
+                    })
+                })
+                .collect();
+            let Some(writers) = crate::code_document::code_document_line_writers_in_txn(
+                store,
+                txn,
+                &document,
+                source.text,
+                &ranges,
+            )?
+            else {
+                continue;
+            };
+            for (index, operations) in indexes.into_iter().zip(writers) {
+                self.manifest.symbols[index].producing_operations = operations
+                    .iter()
+                    .filter_map(crate::code_document::CodeOpAttribution::producing_operation)
+                    .collect();
+            }
+        }
+        Ok(())
+    }
+
     /// Hands `sink` every Mentions edge, a symbol to each other symbol named
     /// in its body: names repeat once per source symbol, and nothing outside
     /// one symbol's own reference list is kept.
@@ -204,6 +266,7 @@ struct RustDefinitionChunk<'a> {
 }
 
 struct ParsedRustSource<'a> {
+    path: &'a str,
     text: &'a str,
     tree: tree_sitter::Tree,
     symbol_indexes: Vec<usize>,

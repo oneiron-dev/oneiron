@@ -100,15 +100,18 @@ impl Memory<'_> {
         }
         self.import_owner(proof)?;
         let host = self.external_git_source_host.clone();
-        match (&host, proof) {
+        // The Grant a checkout member's receive admission stood on: the
+        // ingress view is released only under its read of the imported ref
+        // and every contributing path (FIX 7591).
+        let bound = match (&host, proof) {
             (Some(host), _) => {
                 self.import_host_bound(host.as_ref())?;
                 self.vault
-                    .admit_external_import(host.caller(), &input.repo, &input.door)?;
+                    .admit_external_import_bound(host.caller(), &input.repo, &input.door)?
             }
-            (None, ExternalImportProof::Owner(_)) => {}
+            (None, ExternalImportProof::Owner(_)) => None,
             (None, ExternalImportProof::Member) => return Err(host_unavailable()),
-        }
+        };
         if !self.workbench_readable(input.import)? {
             return Ok(None);
         }
@@ -125,9 +128,13 @@ impl Memory<'_> {
             return Ok(None);
         };
         let ingress = match projection.head {
-            Some(head) => {
-                self.import_ingress(&served, head.provenance, &projection.receipt.imported_ref)?
-            }
+            Some(head) => self.import_ingress(
+                &served,
+                input.code_repo,
+                head.provenance,
+                &projection.receipt.imported_ref,
+                bound,
+            )?,
             None => None,
         };
         let checks = match &ingress {
@@ -173,8 +180,10 @@ impl Memory<'_> {
     fn import_ingress(
         &self,
         served: &ServedCodeRepo,
+        code_repo: EntityId,
         provenance: EntityId,
         ref_name: &str,
+        bound: Option<EntityId>,
     ) -> MemoryResult<Option<CodePushIngressView>> {
         if !self.workbench_readable(provenance)? {
             return Ok(None);
@@ -186,8 +195,34 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::Error::from)?;
-            self.vault
-                .received_code_ingress_in_txn(&txn, provenance, ref_name)?
+            let row = self
+                .vault
+                .received_code_ingress_in_txn(&txn, provenance, ref_name)?;
+            // A checkout member reads the view only under its bound Grant's
+            // read of the ref and every path the push changed (FIX 7591).
+            if let (Some(grant), Some(found)) = (bound, &row) {
+                let paths = found
+                    .operations
+                    .iter()
+                    .map(|operation| operation.path.as_str());
+                let target = crate::federation::RepoTarget {
+                    repo: code_repo,
+                    git_ref: ref_name.to_owned(),
+                    paths: paths.map(str::to_owned).collect(),
+                };
+                let read = self.vault.admit_repo_read_passing_in_txn(
+                    &txn,
+                    self.actor,
+                    self.actor_class(),
+                    code_repo,
+                    &target,
+                    |standing| standing.id == grant,
+                )?;
+                if read.is_err() {
+                    return Ok(None);
+                }
+            }
+            row
         };
         let Some(row) = row.filter(|row| row.source.object_store == served.store) else {
             return Ok(None);

@@ -12443,6 +12443,7 @@ class CodeRepoImportView(TypedDict):
     state: CodeRepoImportState
     baseline_revision: NotRequired[EntityId | None]
     promotion_receipt: NotRequired[EntityId | None]
+    hold: NotRequired[str | None]
 class CodeRepoGetRequest(TypedDict):
     repo: EntityId
 class CodeRepoImportLink(TypedDict):
@@ -13473,6 +13474,7 @@ class RepoViewsGetInput(TypedDict):
 class RepoWorkFile(TypedDict):
     path: str
     content_hash_blake3: str
+    projection: NotRequired[RepoFileProjectionView | None]
 class RepoWorkView(TypedDict):
     work: EntityId
     repo: EntityId

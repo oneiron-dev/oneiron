@@ -250,6 +250,14 @@ impl GitPushStamp {
         matches!(self.arm, GitPushArm::Checkout)
     }
 
+    /// The Grant this push was admitted under, when its arm names one (FIX
+    /// 7591): a checkout member's import status is read under it again.
+    pub(crate) fn grant(&self) -> Option<EntityId> {
+        self.grant
+            .as_deref()
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+    }
+
     /// The admission evidence's record of this authority: the arm, the
     /// Grant, the repo, the checkout and the credential digest.
     pub(crate) fn evidence_value(stamp: Option<&Self>) -> Value {

@@ -5001,7 +5001,7 @@ export type CodeImportManifestView = { manifest_ref: EntityId; digest: string; a
 /** `oneiron::memory::origin_doors::import_types::CodeRepoImportState` */
 export type CodeRepoImportState = "manifest_ready" | "held_baseline" | "held_review" | "promoted"
 /** `oneiron::memory::origin_doors::import_types::CodeRepoImportView` */
-export type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null }
+export type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null; hold?: string | null }
 /** `oneiron::memory::origin_doors::workbench_types::CodeRepoGetRequest` */
 export type CodeRepoGetRequest = { repo: EntityId }
 /** `oneiron::memory::origin_doors::workbench_types::CodeRepoImportLink` */
@@ -5419,7 +5419,7 @@ export type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapsh
 /** `oneiron::memory::repo_doors::types::RepoViewsGetInput` */
 export type RepoViewsGetInput = { work: EntityId }
 /** `oneiron::memory::repo_doors::types::RepoWorkFile` */
-export type RepoWorkFile = { path: string; content_hash_blake3: string }
+export type RepoWorkFile = { path: string; content_hash_blake3: string; projection?: RepoFileProjectionView | null }
 /** `oneiron::memory::repo_doors::types::RepoWorkView` */
 export type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] }
 /** `oneiron::memory::repo_doors::types::RepoViewsGetOutput` */
