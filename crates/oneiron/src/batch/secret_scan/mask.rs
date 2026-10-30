@@ -23,6 +23,7 @@ pub(super) mod admit;
 mod batch_door;
 mod body;
 pub(super) mod carrier;
+mod changed_scan;
 // An escaped key's span (FIX 1369).
 mod escaped_span;
 mod file_plane;
