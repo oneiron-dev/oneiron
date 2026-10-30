@@ -33,11 +33,14 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::code_run::{SelfSpawnAsk, TaskExposure};
 use crate::context_projection::ContextSpec;
+use crate::engine_executor::continuation::run_continuation;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::failure_ladder::HealerCase;
 use crate::task_type::TaskTypeRef;
-use crate::team::{LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost};
+use crate::team::{
+    ErasedPackSpan, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost,
+};
 use crate::workspace_roster::RoomWork;
 
 use super::erase::put_intent_in_txn;
@@ -212,7 +215,8 @@ impl AgentDispatcher<'_> {
     /// continuation of the leader, which carries the same key, leads it too.
     /// `None` for an attempt that leads no planned team: a planned solo, a
     /// member carrying the same plan, or any other run. An erased intent's
-    /// team answers its ids with no start or pack (Engine 10-22).
+    /// team answers its ids with no start, pack or exposure (Engine 10-22),
+    /// and the text-free span each run's exposure named.
     ///
     /// # Errors
     ///
@@ -299,15 +303,49 @@ impl AgentDispatcher<'_> {
     /// Only while the span still hashes as the exposure says; every other
     /// byte of the task stays.
     pub fn tombstone_erased_leader_pack(task: &mut String, exposure: &TaskExposure) {
+        Self::tombstone_erased_pack_span(task, &ErasedPackSpan::from(exposure));
+    }
+
+    /// [`Self::tombstone_erased_leader_pack`] over `span`, the text-free
+    /// span an erased intent keeps of a leader run's exposure: for a
+    /// continued run claimed after the erase, whose fork still holds its
+    /// source run's pack text there
+    /// ([`Self::planned_erased_pack_span_for_leader`]).
+    pub fn tombstone_erased_pack_span(task: &mut String, span: &ErasedPackSpan) {
         let Some(length) = task
-            .get(exposure.start..exposure.end)
-            .filter(|span| *blake3::hash(span.as_bytes()).as_bytes() == exposure.content_hash)
+            .get(span.start..span.end)
+            .filter(|held| *blake3::hash(held.as_bytes()).as_bytes() == span.content_hash)
             .map(str::len)
         else {
             return;
         };
         let tag = ERASED_PACK_TAG.get(..length).unwrap_or(ERASED_PACK_TAG);
-        task.replace_range(exposure.start..exposure.end, &format!("{tag:<length$}"));
+        task.replace_range(span.start..span.end, &format!("{tag:<length$}"));
+    }
+
+    /// Where the erased pack's text sits in the task of `leader`, a
+    /// continued leader run claimed after an erase took its intent: the span
+    /// its source run, the run its checkpoint names, recorded, as the
+    /// intent's erased form keeps it. Its task is that run's fork, so it
+    /// still holds the text there, and the run lays
+    /// [`Self::tombstone_erased_pack_span`] over it. `None` for a run that
+    /// continues none or leads no planned team, while the pack stands, and
+    /// for a source run that recorded no exposure.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::planned_launch_for_leader`]; storage errors.
+    pub fn planned_erased_pack_span_for_leader(
+        &self,
+        leader: AttemptId,
+    ) -> Result<Option<ErasedPackSpan>> {
+        let Some(continuation) = run_continuation(self.vault, leader)? else {
+            return Ok(None);
+        };
+        let source = continuation.checkpoint.source_run;
+        Ok(self
+            .planned_launch_for_leader(leader)?
+            .and_then(|launch| launch.erased_pack_spans.get(&source).copied()))
     }
 
     /// The planned team `leader` leads and its intent's row key, read on
@@ -360,6 +398,7 @@ impl AgentDispatcher<'_> {
             start,
             pack,
             exposures: row.leader_exposures,
+            erased_pack_spans: row.erased_pack_spans,
         };
         Ok(Some((key, launch)))
     }
