@@ -11,29 +11,45 @@
 //! No part count caps a section. A segment left out leaves its parts out:
 //! the section does not open, with the error a missing part gives.
 
+use std::borrow::Borrow;
+
+use super::frame_seal::{BodySource, seal_section_body, write_counted};
 use super::*;
 
 /// The most envelopes one section segment holds: 1 GiB of section body.
 const MAX_SEGMENT_PARTS: usize = 128;
 
+/// A world's section sealed fresh for one bundle, with the key it is sealed
+/// under: the bundle's seal checks that key and files the section's tag
+/// under it (FIX 11947).
+pub(crate) struct FreshSection {
+    pub(super) key: WorldKeyId,
+    pub(super) section: SealedBundleSection,
+}
+
+impl FreshSection {
+    /// The world the section is of.
+    #[cfg(feature = "sync")]
+    pub(crate) fn world(&self) -> EntityId {
+        self.key.world
+    }
+}
+
 impl SealedBundleSection {
-    pub(super) fn seal(vault_id: &[u8; 32], key: &WorldKey, payload: &[u8]) -> Result<Self> {
-        let body = encode_section_body(vault_id, key.id(), payload);
-        let count = body.len().div_ceil(CHUNK);
+    /// Seals `payload` under `key` as it streams, never joined (FIX 11947).
+    pub(super) fn seal(
+        vault_id: &[u8; 32],
+        key: &WorldKey,
+        payload: impl BodySource,
+    ) -> Result<Self> {
         let tag = section_digest(SECTION_TAG_CONTEXT, vault_id, key);
         let params = seal_params(BUNDLE.purpose, vault_id, &tag, SECTION_RECIPIENT);
         let kek = section_kek(vault_id, key);
-        let mut parts = Vec::with_capacity(count);
-        seal_parts(
-            &params,
-            &kek,
-            &body,
-            &even_sizes(body.len(), count),
-            |part| {
-                parts.push(part);
-                Ok(())
-            },
-        )?;
+        let mut parts = Vec::new();
+        seal_section_body(&params, &kek, vault_id, key.id(), payload, |part| {
+            parts.push(part);
+            Ok(())
+        })?;
         Ok(Self { tag, parts })
     }
 
@@ -47,20 +63,13 @@ impl SealedBundleSection {
     /// Each segment, in index order: tag (32) ‖ segment index (4) ‖ segment
     /// count (4) ‖ part count (2) ‖ each part `u32`-length-prefixed. Every
     /// segment but the last holds [`MAX_SEGMENT_PARTS`] parts.
-    pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
-        let segments = self.parts.chunks(MAX_SEGMENT_PARTS);
-        let of = u32::try_from(segments.len()).map_err(|_| refused("too many segments"))?;
-        for (at, segment) in (0..of).zip(segments) {
-            out.extend_from_slice(&self.tag);
-            out.extend_from_slice(&at.to_be_bytes());
-            out.extend_from_slice(&of.to_be_bytes());
-            let count = u16::try_from(segment.len()).map_err(|_| refused("too many parts"))?;
-            out.extend_from_slice(&count.to_be_bytes());
-            for part in segment {
-                put_counted(out, &part.to_bytes())?;
-            }
-        }
-        Ok(())
+    pub(super) fn write(&self, put: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()> {
+        write_segments(&self.tag, self.parts.iter(), put)
+    }
+
+    /// [`Self::write`], freeing each part once it is written (FIX 11947).
+    pub(super) fn write_last(self, put: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()> {
+        write_segments(&self.tag, self.parts.into_iter(), put)
     }
 
     /// One section, its segments joined in index order. Each names the
@@ -104,6 +113,32 @@ impl SealedBundleSection {
             index += 1;
         }
     }
+}
+
+/// `parts` in the segments [`SealedBundleSection::write`] spells, each part
+/// dropped once written when the iterator owns it.
+fn write_segments<P: Borrow<Envelope>>(
+    tag: &[u8; 32],
+    parts: impl ExactSizeIterator<Item = P>,
+    put: &mut dyn FnMut(&[u8]) -> Result<()>,
+) -> Result<()> {
+    let total = parts.len();
+    let segments = total.div_ceil(MAX_SEGMENT_PARTS);
+    let of = u32::try_from(segments).map_err(|_| refused("too many segments"))?;
+    for (at, part) in parts.enumerate() {
+        if at % MAX_SEGMENT_PARTS == 0 {
+            let segment =
+                u32::try_from(at / MAX_SEGMENT_PARTS).map_err(|_| refused("too many segments"))?;
+            let count = u16::try_from((total - at).min(MAX_SEGMENT_PARTS))
+                .map_err(|_| refused("too many parts"))?;
+            put(tag)?;
+            put(&segment.to_be_bytes())?;
+            put(&of.to_be_bytes())?;
+            put(&count.to_be_bytes())?;
+        }
+        write_counted(put, &part.borrow().to_bytes())?;
+    }
+    Ok(())
 }
 
 impl std::fmt::Debug for SealedBundleSection {

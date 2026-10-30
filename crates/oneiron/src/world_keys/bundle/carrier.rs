@@ -2,6 +2,10 @@
 //! The entry point is `Vault::seal_vault_bundle`.
 //! `super` owns the private frame codec and shared carrier storage.
 
+#[cfg(feature = "sync")]
+use super::frame_seal::WrittenPayload;
+use super::frame_seal::{BodySource, bundle_body};
+use super::sections::FreshSection;
 use super::*;
 
 impl SealedVaultBundle {
@@ -108,23 +112,57 @@ impl Vault {
         worlds: &[(EntityId, &[u8])],
         carried: &[SealedBundleSection],
     ) -> Result<SealedVaultUpload> {
+        let mut fresh = Vec::with_capacity(worlds.len());
+        for &(world, payload) in worlds {
+            fresh.push(self.seal_fresh_section(world, payload)?);
+        }
         let carried: Vec<_> = carried.iter().map(|section| (None, section)).collect();
         self.seal_vault_bundle_carrying(
             slot,
             holder,
-            base,
-            worlds,
+            Zeroizing::new(base.to_vec()),
+            fresh,
             &carried,
             &BundleCarry::default(),
         )
     }
 
-    /// [`Self::seal_vault_bundle`] for a publisher that carries `carried` on
-    /// from the generation whose pad object is `carry.latest`: the new pad
-    /// object also holds each pad of `carry.latest` this machine has no row
-    /// for, of a world the bundle still carries for `holder` (or whose settings
-    /// are not here: FIX 4211), not deleted here and whose keys were not
-    /// destroyed here, so a carried section's key still restores with the kit.
+    /// Seals a fresh section of `world` for a bundle under the world's current
+    /// key, from the payload `write` writes, the same bytes on every call: once
+    /// to count it, once to digest it and once into its parts, never joined
+    /// (FIX 11947). This machine must read the world now; the bundle's seal
+    /// ([`Self::seal_vault_bundle_carrying`]) checks the rest.
+    #[cfg(feature = "sync")]
+    pub(crate) fn seal_bundle_section<W>(&self, world: EntityId, write: W) -> Result<FreshSection>
+    where
+        W: Fn(&mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()>,
+    {
+        self.seal_fresh_section(world, WrittenPayload::new(write)?)
+    }
+
+    fn seal_fresh_section(
+        &self,
+        world: EntityId,
+        payload: impl BodySource,
+    ) -> Result<FreshSection> {
+        let key = self.world_key(world)?;
+        let section = SealedBundleSection::seal(&self.bundle_vault_id()?, &key, payload)?;
+        Ok(FreshSection {
+            key: *key.id(),
+            section,
+        })
+    }
+
+    /// [`Self::seal_vault_bundle`] for a publisher that seals `fresh` first
+    /// (`Self::seal_bundle_section`), one world at a time, and carries
+    /// `carried` on from the generation whose pad object is `carry.latest`.
+    /// The bundle body streams into its frame, and `base` and each fresh
+    /// section are freed as they are sealed in, so neither is held twice (FIX
+    /// 11947). The new pad object also holds each pad of `carry.latest` this
+    /// machine has no row for, of a world the bundle still carries for
+    /// `holder` (or whose settings are not here: FIX 4211), not deleted here
+    /// and whose keys were not destroyed here, so a carried section's key
+    /// still restores with the kit.
     /// Its index files each fresh section's tag under its key, and each carried
     /// one's under the key it names, where known
     /// ([`OpenedVaultBundle::sections_known`]). The body files a fresh capsule
@@ -136,43 +174,45 @@ impl Vault {
         &self,
         slot: u64,
         holder: Destination,
-        base: &[u8],
-        worlds: &[(EntityId, &[u8])],
+        base: Zeroizing<Vec<u8>>,
+        fresh: Vec<FreshSection>,
         carried: &[(Option<WorldKeyId>, &SealedBundleSection)],
         carry: &BundleCarry<'_>,
     ) -> Result<SealedVaultUpload> {
         let secret = self.machine_secret_outside_txn()?;
-        let mut keys: Vec<(Arc<WorldKey>, &[u8])> = Vec::with_capacity(worlds.len());
-        for &(world, payload) in worlds {
-            if keys.iter().any(|(key, _)| key.id().world == world) {
+        for (at, section) in fresh.iter().enumerate() {
+            if fresh[..at]
+                .iter()
+                .any(|kept| kept.key.world == section.key.world)
+            {
                 return Err(refused("a world appears twice in one bundle"));
             }
-            keys.push((self.world_key(world)?, payload));
         }
-        let plan = self.seal_plan(&secret, holder, &keys, carry)?;
+        let plan = self.seal_plan(&secret, holder, &fresh, carry)?;
         let generation = SealedBundleGeneration::fresh(slot)?;
-        let mut sections = Vec::with_capacity(keys.len() + carried.len());
-        let mut index = Vec::with_capacity(keys.len() + carried.len());
-        for (key, payload) in &keys {
-            let section = SealedBundleSection::seal(&plan.vault_id, key, payload)?;
-            index.push((*key.id(), section.tag));
+        let mut sections = Vec::with_capacity(fresh.len());
+        let mut index = Vec::with_capacity(fresh.len() + carried.len());
+        for FreshSection { key, section } in fresh {
+            index.push((key, section.tag));
             sections.push(section);
         }
+        // Carried sections ride by reference, never cloned.
+        let mut kept: Vec<&SealedBundleSection> = Vec::with_capacity(carried.len());
         for (known, section) in carried {
             if !sections
                 .iter()
-                .any(|kept: &SealedBundleSection| kept.tag == section.tag)
+                .chain(kept.iter().copied())
+                .any(|held| held.tag == section.tag)
             {
                 if let Some(key) = known {
                     index.push((*key, section.tag));
                 }
-                sections.push((*section).clone());
+                kept.push(*section);
             }
         }
         let (authorities, incomplete_authority) =
             self.seal_world_authorities(&secret.secret, &plan, generation, carry)?;
-        let body = encode_bundle_body(&plan, generation, base, &sections, &authorities)?;
-        drop(sections);
+        let body = bundle_body(&plan, generation, base, sections, kept, &authorities)?;
         let bundle = seal_object(BUNDLE, &plan, generation, body)?;
         let pads_body = encode_pads_body(&plan.vault_id, generation, &plan.pads, &index, None)?;
         let pads = seal_object(PADS, &plan, generation, pads_body)?;
