@@ -1,3 +1,5 @@
+//! NOTE-birth, witness MESSAGE envelope, and prior-SKILL validation guards for the put chokepoint.
+
 use super::*;
 
 // The ledger is immutable birth identity, never a second text plane. This
