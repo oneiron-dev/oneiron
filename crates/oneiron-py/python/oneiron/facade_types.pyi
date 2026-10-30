@@ -8231,7 +8231,6 @@ class BudgetLease(TypedDict):
     exploration_units: int
 class DecideRulesDominance(TypedDict):
     kind: Literal["dominance"]
-    min_primary_gain: float
 class DecideRulesOf366(TypedDict):
     kind: Literal["of366"]
     verdict_epsilon: float
@@ -8382,6 +8381,7 @@ SelectionRanking = SelectionRankingDgm | SelectionRankingInformationGain
 class SelectionReceipt(TypedDict):
     root: AttemptId
     round: int
+    incumbent: AttemptId
     step: ResearchStep
     branches: list[BranchSnapshot]
     best_quality: float
@@ -8472,6 +8472,8 @@ class CampaignPromotionReceipt(TypedDict):
     sealed_digest: str
     referee_pin: str
     skill_proposal: NotRequired[EntityId | None]
+    skill: NotRequired[EntityId | None]
+    proposal_digest: NotRequired[str | None]
     disposition: PromotionDisposition
     budget: ResearchBudgetRead
     at: int

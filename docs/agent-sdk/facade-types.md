@@ -3258,7 +3258,7 @@ export type CampaignSplits = { search: CampaignDatasetRef; held_out: CampaignDat
 /** `oneiron::autoreason_campaign::general::BudgetLease` */
 export type BudgetLease = { budget_id: string; max_units: number; exploration_units: number }
 /** `oneiron::autoreason_campaign::general::DecideRules` */
-export type DecideRules = { kind: "dominance"; min_primary_gain: number } | { kind: "of366"; verdict_epsilon: number }
+export type DecideRules = { kind: "dominance" } | { kind: "of366"; verdict_epsilon: number }
 /** `oneiron::autoreason_campaign::general::MergeCrossover` */
 export type MergeCrossover = { requested?: boolean; min_validation_overlap: number }
 /** `oneiron::autoreason_campaign::general::CampaignKnobs` */
@@ -3310,7 +3310,7 @@ export type BranchSnapshot = { attempt: AttemptId; reward: number; expected_gain
 /** `oneiron::autoreason_campaign::research::estimator::SelectionRanking` */
 export type SelectionRanking = { kind: "dgm" } | { kind: "information_gain"; estimator_version: string }
 /** `oneiron::autoreason_campaign::research::SelectionReceipt` */
-export type SelectionReceipt = { root: AttemptId; round: number; step: ResearchStep; branches: BranchSnapshot[]; best_quality: number; best_gain: number; ranking: SelectionRanking; policy_digest: string; budget_available: boolean; oracle_goal_met: boolean; at: number }
+export type SelectionReceipt = { root: AttemptId; round: number; incumbent: AttemptId; step: ResearchStep; branches: BranchSnapshot[]; best_quality: number; best_gain: number; ranking: SelectionRanking; policy_digest: string; budget_available: boolean; oracle_goal_met: boolean; at: number }
 /** `oneiron::autoreason_campaign::archive::ArchiveQualityMetric` */
 export type ArchiveQualityMetric = { metric_id: string; revision: string }
 /** `oneiron::autoreason_campaign::archive::ArchiveOutputRef` */
@@ -3338,7 +3338,7 @@ export type PromotionDisposition = "promoted" | "lost_sealed" | "held_insufficie
 /** `oneiron::autoreason_campaign::research::budget::ResearchBudgetRead` */
 export type ResearchBudgetRead = { max_units: number; exploration_units: number; work_reserved: number; work_spent: number; exploration_reserved: number; exploration_spent: number }
 /** `oneiron::autoreason_campaign::research::promotion::CampaignPromotionReceipt` */
-export type CampaignPromotionReceipt = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; parents: AttemptId[]; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; cohort: EntityId; exposures: EntityId[]; sufficiency: SufficiencyCard; sealed_won: boolean; sealed_digest: string; referee_pin: string; skill_proposal?: EntityId | null; disposition: PromotionDisposition; budget: ResearchBudgetRead; at: number }
+export type CampaignPromotionReceipt = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; parents: AttemptId[]; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; cohort: EntityId; exposures: EntityId[]; sufficiency: SufficiencyCard; sealed_won: boolean; sealed_digest: string; referee_pin: string; skill_proposal?: EntityId | null; skill?: EntityId | null; proposal_digest?: string | null; disposition: PromotionDisposition; budget: ResearchBudgetRead; at: number }
 /** `oneiron::autoreason_campaign::research::promotion::PromotionBasis` */
 export type PromotionBasis = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; incumbent_pin: CandidateRef; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; incumbent_held_out: Measurement; candidate_held_out: Measurement; call: HeldOutCall; merge_crossover_enabled: boolean; decided_at: number; confirmation?: ConfirmationReceipt | null; promotion?: CampaignPromotionReceipt | null }
 /** `oneiron::verbs::research::ResearchArchive` */

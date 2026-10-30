@@ -382,7 +382,7 @@ pub struct BranchSnapshot {
     pub reward: f64,
     pub expected_gain: f64,
     pub estimator_version: String,
-    /// The engine estimator's belief, once the incumbent root is measured.
+    /// The engine estimator's belief, once the incumbent is measured.
     pub belief: Option<BranchBelief>,
 }
 
@@ -392,6 +392,8 @@ pub struct BranchSnapshot {
 pub struct SelectionReceipt {
     pub root: AttemptId,
     pub round: u64,
+    /// The incumbent whose search reward the round's beliefs beat against.
+    pub incumbent: AttemptId,
     pub step: ResearchStep,
     pub branches: Vec<BranchSnapshot>,
     pub best_quality: f64,
@@ -416,6 +418,19 @@ pub(super) fn campaign_error(error: CampaignError) -> Error {
 
 pub(super) fn hex(attempt: &AttemptId) -> String {
     bytes_to_hex_lower(attempt.as_bytes())
+}
+
+/// The staged skill proposal a skill candidate names: `skill_proposal:<32 hex>`.
+pub(crate) fn proposal_of(candidate: &CandidateRef) -> Option<EntityId> {
+    let id = candidate.config_ref.strip_prefix("skill_proposal:")?;
+    if id.len() != 32
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    EntityId::from_hex(id).ok()
 }
 
 fn sha256_json<T: Serialize>(value: &T, what: &str) -> Result<String> {
@@ -609,6 +624,7 @@ pub fn select_next(
 ) -> Result<SelectionReceipt> {
     let binding = binding(vault, root)?;
     let tree = research_tree(vault, root)?;
+    let incumbent = research_incumbent(vault, root)?;
     let txn = vault.store.env.read_txn()?;
     let nodes = nodes_in_txn(vault, &txn, root)?;
     let rounds: Vec<SelectionReceipt> = ROUND
@@ -617,7 +633,7 @@ pub fn select_next(
         .map(|(_, round)| round)
         .collect();
     drop(txn);
-    let beliefs = estimator::branch_beliefs(&nodes, root, &binding.prior_ladder);
+    let beliefs = estimator::branch_beliefs(&nodes, root, incumbent, &binding.prior_ladder);
     let mut by_hex = BTreeMap::new();
     let mut branches = Vec::new();
     let mut snapshots = Vec::new();
@@ -702,6 +718,7 @@ pub fn select_next(
     let receipt = SelectionReceipt {
         root,
         round,
+        incumbent,
         step,
         best_quality: branches
             .iter()

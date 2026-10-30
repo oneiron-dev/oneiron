@@ -28,6 +28,7 @@ use crate::dreamer_tournament::{
     DreamerTournamentEvidenceStore, DreamerTournamentRunResult, DreamerTournamentStopReason,
 };
 use crate::learning::TypeRef;
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::{SkillLifecycle, SkillRole};
 use crate::team::{
@@ -42,6 +43,10 @@ const AUTHORING: SideTable<[u8; 16], AuthoringCampaign, Named> =
 /// One finalized tournament run, keyed by root attempt then run attempt.
 const AUTHORING_RUN: SideTable<([u8; 16], [u8; 16]), AuthoringFinalization, Named> =
     SideTable::new(&side_table::AUTORESEARCH_AUTHORING_RUN);
+/// A deferred tournament-lineage walk's persisted position, keyed by team
+/// leader attempt then tournament run attempt.
+const TOURNAMENT_CURSOR: SideTable<([u8; 16], [u8; 16]), TournamentLineageCursor, Named> =
+    SideTable::new(&side_table::AUTORESEARCH_TOURNAMENT_CURSOR);
 
 const MAX_REF_BYTES: usize = 256;
 
@@ -95,7 +100,8 @@ pub struct TournamentTeam {
     pub models: Vec<String>,
     /// Role counts beyond the authors, such as critics and judges.
     pub roles: BTreeMap<String, u32>,
-    /// The ranking rule, signed before the work began.
+    /// The ranking rule, signed when the host observed it; lateness is labeled on the
+    /// finalization, never refused.
     pub referee_rule: String,
     pub rule_signed_at: u64,
     pub confessions: u32,
@@ -127,6 +133,9 @@ pub struct AuthoringFinalization {
     pub terminal_receipt_ref: String,
     /// The anchored outcome, once an observer settles it.
     pub outcome: Option<TeamOutcome>,
+    /// The ranking rule was signed after the work began; the run still finalizes
+    /// (Orchestrator 10-22 ruling: label, never refusal).
+    pub referee_rule_late: bool,
     pub at: u64,
 }
 
@@ -274,8 +283,57 @@ pub fn tournament_team_stamp(run_id: &str) -> Result<TeamRunStamp> {
     TeamRunStamp::new(format!("autoreason:{run_id}"), TeamPattern::Market)
 }
 
-/// How far up its run tree a team leader is looked for in a campaign.
-const LINEAGE_LIMIT: usize = 256;
+/// Hops one tournament-start check walks before it defers with a persisted
+/// cursor (FIX 9581): sixteen times the old cutoff, and depth never refuses —
+/// a deferred check resumes where it stopped on the next call.
+const TOTAL_HOPS_PER_CALL: usize = 4096;
+
+/// A deferred tournament-lineage walk's persisted position (FIX 9581): one
+/// row per `(leader, run)`, written only on the defer path and deleted on
+/// every terminal path. Plain stored fields, no compat shim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TournamentLineageCursor {
+    pub leader: AttemptId,
+    pub run: AttemptId,
+    pub at: AttemptId,
+    pub under_run: bool,
+    pub seen: Vec<AttemptId>,
+    pub steps: u64,
+    /// Always zero: this door takes no clock, and resume validation is
+    /// positional — the queue no longer showing the position restarts the
+    /// walk — never temporal.
+    pub updated_at: u64,
+}
+
+/// Whether a persisted tournament-lineage cursor still names the walk it was
+/// written for: the pair, the position's row, and the last visited row's
+/// parent still continuing to the position. Anything else means the queue
+/// moved under the cursor, and the walk restarts from the leader.
+fn tournament_cursor_valid(
+    vault: &Vault,
+    leader: AttemptId,
+    run: AttemptId,
+    cursor: &TournamentLineageCursor,
+) -> Result<bool> {
+    if cursor.leader != leader || cursor.run != run || cursor.seen.is_empty() {
+        return Ok(false);
+    }
+    if cursor.seen[0] != leader || cursor.seen.contains(&cursor.at) {
+        return Ok(false);
+    }
+    let queue = crate::attempt_queue::AttemptQueue::new(vault);
+    if queue.get(cursor.at)?.is_none() {
+        return Ok(false);
+    }
+    let Some(last) = cursor.seen.last() else {
+        return Ok(false);
+    };
+    let Some(record) = queue.get(*last)? else {
+        return Ok(false);
+    };
+    Ok(crate::run_tree::effective_parent(&record) == Some(cursor.at))
+}
 
 /// The experiment a tournament runs as: its run id is that experiment
 /// attempt's id, as hex.
@@ -289,6 +347,13 @@ fn tournament_attempt(run_id: &str) -> Option<AttemptId> {
 /// campaign the leader works in (the nearest bound root up its run tree),
 /// and the leader must be that experiment, work under it, or be the
 /// campaign's root. So a team never joins another campaign's tournament.
+///
+/// The walk is complete and resumable (FIX 9581): each call walks at most
+/// [`TOTAL_HOPS_PER_CALL`] ancestors, persisting its position and answering
+/// `team_start_tournament_deferred` past them, so the next call resumes where
+/// it stopped. A row visited twice is a cycle
+/// (`team_start_tournament_cycle`); `team_start_tournament_unbound` now means
+/// the whole chain was walked and holds no bound root, never a cutoff.
 /// # Errors
 /// Storage errors.
 pub(crate) fn tournament_start_check(
@@ -300,14 +365,52 @@ pub(crate) fn tournament_start_check(
         return Ok(Err("team_start_tournament_unknown"));
     };
     let queue = crate::attempt_queue::AttemptQueue::new(vault);
-    let mut at = leader;
-    let mut under_run = false;
-    for _ in 0..LINEAGE_LIMIT {
+    let key = (*leader.as_bytes(), *run.as_bytes());
+    let txn = vault.store.env.read_txn()?;
+    let stored = TOURNAMENT_CURSOR.get(&vault.store, &txn, &key)?;
+    drop(txn);
+    let had_cursor = stored.is_some();
+    let resumed = match stored {
+        Some(cursor) => tournament_cursor_valid(vault, leader, run, &cursor)?.then_some(cursor),
+        None => None,
+    };
+    let (mut at, mut under_run, mut visited, mut chain, carried) = match resumed {
+        Some(cursor) => {
+            let visited: BTreeSet<AttemptId> = cursor.seen.iter().copied().collect();
+            (
+                cursor.at,
+                cursor.under_run,
+                visited,
+                cursor.seen,
+                cursor.steps,
+            )
+        }
+        None => (leader, false, BTreeSet::new(), Vec::new(), 0),
+    };
+    let mut hops: u64 = 0;
+    let mut exhausted = false;
+    for _ in 0..TOTAL_HOPS_PER_CALL {
+        if !visited.insert(at) {
+            if had_cursor {
+                vault.with_write_txn_grouped(|txn| {
+                    TOURNAMENT_CURSOR.delete(&vault.store, txn, &key)
+                })?;
+            }
+            return Ok(Err("team_start_tournament_cycle"));
+        }
+        chain.push(at);
+        hops += 1;
         under_run |= at == run;
         if authoring_campaign(vault, at)?.is_some() {
             let experiment = research_nodes(vault, at)?
                 .iter()
                 .any(|node| node.attempt == run);
+            if had_cursor {
+                vault.with_write_txn_grouped(|txn| {
+                    TOURNAMENT_CURSOR.delete(&vault.store, txn, &key)
+                })?;
+            }
+            let _ = vault.measure_limit(EngineLimit::TournamentLineageRows, carried + hops);
             return Ok(if experiment && (under_run || at == leader) {
                 Ok(())
             } else {
@@ -315,14 +418,41 @@ pub(crate) fn tournament_start_check(
             });
         }
         let Some(record) = queue.get(at)? else {
+            exhausted = true;
             break;
         };
         let Some(parent) = crate::run_tree::effective_parent(&record) else {
+            exhausted = true;
             break;
         };
         at = parent;
     }
-    Ok(Err("team_start_tournament_unbound"))
+    if exhausted {
+        if had_cursor {
+            vault
+                .with_write_txn_grouped(|txn| TOURNAMENT_CURSOR.delete(&vault.store, txn, &key))?;
+        }
+        let _ = vault.measure_limit(EngineLimit::TournamentLineageRows, carried + hops);
+        return Ok(Err("team_start_tournament_unbound"));
+    }
+    vault.with_write_txn_grouped(|txn| {
+        TOURNAMENT_CURSOR.put(
+            &vault.store,
+            txn,
+            &key,
+            &TournamentLineageCursor {
+                leader,
+                run,
+                at,
+                under_run,
+                seen: chain,
+                steps: carried + hops,
+                updated_at: 0,
+            },
+        )
+    })?;
+    let _ = vault.measure_limit(EngineLimit::TournamentLineageRows, carried + hops);
+    Ok(Err("team_start_tournament_deferred"))
 }
 
 /// Finalize one tournament run after the unchanged gated writer landed its
@@ -332,8 +462,7 @@ pub(crate) fn tournament_start_check(
 /// # Errors
 /// An unbound campaign, a run attempt that is not a campaign experiment, a
 /// failed run with no winner, no persisted evidence for the winner, a winner
-/// claim that never landed, a
-/// rule signed after the work, a malformed or duplicate team receipt, an
+/// claim that never landed, a malformed or duplicate team receipt, an
 /// already-finalized run, or storage errors.
 pub fn finalize_claim_tournament(
     vault: &Vault,
@@ -383,9 +512,7 @@ pub fn finalize_claim_tournament(
     let claim = vault.get_claim(&winner.claim_id)?.ok_or(invalid(
         "the tournament winner never landed through the gate",
     ))?;
-    if team.rule_signed_at > at {
-        return Err(invalid("the ranking rule must be signed before the work"));
-    }
+    let referee_rule_late = team.rule_signed_at > at;
     let branches: BTreeSet<[u8; 16]> = evidence
         .iter()
         .map(|row| *row.branch_attempt.as_bytes())
@@ -448,6 +575,7 @@ pub fn finalize_claim_tournament(
         team_ref,
         terminal_receipt_ref: crate::receipt::attempt_pack_receipt_id(&attempt),
         outcome: None,
+        referee_rule_late,
         at,
     };
     vault.with_write_txn_grouped(|txn| {

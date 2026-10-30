@@ -321,11 +321,13 @@ pub enum EngineScan {
     /// One receipt-family source ledger a receipt query reads, named by its
     /// scope (once cut short or refused past 100,000; FIX 3582).
     ReceiptSourceRows,
+    /// The executed autoresearch roots one continuation sweep's page reads.
+    ResearchContinuationRoots,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 119] = [
+    pub const ALL: [Self; 120] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -445,6 +447,7 @@ impl EngineScan {
         Self::ProjectAnchorDepth,
         Self::ProjectFoldDepth,
         Self::ReceiptSourceRows,
+        Self::ResearchContinuationRoots,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -578,6 +581,7 @@ impl EngineScan {
             Self::ProjectAnchorDepth => "project_anchor_depth",
             Self::ProjectFoldDepth => "project_fold_depth",
             Self::ReceiptSourceRows => "receipt_source_rows",
+            Self::ResearchContinuationRoots => "research_continuation_roots",
         }
     }
 
@@ -779,6 +783,7 @@ impl EngineScan {
             Self::ProjectAnchorDepth => 151,
             Self::ProjectFoldDepth => 152,
             Self::ReceiptSourceRows => 153,
+            Self::ResearchContinuationRoots => 154,
         }]
     }
 }

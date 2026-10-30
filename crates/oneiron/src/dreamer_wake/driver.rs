@@ -45,9 +45,9 @@ use super::settlement::admitted_lease;
 #[cfg(feature = "sync")]
 use super::types::WakeProgressLane;
 use super::types::{
-    DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequest, ProgressKind, RunWakePass,
-    WakeAttemptContext, WakeAttemptMeter, WakeMilestoneAuthor, WakePassReport, WakePassStop,
-    WakeTrigger,
+    ClaimAuthoringFallback, DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequest,
+    ProgressKind, RunWakePass, WakeAttemptContext, WakeAttemptMeter, WakeMilestoneAuthor,
+    WakePassReport, WakePassStop, WakeTrigger,
 };
 
 /// Park reason stamped on attempts cut at the wake-pass ceiling.
@@ -91,6 +91,23 @@ fn yield_once() -> impl std::future::Future<Output = ()> {
     })
 }
 
+/// Warns once for a pass whose consolidation admissions fell back to
+/// single-pass under a promoted default (FIX 9012, warn-at-aggregate).
+fn warn_claim_authoring_fallback(fallback: &Option<ClaimAuthoringFallback>) {
+    let Some(ClaimAuthoringFallback::AmbiguousCampaigns { roots }) = fallback else {
+        return;
+    };
+    let hex: Vec<String> = roots
+        .iter()
+        .map(|root| bytes_to_hex_lower(root.as_bytes()))
+        .collect();
+    tracing::warn!(
+        roots = ?hex,
+        "several bound claim-authoring campaigns carry the promoted default; \
+         this pass authors single-pass"
+    );
+}
+
 /// The wake-pass driver: one bounded work cycle over the consolidation
 /// queue on one node.
 pub struct DreamerWakeDriver<'a> {
@@ -110,6 +127,9 @@ pub struct DreamerWakeDriver<'a> {
     contribution_host:
         Option<&'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync)>,
     claim_authoring: ClaimAuthoringSelection,
+    /// The claim-authoring fallback this pass saw, stashed before a held-error
+    /// return so the observation still records it (FIX 9012).
+    claim_authoring_fallback_stash: Option<ClaimAuthoringFallback>,
     /// The material this pass's `host.wake` pre-hooks added (FIX 8722).
     hook_material: Vec<String>,
     #[cfg(feature = "sync")]
@@ -134,6 +154,7 @@ impl<'a> DreamerWakeDriver<'a> {
             skill_optimizer: None,
             contribution_host: None,
             claim_authoring: ClaimAuthoringSelection::None,
+            claim_authoring_fallback_stash: None,
             hook_material: Vec::new(),
             #[cfg(feature = "sync")]
             progress: None,
@@ -237,6 +258,7 @@ impl<'a> DreamerWakeDriver<'a> {
         let report = self.run_begun_wake_pass(input, exec, cancel).await;
         self.finish_wake_observation(report.as_ref());
         let report = report?;
+        warn_claim_authoring_fallback(&report.claim_authoring_fallback);
         self.post_wake_hooks(hooks, &report);
         clock.log(&report);
         Ok(report)
@@ -250,6 +272,7 @@ impl<'a> DreamerWakeDriver<'a> {
         self.wrap_notice_fired = false;
         self.finalize_entered = false;
         self.steering.clear();
+        self.claim_authoring_fallback_stash = None;
 
         // ONE-1708: a human-assigned TASK realizes no job, so its follow-up has
         // no queue row to be admitted from. It rides the wake pass itself —
@@ -708,7 +731,11 @@ impl<'a> DreamerWakeDriver<'a> {
         }
 
         // A pass that went on past a Retry-parked executor error still
-        // fails, on the first one (FIX 7272).
+        // fails, on the first one (FIX 7272); its claim-authoring fallback is
+        // stashed first so the observation records what the pass saw (FIX 9012).
+        if held_error.is_some() {
+            self.claim_authoring_fallback_stash = report.claim_authoring_fallback.clone();
+        }
         held_error.map_or(Ok(report), Err)
     }
 
