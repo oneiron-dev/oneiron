@@ -11,7 +11,7 @@ mod materialize;
 mod mirror;
 mod scrub;
 mod workflows;
-pub(crate) use scrub::deleted;
+pub(crate) use scrub::{deleted, deleted_elsewhere};
 
 pub(crate) use materialize::apply;
 pub(crate) use mirror::{copy_judged, copy_selected, refresh, refresh_for};
