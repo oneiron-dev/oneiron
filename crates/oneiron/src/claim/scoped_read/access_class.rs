@@ -398,24 +398,39 @@ impl<'v> ScopedRead<'v> {
         let Ok(principal) = claim_principal_id(&body) else {
             return Ok(None);
         };
-        // The split's failure order (L02 04:5x condition 4): every per-item
-        // conjunct that can fail runs first, in the row admission's order,
-        // so its error is the read's whatever the class; only then is the
-        // class verdict read, or judged and held. A class conjunct's error is
-        // never held and propagates as the row admission's does. A view that
-        // does not build past them takes the row admission, which judges the
-        // row whole again.
-        if !self.per_item_judge_in(rtxn, id, raw, &body, principal, authority)? {
-            return Ok(Some(false));
-        }
+        // A view that does not build takes the row admission, which judges
+        // the row whole again.
         let Ok(facets) = self.claim_facet_refs_in(rtxn, id) else {
             return Ok(None);
         };
         let Some(view) = ClassView::of(&body, principal, facets) else {
             return Ok(None);
         };
-        self.class_verdict_in(rtxn, policy, filter, grant, &view, authority)
-            .map(Some)
+        let reader = self.class_reader(policy, filter, grant);
+        let class = view.key(&reader);
+        let verdicts = authority.class_verdicts();
+        let held = verdicts.held(&reader, &class);
+        // A class held refused refuses the row before its per-item conjuncts
+        // (L02 05:4x): a damaged row then reads as refused rather than as its
+        // error, which still fails closed. A class held readable runs them
+        // every time.
+        if held == Some(false) {
+            return Ok(Some(false));
+        }
+        // The split's failure order (L02 04:5x condition 4): every per-item
+        // conjunct that can fail runs first, in the row admission's order,
+        // so its error is the read's whatever the class; only then is the
+        // class verdict read, or judged and held. A class conjunct's error is
+        // never held and propagates as the row admission's does.
+        if !self.per_item_judge_in(rtxn, id, raw, &body, principal, authority)? {
+            return Ok(Some(false));
+        }
+        if let Some(verdict) = held {
+            return Ok(Some(verdict));
+        }
+        let verdict = class_judge_in(self.vault, rtxn, &reader, &view, authority)?;
+        verdicts.hold(&reader, class, verdict);
+        Ok(Some(verdict))
     }
 
     /// Whether this lane's CLAIM rows may be judged by class: neither its
@@ -466,18 +481,15 @@ impl<'v> ScopedRead<'v> {
         self.claim_causally_admitted_in(rtxn, id, body)
     }
 
-    /// This reader's verdict on the class `view` under `filter`, `policy`
-    /// and `grant`: the one `authority` holds, else judged now and held.
-    fn class_verdict_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        grant: Option<&Scope>,
-        view: &ClassView<'_>,
-        authority: &HeldAuthority<'v>,
-    ) -> Result<bool> {
-        let reader = ClassReader {
+    /// The reader this lane's class verdicts are judged and held for under
+    /// `filter`, `policy` and `grant`.
+    fn class_reader<'r>(
+        &'r self,
+        policy: &'r PolicyManifestResolution,
+        filter: &'r ResolvedRetrievalFilter,
+        grant: Option<&'r Scope>,
+    ) -> ClassReader<'r> {
+        ClassReader {
             key: &self.actor_key,
             turn_terms: self
                 .actor_key
@@ -488,14 +500,6 @@ impl<'v> ScopedRead<'v> {
             filter,
             grant,
             policy: ClaimReadPolicy::of(policy),
-        };
-        let class = view.key(&reader);
-        let verdicts = authority.class_verdicts();
-        if let Some(verdict) = verdicts.held(&reader, &class) {
-            return Ok(verdict);
         }
-        let verdict = class_judge_in(self.vault, rtxn, &reader, view, authority)?;
-        verdicts.hold(&reader, class, verdict);
-        Ok(verdict)
     }
 }
