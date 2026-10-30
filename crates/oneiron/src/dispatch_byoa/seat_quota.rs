@@ -113,6 +113,18 @@ pub(super) fn record_seat_quota_in_txn(
     spent: Option<&SeatSpent>,
 ) -> ByoaResult<()> {
     let id = seat_quota_id(seat)?;
+    record_seat_quota_by_id_in_txn(vault, wtxn, id, attempt, spent)
+}
+
+/// Records a capture against the frozen quota identity it ran under, even
+/// when the owner's current policy no longer holds that seat (FIX 11984).
+pub(super) fn record_seat_quota_by_id_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    attempt: &AttemptRecord,
+    spent: Option<&SeatSpent>,
+) -> ByoaResult<()> {
     let head: Option<SeatQuotaRecord> = head_record(vault, wtxn, &id)?;
     let cleared = attempt.state == AttemptState::Completed
         && head.as_ref().is_some_and(|head| head.spent.is_some());
