@@ -69,6 +69,9 @@ impl SyncClient {
             ));
         }
         if window.key.world().is_some() {
+            // Every unresolved world update waits staged while their bytes
+            // together stay within the memory bound, however many there are
+            // (FIX 8863); the drain imports each once its edges resolve.
             self.staged_world_updates
                 .push((window.key.clone(), update.to_vec(), from));
             let pending_bytes: usize = self
@@ -76,10 +79,10 @@ impl SyncClient {
                 .iter()
                 .map(|(_, bytes, _)| bytes.len())
                 .sum();
-            if self.staged_world_updates.len() > 64 || pending_bytes > MAX_DECODED_PAYLOAD_BYTES {
+            if pending_bytes > MAX_DECODED_PAYLOAD_BYTES {
                 self.staged_world_updates.pop();
                 return Err(TransportError::InvalidPayload(
-                    "too many unresolved world updates",
+                    "unresolved world updates past the memory bound",
                 ));
             }
             return self.drain_staged_world_updates();
