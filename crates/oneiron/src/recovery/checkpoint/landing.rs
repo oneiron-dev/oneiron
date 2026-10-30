@@ -133,7 +133,13 @@ impl Vault {
         Self::check_open_config(&config)?;
         // Each row is counted at the length it lands at (FIX 6025, 6232).
         let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired);
-        let mut room = write_budget::RestoreRoom::new(budget, &image, &lengths, &config);
+        // The opened payload rows land beside them, counted the same way.
+        let payload_rows = opened
+            .as_ref()
+            .map(super::payload::OpenedPayload::row_lengths)
+            .unwrap_or_default();
+        let mut room = write_budget::RestoreRoom::new(budget, &image, &lengths, &config)
+            .with_payload(&payload_rows);
         room.admit()?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
