@@ -279,6 +279,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::operator_routes::routes())
         // OF-158: a removed member's own leave notices, on its revoked slip.
         .merge(crate::auth::left_notice_routes())
+        .merge(crate::device_sync::removal_listing_routes())
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
