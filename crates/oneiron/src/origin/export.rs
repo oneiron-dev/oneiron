@@ -139,7 +139,9 @@ impl Vault {
             None => self.document_files(repo, &revision, metadata)?,
         };
         // An import-bound tested revision keeps its original ancestry (CALL
-        // G, G4 PR1); every other revision its immediate exported parent.
+        // G, G4 PR1), and a push its seal consumed completely is a parent on
+        // any chain (FIX 7540); every other revision its immediate exported
+        // parent.
         let parents = match self.resolve_import_export_parents(git, repo, &revision)? {
             Some(parents) => parents,
             None => revision

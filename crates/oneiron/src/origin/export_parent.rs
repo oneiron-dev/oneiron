@@ -11,8 +11,10 @@
 //! allows, rather than choosing again because a later ancestor exported
 //! since. The engine `parent_revision_id` stays the tested chain's parent,
 //! distinct from Git parentage. No live ref, compare-and-swap value or
-//! automatic ancestor export stands in. Every other revision keeps the
-//! export's own immediate-parent rule, unchanged.
+//! automatic ancestor export stands in. A tested revision of an unbound
+//! chain whose own seal consumed a push completely takes that push's
+//! incoming tip as its parent too (FIX 7540). Every other revision keeps
+//! the export's own immediate-parent rule, unchanged.
 use crate::code_revision::CodeRevision;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
@@ -20,7 +22,8 @@ use crate::{EntityId, Vault};
 
 impl Vault {
     /// The Git parents `revision`'s projection takes, or `None` when it is
-    /// no import-bound tested revision. Runs under the export's repository
+    /// neither an import-bound tested revision nor an unbound one whose
+    /// seal consumed a push completely. Runs under the export's repository
     /// writer.
     ///
     /// # Errors
@@ -37,7 +40,7 @@ impl Vault {
             return Ok(None);
         }
         let Some(manifest) = self.resolve_code_revision_import_anchor(revision.revision_id)? else {
-            return Ok(None);
+            return Ok(push_boundary(revision)?.map(|tip| vec![tip]));
         };
         let source = GitOid::parse_hex(manifest.anchor.source_commit)?;
         let mut allowed = vec![source.clone()];
