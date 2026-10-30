@@ -117,9 +117,12 @@ impl Memory<'_> {
         if lane.graph_ask_raw_in_txn(txn, id)?.is_none() {
             return Err(unavailable());
         }
+        // `id` stays the commitment's identity; its current status and body
+        // sit at the head of its status chain.
+        let head = self.vault.commitment_head_in_txn(txn, id)?;
         let body = self
             .vault
-            .get_claim_in_txn(txn, id)?
+            .get_claim_in_txn(txn, &head)?
             .ok_or_else(unavailable)?;
         let record = commitment::decode_commitment_claim(&body)?.ok_or_else(unavailable)?;
         self.produced_from([*id]);

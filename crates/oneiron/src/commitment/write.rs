@@ -22,12 +22,14 @@ use super::{
 /// supersedes its predecessor through the claim lifecycle (FIX 9726), rather
 /// than rewriting the value under the predecessor's id.
 ///
-/// The commitment, schedule and wake readers follow a commitment to the head
-/// of that chain ([`Vault::commitment_head_in_txn`]). `false` until the
-/// readers outside them that still read a commitment's status at the id they
-/// were given (the memory commitment views, receipt families, the close
-/// helpers' close instant) and the batched lapse write follow it too.
-const STATUS_CHANGE_MINTS_SUCCESSOR: bool = false;
+/// The commitment, schedule, wake, close, memory, receipt and deep-link
+/// readers follow a commitment to the head of that chain
+/// ([`Vault::commitment_head_in_txn`]), and the batched lapse stages its
+/// successors in the batch's own transaction. `false` while the claim
+/// supersession refuses to close a predecessor before its occurred start: a
+/// scheduled instance's occurred range is its due window, so fulfilling,
+/// releasing or superseding it before its due instant would fail.
+pub(super) const STATUS_CHANGE_MINTS_SUCCESSOR: bool = false;
 
 impl Vault {
     /// The head of a commitment's status chain: `id` itself, or the
@@ -68,6 +70,36 @@ impl Vault {
             }
             return Ok(head);
         }
+    }
+
+    /// The commitment whose status `id` continues: the `commitment.record`
+    /// claim `id` superseded carrying the same promise under its previous
+    /// status. `None` for a commitment's first id and for a replacement that
+    /// changed the promise itself.
+    pub(crate) fn commitment_predecessor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let Some(record) = self
+            .get_claim_in_txn(txn, id)?
+            .and_then(|body| decode_commitment_claim(&body).ok().flatten())
+        else {
+            return Ok(None);
+        };
+        for predecessor in
+            self.port_edge_peers(txn, id, EdgeDirection::Out, EdgeKind::Supersedes)?
+        {
+            let predecessor = predecessor?;
+            if self
+                .get_claim_in_txn(txn, &predecessor)?
+                .and_then(|body| decode_commitment_claim(&body).ok().flatten())
+                .is_some_and(|prior| same_promise(&prior, &record))
+            {
+                return Ok(Some(predecessor));
+            }
+        }
+        Ok(None)
     }
 
     /// Writes a new open `commitment.record` claim using the gated claim

@@ -168,7 +168,12 @@ pub fn resolve_commitment_receipt_link(
 
     // The ungated targeted read on purpose: this is the history door, and a
     // closed commitment must stay reachable from the receipt that cited it.
-    let body = vault.get_claim(&id)?.ok_or(Error::EntityNotFound)?;
+    // Its lifecycle is the one at the head of its status chain.
+    let txn = vault.store.env.read_txn()?;
+    let head = vault.commitment_head_in_txn(&txn, &id)?;
+    let body = vault
+        .get_claim_in_txn(&txn, &head)?
+        .ok_or(Error::EntityNotFound)?;
     decode_commitment_claim(&body)?.ok_or(Error::InvalidClaimBody(
         "claim predicate is not commitment.record",
     ))?;
