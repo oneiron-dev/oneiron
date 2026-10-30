@@ -15,7 +15,9 @@ use crate::llm::decision::{
 
 /// A role on an ask's route as a write keeps it: where it sits on the chain
 /// and the project whose boards it walks, never the actor it names.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct KeptRole {
     pub rank: RoleRank,
@@ -42,7 +44,9 @@ impl KeptRole {
 }
 
 /// The route the Dreamer bound, as a write keeps it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct KeptRoute {
     /// The role asked first.
@@ -55,7 +59,7 @@ pub struct KeptRoute {
 /// A holder's answer as a write keeps it: what it answered and when, as
 /// which role, person or agent, and the owner's reason and rule row, never
 /// who answered.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KeptAnswer {
     pub answer: DecisionAnswer,
@@ -89,7 +93,7 @@ impl KeptAnswer {
 /// bound and the holder's answer once one landed, each actor-free. Two copies
 /// of one ask are equal whoever was erased since. A request never reads as a
 /// grant.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KeptAsk {
     pub seq: u64,

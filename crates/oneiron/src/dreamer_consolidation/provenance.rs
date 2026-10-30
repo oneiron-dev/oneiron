@@ -116,7 +116,9 @@ pub struct PromotionCandidate {
 /// One typed question's decision as a consolidation write keeps it: the
 /// ladder's whole decision (all three answers, its pins, evidence versions,
 /// principal and clock) and, when it went up the role chain, that ask.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct KeptDecision {
     pub decision: crate::llm::decision::TypedDecision,
