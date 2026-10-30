@@ -25,6 +25,7 @@ use crate::merge_queue::{QueueConflictLink, QueueStageOverlap};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::repo_mutation::RepoConflictClaim;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
 
 use super::super::conflict_value::{
@@ -250,6 +251,16 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
     let data = encode_claim_body(&body)?;
     let learned_at = now_secs();
     let mut wtxn = vault.store.env.write_txn()?;
+    // Every shared path is kept; past the threshold row the host is asked
+    // whether everything is okay (rule 5, FIX 8831).
+    let mut count = ScanCount::start(
+        &vault.store,
+        &wtxn,
+        EngineScan::RepoConflictPaths,
+        subject.as_bytes(),
+    )?;
+    count.rows(value.conflicted_paths.len());
+    count.defer(&vault.store);
     if !admission.holds_in_txn(vault, &wtxn, overlap)? {
         return Err(Error::ConcurrentWrite(
             "the queue reconciliation admission no longer holds",
