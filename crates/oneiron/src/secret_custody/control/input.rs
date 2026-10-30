@@ -33,8 +33,12 @@
 //! part row carries its index, every part's digest and its own bytes, and
 //! the digest the request names is over that list, so one 32-byte digest
 //! commits to the whole input and each part is checked on its own as it is
-//! admitted. The holder joins the parts before it opens the input; while one
-//! is missing, the request stays pending.
+//! admitted. The holder reads the parts in order as it opens the input,
+//! never joining them; while one is missing, the request stays pending.
+//!
+//! A door reads the input its owner's surface sealed where it lies, a file
+//! or a buffer, never as one buffer (FIX 11140, `stream`): it computes the
+//! digest part by part and keeps the input row by row.
 //!
 //! A witness past one row's bound travels in signed numbered parts of its
 //! own, and each input row carries a signed reference to them (FIX 8088,
@@ -47,8 +51,11 @@
 mod attached;
 mod carrier_seal;
 mod envelopes;
+mod stream;
 mod surface_seal;
 mod witness;
+
+use std::io::Read;
 
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -71,13 +78,15 @@ use crate::store::Store;
 use crate::world_keys::MachineSecret;
 
 pub(crate) use self::attached::{
-    Attached, AttachedManifest, attach_manifest, attach_no_manifest, attach_published_manifests,
-    attach_unread, split_attached,
+    Attached, AttachedManifest, Attachment, attach_manifest, attach_no_manifest,
+    attach_published_manifests, attach_unread,
 };
 pub(crate) use self::carrier_seal::{
-    LeafSource, input_carrier_in_txn, leaf_input_retries_in_txn, leaf_sealed,
-    retire_input_carriers_in_txn, seal_leaf_input_in_txn,
+    LeafSource, input_carrier_binds, input_carrier_in_txn, leaf_input_retries_in_txn,
+    open_leaf_input, retire_input_carriers_in_txn, seal_leaf_input_in_txn, surface_leaf_input,
 };
+pub use self::stream::SealedInput;
+pub(crate) use self::stream::{InputDigests, SealedFrame, kept_input_in_txn};
 pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
 pub(crate) use self::witness::{WitnessJoin, keep_witnessed_input_in_txn, witness_joined_in_txn};
 #[cfg(feature = "sync")]
@@ -200,21 +209,24 @@ impl InputBinding<'_> {
         .map_err(|_| refused("sealing the custody input to its holder failed"))
     }
 
-    /// The body `input` holds, opened with the holder's `secret` under this
-    /// binding: one envelope, or every numbered envelope of a frame, each
-    /// opened and verified at its place before the body is joined (FIX
-    /// 5521). `None` when `secret` is not the holder's, an envelope does not
-    /// parse under its codec, or one was sealed to another key, under
-    /// another binding or at another place. Its length past one row's bound
-    /// is no reason: such an input comes joined from its parts (FIX 5445).
-    pub(crate) fn open(&self, input: &[u8], secret: &MachineSecret) -> Option<Zeroizing<Vec<u8>>> {
+    /// The body the input of `len` bytes `reader` holds, opened with the
+    /// holder's `secret` under this binding as it is read: one envelope, or
+    /// every numbered envelope of a frame, each opened and verified at its
+    /// place before the next is read and the runs joined (FIX 5521, 11140).
+    /// `None` when `secret` is not the holder's, an envelope does not parse
+    /// under its codec, or one was sealed to another key, under another
+    /// binding or at another place. Its length past one row's bound is no
+    /// reason: such an input is read from its parts in order (FIX 5445).
+    pub(crate) fn open(
+        &self,
+        reader: impl Read,
+        len: u64,
+        secret: &MachineSecret,
+    ) -> Option<Zeroizing<Vec<u8>>> {
         if secret.machine != self.holder {
             return None;
         }
-        match envelopes::numbered_frame(input) {
-            Some(frame) => self.open_numbered(frame, secret),
-            None => self.open_one(input, secret, &self.key_id()),
-        }
+        self.open_read(reader, len, secret)
     }
 
     /// The body one `envelope` holds, opened with the holder's `secret`
@@ -453,7 +465,9 @@ impl RelayedInput {
     /// The rows that carry this whole input when it travels in parts: each
     /// numbered part, in order, every one with the witness and the part
     /// list. `None` when it fits one row, or is a part already. Refused only
-    /// past the part list's own bound.
+    /// past the part list's own bound. A door's own input is kept as it is
+    /// read instead (`stream`, FIX 11140).
+    #[cfg(feature = "sync")]
     fn parts(&self) -> Result<Option<Vec<Self>>> {
         if self.part.is_some() || !splits(&self.envelope) {
             return Ok(None);
@@ -560,6 +574,7 @@ pub(crate) fn request_witness_in_txn(
 /// Keeps `input` in `wtxn`, each row under its key: a whole input that
 /// fits one row as it is, a longer one as its numbered parts, and a relayed
 /// part as it came.
+#[cfg(feature = "sync")]
 pub(crate) fn keep_input_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -581,42 +596,6 @@ pub(crate) fn held_input_in_txn(
     Ok(INPUTS
         .get(store, txn, key)?
         .and_then(|bytes| RelayedInput::decode(&bytes)))
-}
-
-/// The input the request names `digest` of, as this vault keeps it: its
-/// whole row, or every part of it joined in order, each part checked
-/// against the part list `digest` is over. `None` while it, or any part of
-/// it, is not here: the request stays pending.
-pub(crate) fn assembled_input_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    digest: &[u8; 32],
-) -> Result<Option<Vec<u8>>> {
-    if let Some(whole) = held_input_in_txn(store, txn, digest)?
-        && whole.part.is_none()
-        && whole.digest() == *digest
-    {
-        return Ok(Some(whole.envelope));
-    }
-    let mut joined = Vec::new();
-    let mut index = 0_u32;
-    loop {
-        let Some(row) = held_input_in_txn(store, txn, &part_key(digest, index))? else {
-            return Ok(None);
-        };
-        let Some(part) = &row.part else {
-            return Ok(None);
-        };
-        if part.index != index || parts_digest(&part.digests) != *digest {
-            return Ok(None);
-        }
-        let count = part.digests.len();
-        joined.extend_from_slice(&row.envelope);
-        index += 1;
-        if usize::try_from(index).is_ok_and(|done| done == count) {
-            return Ok(Some(joined));
-        }
-    }
 }
 
 /// Forgets the input the request names `digest` of: its whole row, or each

@@ -24,16 +24,28 @@
 //! (`leaf_delivery`), or in its own custody when it is the recorder. Until
 //! then the request stays pending. Once it is answered, the recorder's key
 //! retires and the holder's copy goes from memory.
+//!
+//! Both read the input where it lies (FIX 11140, `stream`). The door seals
+//! a body it holds whole, then keeps the sealed input row by row. A
+//! surface's input is joined to be sealed on top, so only one that fits one
+//! row is; one past it is kept as it lies, under the holder's key alone, as
+//! with the wire off. The holder reads the head, then the rest in order:
+//! the holder's envelopes as each completes, or the key's one seal, within
+//! one row.
+
+use std::io::Read;
 
 use oneiron_crypto::HybridPublicKey;
 use zeroize::Zeroizing;
 
 use super::super::super::carrier_custody::{
-    CARRIER_REF_BYTES, CUSTODY_CARRIER_LEAF_WIRE, CUSTODY_INPUT_WIRE_VERSION, CarrierRef,
+    CARRIER_REF_BYTES, CARRIER_SEAL_BYTES, CUSTODY_CARRIER_LEAF_WIRE, CUSTODY_INPUT_WIRE_VERSION,
+    CarrierRef,
 };
+use super::stream::{KeptInput, open_framed};
 use super::{
-    Attached, InputBinding, RelayedInput, held_input_in_txn, input_digest, part_key, parts_digest,
-    split_attached,
+    Attached, InputBinding, PART_BYTES, RelayedInput, SealedFrame, held_input_in_txn, input_digest,
+    part_key, parts_digest,
 };
 use crate::Vault;
 use crate::error::Result;
@@ -42,6 +54,10 @@ use crate::world_keys::MachineSecret;
 
 /// The label a leaf-sealed input opens with.
 const LEAF_INPUT_LABEL: &[u8] = b"oneiron/custody-input-leaf\0";
+
+/// The bytes a leaf-sealed input's head takes: its label, the input wire
+/// version, the layer, the key's reference and the retry digest.
+const LEAF_HEAD_BYTES: usize = LEAF_INPUT_LABEL.len() + 2 + CARRIER_REF_BYTES + 32;
 
 /// Where an input's carrier key seals it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,17 +92,29 @@ pub(crate) enum LeafSource<'a> {
     /// bind's bindings.
     Body(&'a [u8]),
     /// The input the owner's surface sealed to the holder, with what the
-    /// recorder attached beside it.
+    /// recorder attached beside it, joined ([`surface_leaf_input`]).
     Sealed(&'a [u8]),
 }
 
-/// A leaf-sealed input as read: its key's reference, its layer, the digest
-/// a surface's same input is found by, and the bytes after its head.
-pub(crate) struct LeafSealed<'a> {
-    pub(crate) carrier: CarrierRef,
+/// A leaf-sealed input's head as read: its key's reference, its layer and
+/// the digest a surface's same input is found by.
+struct LeafHead {
+    carrier: CarrierRef,
     layer: LeafLayer,
     retry: [u8; 32],
-    sealed: &'a [u8],
+}
+
+/// The input the owner's surface sealed, `frame`, joined for its carrier
+/// seal on top, while the carrier wire is on and it fits one row; `None`
+/// past one row (FIX 11140 joins none), which is kept as it lies.
+///
+/// # Errors
+/// A fault reading the input from its file.
+pub(crate) fn surface_leaf_input(frame: &SealedFrame<'_>) -> Result<Option<Vec<u8>>> {
+    if !CUSTODY_CARRIER_LEAF_WIRE {
+        return Ok(None);
+    }
+    frame.joined_within(PART_BYTES)
 }
 
 /// Seals the input of the request `binding` binds, while the carrier wire
@@ -138,10 +166,10 @@ pub(crate) fn seal_leaf_input_in_txn(
     Ok(out)
 }
 
-/// The leaf-sealed input `input` is, while the carrier wire is on and it
-/// opens with a whole head; `None` for any other input, which opens as
+/// The head of the leaf-sealed input `input` opens with, while the carrier
+/// wire is on and it is whole; `None` for any other input, which opens as
 /// before.
-pub(crate) fn leaf_sealed(input: &[u8]) -> Option<LeafSealed<'_>> {
+fn leaf_head(input: &[u8]) -> Option<LeafHead> {
     if !CUSTODY_CARRIER_LEAF_WIRE {
         return None;
     }
@@ -153,45 +181,60 @@ pub(crate) fn leaf_sealed(input: &[u8]) -> Option<LeafSealed<'_>> {
     let layer = LeafLayer::from_byte(layer)?;
     let (carrier, rest) = rest.split_first_chunk::<CARRIER_REF_BYTES>()?;
     let carrier = CarrierRef::decode(carrier)?;
-    let (retry, sealed) = rest.split_first_chunk::<32>()?;
-    Some(LeafSealed {
+    let (retry, _) = rest.split_first_chunk::<32>()?;
+    Some(LeafHead {
         carrier,
         layer,
         retry: *retry,
-        sealed,
     })
 }
 
-impl LeafSealed<'_> {
-    /// Whether its key is the input key of the request `binding` binds: a
-    /// request input's, of its secret, at the generation it approves.
-    pub(crate) fn binds(&self, binding: &InputBinding<'_>) -> bool {
-        self.carrier.kind == CustodyKind::CustodyRequestInput
-            && self.carrier.credential == binding.id
-            && self.carrier.generation == binding.generation
-    }
+/// Whether `carrier` is the input key of the request `binding` binds: a
+/// request input's, of its secret, at the generation it approves.
+pub(crate) fn input_carrier_binds(carrier: &CarrierRef, binding: &InputBinding<'_>) -> bool {
+    carrier.kind == CustodyKind::CustodyRequestInput
+        && carrier.credential == binding.id
+        && carrier.generation == binding.generation
+}
 
-    /// The body it holds, opened under `leaf` and with the holder's
-    /// `secret` under `binding`, with what its recorder attached beside a
-    /// surface's envelope; `None` when any layer does not open.
-    pub(crate) fn open(
-        &self,
-        binding: &InputBinding<'_>,
-        leaf: &CredentialLeaf,
-        secret: &MachineSecret,
-    ) -> Option<(Zeroizing<Vec<u8>>, Option<Attached>)> {
-        match self.layer {
+/// The body the kept leaf-sealed input `kept` holds, opened under
+/// `carrier`'s key `leaf` and with the holder's `secret` under `binding`,
+/// with what its recorder attached beside a surface's envelope: its rows
+/// read in order, its head first (FIX 11140). `None` when its head is not
+/// `carrier`'s, a surface's seal outgrows one row, or any layer does not
+/// open.
+///
+/// # Errors
+/// Storage errors reading a row.
+pub(crate) fn open_leaf_input(
+    kept: &KeptInput<'_, '_>,
+    carrier: &CarrierRef,
+    binding: &InputBinding<'_>,
+    leaf: &CredentialLeaf,
+    secret: &MachineSecret,
+) -> Result<Option<(Zeroizing<Vec<u8>>, Option<Attached>)>> {
+    kept.read_rows(|rows, len| {
+        let mut head = [0; LEAF_HEAD_BYTES];
+        rows.read_exact(&mut head).ok()?;
+        let head = leaf_head(&head).filter(|head| head.carrier == *carrier)?;
+        let len = len.checked_sub(LEAF_HEAD_BYTES as u64)?;
+        match head.layer {
             LeafLayer::UnderHolder => {
-                let under = binding.open(self.sealed, secret)?;
-                Some((self.carrier.open(leaf, None, &under).ok()?, None))
+                let under = binding.open(rows, len, secret)?;
+                Some((carrier.open(leaf, None, &under).ok()?, None))
             }
             LeafLayer::OverHolder => {
-                let over = self.carrier.open(leaf, None, self.sealed).ok()?;
-                let (envelope, attached) = split_attached(&over)?;
-                Some((binding.open(envelope, secret)?, attached))
+                // Only a surface's input that fit one row was sealed on top.
+                if len > (PART_BYTES + CARRIER_SEAL_BYTES) as u64 {
+                    return None;
+                }
+                let mut sealed = vec![0; usize::try_from(len).ok()?];
+                rows.read_exact(&mut sealed).ok()?;
+                let over = carrier.open(leaf, None, &sealed).ok()?;
+                open_framed(binding, over.as_slice(), over.len() as u64, secret)
             }
         }
-    }
+    })
 }
 
 /// The head row of the input the request names `digest` of, as this vault
@@ -227,8 +270,11 @@ pub(crate) fn input_carrier_in_txn(
     txn: &heed::RoTxn<'_>,
     digest: &[u8; 32],
 ) -> Result<Option<CarrierRef>> {
+    if !CUSTODY_CARRIER_LEAF_WIRE {
+        return Ok(None);
+    }
     Ok(head_row_in_txn(store, txn, digest)?
-        .and_then(|row| leaf_sealed(&row.envelope).map(|sealed| sealed.carrier)))
+        .and_then(|row| leaf_head(&row.envelope).map(|head| head.carrier)))
 }
 
 /// Whether the input the request names `named` of, kept here, is a
@@ -244,8 +290,8 @@ pub(crate) fn leaf_input_retries_in_txn(
     retry: &[u8; 32],
 ) -> Result<bool> {
     Ok(head_row_in_txn(store, txn, named)?.is_some_and(|row| {
-        leaf_sealed(&row.envelope)
-            .is_some_and(|sealed| sealed.layer == LeafLayer::OverHolder && sealed.retry == *retry)
+        leaf_head(&row.envelope)
+            .is_some_and(|head| head.layer == LeafLayer::OverHolder && head.retry == *retry)
     }))
 }
 
@@ -256,7 +302,7 @@ pub(crate) fn row_carrier(bytes: &[u8]) -> Option<CarrierRef> {
     if row.part.as_ref().is_some_and(|part| part.index != 0) {
         return None;
     }
-    leaf_sealed(&row.envelope).map(|sealed| sealed.carrier)
+    leaf_head(&row.envelope).map(|head| head.carrier)
 }
 
 /// Retires each of `carriers`, in `wtxn`: what they sealed is answered or
