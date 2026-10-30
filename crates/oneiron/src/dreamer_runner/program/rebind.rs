@@ -14,9 +14,11 @@
 //! sealed slip is swapped on the owed row through the same proof, and its
 //! admission runs on the new slip in that same writer, so no concurrent
 //! admission judges or runs the old slip: a drain that read the wake before
-//! finds it admitted and admits nothing. A wake whose admission already
-//! refused it on the lapse keeps that refusal: it is the lapsed slip's own
-//! status.
+//! finds it admitted and admits nothing. A wake whose sealed slip lapsed is
+//! no refusal before its own expiry (FIX 12058): the drain's admission keeps
+//! it owed, the lapse its row's status, and passes it by, so this rebind
+//! still reaches it. A wake an admission refused after that expiry keeps the
+//! refusal.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +30,7 @@ use crate::error::{Error, Result};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, Vault};
 
+use super::admit::WakeAdmission;
 use super::authority::TurnProgramAuthority;
 use super::types::TurnProgramAdmissionOutcome;
 use super::{ADMISSION, ATTEMPT, WAKE};
@@ -215,9 +218,17 @@ fn rebind_owed_wake(
             rebound_in_txn(vault, txn, &wake.authority, successor, actor, class)?;
         wake.authority = authority;
         // The owed row holds the rebound wake until its admission, in this
-        // writer, consumes it.
+        // writer, consumes it. A wake held on its lapsed slip (FIX 12058)
+        // keeps its hold's expiry; its admission here judges the new slip.
         WAKE.put(vault, txn, &key, &wake)?;
-        Ok((super::admit::admit_in_txn(vault, txn, &wake, now)?, rebind))
+        match super::admit::admit_in_txn(vault, txn, &wake, now)? {
+            WakeAdmission::Decided(admitted) => Ok((admitted, rebind)),
+            // The successor verified in this writer, so its admission never
+            // finds its slip lapsed.
+            WakeAdmission::Held => Err(Error::InvariantViolation(
+                "a rebound turn program wake was held on its new slip",
+            )),
+        }
     })?;
     let attempt = match admitted.outcome {
         TurnProgramAdmissionOutcome::Queued { attempt, .. } => {
