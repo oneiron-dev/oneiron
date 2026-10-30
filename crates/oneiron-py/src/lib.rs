@@ -858,6 +858,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_memory_pads_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.memory.pads.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.memory.pads.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_memory_pads_admin_reads(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.memory.pads.admin_reads")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.memory.pads.admin_reads", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "cancel")?;
         let output = py
