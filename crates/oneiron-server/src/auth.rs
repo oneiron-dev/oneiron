@@ -729,6 +729,7 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
+        let _l15 = oneiron::stage_timing::stage("server.auth");
         Self::for_request(parts, server).await.map_err(Into::into)
     }
 }
