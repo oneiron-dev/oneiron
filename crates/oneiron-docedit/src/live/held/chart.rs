@@ -20,9 +20,7 @@ use crate::live::pptx::{
     ChartCategories, ChartCategory, ChartKind, ChartPlot, ChartSeries, ChartSource, NodeId,
     NodePayload, SeriesBinding, draws_categories, effective_categories,
 };
-use crate::native_patch::{
-    Count, NativeRefusal, chart_data, declared, level_cache, stock_placeholder,
-};
+use crate::native_patch::{Count, chart_data, declared, level_cache, stock_placeholder};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use oneiron_contracts::limit_ask::available_memory_bytes;
@@ -631,14 +629,10 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
     }
     let source = if !referenced {
         ChartSource::Literal
+    } else if chart_data(package, chart).is_ok() {
+        ChartSource::Workbook
     } else {
-        match chart_data(package, chart) {
-            Ok(_) => ChartSource::Workbook,
-            // What the host cannot hold is no reason to read the chart as
-            // its caches (FIX 9165).
-            Err(refusal @ NativeRefusal::MemoryFloor { .. }) => return Err(refusal.into()),
-            Err(_) => ChartSource::Cached,
-        }
+        ChartSource::Cached
     };
     Ok(Some(NodePayload::Chart {
         family,
