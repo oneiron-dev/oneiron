@@ -297,5 +297,6 @@ pub(in super::super) fn owner_table() -> OwnerTable {
     ];
     table.extend(line_chats::owner_table());
     table.extend(native_mail_identities::owner_table());
+    table.extend(super::skill_merge_routes::owner_table());
     table
 }
