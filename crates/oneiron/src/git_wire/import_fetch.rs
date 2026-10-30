@@ -58,6 +58,12 @@ impl FetchedExternalGit {
     pub fn base(&self) -> &GitOid {
         &self.base
     }
+
+    /// The private scratch store the fetch wrote, for a read of what it
+    /// holds (FIX 7596).
+    pub(crate) fn repo(&self) -> &GitWireRepo {
+        &self.repo
+    }
 }
 
 impl std::fmt::Debug for FetchedExternalGit {

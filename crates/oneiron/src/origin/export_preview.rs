@@ -170,6 +170,16 @@ impl Vault {
                 "engine commit belongs to another object store or inventory",
             ));
         }
+        // Its ancestors and its Baseline's import approval are sources too,
+        // listed for the caller's credential, never judged again (FIX 8270).
+        pinned.sources.extend(
+            self.code_revision_ancestry_sources(revision.revision_id)?
+                .into_iter()
+                .map(|entity| PreviewSource {
+                    entity,
+                    required: false,
+                }),
+        );
         let manifest = self.resolve_code_revision_import_anchor(revision.revision_id)?;
         let anchor_repo = manifest
             .as_ref()

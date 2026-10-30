@@ -193,7 +193,11 @@ impl Vault {
         view.base_revision = Some(resolved.base_revision);
         view.fork_session = Some(resolved.fork_session);
         view.proposal_refs = vec![resolved.proposal_id];
-        view.state = match self.repo_proposal(resolved.proposal_id)? {
+        let proposal = self.repo_proposal(resolved.proposal_id)?;
+        let stack = proposal
+            .as_ref()
+            .and_then(|proposal| proposal.merge_stack.clone());
+        view.state = match proposal {
             None => CodePushCandidateState::Pending,
             Some(proposal) => match proposal.status {
                 _ if proposal.merge_stack.is_some()
@@ -225,6 +229,30 @@ impl Vault {
                 RepoProposalStatus::Rejected => CodePushCandidateState::Rejected,
             },
         };
+        // A quarantine that names its proposal, with no live batch carrying
+        // it on, is where it stands; every check work of its batches is
+        // named (FIX 7536).
+        let (quarantined, checks) = self.queue_proposal_quarantine_and_checks(
+            &row.source.object_store,
+            resolved.proposal_id,
+            &view.batch_refs,
+        )?;
+        let carried_on = match view.state {
+            CodePushCandidateState::Queued => {
+                stack.is_none_or(|stack| !quarantined.contains(&stack))
+            }
+            CodePushCandidateState::Proposed => false,
+            _ => true,
+        };
+        if !quarantined.is_empty() && !carried_on {
+            view.state = CodePushCandidateState::Quarantined;
+        }
+        for batch in quarantined {
+            if !view.batch_refs.contains(&batch) {
+                view.batch_refs.push(batch);
+            }
+        }
+        view.check_work_refs = checks;
         // An active projection hold wins over the proposal's progress, its
         // links kept (FIX 7608 2b-ii-B2).
         if let (Some(_), Some(held)) = (&view.detail, &candidate.hold) {

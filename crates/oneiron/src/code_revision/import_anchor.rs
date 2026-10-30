@@ -109,6 +109,56 @@ pub(crate) fn import_snapshot_custody_in_txn(
 }
 
 impl Vault {
+    /// The records `revision_id`'s bytes descend through, for a reader that
+    /// lists them (FIX 8270): each ancestor revision and its session, up
+    /// to the chain's root, and that root's import-approval claim when it
+    /// holds one. Listed only, never judged here; every ancestor is read,
+    /// however many (rule 5).
+    ///
+    /// # Errors
+    /// A missing record, a parent chain with a cycle, a receipt that names
+    /// another approval, or a store failure.
+    pub(crate) fn code_revision_ancestry_sources(
+        &self,
+        revision_id: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let mut count = ScanCount::start(
+            &self.store,
+            &txn,
+            EngineScan::DagWalkRecords,
+            revision_id.as_bytes(),
+        )?;
+        let mut visited = HashSet::from([revision_id]);
+        let mut sources = Vec::new();
+        let mut root = read_code_revision_record_in_txn(&self.store, &txn, &revision_id)?
+            .ok_or(Error::EntityNotFound)?;
+        while let Some(parent) = root.parent_revision_id {
+            count.row();
+            if !visited.insert(parent) {
+                count.defer(&self.store);
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                    "code revision parent chain contains a cycle",
+                )));
+            }
+            root = read_code_revision_record_in_txn(&self.store, &txn, &parent)?
+                .ok_or(Error::EntityNotFound)?;
+            sources.extend([root.revision_id, root.session_id]);
+        }
+        count.defer(&self.store);
+        let baseline = root
+            .tested_queue
+            .as_ref()
+            .is_some_and(|tested| tested.target == QueueTestedTarget::Baseline);
+        if baseline
+            && let Some((approval, _)) =
+                baseline_import_approval_in_txn(self, &txn, root.revision_id)?
+        {
+            sources.push(approval);
+        }
+        Ok(sources)
+    }
+
     /// The manifest of the reviewed import `revision_id`'s tested chain is
     /// bound to, or `None` for an ordinary or unbound revision.
     ///
