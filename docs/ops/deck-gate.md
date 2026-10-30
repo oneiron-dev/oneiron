@@ -111,7 +111,7 @@ git -C <workspace>/Desktop/code/oneiron show "$sha:scripts/office/deck_gate_linu
 ## 1. Engine half (Linux fleet host)
 
 ```sh
-cd <workspace>/Desktop/temp/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate engine half $run" --need rust-1.96 --host nelly --mem 20G --no-mem-floor --threads 8 --disk 30 --timeout 3h --sync <workspace>/Desktop/temp/deck-gate/job -- bash deck_gate_linux.sh "$sha" "$run" > <workspace>/Desktop/temp/deck-gate/$run-engine.log 2>&1
+cd <workspace>/Desktop/temp/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate engine half $run" --need rust-1.96 --host nelly --mem 32G --no-mem-floor --threads 6 --disk 30 --timeout 3h --sync <workspace>/Desktop/temp/deck-gate/job -- bash deck_gate_linux.sh "$sha" "$run" > <workspace>/Desktop/temp/deck-gate/$run-engine.log 2>&1
 ```
 
 The job clones oneiron at `$sha`, runs `deck_gate.py acquire` for the PPTArena
