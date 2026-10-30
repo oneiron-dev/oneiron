@@ -315,7 +315,8 @@ pub(super) fn ensure_entity_materialized_from_crdt(
         // A hydrated TASK reaches board subscribers after the same commit.
         Some(crate::registry::ENTITY_TYPE_TASK) => {
             if let Some(id) = step.written() {
-                crate::batch::queue_task_updates(vault, wtxn, [id]);
+                let announce = crate::context_board::task_for_announcement(&blob, id);
+                crate::batch::queue_task_updates(vault, wtxn, [announce]);
             }
         }
         _ => {}
