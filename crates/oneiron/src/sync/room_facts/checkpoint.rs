@@ -10,7 +10,8 @@
 
 use super::{carrier_key, decode, named};
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::checkpoint_payload::{Placement, SyncUnclassified};
+use crate::sync::carrier_parts::is_part_key;
+use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified};
 use crate::workspace_roster::RoomSideRow;
 
 /// A side row's actors and handles.
@@ -18,6 +19,22 @@ const SIDE_ROW_ACTORS: &str = "a room side row names actors or a platform handle
 
 /// Where the side row under `key` goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
+    // FIX 11790: a part goes with the manifest that lists it, and a manifest
+    // as its joined row goes, under the entity its key names: every key
+    // spells that entity second.
+    if is_part_key(key) {
+        return Placement::Part;
+    }
+    if let Some(parts) = crate::sync::room_parts::manifest(value) {
+        return match key.split('/').nth(1).and_then(named) {
+            Some(rides) => Placement::Manifest {
+                holders: vec![Holder::new(OwnerRef::entity(&rides), Vec::new())],
+                parts,
+                joined: Some(SyncUnclassified::ActorSplit(SIDE_ROW_ACTORS)),
+            },
+            None => Placement::unclassified(None, SyncUnclassified::Undecodable),
+        };
+    }
     let row = match decode(value) {
         Ok(row) if carrier_key(&row, value) == key => row,
         _ => return Placement::unclassified(None, SyncUnclassified::Undecodable),

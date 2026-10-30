@@ -35,13 +35,14 @@ pub(super) struct StagedPut {
 }
 
 /// The replicated put that ends a row's ladder: applied at once, or held for
-/// the batch of the component a TASK row is staged in.
+/// the batch of the component a TASK row is staged in. `blob` is the row as
+/// its window holds it; `data` is the body the put lands.
 pub(super) fn put_or_stage(
-    staging: &Staging,
-    vault: &Vault,
+    ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: EntityId,
     header: &EntityMetadataHeader,
+    blob: &[u8],
     data: &[u8],
 ) -> Result<()> {
     let occurred = TimeRange {
@@ -49,7 +50,7 @@ pub(super) fn put_or_stage(
         end: header.occurred_end,
     };
     if header.entity_type == ENTITY_TYPE_TASK
-        && let Some(staged) = staging.borrow_mut().as_mut()
+        && let Some(staged) = ctx.staged.borrow_mut().as_mut()
     {
         staged.push(StagedPut {
             id,
@@ -59,7 +60,11 @@ pub(super) fn put_or_stage(
         });
         return Ok(());
     }
-    vault
+    // FIX 9600: a MESSAGE row an own machine's proven connection sent takes
+    // its own-device lane as far as the put, and no further here: the batch
+    // threads it to the witness gate.
+    let _own_device = super::own_device::lane_in_txn(ctx, wtxn, &id, blob, data)?;
+    ctx.vault
         .batch_in()
         .put_replicated(&id, header.entity_type, occurred, header.learned_at, data)
         .apply(wtxn)
