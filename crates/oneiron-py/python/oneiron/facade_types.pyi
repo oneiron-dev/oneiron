@@ -6317,6 +6317,7 @@ class PackSetupSecret(TypedDict):
     label: str
     effector: str
     hint: NotRequired[str | None]
+    optional: NotRequired[bool]
 PackSetupRisk = Literal["low", "medium", "high"]
 class PackSetupPermission(TypedDict):
     id: str
