@@ -386,7 +386,7 @@ fn live_outcome_heads_in(
 /// CAL-00 owns this predicate; CAL-07 only reads it, and has to: cancellation
 /// has two homes by law, and the home this module never writes is exactly the
 /// one a check-in must not ignore.
-fn current_status_in(
+pub(in crate::calendar) fn current_status_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,

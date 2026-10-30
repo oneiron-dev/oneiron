@@ -14,6 +14,9 @@ side_tables! {
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
+    /// FIX 12004: one meeting card delivered to the owners' INBOX, a prep pack or a check-in with
+    /// its one morning re-ask, holding the lens as delivered. Key: id16(EVENT) + string (kind).
+    CALENDAR_INBOX_CARD: VaultMeta b"calendar.inbox-card.v1:" Named Admitted;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;

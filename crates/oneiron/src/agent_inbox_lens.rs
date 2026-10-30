@@ -4,7 +4,9 @@
 //! receipts. No mailbox, renderer, or independent approval store is created.
 //! Concern rows are the Coach's open agent-health cards (OF-568). Digest
 //! rows are the digest notifications already addressed to the agent (FIX
-//! 1261); no channel identity carries them.
+//! 1261); no channel identity carries them. Meeting rows are the prep packs
+//! and check-ins the calendar delivered to the vault's owners (FIX 12004):
+//! a prep pack is an update, a check-in waits on its answer.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -218,6 +220,8 @@ impl Vault {
         items.extend(crate::actor_claims::craft_candidate_inbox_items(self)?);
         // A comm widen ask waiting on its recipient (FIX 3901).
         items.extend(self.comm_widen_inbox_items()?);
+        // A meeting's prep pack and its check-in, for the owners (FIX 12004).
+        items.extend(crate::calendar::calendar_inbox_items(self)?);
         if let Some(recipient) = digests_for {
             items.extend(self.digest_inbox_items(recipient)?);
         }
@@ -543,10 +547,12 @@ fn receipt_order(receipt: &ReceiptRecord) -> (u64, bool, &str) {
 
 mod inbound;
 mod read_state;
-pub(crate) use read_state::erase_agent_inbox_read_marks_actor_in_txn;
 pub use read_state::{
     AgentInboxBoardSlice, AgentInboxReadState, InboxItemLaterRequest, InboxItemMarked,
     InboxItemMessage, InboxItemRequest, InboxItemView,
+};
+pub(crate) use read_state::{
+    agent_inbox_row_done_in_txn, erase_agent_inbox_read_marks_actor_in_txn,
 };
 mod serve;
 pub use serve::*;

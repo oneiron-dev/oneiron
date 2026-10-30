@@ -66,7 +66,8 @@ impl PrepHomeNodeJob {
 ///   stale and answers `None` rather than rendering against an old time.
 ///
 /// `Ok(None)` therefore covers both "stale" and "now empty", and in both cases
-/// the caller emits no lens.
+/// the caller emits no lens. A rendered lens reaches the owner as the EVENT's
+/// prep card in the INBOX ([`crate::calendar::run_calendar_card_pass`]).
 ///
 /// # Errors
 ///
@@ -106,7 +107,10 @@ pub fn run_due_home_node_prep(
 /// campaign or a commitment links the EVENT, and whether the EVENT's own
 /// `calendar.prep_opt_in` opts it in; the vault-wide opt-in is
 /// [`PrepPolicy::external_only`].
-fn live_prep_event(vault: &Vault, event_ref: EntityId) -> Result<Option<PrepEvent>> {
+pub(in crate::calendar) fn live_prep_event(
+    vault: &Vault,
+    event_ref: EntityId,
+) -> Result<Option<PrepEvent>> {
     let Some(header) = vault.read_entity_header(&event_ref)? else {
         return Ok(None);
     };
