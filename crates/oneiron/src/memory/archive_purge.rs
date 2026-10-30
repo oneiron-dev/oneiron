@@ -90,7 +90,9 @@ impl Memory<'_> {
 
     /// Each result carries its own ARCH-0038 receipt or refusal. A later row's
     /// failure must not hide an earlier completed delete. The deletion rail
-    /// rechecks both authority and the preview inside its linearizing transaction.
+    /// rechecks both authority and the preview inside its linearizing
+    /// transaction, the preview by its scrub-stable identity: the archive
+    /// marker the previewed id holds (FIX 9062, `same_archive_in`).
     pub fn confirm_archive_purge(
         &self,
         preview: &ArchivePurgePreview,
@@ -102,19 +104,7 @@ impl Memory<'_> {
                 let result = self.safe_delete_checked(
                     &row.entity.to_hex(),
                     SafeDeleteReason::UserHardDelete,
-                    |txn| {
-                        let marker = archive_marker(self.vault, txn, row.entity)?;
-                        let raw = self
-                            .vault
-                            .get_raw_in(txn, &row.entity)?
-                            .ok_or_else(stale_preview)?;
-                        if marker != row.archive_marker
-                            || blake3::hash(&raw).as_bytes() != &row.fingerprint
-                        {
-                            return Err(stale_preview());
-                        }
-                        Ok(())
-                    },
+                    |txn| same_archive_in(self.vault, txn, row.entity, &row.archive_marker),
                 );
                 (row.entity, result)
             })
@@ -158,10 +148,12 @@ impl Memory<'_> {
     /// The checked sibling of [`Self::confirm_archive_purge`]: each explicit
     /// target, once, in canonical order (the first item named for an id is
     /// kept), is a user hard delete under this caller's archive-delete
-    /// authority. Each write before publication rechecks that authority,
-    /// the cleanup archive marker and, when given, the expected record hash
-    /// and marker. One target's refusal or failure never hides another's
-    /// receipt.
+    /// authority. The expected record hash and marker, when given, are
+    /// compared once in a snapshot before the delete starts; each write
+    /// before publication then rechecks that authority, the cleanup archive
+    /// marker and, when given, the expected marker, the preview's
+    /// scrub-stable identity (FIX 9062, `same_archive_in`). One target's
+    /// refusal or failure never hides another's receipt.
     pub(crate) fn confirm_archive_delete(
         &self,
         items: &[(EntityId, Option<ArchiveExpectation>)],
@@ -172,24 +164,49 @@ impl Memory<'_> {
         targets
             .into_iter()
             .map(|(id, expected)| {
-                let result = self.safe_delete_archive_checked(
-                    id,
-                    &|txn| self.archive_delete_authority_in(txn, id),
-                    |txn| {
-                        let marker = archive_marker(self.vault, txn, id)?;
-                        let Some((hash, expected_marker)) = &expected else {
-                            return Ok(());
-                        };
-                        let raw = self.vault.get_raw_in(txn, &id)?.ok_or_else(stale_preview)?;
-                        if &marker != expected_marker || blake3::hash(&raw).as_bytes() != hash {
-                            return Err(stale_preview());
-                        }
-                        Ok(())
-                    },
-                );
+                let result = self
+                    .expected_archive_holds(id, expected.as_ref())
+                    .and_then(|()| {
+                        self.safe_delete_archive_checked(
+                            id,
+                            &|txn| self.archive_delete_authority_in(txn, id),
+                            |txn| match &expected {
+                                Some((_, marker)) => same_archive_in(self.vault, txn, id, marker),
+                                None => archive_marker(self.vault, txn, id).map(drop),
+                            },
+                        )
+                    });
                 (id, result)
             })
             .collect()
+    }
+
+    /// Whether archived `id` is still what `expected` names, read in one
+    /// snapshot before its delete starts: the record hash and archive
+    /// marker its preview read. Nothing expected passes.
+    fn expected_archive_holds(
+        &self,
+        id: EntityId,
+        expected: Option<&ArchiveExpectation>,
+    ) -> MemoryResult<()> {
+        let Some((hash, marker)) = expected else {
+            return Ok(());
+        };
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        same_archive_in(self.vault, &txn, id, marker)?;
+        let raw = self
+            .vault
+            .get_raw_in(&txn, &id)?
+            .ok_or_else(stale_preview)?;
+        if blake3::hash(&raw).as_bytes() != hash {
+            return Err(stale_preview());
+        }
+        Ok(())
     }
 
     /// This caller's authority to delete the archived `id` in `txn`
@@ -236,6 +253,24 @@ fn archive_entry_in(
         fingerprint: *blake3::hash(&raw).as_bytes(),
         archive_marker: marker,
     })
+}
+
+/// Whether `id` in `txn` is still the cleanup archive a preview read, by its
+/// scrub-stable identity (FIX 9062): the archive marker `id` holds is
+/// `marker`. That marker carries the archiving request's own id, so a
+/// restore, which clears it, or a change and a new archive, which writes
+/// another, fails the check; a scrub before publication changes the record
+/// bytes but never the marker, so the record bytes are not compared here.
+fn same_archive_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    marker: &[u8],
+) -> MemoryResult<()> {
+    if archive_marker(vault, txn, id)? != marker {
+        return Err(stale_preview());
+    }
+    Ok(())
 }
 
 fn stale_preview() -> MemoryError {
