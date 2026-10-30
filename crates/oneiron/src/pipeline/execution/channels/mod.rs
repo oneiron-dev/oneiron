@@ -436,7 +436,7 @@ impl PipelineBuilder<'_> {
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
-                ))?;
+                )?);
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
