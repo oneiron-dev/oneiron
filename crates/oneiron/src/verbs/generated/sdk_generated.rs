@@ -2781,7 +2781,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.consent.create_auto_weave_grant",
                 crate::code_run::vault_read::request_schema::<
-                    crate::gate::weave_grant::AutoWeaveGrantRequest,
+                    crate::consent::lifecycle::AutoWeaveGrantRequest,
                 >(),
             ),
             (
@@ -20613,7 +20613,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 decode(value.clone())?;
         }
         "vault.consent.create_auto_weave_grant" => {
-            let _input: crate::gate::weave_grant::AutoWeaveGrantRequest = decode(value.clone())?;
+            let _input: crate::consent::lifecycle::AutoWeaveGrantRequest = decode(value.clone())?;
         }
         "vault.consent.registry" => {
             let _input: crate::consent::ConsentRegistryQuery = decode(value.clone())?;
@@ -30008,9 +30008,9 @@ pub fn vault_consent_create_standing_grant(
 }
 pub fn vault_consent_create_auto_weave_grant(
     memory: &Memory<'_>,
-    input: crate::gate::weave_grant::AutoWeaveGrantRequest,
+    input: crate::consent::lifecycle::AutoWeaveGrantRequest,
 ) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
-    crate::gate::weave_grant::mint_auto_weave_grant(
+    crate::consent::lifecycle::mint_auto_weave_grant(
         memory.vault(),
         &memory.embedded_owner("vault.consent.create_auto_weave_grant")?,
         input,
