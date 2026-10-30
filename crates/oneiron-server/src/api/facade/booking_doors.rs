@@ -134,7 +134,11 @@ pub(crate) async fn vault_booking_availability(
         BookingOperationRequest::Availability(input),
     )
     .await;
-    let rows = if answer.is_err() { Some(Vec::new()) } else { rows };
+    let rows = if answer.is_err() {
+        Some(Vec::new())
+    } else {
+        rows
+    };
     (answer, rows)
 }
 

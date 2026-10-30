@@ -36,10 +36,18 @@ impl Memory<'_> {
             Err(err) if approval == ClaimApprovalStatus::Auto && gate_rejection_pends(&err) => {
                 approval = ClaimApprovalStatus::Proposed;
                 self.attempt_claim_write(&write, approval).map_err(|err| {
-                    write.publication_refusal.take().unwrap_or_else(|| err.into())
+                    write
+                        .publication_refusal
+                        .take()
+                        .unwrap_or_else(|| err.into())
                 })?
             }
-            Err(err) => return Err(write.publication_refusal.take().unwrap_or_else(|| err.into())),
+            Err(err) => {
+                return Err(write
+                    .publication_refusal
+                    .take()
+                    .unwrap_or_else(|| err.into()));
+            }
         };
         if refused {
             return Err(hard_deleted_refusal(&write.id));
