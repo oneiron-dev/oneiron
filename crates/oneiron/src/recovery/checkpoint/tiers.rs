@@ -21,8 +21,10 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // topology input, never an image's (DOOR-101 PR2a).
                 b"dreamer:home_candidates:v1",
                 b"dreamer:parked:",
+                b"dreamer:outage_due:v1:",
                 b"dreamer:peer_wait",
                 b"dreamer:trap_binding:",
+                b"dreamer:trap_sent:v1:",
                 // A pass's own observation of its clock, calls and leases
                 // (DOOR-144): no image restores a live lease.
                 b"dreamer:wake:observation:v1:",

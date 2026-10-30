@@ -309,19 +309,22 @@ fn authorize_blocks_write(
 
 /// Is `target` reachable from `start` over `Blocks` edges ONLY?
 ///
-/// Kind-local by construction: the walk rides the landed kind-filtered,
-/// cap-bounded peer scan, so a `child_of` / `derived_from` path between the
-/// same endpoints can never fabricate a readiness cycle. Overflow is the
-/// typed [`Error::IndexOverflow`], never a partial acyclicity proof.
+/// Kind-local by construction: the walk rides the landed kind-filtered
+/// peer scan, so a `child_of` / `derived_from` path between the same
+/// endpoints can never fabricate a readiness cycle. The walk reads whole,
+/// however many readiness edges the vault holds: past its row it raises
+/// one advisory check and reads on, and `false` answers only a complete
+/// walk that never reached `target`.
 pub(crate) fn blocks_path_exists(
     vault: &Vault,
     txn: &RoTxn<'_>,
     start: EntityId,
     target: EntityId,
 ) -> Result<bool> {
+    let scope = [start.as_bytes().as_slice(), target.as_bytes().as_slice()].concat();
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::AudienceEdgeRows, &scope)?;
     let mut visited: HashSet<EntityId> = HashSet::from([start]);
     let mut frontier: VecDeque<EntityId> = VecDeque::from([start]);
-    let mut traversed_steps = 0usize;
 
     while let Some(current) = frontier.pop_front() {
         let peers = vault.filtered_edge_peers(
@@ -332,11 +335,9 @@ pub(crate) fn blocks_path_exists(
             None,
         )?;
         for peer in peers {
-            if traversed_steps >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("blocks readiness walk"));
-            }
-            traversed_steps += 1;
+            count.row();
             if peer == target {
+                count.defer(&vault.store);
                 return Ok(true);
             }
             if visited.insert(peer) {
@@ -345,6 +346,7 @@ pub(crate) fn blocks_path_exists(
         }
     }
 
+    count.defer(&vault.store);
     Ok(false)
 }
 

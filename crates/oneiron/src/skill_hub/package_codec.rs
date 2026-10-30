@@ -170,7 +170,13 @@ pub fn decode_hub_package(raw: &[u8]) -> Result<HubPackage> {
         &mut caps.mcp,
         &mut caps.allowed_tools,
     ] {
-        for _ in 0..count(&mut input, 256)? {
+        // Each entry takes at least one byte, so a count the bytes left
+        // cannot hold is a truncated package; no count is refused for its size.
+        let left = input
+            .get_ref()
+            .len()
+            .saturating_sub(input.position() as usize);
+        for _ in 0..count(&mut input, left)? {
             if !set.insert(text(&mut input, 512)?) {
                 return Err(invalid("duplicate capability"));
             }

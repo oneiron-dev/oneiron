@@ -49,11 +49,16 @@ impl Vault {
         occurred: crate::temporal::TimeRange,
         learned_at: u64,
     ) -> Result<crate::consent::ConsentReceipt> {
+        // The Git adapter accepts `owner/repo` shorthand; normalize through
+        // it before validating so the stored endpoint is the canonical one
+        // the adapter binds imports to.
+        let mut record = record.clone();
         match record.kind {
             super::SkillHubKind::HttpIndex => {
                 super::http_fetch::checked_url(&record.endpoint)?;
             }
             super::SkillHubKind::Git if !std::path::Path::new(&record.endpoint).is_absolute() => {
+                record.endpoint = super::git_fetch::normalize_endpoint(&record.endpoint)?;
                 super::http_fetch::checked_url(&record.endpoint)?;
             }
             super::SkillHubKind::LocalDir
@@ -65,7 +70,7 @@ impl Vault {
             }
             _ => {}
         }
-        let data = super::encode_skill_hub_record(record)?;
+        let data = super::encode_skill_hub_record(&record)?;
         let binding = blake3::hash(&data).to_hex();
         let effect = crate::consent::ComposedEffect::new(crate::consent::EffectFacts::new(
             format!("skill.hub.configure:{}:{binding}:{learned_at}", id.to_hex()),

@@ -65,6 +65,7 @@ pub use evidence::{
     SolvedRunScope, SolvedSource, WORKFLOW_FILING_DOMAIN, WORKFLOW_FILING_PREDICATE,
     WorkflowFiling, workflow_filing_id,
 };
+pub use index::all_groups::all_solved_groups;
 pub use index::{
     DirtySolvedGroup, FailureLineage, Page, PageCursor, ProgramFailureRef, ProgramSeen,
     SOLVED_PAGE, dirty_solved_groups, mark_group_clean, mark_program_seen_in_txn, program_seen,

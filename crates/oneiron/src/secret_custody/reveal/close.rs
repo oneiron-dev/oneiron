@@ -1,7 +1,7 @@
 //! A reveal closed with a named cause when its secret is erased (FIX 8350).
 
-use super::{REVEALS, SecretRevealCause, SecretRevealState};
 use super::notice::settle_reveal_notices_in_txn;
+use super::{REVEALS, SecretRevealCause, SecretRevealState};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
