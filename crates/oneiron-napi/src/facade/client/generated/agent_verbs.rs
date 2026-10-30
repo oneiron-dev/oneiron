@@ -640,6 +640,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_runners_seats_resume(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runners.seats.resume", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_fanout_resume(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.fanout.resume", js_json(input))
@@ -4953,6 +4962,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.lenses.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_propose_from_pack(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.propose_from_pack", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

@@ -235,6 +235,11 @@ pub struct RemoteRung {
     pub embedder: std::sync::Arc<dyn Embedder>,
     pub predicate: std::sync::Arc<dyn EgressPredicate>,
     pub lease_duration_ms: u64,
+    /// The full `model@place` route id minted for this rung at build time
+    /// (FIX 11768 seam for L05): `None` when built without one (tests,
+    /// fixtures, primary rungs), in which case [`Self::offer_id`] is empty
+    /// and no ordered world admits it (fail-closed).
+    pub offer_id: Option<String>,
 }
 
 #[cfg(feature = "sync")]
@@ -250,7 +255,16 @@ impl RemoteRung {
             embedder,
             predicate,
             lease_duration_ms: DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS,
+            offer_id: None,
         }
+    }
+
+    /// The full `model@place` route id carried from build time (FIX 11768
+    /// seam for L05), or empty when none was carried: an unidentified rung
+    /// matches no ordered world (fail-closed).
+    #[must_use]
+    pub fn offer_id(&self) -> String {
+        self.offer_id.clone().unwrap_or_default()
     }
 }
 

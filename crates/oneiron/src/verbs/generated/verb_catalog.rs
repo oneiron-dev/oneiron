@@ -88,6 +88,7 @@ pub enum AgentVerb {
     VaultBudgetsResidentSharesSet,
     VaultRunnersSeatsQuotas,
     VaultRunnersSeatsTopUp,
+    VaultRunnersSeatsResume,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -573,6 +574,7 @@ pub enum AgentVerb {
     VaultSettingsInferenceDefaults,
     VaultSettingsInferenceDefaultsReplace,
     VaultLensesPropose,
+    VaultLensesProposeFromPack,
     VaultLensesActivate,
     VaultLensesDeactivate,
     VaultLensesList,
@@ -1322,6 +1324,7 @@ impl AgentVerb {
         Self::VaultBudgetsResidentSharesSet,
         Self::VaultRunnersSeatsQuotas,
         Self::VaultRunnersSeatsTopUp,
+        Self::VaultRunnersSeatsResume,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -1807,6 +1810,7 @@ impl AgentVerb {
         Self::VaultSettingsInferenceDefaults,
         Self::VaultSettingsInferenceDefaultsReplace,
         Self::VaultLensesPropose,
+        Self::VaultLensesProposeFromPack,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
@@ -2559,6 +2563,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => "vault.budgets.resident_shares.set",
             Self::VaultRunnersSeatsQuotas => "vault.runners.seats.quotas",
             Self::VaultRunnersSeatsTopUp => "vault.runners.seats.top_up",
+            Self::VaultRunnersSeatsResume => "vault.runners.seats.resume",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -3058,6 +3063,7 @@ impl AgentVerb {
                 "vault.settings.inference_defaults.replace"
             }
             Self::VaultLensesPropose => "vault.lenses.propose",
+            Self::VaultLensesProposeFromPack => "vault.lenses.propose_from_pack",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
@@ -3823,6 +3829,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -4308,6 +4315,7 @@ impl AgentVerb {
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
@@ -5086,6 +5094,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -5571,6 +5580,7 @@ impl AgentVerb {
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
@@ -6506,6 +6516,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -6975,6 +6986,7 @@ impl AgentVerb {
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
@@ -7609,6 +7621,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiHoldResume
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -7911,6 +7924,7 @@ impl AgentVerb {
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesResultSetAction
@@ -8295,6 +8309,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordRoomsSuggestSave
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::VaultGraphAsk
@@ -8420,6 +8435,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
+            Self::VaultRunnersSeatsResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -8905,6 +8921,7 @@ impl AgentVerb {
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
             Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesProposeFromPack => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
@@ -9655,6 +9672,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
+            Self::VaultRunnersSeatsResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -10140,6 +10158,7 @@ impl AgentVerb {
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
             Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesProposeFromPack => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
@@ -11052,6 +11071,9 @@ impl AgentVerb {
             }
             Self::VaultRunnersSeatsTopUp => {
                 "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."
+            }
+            Self::VaultRunnersSeatsResume => {
+                "The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
@@ -12487,6 +12509,9 @@ impl AgentVerb {
             }
             Self::VaultLensesPropose => {
                 "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."
+            }
+            Self::VaultLensesProposeFromPack => {
+                "Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it."
             }
             Self::VaultLensesActivate => {
                 "The owner selects a proposed lens revision for its pack slot."

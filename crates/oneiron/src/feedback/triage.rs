@@ -46,6 +46,7 @@ mod source;
 mod work;
 mod work_store;
 
+pub(crate) use self::erased::erase_handoff_in_txn;
 pub(crate) use self::jobs::job_target;
 use self::jobs::{
     attempt_id, attempt_ref, enqueue_triage_in_txn, invalid_job, requeue_unacknowledged,
@@ -229,8 +230,8 @@ pub struct FeedbackTriageHandoff {
     pub handed_off_at: u64,
     /// The committed result; `None` while the revision is unacknowledged.
     pub result: Option<FeedbackTriageResult>,
-    /// Vault seconds a sweep found its evidence ASSET erased by the owner:
-    /// settled with no result, it is never queued again.
+    /// Vault seconds a sweep or the erase path found its evidence ASSET erased by the owner:
+    /// settled, with or without a result, it is never queued again.
     pub erased_at: Option<u64>,
     /// The part and synthesis graph of an item too long for the Coach's
     /// window (FIX 7549), every answer kept; `None` for an item triaged
@@ -560,6 +561,7 @@ fn retain_evidence_in_txn(
     if let Some(raw) =
         crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*txn, evidence)?
     {
+        let raw = vault.materialized_row_in_txn(&*txn, evidence, raw)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("feedback triage evidence header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_ASSET
