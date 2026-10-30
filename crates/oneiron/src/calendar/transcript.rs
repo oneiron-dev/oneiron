@@ -555,13 +555,28 @@ fn persist_note_fallback(
 ) -> crate::Result<TranscriptIngestOutcome> {
     let at = request.arrived_at_ms / 1_000;
     let actor = file_drop_import_actor(vault, at)?;
+    let world = source_world(vault, request.source_blob_ref)?;
     let receipt = vault
         .memory(actor, EdgeActorClass::System)
-        .author_take(
+        .author_take_in_world(
             TakeTarget::Subject(request.source_blob_ref),
             request.decoded_text.trim().to_owned(),
+            world,
         )
         .map_err(|_| crate::Error::InvalidClaimBody("file-drop NOTE fallback refused"))?;
     let note_ref = crate::EntityId::from_hex(&receipt.id_hex)?;
     Ok(TranscriptIngestOutcome::NoteFallback { note_ref })
+}
+
+/// The world a transcript source sits in, as its stored record places it
+/// (`Vault::record_world`): the fallback NOTE is born there, and `None` is
+/// base reality (FIX 10725). A source whose world does not read lands no
+/// NOTE rather than a base one.
+fn source_world(
+    vault: &crate::Vault,
+    source: crate::EntityId,
+) -> crate::Result<Option<crate::EntityId>> {
+    vault
+        .record_world(&source)?
+        .ok_or(crate::Error::EntityNotFound)
 }

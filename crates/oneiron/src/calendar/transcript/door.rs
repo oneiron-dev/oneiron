@@ -82,8 +82,11 @@ impl Memory<'_> {
         let outcome = match parsed {
             TranscriptParse::NoteFallback { text } => {
                 // NOTE authorship uses the caller's own gate, never the host
-                // import MACHINE's system-class policy.
-                let receipt = self.author_take(TakeTarget::Subject(source), text)?;
+                // import MACHINE's system-class policy; the NOTE is born in
+                // its source's world.
+                let world = super::source_world(vault, source)?;
+                let receipt =
+                    self.author_take_in_world(TakeTarget::Subject(source), text, world)?;
                 TranscriptIngestOutcome::NoteFallback {
                     note_ref: EntityId::from_hex(&receipt.id_hex)?,
                 }
