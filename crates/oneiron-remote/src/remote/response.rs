@@ -47,6 +47,8 @@ struct ApiErrorBody {
     /// The refusal's stable reason codes, in order (FIX 7398).
     #[serde(default, rename = "reasonCodes")]
     reason_codes: Vec<String>,
+    #[serde(default)]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -188,6 +190,7 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         retry_after: envelope.error.retry_after,
         resets_at: envelope.error.resets_at,
         reason_codes: envelope.error.reason_codes,
+        legal_hold: envelope.error.legal_hold,
     })
 }
 

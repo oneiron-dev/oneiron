@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1207 facade rows, 4356 generated types.
+// UniFFI census: 1207 facade rows, 4358 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1159.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -54737,6 +54737,29 @@ pub enum WireRefusalReason {
     GateRefused,
 }
 
+/// `oneiron_contracts::error::legal_hold::LegalHoldState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LegalHoldState {
+    #[serde(rename = "retained_for_law")]
+    RetainedForLaw,
+    #[serde(rename = "use_restricted")]
+    UseRestricted,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldNotice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldNotice {
+    #[serde(rename = "state")]
+    pub state: LegalHoldState,
+    #[serde(rename = "bound")]
+    pub bound: LegalHoldBound,
+    #[serde(rename = "works_self_hosted")]
+    pub works_self_hosted: bool,
+    #[serde(rename = "self_hosted_note")]
+    pub self_hosted_note: String,
+}
+
 /// `oneiron::memory::claims::RecordRefusal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WireRecordRefusal {
@@ -54750,6 +54773,12 @@ pub struct WireRecordRefusal {
     pub suggestions: Vec<String>,
     #[serde(rename = "field")]
     pub field: String,
+    #[serde(
+        rename = "legal_hold",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_hold: Option<LegalHoldNotice>,
 }
 
 /// `oneiron::memory::claims::CommitOutcome`.
@@ -57391,6 +57420,12 @@ pub struct MemoryError {
         skip_serializing_if = "Option::is_none"
     )]
     pub reason_codes: Option<Vec<String>>,
+    #[serde(
+        rename = "legal_hold",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_hold: Option<LegalHoldNotice>,
     #[serde(flatten)]
     pub memory_wrong_root: Option<MemoryWrongRoot>,
 }
