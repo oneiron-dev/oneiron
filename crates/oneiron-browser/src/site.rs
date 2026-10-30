@@ -221,4 +221,9 @@ pub trait SiteSkillLoader: Send + Sync {
     /// The program and provenance `candidate`'s exact bytes hold, checked
     /// against the digest its import pinned (CALL 7).
     fn seed(&self, candidate: &str) -> Result<SeedBody, SiteSkillError>;
+
+    /// Told once `matches` went out on observation `seq` of `scope`, so the
+    /// host can record what its run was shown (FIX 11436). Does nothing by
+    /// default.
+    fn note_delivered(&self, _seq: u64, _scope: &str, _matches: &[SiteSkillMatch]) {}
 }

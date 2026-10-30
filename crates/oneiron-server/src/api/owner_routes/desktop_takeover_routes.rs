@@ -17,7 +17,6 @@ use std::convert::Infallible;
 use std::sync::{Arc, PoisonError, TryLockError};
 use std::time::Duration;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::header;
@@ -30,7 +29,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron_browser::{BrowserError, DesktopSession, PersonInput, Takeover, TakeoverRecord};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -44,14 +43,63 @@ use crate::server::{DesktopSeats, RunSeats, Seat, SeatGuest, SyncServer};
 /// keeps the same pace.
 const FRAME_EVERY: Duration = Duration::from_millis(500);
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/desktops", get(list))
-        .route("/desktops/take", post(take))
-        .route("/desktops/screen", post(screen))
-        .route("/desktops/stream", get(stream))
-        .route("/desktops/input", post(input))
-        .route("/desktops/return", post(hand_back))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/desktops",
+                summary: "Each bound run desktop whose guest started, with who has it, the agent's ask while it waits, and the holder's count of inputs.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/take",
+                summary: "The owner holds the run's desktop, asked or not, once the agent's call in flight ends.",
+                row: None,
+            },
+            post(take),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/screen",
+                summary: "The whole display as a PNG, unmasked, for the owner only: never kept, never a receipt.",
+                row: None,
+            },
+            post(screen),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/desktops/stream",
+                summary: "The run desktop's whole display as server-sent events while the owner watches or holds it: state, frame (changed PNGs as base64, paced), error, ended and refused events.",
+                row: None,
+            },
+            get(stream),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/input",
+                summary: "One click, type, key, hotkey or scroll from the owner who holds the desktop, at the pixels of the screen they were last shown.",
+                row: None,
+            },
+            post(input),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/return",
+                summary: "The owner hands the desktop back, from holding it or from the agent's ask unanswered.",
+                row: None,
+            },
+            post(hand_back),
+        ),
+    ]
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]

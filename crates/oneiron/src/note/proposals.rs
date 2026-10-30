@@ -574,7 +574,7 @@ pub(super) fn land(
             .memory(actor.entity_ref(), actor.actor_class())
             .apply_note_operation_in_txn(txn, fork.note, &operation, None)
             .map_err(|_| invalid("canonical NOTE proposal admission failed"))?;
-        if matches!(receipt.outcome, super::NoteEditOutcome::Proposed(_)) {
+        if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {
             return Ok(None);
         }
     }

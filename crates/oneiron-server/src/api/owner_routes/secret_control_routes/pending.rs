@@ -8,20 +8,38 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::super::{OwnerReply, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::pending_custody::{self, PendingPage, ReceiptView};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/secrets/custody/pending", get(pending).post(release))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/custody/pending",
+                summary: "Each restore batch whose credentials wait on their source's evidence, by handle, and each batch an owner kept, with its receipt and a generic owner card.",
+                row: None,
+            },
+            get(pending),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/custody/pending",
+                summary: "With {\"batch\", \"confirm\": \"keep_without_source\"}: keeps the batch without its source's evidence, the owner's election; returns its receipt.",
+                row: None,
+            },
+            post(release),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/custody/pending`'s body (FIX 11611):

@@ -47,7 +47,8 @@ use super::validate::{
     validate_endpoint, validate_execution_budget, validate_exhaust,
 };
 use super::work_binding::{
-    RunnerWorkBinding, SpentCapture, capture_seat_in_txn, note_spent_hop_in_txn,
+    RunnerWorkBinding, SpentCapture, capture_hop_seat_quota_in_txn, capture_seat_in_txn,
+    note_spent_hop_in_txn,
 };
 use super::work_resume::moved_on_in_txn;
 /// Resolves an endpoint config into a concrete host-owned backend.
@@ -440,8 +441,13 @@ where
                 return Ok(route);
             }
             let seat = capture_seat_in_txn(self.vault, wtxn, policy, &receipt, seat)?;
-            let ran = policy.seat(seat)?;
-            record_seat_quota_in_txn(self.vault, wtxn, ran, &receipt.attempt, spent.as_ref())?;
+            let ran = match seat {
+                Some(index) => Some(policy.seat(index)?),
+                None => None,
+            };
+            if let Some(ran) = ran {
+                record_seat_quota_in_txn(self.vault, wtxn, ran, &receipt.attempt, spent.as_ref())?;
+            }
             let Some(spent) = spent else {
                 return Ok(SeatRoute::Settled(receipt));
             };
@@ -469,14 +475,11 @@ where
             };
             // A bound work the spend kept on this seat notes it for its outcome.
             if !matches!(route, SeatRoute::NextSeat { .. }) {
-                note_spent_hop_in_txn(
-                    self.vault,
-                    wtxn,
-                    route.receipt(),
-                    seat,
-                    *seat_quota_id(ran)?.as_bytes(),
-                    &spent,
-                )?;
+                let (seat, quota) = match seat {
+                    Some(index) => (index, *seat_quota_id(policy.seat(index)?)?.as_bytes()),
+                    None => capture_hop_seat_quota_in_txn(self.vault, wtxn, route.receipt())?,
+                };
+                note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, quota, &spent)?;
             }
             Ok(route)
         })

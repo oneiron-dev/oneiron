@@ -8,8 +8,8 @@
 //! written before the body filer, whose raw bytes carry no envelope —
 //! fails as [`OutboundFailureKind::InvalidRequest`], never as a literal
 //! fallback or a second send. The leg's `SenderTransport` drops this
-//! sender's raw result (it forwards only the outcome and the remote
-//! task), so the raw result stays empty on every path.
+//! sender's raw result (it forwards only the outcome, the remote task,
+//! and the provider wait), so the raw result stays empty on every path.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -21,11 +21,12 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::outbound::{
     OutboundExecutionOutcomeKind, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
     OutboundIntentDraft, OutboundIntentTrigger, OwnedServedChannelSink, outbound_verb_contract,
+    provider_retry_after_secs,
 };
 use crate::outbound_consent::{OutboundResultSender, OutboundTransportResult, RawOutboundResult};
 use crate::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
-    RemoteTaskHandle,
+    ProviderWait, RemoteTaskHandle,
 };
 
 /// The enrollment leg's frozen envelope, v1: the resolved target, the
@@ -48,6 +49,7 @@ pub struct CampaignChannelSender {
     vault: Arc<Vault>,
     sink: OwnedServedChannelSink,
     remote: Option<RemoteTaskHandle>,
+    provider_wait: Option<ProviderWait>,
 }
 
 impl CampaignChannelSender {
@@ -60,13 +62,16 @@ impl CampaignChannelSender {
             vault: Arc::clone(&vault),
             sink: OwnedServedChannelSink::new(vault, line_push_allowance),
             remote: None,
+            provider_wait: None,
         }
     }
 
     /// Certain non-delivery: the frozen call is not a sendable campaign
-    /// envelope. Any stale remote handle is dropped with it.
+    /// envelope. Any stale remote handle and provider wait are dropped
+    /// with it.
     fn invalid(&mut self) -> OutboundTransportResult {
         self.remote = None;
+        self.provider_wait = None;
         OutboundTransportResult {
             outcome: OutboundSendOutcome::Failed(OutboundSendFailure {
                 kind: OutboundFailureKind::InvalidRequest,
@@ -154,6 +159,19 @@ impl OutboundResultSender for CampaignChannelSender {
             OutboundExecutionOutcomeKind::Deferred => execution.remote_task.clone(),
             _ => None,
         };
+        // Only a Failed definite non-delivery the provider refused for rate
+        // or quota hands a wait on (the dispatch pipeline's FIX 8818
+        // predicate, transport.rs); any other outcome drops the stale one,
+        // so `provider_wait` never answers for an older send.
+        self.provider_wait = match execution.kind {
+            OutboundExecutionOutcomeKind::Failed if !execution.delivery_may_have_occurred => {
+                execution.provider_wait.map(|kind| ProviderWait {
+                    kind,
+                    retry_after_secs: provider_retry_after_secs(&execution),
+                })
+            }
+            _ => None,
+        };
         OutboundTransportResult {
             outcome,
             raw_result: RawOutboundResult::new(None, None, None, None),
@@ -162,5 +180,9 @@ impl OutboundResultSender for CampaignChannelSender {
 
     fn remote_task(&self) -> Option<RemoteTaskHandle> {
         self.remote.clone()
+    }
+
+    fn provider_wait(&self) -> Option<ProviderWait> {
+        self.provider_wait
     }
 }

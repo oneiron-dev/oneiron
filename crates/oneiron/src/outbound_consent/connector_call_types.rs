@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::ConnectorCallRoute;
 use crate::entity_id::EntityId;
-use crate::secret_custody::SentPresentation;
+use crate::secret_custody::{RunSecretHolder, SentPresentation};
 use crate::secret_lease::SecretGrantRef;
 
 use super::result_scrub::OutboundResultSender;
@@ -180,13 +180,17 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// from here on, in place of the route's own secret, through the
     /// credential door for the route's effector; `None` goes back to the
     /// route's. With a `grant`, each send redeems it at its door
-    /// (`Vault::redeem_secret_grant_at_door`) instead. False when this host
-    /// cannot present a record or a grant: a call that names one is then
-    /// refused unsent.
+    /// (`Vault::redeem_secret_grant_at_door`) instead. A record the use's
+    /// own `run` found presents through that run's seat binding, under the
+    /// route effector's door policy (`Vault::with_run_secret_for`, FIX
+    /// 8334), in each send and each live exchange taken up again. False
+    /// when this host cannot present a record or a grant: a call that names
+    /// one is then refused unsent.
     fn present_credential(
         &mut self,
         credential: Option<EntityId>,
         grant: Option<SecretGrantRef>,
+        _run: Option<RunSecretHolder>,
     ) -> bool {
         credential.is_none() && grant.is_none()
     }

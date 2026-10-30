@@ -12,7 +12,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::secret_custody::SentPresentation;
+use crate::secret_custody::{RunSecretHolder, SentPresentation};
 use crate::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use crate::vault::Vault;
 
@@ -27,13 +27,16 @@ impl ProviderConnectionChecks {
     /// leaves; beside the record presented and the generation its door
     /// released, when it released one. The door presents `custody`, the
     /// record the use's handle resolved to, by its id, so a name
-    /// re-registered since the use was admitted cannot swap it. A door that
-    /// refuses sends nothing and answers with its refusal, as `verify` does.
+    /// re-registered since the use was admitted cannot swap it; a record
+    /// the user's own `run` found goes through that run's seat binding, by
+    /// its handle (FIX 8334). A door that refuses sends nothing and answers
+    /// with its refusal, as `verify` does.
     pub(crate) fn verify_cleared(
         &self,
         vault: &Vault,
         check: &PackConnectionCheck<'_>,
         custody: &EntityId,
+        run: Option<&RunSecretHolder>,
         scrub: &dyn Fn(&mut String, &[u8]),
     ) -> (Checked, Option<SentPresentation>) {
         let (method, url) = match provider_call(check.check) {
@@ -47,14 +50,17 @@ impl ProviderConnectionChecks {
             );
         };
         let mut answer = None;
-        let door = vault.present_resolved_secret_at_door(
-            custody,
-            &secret.effector,
-            &mut |value: &[u8]| {
-                answer = Some(self.cleared_check(check.check, &method, url, value, scrub));
-                Ok(())
-            },
-        );
+        let mut present = |value: &[u8]| -> Result<()> {
+            answer = Some(self.cleared_check(check.check, &method, url, value, scrub));
+            Ok(())
+        };
+        let door = match run {
+            Some(run) => {
+                let handle = vault.secret_clear_text(Some(custody));
+                vault.with_run_secret_for(run, &handle, &secret.effector, &mut present)
+            }
+            None => vault.present_resolved_secret_at_door(custody, &secret.effector, &mut present),
+        };
         match door {
             Ok(receipt) => (
                 answer.unwrap_or_else(|| Err("the check did not run".to_owned())),
