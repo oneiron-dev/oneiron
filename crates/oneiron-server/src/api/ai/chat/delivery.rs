@@ -101,8 +101,14 @@ pub(in crate::api::ai::chat) fn streamed(
 }
 
 /// The whole-message answer, once the reply is saved. A reply cut short is
-/// answered as saved and incomplete; one that saved nothing is an error.
-pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
+/// answered as saved and incomplete; one that saved nothing is an error. A
+/// claimed invocation stays claimed until the producer ends, not until this
+/// request's future does, and keeps this reply for each duplicate (FIX 12315).
+pub(in crate::api::ai::chat) async fn whole(
+    started: Started,
+    claim: Option<InvocationClaim>,
+) -> Response {
+    let started = kept_on_claim(started, claim);
     let Started {
         conversation_ref,
         turn,
@@ -157,8 +163,8 @@ pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
 
 /// `started` with its reply kept on `claim` for each duplicate of the turn
 /// (FIX 2004): once the producer ends, the claim saves the answer [`whole`]
-/// would send ([`whole_reply`]), and the outcome goes on to the stream.
-/// Unclaimed, `started` is as it was.
+/// would send ([`whole_reply`]), and the outcome goes on to the stream or to
+/// [`whole`] (FIX 12315). Unclaimed, `started` is as it was.
 fn kept_on_claim(mut started: Started, claim: Option<InvocationClaim>) -> Started {
     let Some(claim) = claim else {
         return started;

@@ -494,7 +494,7 @@ pub(super) async fn chat_turn(
     let read = recall::TurnRead { mark, board };
     let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
         Ok(started) if started.stream => return streamed(started, claim),
-        Ok(started) => whole(started).await,
+        Ok(started) => return whole(started, claim).await,
         Err(refused) => *refused,
     };
     match claim {
