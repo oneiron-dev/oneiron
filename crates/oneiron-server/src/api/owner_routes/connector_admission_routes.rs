@@ -21,6 +21,9 @@
 //! `/slate/staged/accept` stamps it, and `/qualify` or `/attest` swaps it
 //! in. A catalog's per-grant keys follow each of these.
 //!
+//! `/charter`, `/charter/propose`, `/charter/approve` and `/charter/discard`
+//! are the owner's GOV-10 charter on the connector's key (FIX 11680).
+//!
 //! `/proxy` admits the OpenAI proxy for one paired actor (ARCH-0028): its
 //! own key on the proxy connector, over the proxy's fixed slate, stamped by
 //! the owner. No endpoint is listed and no suite runs.
@@ -68,9 +71,11 @@ const CATALOG_CALL_CLASS: ConnectorCallClass = ConnectorCallClass::ScopedMcp;
 const OWNER_OFF_REASON: &str = "switched off by the owner";
 
 mod admitted;
+mod charter;
 mod qualify;
 mod table;
 use self::admitted::{accept_staged, enabled, refresh};
+use self::charter::{approve_charter, charter, discard_charter, propose_charter};
 pub(crate) use self::qualify::qualify_connector;
 use self::qualify::{attest, qualify};
 pub(super) use self::table::owner_table;
