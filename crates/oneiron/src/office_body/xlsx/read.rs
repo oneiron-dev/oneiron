@@ -97,12 +97,12 @@ pub(in crate::office_body) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<(
 pub(in crate::office_body) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
     let office = doc.get_map(OFFICE);
     let LoroValue::Map(meta) = office.get_value() else {
-        return Err(invalid("not a schema-1 XLSX body"));
+        return Err(invalid(&format!("not a schema-{SCHEMA} XLSX body")));
     };
     if string(&meta, "kind").as_deref() != Some("xlsx")
         || meta.get("schema") != Some(&LoroValue::I64(i64::from(SCHEMA)))
     {
-        return Err(invalid("not a schema-1 XLSX body"));
+        return Err(invalid(&format!("not a schema-{SCHEMA} XLSX body")));
     }
     let list = |key: &str| match meta.get(key) {
         Some(LoroValue::List(list)) => Ok(list.clone()),
