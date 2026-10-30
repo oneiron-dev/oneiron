@@ -305,7 +305,8 @@ fn booking_is_active_future_for(
             continue;
         };
         // The engine's surfaceable record only, as the lifecycle writer reads
-        // it: a pending proposal beside it must not shrink this tally.
+        // it: a pending proposal beside it must not shrink this tally, and a
+        // record awaiting its owner's critical confirm does not count yet.
         if body.lifecycle != ClaimLifecycleStatus::Active
             || body.stale
             || !matches!(
@@ -313,6 +314,9 @@ fn booking_is_active_future_for(
                 ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
             )
             || body.subject != ClaimSubject::Entity(event_ref)
+            || !vault
+                .claim_critical_confirm_settled(&claim_id)
+                .map_err(engine_read_error)?
         {
             continue;
         }
