@@ -295,14 +295,15 @@ pub(crate) async fn start_desktop_workers(
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
     // The server's own voice loop (OF-410): off unless `[models.voice]`
-    // names its socket. A call is the owner's foreground work, as on a
-    // managed host: it stays admitted past the vault's deletion.
+    // names its socket. A call is the owner's foreground work: one in flight
+    // runs on, but no new call is admitted past the vault's deletion
+    // (FIX 12039), as on a managed host.
     #[cfg(unix)]
     let voice = crate::voice_host::VoiceBoot::start(
         &sync_server,
         config.models.as_ref().map(|models| &models.voice),
         None,
-        crate::server::admit_every_pass(),
+        admitted(),
     );
     let tagger = sync_server
         .tagger

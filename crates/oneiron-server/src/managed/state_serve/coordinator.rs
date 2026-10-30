@@ -562,7 +562,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // the vault's owner, or on the owner's own slip from a machine that
         // stands as his enrolled device (FIX 1949 = B), and is admitted like a
         // served write for its whole length: a call in flight keeps a reap from
-        // finding the vault quiescent, and a frozen vault takes no call.
+        // finding the vault quiescent; a frozen vault takes no call, and a
+        // deleted vault takes none either (FIX 12039).
         #[cfg(unix)]
         let voice = crate::voice_host::VoiceBoot::start(
             &sync_server,
@@ -579,7 +580,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                     },
                 )
             }),
-            state.background_admission(WriteKind::OwnerWrite),
+            state.voice_admission(),
         );
         // The supervisor reaches the loop on the vault VM's voice port.
         #[cfg(unix)]

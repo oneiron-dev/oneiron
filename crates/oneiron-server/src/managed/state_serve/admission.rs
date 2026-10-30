@@ -333,6 +333,24 @@ impl ManagedState {
         Arc::new(move || state.admit_background(kind))
     }
 
+    /// Admits a new voice call (FIX 12039): an `OwnerWrite` for its whole
+    /// length, as a served write. Once the vault's deletion marker is present
+    /// no new call is admitted, logged once; a call in flight runs on under
+    /// the freeze as today. Every other `OwnerWrite` stays as
+    /// [`Self::admit_background`] leaves it.
+    pub(super) fn admit_voice_call(&self) -> Option<Box<dyn Send>> {
+        if self.admission.deletion.stops_pass(self.server.vault()) {
+            return None;
+        }
+        self.admit_pass(WriteKind::OwnerWrite)
+    }
+
+    /// [`Self::admit_voice_call`] as the admission the voice loop takes per call.
+    pub(super) fn voice_admission(self: &Arc<Self>) -> HousekeepingAdmission {
+        let state = Arc::clone(self);
+        Arc::new(move || state.admit_voice_call())
+    }
+
     /// The admission of a pass a deleted vault still runs (FIX 11710): a
     /// backup schedule tick, whose whole pass reaches the drop of the
     /// vault's backups at their deadline, and a custody publication pass,
