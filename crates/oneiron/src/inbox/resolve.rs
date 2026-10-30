@@ -103,7 +103,7 @@ impl Vault {
         self.resolve_inbox_group_bound_at(group_key, verb, None, now, Some((actor, target)))
     }
 
-    fn resolve_inbox_group_bound_at(
+    pub(super) fn resolve_inbox_group_bound_at(
         &self,
         group_key: &str,
         verb: InboxBulkVerb,
