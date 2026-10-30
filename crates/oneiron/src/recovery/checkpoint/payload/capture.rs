@@ -24,9 +24,14 @@ use crate::store::checkpoint_payload::CHECKPOINT_PAYLOADS_ENABLED;
 use crate::store::checkpoint_payload::rows::OwnerRef;
 
 /// What a capture hands its artifact once its rows are sealed: the
-/// payload's section and streams.
+/// payload's section and streams, and what its receipt names.
 pub(in crate::recovery::checkpoint) struct CapturedPayload {
     pub(in crate::recovery::checkpoint) streams: PayloadStreams,
+    /// The rows the image keeps that no compartment holds, counted by
+    /// family ([`super::NOT_COMPARTMENTED`]).
+    pub(in crate::recovery::checkpoint) not_compartmented: BTreeMap<String, u64>,
+    /// Each registry gap the capture rode past, one line each (KS7-6).
+    pub(in crate::recovery::checkpoint) registry_gaps: Vec<String>,
 }
 
 /// Where the rows of the image `txn` reads go (KS7-2b), through `filter`,
@@ -119,7 +124,15 @@ pub(in crate::recovery::checkpoint) fn seal_image(
             "not compartmented: erase can't reach these families' rows in this checkpoint"
         );
     }
-    Ok(Some(CapturedPayload { streams }))
+    Ok(Some(CapturedPayload {
+        streams,
+        not_compartmented: projected
+            .not_compartmented
+            .iter()
+            .map(|(family, rows)| ((*family).to_owned(), *rows))
+            .collect(),
+        registry_gaps: projected.findings.iter().map(ToString::to_string).collect(),
+    }))
 }
 
 /// Every whole structure row a getter keeps that holds an id link, with

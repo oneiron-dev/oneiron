@@ -381,6 +381,10 @@ impl Vault {
             elapsed_ms = elapsed_ms(started),
             "checkpoint snapshot: receipt"
         );
+        // What its payload left under the vault-wide seal, and why (KS7-6).
+        let (not_compartmented, payload_registry_gaps) = payload
+            .map(|payload| (payload.not_compartmented, payload.registry_gaps))
+            .unwrap_or_default();
         Ok(Some(BackupSnapshotReceipt {
             image_digest: blake3::Hash::from(id).to_hex().to_string(),
             covered: mark.covered(),
@@ -388,6 +392,8 @@ impl Vault {
             checkpoint_fact,
             host_holds: host_holds_availability,
             pads_carried,
+            not_compartmented,
+            payload_registry_gaps,
         }))
     }
 
