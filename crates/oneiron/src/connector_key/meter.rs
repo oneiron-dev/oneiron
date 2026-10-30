@@ -37,7 +37,9 @@ use self::row::row_ordinal;
 pub use self::row::{
     EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource,
 };
-pub(crate) use self::spend_reserve::{SpendReserve, reserve_connector_spend_in_txn};
+pub(crate) use self::spend_reserve::{
+    SpendReserve, reconcile_connector_spend_in_txn, reserve_connector_spend_in_txn,
+};
 
 /// vault_meta usage rows: key id (16 bytes) ++ row source tag u8 ++ row
 /// ordinal u64 BE (`EffectorBudgetRowId::usage_key`) -> canonical msgpack

@@ -15,8 +15,8 @@ use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
     IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
     RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry,
-    complete_record_bridged, defer_record, provider_wait_edge, record_definite_non_delivery,
-    record_possible_delivery, record_provider_refusal,
+    complete_record_bridged, defer_record, keep_reported_cost, provider_wait_edge,
+    record_definite_non_delivery, record_possible_delivery, record_provider_refusal,
 };
 
 /// The receipt reason a send held by its provider's stated wait carries
@@ -375,6 +375,19 @@ fn send_pending_with_gate<T: OutboundTransport>(
     vault.resume_from_slim_on_inbound()?;
     match outcome {
         OutboundSendOutcome::Acked => {
+            // FIX 11662: the actual cost the provider reported is kept with
+            // the send before its Done, which reconciles the preauthorized
+            // spend to it. A write that fails never fails the delivered
+            // send: its declared price stays the charge.
+            if let Some(cost) = transport.reported_cost()
+                && let Err(error) = keep_reported_cost(vault, &record.id, cost)
+            {
+                tracing::warn!(
+                    reason = "outbound_reported_cost_unkept",
+                    %error,
+                    "a delivered send's reported cost was not kept; its estimate stays its charge"
+                );
+            }
             // A turn program's send settles its step in the Done commit,
             // with the body its transport returned (DOOR-141 PR2); any
             // other send writes nothing more, and nothing here fails it.
