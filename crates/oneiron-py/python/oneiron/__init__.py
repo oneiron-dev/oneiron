@@ -3520,6 +3520,9 @@ class Oneiron:
         def propose(self, spec):
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."""
             return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
+        def propose_from_pack(self, spec):
+            """Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_propose_from_pack(json.dumps(spec))))
         def activate(self, spec):
             """The owner selects a proposed lens revision for its pack slot."""
             return json.loads(_translate(lambda: self._client.vault_lenses_activate(json.dumps(spec))))

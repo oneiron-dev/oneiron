@@ -1949,6 +1949,8 @@ export class Oneiron {
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),
+      /** Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it. */
+      propose_from_pack: (input: Facade.PackLensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesProposeFromPack(input) as Facade.LensProposalReceipt),
       /** The owner selects a proposed lens revision for its pack slot. */
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
       /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
