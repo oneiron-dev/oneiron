@@ -356,13 +356,13 @@ side_tables! {
     /// One compiled acting revision (a charter or brief revision compiled from one principal's
     /// approved preferences) and its answer. Key: string (revision id, 64 hex).
     EDIT_DISTANCE_ACTING_REVISION: VaultMeta b"edit_distance/acting_revision/v1\0" Named;
+    /// Amendment cause rows by the attempt receipt they name, so the nightly agent-health pass
+    /// looks them up instead of scanning (FIX 11639). Key: id32 + id32 + string.
+    EDIT_DISTANCE_AMENDMENT_ATTEMPT: VaultMeta b"edit_distance/amendment_attempt/v1\0" Raw;
     /// One amendment judgment's labels kept write-once per receipt and judge revision (FIX 11638);
     /// a project's erase re-keys the project it names. Key: id32 + string.
     EDIT_DISTANCE_AMENDMENT_CAUSE: VaultMeta b"edit_distance/amendment_cause/v1\0" Raw
         => crate::edit_distance::attribution::erase_amendment_project_in_txn;
-    /// Amendment cause rows by the attempt receipt they name, so the nightly agent-health pass
-    /// looks them up instead of scanning (FIX 11639). Key: id32 + id32 + string.
-    EDIT_DISTANCE_AMENDMENT_ATTEMPT: VaultMeta b"edit_distance/amendment_attempt/v1\0" Raw;
     /// Write-once Δ side-ledger row for one receipt: a captured edit-distance measurement (canonical
     /// JSON), or the literal marker "uncaptured" when capture was attempted and failed. Key: string.
     EDIT_DISTANCE_AMENDMENT_DELTA: VaultMeta b"edit_distance/amendment_delta/v1\0" Raw;
