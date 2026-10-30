@@ -1,7 +1,11 @@
 //! Schema version, vault-meta predicates, the autonomy rung, envelope/candidate/mode/request/state shapes and the graduation shapes.
 
+use std::collections::BTreeMap;
+
 use crate::access_grant::AccessGrant;
-use crate::channel_identity_selection::RelationshipContext;
+use crate::channel_identity_selection::{
+    ChannelIdentityFace, RelationshipContext, SelectionRuleScope,
+};
 use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrant;
 
@@ -102,6 +106,13 @@ pub struct SendAutonomyContext {
     /// None is an unclassified counterparty: as on an envelope, it matches
     /// only an unclassified envelope, never a class-pinned one.
     pub counterparty_class: Option<String>,
+    /// The selection scope keys that apply to this send.
+    pub applicable_scopes: Vec<SelectionRuleScope>,
+    /// The host's face for each identity of the sending actor it offers on
+    /// this send: its face classifier's answers. An unpinned send with faces
+    /// selects its sender by the vault's selection law; with none it takes
+    /// the connector's unique identity.
+    pub identity_faces: BTreeMap<EntityId, ChannelIdentityFace>,
 }
 
 impl SendAutonomyContext {
@@ -112,7 +123,23 @@ impl SendAutonomyContext {
         Self {
             relationship,
             counterparty_class: send_counterparty_class(explicit_class),
+            applicable_scopes: Vec::new(),
+            identity_faces: BTreeMap::new(),
         }
+    }
+
+    /// This context with the scope keys and identity faces the host's
+    /// selection query used, so the send's dispatch selects its sender by
+    /// the same law.
+    #[must_use]
+    pub fn with_selection(
+        mut self,
+        applicable_scopes: Vec<SelectionRuleScope>,
+        identity_faces: BTreeMap<EntityId, ChannelIdentityFace>,
+    ) -> Self {
+        self.applicable_scopes = applicable_scopes;
+        self.identity_faces = identity_faces;
+        self
     }
 }
 

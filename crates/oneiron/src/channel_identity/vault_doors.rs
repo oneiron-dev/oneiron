@@ -111,13 +111,34 @@ impl Vault {
         request: DelegatedProvisionRequest,
         requested_at: u64,
     ) -> Result<ChannelIdentity> {
+        Ok(self
+            .provision_delegated_identity_with_custody_record_in_txn(
+                wtxn,
+                id,
+                request,
+                requested_at,
+            )?
+            .0)
+    }
+
+    /// [`Self::provision_delegated_identity_in_txn`], also answering the
+    /// custody record the proof resolved the grant's name to in that same
+    /// transaction, so a caller that lists what the provision read names the
+    /// record the proof stood on.
+    pub(crate) fn provision_delegated_identity_with_custody_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        request: DelegatedProvisionRequest,
+        requested_at: u64,
+    ) -> Result<(ChannelIdentity, EntityId)> {
         if self.store.port_entity_record(wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         // The proof borrows `wtxn`; the block ends the borrow before the write
-        // takes it mutably, and the row it produced outlives it because a row
-        // carries names, never evidence.
-        let identity = {
+        // takes it mutably, and the row and record id it produced outlive it
+        // because they carry names and ids, never evidence.
+        let (identity, custody_record) = {
             let channel_key = ChannelKey::normalize(&request.channel);
             let address =
                 AssignmentAddress::normalize(channel_key.as_str(), &request.address_or_handle);
@@ -128,14 +149,15 @@ impl Vault {
                 address.as_str(),
                 &request.grant,
             )?;
-            ChannelIdentity::requested_delegated(
+            let identity = ChannelIdentity::requested_delegated(
                 channel_key.as_str(),
                 address.as_str(),
                 request.binding,
                 request.grant,
                 &proof,
                 requested_at,
-            )?
+            )?;
+            (identity, proof.custody_record_id())
         };
         let data = encode_channel_identity_body(&identity)?;
         admit_channel_identity_transition_in_txn(
@@ -145,7 +167,7 @@ impl Vault {
             IdentityTransition::Birth { next: &identity },
         )?;
         self.apply_channel_identity_body(wtxn, id, requested_at, data)?;
-        Ok(identity)
+        Ok((identity, custody_record))
     }
 
     /// Verifies the custody record a delegated grant names for

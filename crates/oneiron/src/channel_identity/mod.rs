@@ -95,6 +95,7 @@ pub(crate) use self::codec::validate_channel_identity_put_carrier;
 #[cfg(test)]
 use self::record::StoredIdentityParts;
 pub use self::sender::ChannelIdentityFaceClassifier;
+pub(crate) use self::sender::channel_identity_selection_candidates_in_txn;
 pub(crate) use self::sender::channel_identity_send_holder_in_txn;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;
 pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
