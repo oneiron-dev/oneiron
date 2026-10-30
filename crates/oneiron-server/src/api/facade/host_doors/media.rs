@@ -257,7 +257,7 @@ fn step_replay(attempt: Option<&str>, request: &MediaRequest) -> Option<MediaRep
 /// inside the run's own partition: its name under `run:`, which no owner's
 /// call shares (FIX 2962 keeps owner keys in [`OWNER_REPLAY_PARTITION`]);
 /// none without a key, or with an empty one. Two runs that send one key
-/// keep two answers, one per run, as two owners' credentials do.
+/// keep two answers, one per run, as two HTTP credentials do.
 fn run_replay(
     run: &RunAdmission,
     key: Option<String>,
