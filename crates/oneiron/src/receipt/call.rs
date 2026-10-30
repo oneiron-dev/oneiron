@@ -120,6 +120,7 @@ pub struct CallReceipt {
     /// The linked machine that carried a forwarded call (FIX 3550), as
     /// canonical hex, when the caller named above is the one a device
     /// forwarded to its home; `None` for a call its own connection made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carrier_machine: Option<String>,
     pub outcome: CallOutcome,
     /// BLAKE3 of the canonical input JSON, lowercase hex.
