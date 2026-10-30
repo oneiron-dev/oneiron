@@ -39,6 +39,7 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
+mod engine_offer;
 mod standing;
 
 /// Pinned label of the typed contact-disclosure widen payload.
@@ -506,7 +507,7 @@ impl Vault {
             };
             self.file_contact_disclosure_offer_in_txn(
                 txn,
-                &actor.entity_ref(),
+                actor,
                 &proposal,
                 owner_ref,
                 expires_at,
