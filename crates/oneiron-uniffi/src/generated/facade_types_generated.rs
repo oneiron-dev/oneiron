@@ -1001,7 +1001,7 @@ pub struct ScratchpadSealRequest {
     pub session_id: String,
 }
 
-/// `oneiron::verbs::self::DiaryEntryRequest`.
+/// `oneiron::verbs::self_verbs::DiaryEntryRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DiaryEntryRequest {
@@ -1024,7 +1024,7 @@ pub struct RecordRef {
     pub label: String,
 }
 
-/// `oneiron::verbs::self::DiaryEntryReceipt`.
+/// `oneiron::verbs::self_verbs::DiaryEntryReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DiaryEntryReceipt {
     #[serde(rename = "entry_id")]
@@ -4596,7 +4596,7 @@ pub struct TaskCancelReceipt {
     pub forced: bool,
 }
 
-/// `oneiron::verbs::self::SteerRequest`.
+/// `oneiron::verbs::self_verbs::SteerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SteerRequest {
@@ -4608,7 +4608,7 @@ pub struct SteerRequest {
     pub key: String,
 }
 
-/// `oneiron::verbs::self::SteerReceipt`.
+/// `oneiron::verbs::self_verbs::SteerReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SteerReceipt {
     #[serde(rename = "task_ref")]
@@ -24045,7 +24045,7 @@ pub struct OffRecordRecallRequest {
     pub limit: u64,
 }
 
-/// `oneiron::verbs::memory::CreateNoteRequest`.
+/// `oneiron::verbs::memory_requests::CreateNoteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNoteRequest {
@@ -65452,7 +65452,7 @@ pub struct ScopedReadResultOptionalSharedBriefCitation {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::verbs::memory::AuthorTakeTarget`.
+/// `oneiron::verbs::memory_requests::AuthorTakeTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AuthorTakeTarget {
     #[serde(rename = "subject")]
@@ -65461,7 +65461,7 @@ pub enum AuthorTakeTarget {
     Claim(String),
 }
 
-/// `oneiron::verbs::memory::AuthorTakeRequest`.
+/// `oneiron::verbs::memory_requests::AuthorTakeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorTakeRequest {
@@ -65471,7 +65471,7 @@ pub struct AuthorTakeRequest {
     pub markdown: String,
 }
 
-/// `oneiron::verbs::memory::CreateNoteFromEntityRequest`.
+/// `oneiron::verbs::memory_requests::CreateNoteFromEntityRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNoteFromEntityRequest {
@@ -65848,7 +65848,7 @@ pub struct NoteEditorClosed {
     pub closed: bool,
 }
 
-/// `oneiron::verbs::memory::EditNoteRequest`.
+/// `oneiron::verbs::memory_requests::EditNoteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EditNoteRequest {
