@@ -38,6 +38,10 @@ pub const PREDICATE_CALENDAR_ORIGIN: &str = "calendar.origin";
 /// Confirmed/cancelled status with the basis that recorded it.
 pub const PREDICATE_CALENDAR_STATUS: &str = "calendar.status";
 
+/// The owner's or an agent's per-EVENT opt-in to meeting prep, a boolean:
+/// `true` preps the EVENT even when no attendee is outside the house.
+pub const PREDICATE_CALENDAR_PREP_OPT_IN: &str = "calendar.prep_opt_in";
+
 /// Complete `calendar.*` claim family minted at this layer.
 ///
 /// Membership is an exact table, never a `calendar.` prefix match: an unknown
@@ -60,6 +64,7 @@ pub const CALENDAR_CLAIM_PREDICATES: &[&str] = &[
     PREDICATE_CALENDAR_ORIGIN,
     PREDICATE_CALENDAR_STATUS,
     PREDICATE_CALENDAR_EVENT_OUTCOME,
+    PREDICATE_CALENDAR_PREP_OPT_IN,
 ];
 
 /// Upper bound for every bounded text field in this family.
@@ -104,9 +109,10 @@ pub struct ClaimClassDescriptorRow {
 /// Descriptor rows for the whole `calendar.*` family, one per predicate.
 ///
 /// `calendar.passport` and `calendar.origin` are projector-recorded provenance;
-/// every other predicate, including `calendar.status` and
-/// `calendar.event_outcome`, is ordinary — an outcome may be owner-attested, so
-/// it is not projector-only. No calendar class is enforcement-gated or
+/// every other predicate, including `calendar.status`,
+/// `calendar.event_outcome` and `calendar.prep_opt_in`, is ordinary — an
+/// outcome may be owner-attested and an opt-in is the owner's or an agent's
+/// own say, so neither is projector-only. No calendar class is enforcement-gated or
 /// restrictive: none of them is a consent surface.
 #[must_use]
 pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {

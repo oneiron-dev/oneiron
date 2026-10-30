@@ -5,7 +5,7 @@ use rmpv::Value;
 use super::predicates::{
     CONTENT_HASH_LEN, MAX_RRULE_BYTES, MAX_TEXT_BYTES, PREDICATE_CALENDAR_ATTENDEE,
     PREDICATE_CALENDAR_MEETING_LINK, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_RRULE, PREDICATE_CALENDAR_SERIES_EXCEPTION,
+    PREDICATE_CALENDAR_PREP_OPT_IN, PREDICATE_CALENDAR_RRULE, PREDICATE_CALENDAR_SERIES_EXCEPTION,
     PREDICATE_CALENDAR_SERIES_MASTER, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_SUCCESSOR,
     PREDICATE_CALENDAR_TIME_KIND, PREDICATE_CALENDAR_TZ, PREDICATE_CALENDAR_WALL_TIME,
     is_calendar_claim_predicate,
@@ -148,8 +148,23 @@ pub(in crate::calendar) fn validate_calendar_claim_value(
         }
         PREDICATE_CALENDAR_STATUS => decode_status_value(value).map(|_| ()),
         PREDICATE_CALENDAR_EVENT_OUTCOME => decode_event_outcome_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_PREP_OPT_IN => decode_prep_opt_in_value(value).map(|_| ()),
         _ => unreachable!("predicate membership checked above"),
     }
+}
+
+/// Decodes a `calendar.prep_opt_in` value: whether the EVENT is prepped
+/// even when no attendee is outside the house.
+pub(in crate::calendar) fn decode_prep_opt_in_value(value: &Value) -> Result<bool> {
+    value
+        .as_bool()
+        .ok_or_else(|| invalid_claim("calendar.prep_opt_in must be a boolean"))
+}
+
+/// Encodes a `calendar.prep_opt_in` value, for a writer of the opt-in.
+#[must_use]
+pub fn encode_prep_opt_in_value(opt_in: bool) -> Value {
+    Value::Boolean(opt_in)
 }
 
 /// Decodes a `calendar.time_kind` value.
