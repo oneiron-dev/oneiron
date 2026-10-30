@@ -706,6 +706,61 @@ impl GmailDelegatedAdapter {
         }
     }
 
+    /// Derives this adapter from a campaign step's sticky sender row
+    /// (FIX 11641): the row's own mailbox, custody record and scopes.
+    ///
+    /// The row must be an Active `delegated_grant` row on the email
+    /// channel whose grant carries `mail.send`. The adapter re-proves the
+    /// row against itself through the same predicate both doors use, and
+    /// the send door re-proves row and custody again at credential egress.
+    /// Pure assembly from vault reads: no secret crosses this call.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] when the sender row or its facts do not
+    /// read; [`Error::InvalidConfig`] when the row is not a send-capable
+    /// delegated mailbox for this adapter.
+    pub(crate) fn from_campaign_sender_row(vault: &Vault, sender_ref: EntityId) -> Result<Self> {
+        let txn = vault.store.env.read_txn()?;
+        let identity = vault
+            .get_channel_identity_in_txn(&txn, &sender_ref)?
+            .ok_or(Error::EntityNotFound)?;
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            &txn,
+            &sender_ref,
+        )?
+        .ok_or(Error::EntityNotFound)?;
+        drop(txn);
+        if facts.channel != EMAIL_CHANNEL {
+            return Err(Error::InvalidConfig(
+                "gmail campaign send requires an email sender row".to_owned(),
+            ));
+        }
+        let Some(grant) = identity.grant() else {
+            return Err(Error::InvalidConfig(
+                "gmail campaign send requires a delegated_grant sender row".to_owned(),
+            ));
+        };
+        if !grant.scopes.contains(&DelegatedGrantScope::MailSend) {
+            return Err(Error::InvalidConfig(
+                "gmail campaign send requires mail.send on the sender grant".to_owned(),
+            ));
+        }
+        // The adapter's mailbox is the row's live assigned address, spelled
+        // as the binding constructor spells it.
+        let (local_part, mailbox_domain) = split_email_address(&facts.address_or_handle)?;
+        let adapter = Self::new(GmailDelegatedAdapterConfig {
+            mailbox_address: format!("{local_part}@{mailbox_domain}"),
+            custody_record_ref: grant.custody_record_ref.clone(),
+            scopes: grant.scopes.clone(),
+            placement_policy: PlacementPolicy::default(),
+        });
+        adapter.require_send_grant()?;
+        adapter.require_active_row_matches_adapter(vault, &sender_ref)?;
+        Ok(adapter)
+    }
+
     fn provision_record(
         &self,
         identity_id: EntityId,
