@@ -105,21 +105,32 @@ pub(crate) fn native_mail_message_stops(
 }
 
 /// The message `identity_id`'s inbox polls stop at, short of being set
-/// aside, if one is.
+/// aside, if one is. A row that does not decode is skipped, so one
+/// damaged row never stops the inbox's poll.
 ///
 /// # Errors
 ///
-/// Store failure or a row that does not decode.
+/// Store failure.
 pub(crate) fn native_mail_stopping_message(
     vault: &Vault,
     identity_id: EntityId,
 ) -> Result<Option<NativeMailSkippedMessage>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(SKIPPED_MESSAGES
-        .scan_from(&vault.store, &txn, identity_id.as_bytes())?
-        .into_iter()
-        .map(|(_, row)| row)
-        .find(|row| !row.is_set_aside()))
+    let rows = SKIPPED_MESSAGES.iter_from(&vault.store, &txn, identity_id.as_bytes())?;
+    for row in rows {
+        match row {
+            Ok((_, stopping)) if !stopping.is_set_aside() => return Ok(Some(stopping)),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    identity = %identity_id.to_hex(),
+                    %error,
+                    "native mail stopping message row does not decode; skipped"
+                );
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Keeps `stopping`, short of being set aside, as the one message
