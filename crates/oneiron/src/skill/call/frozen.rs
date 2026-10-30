@@ -134,7 +134,10 @@ pub(super) fn freeze_callable_case(
         CASES.put(&vault.store, txn, &key, &row)?;
         index::index_case_in_txn(&vault.store, txn, &key, &row)?;
         let kept = CASES.scan_keys(&vault.store, &*txn, skill.as_bytes())?;
-        for old in kept.iter().take(kept.len().saturating_sub(FROZEN_CASES_PER_SKILL)) {
+        for old in kept
+            .iter()
+            .take(kept.len().saturating_sub(FROZEN_CASES_PER_SKILL))
+        {
             delete_case_in_txn(&vault.store, txn, old)?;
         }
         Ok(())

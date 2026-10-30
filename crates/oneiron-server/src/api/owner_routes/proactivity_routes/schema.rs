@@ -13,11 +13,11 @@ use oneiron::dreamer_runner::maintenance::stewardship::StewardshipRules;
 use oneiron::self_heal::distillation::ReviewedFinding;
 use oneiron::training_pack::PinnedCheckpoint;
 
+use super::training_runs::checkpoints::CheckpointManifest;
 use super::{
     AnswerIdentityAsk, ApproveRepresentation, ApprovedView, DeclineRepresentation, DigestView,
     LabelFinding, SetActionMode, SetStewardship,
 };
-use super::training_runs::checkpoints::CheckpointManifest;
 
 pub(crate) use super::training_runs::checkpoints::CHECKPOINT_HEADER;
 
