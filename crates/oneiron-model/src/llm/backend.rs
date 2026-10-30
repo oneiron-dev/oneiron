@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
+use oneiron_contracts::EntityId;
 
 use super::inference_observation::InferenceObservations;
 use super::{
@@ -80,6 +81,18 @@ pub trait LlmBackend: Send + Sync {
 
     fn generate<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease)
     -> LlmGenerateFuture<'a>;
+
+    /// Generates with the complete rows the request was read from, or `None`
+    /// when any constituent is unknown. The default keeps an implementer's
+    /// existing unsourced behavior; source-aware backends override it.
+    fn generate_sourced<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _sources: Option<Vec<EntityId>>,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate(request, lease)
+    }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a>;
 }
