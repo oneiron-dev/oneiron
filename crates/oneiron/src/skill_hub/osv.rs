@@ -10,7 +10,8 @@ use std::io::Read;
 use std::time::Duration;
 
 pub const OSV_SCAN_PROVIDER: &str = "oneiron.osv.v1";
-const MAX_COORDINATES: usize = 256;
+/// Coordinates sent in one OSV querybatch request.
+const OSV_QUERY_BATCH_SIZE: usize = 256;
 const MAX_RESPONSE_BYTES: u64 = 1_048_576;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +57,6 @@ impl OsvQuery for OsvDevClient {
         if coordinates.is_empty() {
             return Ok(Vec::new());
         }
-        let queries:Vec<_>=coordinates.iter().map(|d|serde_json::json!({"package":{"ecosystem":d.ecosystem,"name":d.name},"version":d.version})).collect();
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(5))
             .connect_timeout(Duration::from_secs(3))
@@ -64,26 +64,33 @@ impl OsvQuery for OsvDevClient {
             .https_only(true)
             .build()
             .map_err(|_| invalid())?;
-        let response = client
-            .post("https://api.osv.dev/v1/querybatch")
-            .json(&serde_json::json!({"queries":queries}))
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(|_| invalid())?;
-        let mut bytes = Vec::new();
-        response
-            .take(MAX_RESPONSE_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > MAX_RESPONSE_BYTES {
-            return Err(invalid());
+        let mut combined = Vec::with_capacity(coordinates.len());
+        for batch in coordinates.chunks(OSV_QUERY_BATCH_SIZE) {
+            let queries: Vec<_> = batch
+                .iter()
+                .map(|d| {
+                    serde_json::json!({"package":{"ecosystem":d.ecosystem,"name":d.name},"version":d.version})
+                })
+                .collect();
+            let response = client
+                .post("https://api.osv.dev/v1/querybatch")
+                .json(&serde_json::json!({"queries":queries}))
+                .send()
+                .and_then(reqwest::blocking::Response::error_for_status)
+                .map_err(|_| invalid())?;
+            let mut bytes = Vec::new();
+            response
+                .take(MAX_RESPONSE_BYTES + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+                return Err(invalid());
+            }
+            combined.extend(decode_results(&bytes, batch.len())?);
         }
-        decode_results(&bytes, coordinates.len())
+        Ok(combined)
     }
 }
 fn validate_coordinates(coordinates: &[DependencyCoordinate]) -> Result<()> {
-    if coordinates.len() > MAX_COORDINATES {
-        return Err(invalid());
-    }
     for coordinate in coordinates {
         coordinate.validate()?;
     }
@@ -209,8 +216,15 @@ impl Vault {
     }
     /// Dynamic dependency install door. Coordinates are host-resolved package
     /// identities, never SKILL instructions, files, credentials or vault data.
+    /// `owner` is checked again in the writer that commits the skill, its
+    /// provenance and scan receipts, after the advisory query.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the install binds owner proof, package identity, inventory and import timing"
+    )]
     pub fn install_skill_with_advisories(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
         hub_ref: &HubRef,
         package: &HubPackage,
         coordinates: &[DependencyCoordinate],
@@ -219,6 +233,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SkillInstallAdvisories> {
         self.import_with_advisories(
+            Some(owner),
             hub_ref,
             package,
             EntityId::now(),
@@ -230,10 +245,11 @@ impl Vault {
     }
     #[expect(
         clippy::too_many_arguments,
-        reason = "the install binds package identity, dependency inventory and import timing"
+        reason = "the install binds owner proof, package identity, inventory and import timing"
     )]
     pub(super) fn import_with_advisories(
         &self,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
         hub_ref: &HubRef,
         package: &HubPackage,
         id: EntityId,
@@ -244,8 +260,9 @@ impl Vault {
     ) -> Result<SkillInstallAdvisories> {
         let (status, advisory_ids, scans) =
             self.dependency_advisories(package.content_hash()?, coordinates, query, learned_at)?;
-        let entity = self
-            .import_skill_from_hub_with_scans(hub_ref, package, id, &scans, occurred, learned_at)?;
+        let entity = self.import_skill_from_hub_with_scans(
+            owner, hub_ref, package, id, &scans, occurred, learned_at,
+        )?;
         Ok(SkillInstallAdvisories {
             entity,
             advisory_ids,
@@ -309,9 +326,6 @@ pub(super) fn files_dependency_inventory(
                     version: version.into(),
                 });
             }
-        }
-        if coordinates.len() > MAX_COORDINATES {
-            return Err(invalid());
         }
     }
     let coordinates: Vec<_> = coordinates.into_iter().collect();

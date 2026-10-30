@@ -1,21 +1,20 @@
 //! The OpenAPI schemas of the row-less `/v1/owner/packs*` writes (FIX 11611 part D):
-//! `POST /v1/owner/packs`, `/packs/agent/world`, `/packs/hooks/bind`,
-//! `/packs/hooks/qualify`, `/packs/install`, `/packs/organs/build`,
-//! `/packs/remove`, `/packs/setup/answer`, `/packs/setup/prepare`,
-//! `/packs/setup/verify`, `/packs/skills/import`, `/packs/skills/restore`,
-//! `/packs/skills/{entity}/activation/approve`,
+//! `POST /v1/owner/packs`, `/packs/activate`, `/packs/agent/world`,
+//! `/packs/hooks/bind`, `/packs/hooks/qualify`, `/packs/install`,
+//! `/packs/organs/build`, `/packs/remove`, `/packs/setup/answer`,
+//! `/packs/setup/prepare`, `/packs/setup/verify`, `/packs/skills/import`,
+//! `/packs/skills/restore`, `/packs/skills/{entity}/activation/approve`,
 //! `/packs/skills/{entity}/activation/prepare`, `/packs/slack/install` and
-//! `/packs/sync`, plus `PUT /v1/owner/packs/ref-sync`. [`super`] is already
-//! past the file-size bar, so their schema fns live here, beside the route
-//! files' own.
+//! `/packs/sync`, plus `PUT /v1/owner/packs/ref-sync`. Their schema fns live
+//! here, beside the route files' own.
 
 use oneiron::skill_hub::pack_catalog::{PackInstallReceipt, PackOrganBuild};
 
 use super::{
-    ActivationAskView, ActivationRequest, AgentWorld, BindHooks, ConsentRow, HookEnabled,
-    HookQualification, ImportSkill, InstallFromHub, PackPut, PackSetupAnswerRequest, PackSetupKey,
-    PackSetupReply, PackSetupVerifyRequest, PutOrganBuild, PutPack, QualifyHooks, RefSyncView,
-    RestoreSkill, SetRefSync, SkillRow, SkillSync, SlackInstallRequest, SyncPack,
+    ActivateCandidate, ActivationAskView, ActivationRequest, AgentWorld, BindHooks, ConsentRow,
+    HookEnabled, HookQualification, ImportSkill, InstallFromHub, PackPut, PackSetupAnswerRequest,
+    PackSetupKey, PackSetupReply, PackSetupVerifyRequest, PutOrganBuild, PutPack, QualifyHooks,
+    RefSyncView, RestoreSkill, SetRefSync, SkillRow, SkillSync, SlackInstallRequest, SyncPack,
 };
 use crate::builtin_host::SlackInstallLink;
 
@@ -26,10 +25,16 @@ pub(crate) fn put_pack_body_schema() -> serde_json::Value {
 }
 
 /// The OpenAPI schema of the pack puts' answer (FIX 11611), shared by
-/// `POST /v1/owner/packs`, `/packs/agent/world`, `/packs/install` and
-/// `/packs/sync`: [`PackPut`].
+/// `POST /v1/owner/packs`, `/packs/activate`, `/packs/agent/world`,
+/// `/packs/install` and `/packs/sync`: [`PackPut`].
 pub(crate) fn pack_put_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<PackPut>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/activate`'s body:
+/// [`ActivateCandidate`].
+pub(crate) fn activate_candidate_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ActivateCandidate>()
 }
 
 /// The OpenAPI schema of `POST /v1/owner/packs/agent/world`'s body

@@ -190,6 +190,9 @@ side_tables! {
     /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
     /// unchanged room is not declared again. Key: id16 of the room.
     COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw;
+    /// The last site-skill candidate filed for one (site, scope), with its content fingerprint and
+    /// source evidence (FIX 7606). Key: hash32 (site) + hash32 (scope).
+    COACH_SITE_SKILL_SEEN: VaultMeta b"coach:site_skill_seen:v1:" Named;
     /// A quick pick that later proved wrong: a case where a person changed an answer the
     /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
     /// (FIX 2437). Key: id16 of the source the host bound the answer to.
