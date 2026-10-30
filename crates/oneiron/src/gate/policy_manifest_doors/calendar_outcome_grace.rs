@@ -49,16 +49,17 @@ impl crate::gate::resolution::PolicyManifestResolution {
     }
 }
 
+fn named<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(name))
+        .map(|(_, value)| value)
+}
+
 fn is_vault_grace_row(entries: &[(Value, Value)]) -> bool {
-    let named = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    named("key").and_then(Value::as_str) == Some(KEY.as_str())
+    named(entries, "key").and_then(Value::as_str) == Some(KEY.as_str())
         && matches!(
-            named("scope"),
+            named(entries, "scope"),
             Some(Value::Map(scope)) if scope.len() == 1
                 && scope[0].0.as_str() == Some("level")
                 && scope[0].1.as_str() == Some("vault")
