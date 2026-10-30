@@ -12,6 +12,7 @@ use serde_json::json;
 use super::{
     ResidenceHit, ResidenceRpc, ResidenceSearch, SearchHit, SearchSource, WindowKey, refused,
 };
+use crate::claim::CallerLocality;
 use crate::sync::residence::{ResidenceSearchCursor, ResolvedRecallSelection};
 use crate::sync::transport::TransportError;
 
@@ -28,7 +29,7 @@ struct SearchPageReply {
 }
 
 /// Asks the home for `limit` hits a page at a time over `rpc`, as the caller
-/// a forwarded search names, within `scope`.
+/// a forwarded search names, at its locality, within `scope`.
 pub(super) async fn search_pages(
     vault: &crate::Vault,
     rpc: &mut ResidenceRpc,
@@ -36,7 +37,7 @@ pub(super) async fn search_pages(
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
-    caller: Option<&crate::authority::ForwardedCallerProof>,
+    caller: Option<(&crate::authority::ForwardedCallerProof, CallerLocality)>,
 ) -> Result<ResidenceSearch, TransportError> {
     let selector = base64::engine::general_purpose::STANDARD.encode(selector_wire);
     let mut hits: Vec<ResidenceHit> = Vec::new();
@@ -49,13 +50,15 @@ pub(super) async fn search_pages(
         if let Some(page) = &page {
             params["page"] = serde_json::to_value(page).map_err(|_| refused())?;
         }
-        if let Some(caller) = caller {
-            // Each page's request is signed whole, its cursor too.
+        if let Some((caller, locality)) = caller {
+            // Each page's request is signed whole, its cursor and the
+            // caller's locality too (FIX 3550).
             let machine = crate::sync::residence::with_forwarded_search_page(
                 query,
                 limit,
                 selector_wire,
                 scope,
+                locality,
                 page.as_ref(),
                 |request| vault.forwarding_machine_proof(request, caller),
             )
@@ -63,6 +66,7 @@ pub(super) async fn search_pages(
             .ok_or_else(refused)?;
             params["forwarded"] = serde_json::to_value(caller).map_err(|_| refused())?;
             params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
+            params["caller_locality"] = serde_json::to_value(locality).map_err(|_| refused())?;
         }
         let reply = match rpc.call("residence.search", params).await? {
             Ok(reply) => reply,

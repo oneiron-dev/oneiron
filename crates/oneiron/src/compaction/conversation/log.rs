@@ -121,7 +121,7 @@ pub fn read_chat_log(
         .iter()
         .map(read_turn)
         .collect::<MemoryResult<Vec<_>>>()?;
-    let reader = WriteActor::new(memory.actor(), memory.actor_class());
+    let reader = memory.write_actor();
     // The reader's whole key, with its credential's, locality's and room
     // turn's ceilings, resolved before the snapshot: the room resolver opens
     // its own. A summary's evidence and words are read under it.

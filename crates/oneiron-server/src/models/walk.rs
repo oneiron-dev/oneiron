@@ -35,6 +35,9 @@ pub(super) enum Passed {
     /// A fallback to it would take the work off the device, and the call's
     /// world stays on it, for this content-free reason (FIX 4939).
     KeptOnDevice { reason: &'static str },
+    /// Its world's order does not name its route (FIX 11768):
+    /// content-free, the receipt names the rung.
+    WorldRouteNotAdmitted,
     /// It does not hold the call's voice (FIX 1746): its target held no live
     /// binding of the banked voice when the call was admitted, or holds it
     /// no more, or the call's stock or raw voice is another rung's.
@@ -139,6 +142,9 @@ impl Walk {
                         row["cooldown_until"] = json!(rest.until);
                     }
                     Passed::KeptOnDevice { .. } => row["passed"] = json!("kept_on_device"),
+                    Passed::WorldRouteNotAdmitted => {
+                        row["passed"] = json!("world_route_not_admitted")
+                    }
                     Passed::VoiceNotHeld => row["passed"] = json!("voice_not_held"),
                     Passed::ProbeInFlight { .. } => row["passed"] = json!("probation_busy"),
                 }
@@ -154,6 +160,14 @@ impl Walk {
             .any(|(at, passed)| *at == index && matches!(passed, Passed::KeptOnDevice { .. }))
     }
 
+    /// Whether the call was ever refused from the rung at `index` for its
+    /// world's order.
+    pub(super) fn unadmitted_from(&self, index: usize) -> bool {
+        self.passed
+            .iter()
+            .any(|(at, passed)| *at == index && matches!(passed, Passed::WorldRouteNotAdmitted))
+    }
+
     /// Whether the call was last kept from some rung: a fallback to it would
     /// have taken the work off the device.
     pub(super) fn kept(&self) -> bool {
@@ -167,6 +181,17 @@ impl Walk {
             Passed::KeptOnDevice { reason } => Some(*reason),
             _ => None,
         })
+    }
+
+    /// Whether the walk refused routes and nothing else: every rung the
+    /// call last met was one its world's order does not name (FIX 11768).
+    /// False on an empty walk: nothing met is not a refusal.
+    pub(super) fn route_refused_only(&self) -> bool {
+        !self.passed.is_empty()
+            && self
+                .latest()
+                .values()
+                .all(|passed| matches!(passed, Passed::WorldRouteNotAdmitted))
     }
 
     /// Each rung of `rungs` with the rest it was last found in, when every
@@ -187,7 +212,9 @@ impl Walk {
                     rest: Some(rest), ..
                 }
                 | Passed::Resting { rest } => parked.push((index, *rest)),
-                Passed::KeptOnDevice { .. } | Passed::VoiceNotHeld => {}
+                Passed::KeptOnDevice { .. }
+                | Passed::VoiceNotHeld
+                | Passed::WorldRouteNotAdmitted => {}
                 Passed::Refused { rest: None, .. }
                 | Passed::Down { rest: None, .. }
                 | Passed::Failed { .. }
@@ -264,12 +291,13 @@ impl Passed {
     }
 
     /// Whether a rung passed unsent as `found` is as the call last found
-    /// it: kept from the work, without the call's voice, or resting until
-    /// the same end. A rung that
+    /// it: kept from the work, refused for its route, without the call's
+    /// voice, or resting until the same end. A rung that
     /// was sent is always news.
     fn same_state(&self, found: &Self) -> bool {
         match found {
             Self::KeptOnDevice { .. } => matches!(self, Self::KeptOnDevice { .. }),
+            Self::WorldRouteNotAdmitted => matches!(self, Self::WorldRouteNotAdmitted),
             Self::VoiceNotHeld => matches!(self, Self::VoiceNotHeld),
             Self::ProbeInFlight { .. } => matches!(self, Self::ProbeInFlight { .. }),
             Self::Resting { rest } => self.back() == Some(rest.until),
@@ -292,6 +320,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         // A typed cut names its cause as its class (FIX 10403).
         LlmError::Retryable(RetryableLlmError::TransportFault(fault)) => fault.kind.as_str(),
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => "kept_on_device",
+        LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => "world_route_not_admitted",
         LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
         LlmError::Fatal(FatalLlmError::InvalidRequestDetail { .. }) => "invalid_request",
         LlmError::Fatal(FatalLlmError::Auth) => "auth",
@@ -318,7 +347,8 @@ pub(super) fn provider_down(error: &LlmError) -> bool {
 /// 400, filtered content, a capability it needs), so the next offer would
 /// fail it too, or the run refused it, so the next rung's admission meets the
 /// same line, or an erase took its answer (FIX 6296). Every other failure
-/// hands the call on.
+/// hands the call on. A world-route refusal needs no arm here: `unanswered`
+/// produces it, so it is never fed into `failed()` (FIX 11768).
 pub(super) fn ends_call(error: &LlmError) -> bool {
     matches!(
         error,

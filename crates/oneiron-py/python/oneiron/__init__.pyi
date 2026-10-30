@@ -976,6 +976,8 @@ class Oneiron:
             """The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."""
         def top_up(self, spec: Facade.RunnerSeatCreditTopUpRequest) -> Facade.RunnerSeatTopUpReceipt:
             """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
+        def resume(self, spec: Facade.RunnerWorkResumeRequest) -> Facade.RunnerWorkResumeView:
+            """The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -2302,6 +2304,8 @@ class Oneiron:
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."""
+        def propose_from_pack(self, spec: Facade.PackLensProposeRequest) -> Facade.LensProposalReceipt:
+            """Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it."""
         def activate(self, spec: Facade.LensActivateRequest) -> Facade.LensActivationReceipt:
             """The owner selects a proposed lens revision for its pack slot."""
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:

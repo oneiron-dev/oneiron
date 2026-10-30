@@ -316,6 +316,64 @@ fn is_live_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &str) -> Result<bo
     }
 }
 
+/// [`Vault::create_esign_document`]'s draft under `txn`, its document already
+/// validated: the overlay is new, a project's membership holds, each item's
+/// PDF is at its pinned version, and the draft lands, stamped to its project.
+pub(super) fn create_document_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    body: &EsignDocument,
+    actor: EsignAuditActor,
+    now: u64,
+) -> Result<()> {
+    if !events_in(vault, txn, document)?.is_empty() {
+        return Err(invalid("document already exists"));
+    }
+    if let Some(project) = body.project {
+        let (_, effective) = vault
+            .effective_project_in_txn(txn, project)?
+            .ok_or_else(|| invalid("the document's project is not a live project"))?;
+        let by = actor.actor.as_str();
+        let member = effective.seats(by)
+            || effective.leader == by
+            || effective.board.iter().any(|holder| holder == by);
+        if PROJECT_MEMBERS_ONLY && !member && !is_live_owner(vault, txn, by)? {
+            return Err(invalid(
+                "only a member of a project or a vault owner sends a document for it",
+            ));
+        }
+    }
+    for item in &body.items {
+        let id = EntityId::from_hex(&item.artifact_ref)?;
+        let head = super::super::read_blob_artifact_head_in_txn(&vault.store, txn, &id)?
+            .ok_or_else(|| invalid("missing original PDF version"))?;
+        if head.version != item.original_version {
+            return Err(invalid("original version changed"));
+        }
+        let artifact = vault
+            .get_blob_artifact_in_txn(txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        if artifact.media_type != "application/pdf" {
+            return Err(invalid("signing item is not a PDF"));
+        }
+    }
+    append(
+        vault,
+        txn,
+        document,
+        EsignEvent::Drafted {
+            document: body.clone(),
+        },
+        actor,
+        now,
+    )?;
+    if let Some(project) = body.project {
+        crate::federation::record_scope::stamp_blob_project(&vault.store, txn, document, project)?;
+    }
+    Ok(())
+}
+
 impl Vault {
     /// Creates the signing overlay on an existing artifact. Original item
     /// versions are pinned before the first event; later send rechecks them.
@@ -331,58 +389,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         validate_document(body, now)?;
-        self.with_write_txn_grouped(|txn| {
-            if !events_in(self, txn, document)?.is_empty() {
-                return Err(invalid("document already exists"));
-            }
-            if let Some(project) = body.project {
-                let (_, effective) = self
-                    .effective_project_in_txn(txn, project)?
-                    .ok_or_else(|| invalid("the document's project is not a live project"))?;
-                let by = actor.actor.as_str();
-                let member = effective.seats(by)
-                    || effective.leader == by
-                    || effective.board.iter().any(|holder| holder == by);
-                if PROJECT_MEMBERS_ONLY && !member && !is_live_owner(self, txn, by)? {
-                    return Err(invalid(
-                        "only a member of a project or a vault owner sends a document for it",
-                    ));
-                }
-            }
-            for item in &body.items {
-                let id = EntityId::from_hex(&item.artifact_ref)?;
-                let head = super::super::read_blob_artifact_head_in_txn(&self.store, txn, &id)?
-                    .ok_or_else(|| invalid("missing original PDF version"))?;
-                if head.version != item.original_version {
-                    return Err(invalid("original version changed"));
-                }
-                let artifact = self
-                    .get_blob_artifact_in_txn(txn, &id)?
-                    .ok_or(Error::EntityNotFound)?;
-                if artifact.media_type != "application/pdf" {
-                    return Err(invalid("signing item is not a PDF"));
-                }
-            }
-            append(
-                self,
-                txn,
-                document,
-                EsignEvent::Drafted {
-                    document: body.clone(),
-                },
-                actor,
-                now,
-            )?;
-            if let Some(project) = body.project {
-                crate::federation::record_scope::stamp_blob_project(
-                    &self.store,
-                    txn,
-                    document,
-                    project,
-                )?;
-            }
-            Ok(())
-        })
+        self.with_write_txn_grouped(|txn| create_document_in(self, txn, document, body, actor, now))
     }
     pub fn esign_document(&self, document: EntityId) -> Result<EsignState> {
         let txn = self.store.env.read_txn()?;

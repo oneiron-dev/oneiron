@@ -96,22 +96,7 @@ impl VerifiedSlip {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());
         };
-        let pact = fold.pact_for_grant(grant).ok_or_else(invalid_authority)?;
-        let effective = requested.intersect(&pact.effective_scope);
-        if pact.status != super::FederationPactStatus::Active
-            || fold
-                .federation_grant_bindings
-                .get(grant)
-                .is_none_or(|ids| ids.len() != 1)
-            || !crate::federation::Ceiling::new(requested.clone())
-                .is_within(&crate::federation::Ceiling::new(effective.clone()))
-            || effective.worlds.is_bottom()
-            || effective.facets.is_bottom()
-            || effective.bands.is_bottom()
-        {
-            return Err(invalid_authority());
-        }
-        Ok(())
+        witnessed_pact_scope(fold, grant, requested).map(drop)
     }
 
     #[must_use]
@@ -509,6 +494,34 @@ fn meet_caveat(
     Ok(())
 }
 
+/// `requested` met with `grant`'s pact while that pact holds in `fold`: it
+/// is Active, its grant is bound once, `requested` lies inside its effective
+/// scope and no axis of the meet is ⊥. A live slip's pact bound
+/// ([`VerifiedSlip::witness_pact`]) and a transferred removal archive's, at
+/// each serve (FIX 11860), are both witnessed so.
+fn witnessed_pact_scope(
+    fold: &AuthorityFold,
+    grant: &crate::EntityId,
+    requested: &crate::federation::FederationDirectionScope,
+) -> EngineResult<crate::federation::FederationDirectionScope> {
+    let pact = fold.pact_for_grant(grant).ok_or_else(invalid_authority)?;
+    let effective = requested.intersect(&pact.effective_scope);
+    if pact.status != super::FederationPactStatus::Active
+        || fold
+            .federation_grant_bindings
+            .get(grant)
+            .is_none_or(|ids| ids.len() != 1)
+        || !crate::federation::Ceiling::new(requested.clone())
+            .is_within(&crate::federation::Ceiling::new(effective.clone()))
+        || effective.worlds.is_bottom()
+        || effective.facets.is_bottom()
+        || effective.bands.is_bottom()
+    {
+        return Err(invalid_authority());
+    }
+    Ok(effective)
+}
+
 /// The verb a transferred holder's bounds must carry to take any of a
 /// removal archive (CALLS "REMOVAL_ARCHIVE_TRANSFER_VERB", accepted by the
 /// Engine 10-22 05:3x): the scoped export's own.
@@ -518,7 +531,8 @@ pub(crate) const REMOVAL_ARCHIVE_TRANSFER_VERB: &str = "export";
 /// original mint (FIX-LIST 8224): the caveats met over the mint's claims,
 /// the mint's own lifetime aside, which the removal already ended for its
 /// recipient too. Live standing (revocation, retirement) is not consulted:
-/// it ended with the removal, and a transfer's bounds never revive it.
+/// it ended with the removal, and a transfer's bounds never revive it. A
+/// pact bound is the one standing read live, at each serve (FIX 11860).
 #[derive(Debug, Clone)]
 pub(crate) struct TransferredBounds {
     scope: Scope,
@@ -529,20 +543,38 @@ pub(crate) struct TransferredBounds {
     channel_bound: bool,
     deadline: u64,
     single_use: bool,
-    pact: bool,
+    /// The pact bound a caveat set: its grant and the scope it requested.
+    pact: PactBound,
 }
 
 impl TransferredBounds {
     /// Whether the archived record `id`, which stood at `position` when the
     /// removal froze it, lies inside these bounds at `now`. A record frozen
     /// with no position is judged as if it stood everywhere: only bounds no
-    /// caveat narrowed take it. A one-shot or pact-bound transfer takes
-    /// nothing here: an archive read is no one-shot redemption, and a
-    /// removal archive is no pact's reach. Nor does a channel-bound one: an
-    /// archived record stood on no channel, and this door is none.
+    /// caveat narrowed take it. A one-shot transfer is judged as any other:
+    /// the archive doors take it once and spend it in the writer that serves
+    /// it ([`Self::single_use`], FIX-LIST 10773). A pact-bound transfer takes
+    /// only a record whose frozen position lies inside `served_pact`, the
+    /// scope its pact still leaves it at this serve
+    /// ([`Self::served_pact_scope`], FIX 11860), and nothing once that pact
+    /// no longer holds. A channel-bound one takes nothing: an archived record
+    /// stood on no channel, and this door is none.
     #[must_use]
-    pub(crate) fn admits(&self, id: crate::EntityId, position: Option<&Scope>, now: u64) -> bool {
-        if now >= self.deadline || self.single_use || self.pact || self.channel_bound {
+    pub(crate) fn admits(
+        &self,
+        id: crate::EntityId,
+        position: Option<&Scope>,
+        now: u64,
+        served_pact: Option<&crate::federation::FederationDirectionScope>,
+    ) -> bool {
+        if now >= self.deadline || self.channel_bound {
+            return false;
+        }
+        let top = Scope::top();
+        if self.pact.is_some()
+            && !served_pact
+                .is_some_and(|pact| super::current_scope::within(position.unwrap_or(&top), pact))
+        {
             return false;
         }
         if self
@@ -552,7 +584,6 @@ impl TransferredBounds {
         {
             return false;
         }
-        let top = Scope::top();
         let mut record = crate::federation::record_scope::note_world::any_world_at(
             position.unwrap_or(&top),
             &self.scope.worlds,
@@ -564,6 +595,33 @@ impl TransferredBounds {
             && self
                 .scope
                 .admits(REMOVAL_ARCHIVE_TRANSFER_VERB, &record, &Scope::top())
+    }
+
+    /// Whether the mint or a caveat made the transfer one-shot: an archive
+    /// door serves it once, and the first answer that takes anything spends
+    /// the slip (FIX-LIST 10773).
+    #[must_use]
+    pub(crate) const fn single_use(&self) -> bool {
+        self.single_use
+    }
+
+    /// The grant of the pact a caveat bound this transfer to, if one did.
+    #[must_use]
+    pub(crate) fn pact_grant(&self) -> Option<crate::EntityId> {
+        self.pact.as_ref().map(|(grant, _)| *grant)
+    }
+
+    /// The scope a pact-bound transfer takes at this serve: its requested
+    /// scope met with its pact's effective scope, while that pact holds in
+    /// `fold` (FIX 11860); `None` with no pact bound, or once the pact ended,
+    /// was suspended or no longer covers what the transfer requested.
+    #[must_use]
+    pub(crate) fn served_pact_scope(
+        &self,
+        fold: &AuthorityFold,
+    ) -> Option<crate::federation::FederationDirectionScope> {
+        let (grant, requested) = self.pact.as_ref()?;
+        witnessed_pact_scope(fold, grant, requested).ok()
     }
 }
 
@@ -601,7 +659,7 @@ impl CapabilitySlip {
             channel_bound: !effective.channels.is_empty(),
             scope: effective.scope,
             single_use: effective.single_use,
-            pact: pact.is_some(),
+            pact,
         }))
     }
 }

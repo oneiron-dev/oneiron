@@ -24,6 +24,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, bad_part};
 use crate::sync::bridge::{format_edge_key, parse_edge_key};
+use crate::sync::carrier_parts::is_part_key;
 use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
@@ -164,6 +165,8 @@ fn binary(value: &[u8]) -> LoroValue {
 /// meets is asked, a deleted one's too.
 pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
     let class = match root {
+        // A room row's part is filed under its digest (FIX 11790).
+        ROOM_TURNS_MAP | ROOM_FACTS_MAP if is_part_key(key) => KeyClass::Digest,
         "entities"
         | "tombstones"
         | "retained_claim_worlds"

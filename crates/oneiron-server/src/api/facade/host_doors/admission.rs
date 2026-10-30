@@ -478,6 +478,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.budgets.rsi.hold.resume"
         | "vault.runners.seats.quotas"
         | "vault.runners.seats.top_up"
+        | "vault.runners.seats.resume"
         | "vault.research.evaluate_split"
         | "vault.research.create_child"
         | "vault.evals.inventory"
