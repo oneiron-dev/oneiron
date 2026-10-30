@@ -13,6 +13,7 @@ use crate::linear_sync::{
     LinearEffectAdmission, LinearIssueRef, LinearSyncDirection, LinearSyncError, LinearSyncResult,
     LinearWait, MirroredTaskFields, linear_operation_id,
 };
+use crate::outbound::OutboundDispatchRequest;
 use crate::task_verb::linear_effect_state_in_txn;
 
 const EFFECT_AUTH_KEY: &[u8] = b"linear:effect_authorized:v1/";
@@ -271,6 +272,17 @@ impl Vault {
         &self,
         request: &LinearEffectRequest,
     ) -> LinearSyncResult<LinearEffectAdmission> {
+        self.admit_linear_effect(request, None)
+    }
+
+    /// [`Self::authorize_linear_effect_outcome`], with the scheduler asked
+    /// over the recorded outbound door's own effect and reading the press
+    /// that door kept when `door` names it (FIX 6823).
+    fn admit_linear_effect(
+        &self,
+        request: &LinearEffectRequest,
+        door: Option<&super::door_recheck::DoorScheduler>,
+    ) -> LinearSyncResult<LinearEffectAdmission> {
         let issue_id = request.issue.as_ref().map(|issue| issue.issue_id.as_str());
         if request.operation_id == [0; 32]
             || (request.kind == LinearEffectKind::Create) != request.issue.is_none()
@@ -332,13 +344,24 @@ impl Vault {
             if policy.diagnostics.is_fail_closed() {
                 return Err(LinearSyncError::AuthorizationDenied);
             }
-            let host_effect = effect(request.scheduler_actor, EdgeActorClass::System, request);
+            let host_effect = door.map_or_else(
+                || effect(request.scheduler_actor, EdgeActorClass::System, request),
+                |door| door.effect.clone(),
+            );
             let writer_effect = effect(writer.actor_ref, class, request);
             // FIX 6424 part 2a: the press each actor's admission of this
-            // operation spent, reused on its retry.
+            // operation spent, reused on its retry; FIX 6823: the door's.
             let retries = if previously_authorized {
                 [
-                    super::approval::kept_press_in(self, txn, request.operation_id, &host_effect),
+                    match door {
+                        Some(door) => super::door_recheck::kept_door_press_in(self, txn, door),
+                        None => super::approval::kept_press_in(
+                            self,
+                            txn,
+                            request.operation_id,
+                            &host_effect,
+                        ),
+                    },
                     super::approval::kept_press_in(self, txn, request.operation_id, &writer_effect),
                 ]
             } else {
@@ -399,26 +422,46 @@ impl Vault {
     /// The live recheck before a retried send through the recorded outbound
     /// door (OF-427). That door admits both actors once, inside its own
     /// admission, and its replay does not run the writer again. So an
-    /// operation whose frozen binding is already stored rechecks that binding
-    /// and both actors' live grants here, charging nothing. An operation not
-    /// yet admitted passes: its first admission runs inside the door.
+    /// operation whose frozen binding is already stored and whose send
+    /// `door_request` (the request the door dispatches it under) already
+    /// holds a ledger row rechecks that binding and both actors' live grants
+    /// here, charging nothing. An operation not yet admitted passes: its
+    /// first admission runs inside the door.
+    ///
+    /// FIX 6823 (Engine 09:39 ruling A): the scheduler is rechecked over the
+    /// door's own effect and reads the press the door kept for that send, so
+    /// the person is never asked twice ([`super::door_recheck`]).
     ///
     /// # Errors
-    /// As [`Self::authorize_linear_effect`], for an admitted operation.
+    /// As [`Self::authorize_linear_effect`], for an admitted operation, but a
+    /// hold for a press is [`LinearSyncError::Held`] with its digest; the
+    /// door request's own refusal at preparation.
     pub fn recheck_admitted_linear_effect(
         &self,
         request: &LinearEffectRequest,
+        door_request: &OutboundDispatchRequest,
     ) -> LinearSyncResult<()> {
         let admitted = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             effect_bound_in(self, &txn, &request.operation_id)?
         };
+        if !admitted {
+            return Ok(());
+        }
+        let Some(door) = super::door_recheck::door_scheduler(self, request, door_request)? else {
+            return Ok(());
+        };
         // The binding row is never removed, so this admission observes it
         // too and charges no budget.
-        if admitted {
-            self.authorize_linear_effect(request)?;
+        match self.admit_linear_effect(request, Some(&door))? {
+            LinearEffectAdmission::Admitted { .. } => Ok(()),
+            LinearEffectAdmission::Held(hold) => Err(super::door_recheck::hold_error(hold)),
+            LinearEffectAdmission::Paced { next_eligible_at } => {
+                Err(LinearSyncError::Waiting(LinearWait::RateWindow {
+                    next_eligible_at,
+                }))
+            }
         }
-        Ok(())
     }
 
     /// Keeps the recorded outbound door's admission on a direct-mode push's

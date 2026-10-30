@@ -315,7 +315,12 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
     ) -> LinearSyncResult<GraphQlValue> {
         let operation_id = mutation.operation_id;
         let (effect, verb, target) = self.mutation_effect(mutation, call)?;
-        self.vault.recheck_admitted_linear_effect(&effect)?;
+        // FIX 6823: a retried send is rechecked over the request this door
+        // dispatches it under, so its scheduler's kept press is read.
+        let (recheck_request, _) =
+            self.door_request(operation_id, verb, target, &request_ref(&operation_id));
+        self.vault
+            .recheck_admitted_linear_effect(&effect, &recheck_request)?;
         let content_ref = self
             .journal
             .stage_request(&operation_id, effect.task_ref, call)?;
