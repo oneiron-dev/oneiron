@@ -78,7 +78,7 @@ pub(super) fn type_fraction(key: GroupKey, allocation: &TokenAllocation) -> f32 
         GroupKey::Kind(ENTITY_TYPE_CLAIM | ENTITY_TYPE_FACET) => allocation.claims,
         GroupKey::Kind(ENTITY_TYPE_TURN) => allocation.turns,
         GroupKey::Kind(ENTITY_TYPE_SUMMARY) => allocation.summaries,
-        GroupKey::Kind(_) | GroupKey::Other | GroupKey::ExportSection(_) => allocation.other,
+        GroupKey::Kind(_) | GroupKey::Other => allocation.other,
     }
 }
 
@@ -475,6 +475,9 @@ pub(super) fn append_stats_line(out: &mut String, stats: &PackStats, format: Pac
             stats.items_dropped.reason.as_str()
         ));
     }
+    if stats.deadline_exceeded {
+        stats_line.push_str(" | deadline_exceeded: true");
+    }
     if stats.critical_over_budget {
         stats_line.push_str(&format!(
             " | critical_over_budget: {}",
@@ -535,6 +538,10 @@ pub(super) fn json_stats(pack_stats: &PackStats) -> Value {
             item_accounting_json(pack_stats.items_dropped),
         );
     }
+    stats.insert(
+        "deadline_exceeded".to_owned(),
+        Value::Bool(pack_stats.deadline_exceeded),
+    );
     stats.insert(
         "critical_over_budget".to_owned(),
         Value::Bool(pack_stats.critical_over_budget),

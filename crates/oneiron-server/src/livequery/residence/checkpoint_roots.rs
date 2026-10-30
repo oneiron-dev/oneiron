@@ -72,8 +72,9 @@ fn unavailable() -> AppError {
     AppError::internal_server_error("authority checkpoint unavailable")
 }
 
-/// A countersign stage's charge on this server's retained-memory line, the
-/// one the residence index cache is charged to (FIX 5111).
+/// A countersign or authority append stage's charge on this server's
+/// retained-memory line, the one the residence index cache is charged to
+/// (FIX 5111).
 struct StageCharge {
     line: Arc<ByteLine>,
     held: HeldBytes,
@@ -86,7 +87,7 @@ impl CountersignStageCharge for StageCharge {
     }
 }
 
-fn stage_charge(server: &SyncServer) -> Box<dyn CountersignStageCharge> {
+pub(super) fn stage_charge(server: &SyncServer) -> Box<dyn CountersignStageCharge> {
     Box::new(StageCharge {
         held: server.retained.empty(),
         line: Arc::clone(&server.retained),
