@@ -2,7 +2,9 @@
 //! answer the organ's asks while it runs, take the outputs back. The bytes
 //! this node takes back, the reply and each output, lease this machine's
 //! memory floor before they are allocated, and an output keeps its lease
-//! while it lives (FIX 6196). The organ's own memory stays its host's:
+//! while it lives (FIX 6196). What it sends leases the floor while it
+//! crosses: a handler's answer until it is sent, each staged piece while
+//! its exchange runs (FIX 10577). The organ's own memory stays its host's:
 //! `memory.grow` is never answered here.
 
 use std::collections::HashSet;
@@ -56,11 +58,13 @@ pub(crate) async fn offers(conn: &dyn MeshConnection) -> Result<Vec<Offer>, Mesh
     }
 }
 
-/// Stages bytes on the serving node, unless they ride inline.
+/// Stages bytes on the serving node, unless they ride inline. Each piece
+/// leases `here` for its copy and its encoded message while it crosses.
 async fn put(
     conn: &dyn MeshConnection,
     bytes: &[u8],
     sent: &mut HashSet<Hash32>,
+    here: Here<'_>,
 ) -> Result<Carried, MeshError> {
     if bytes.len() <= INLINE {
         return Ok(Carried::Inline(ByteBuf::from(bytes.to_vec())));
@@ -69,6 +73,7 @@ async fn put(
     let total = bytes.len() as u64;
     if sent.insert(hash) {
         for (n, piece) in bytes.chunks(PIECE).enumerate() {
+            let _held = here.hold_sent((piece.len() as u64).saturating_mul(2))?;
             let request = Request::Put {
                 hash,
                 total,
@@ -84,8 +89,8 @@ async fn put(
     Ok(Carried::Staged { hash, len: total })
 }
 
-/// This node's memory floor for the bytes a call takes back, and the
-/// call's deadline, which a wait for it keeps.
+/// This node's memory floor for the bytes a call takes back or sends, and
+/// the call's deadline, which a wait for it keeps.
 #[derive(Clone, Copy)]
 struct Here<'a> {
     floor: Option<&'a SharedFloor>,
@@ -97,24 +102,42 @@ impl Here<'_> {
     /// back, before they are allocated; none for bytes that rode inline, or
     /// with no floor here.
     fn hold(self, carried: &Carried) -> Result<Option<Leased>, PeerError> {
-        let (Some(floor), Carried::Staged { len, .. }) = (self.floor, carried) else {
+        let Carried::Staged { len, .. } = carried else {
+            return Ok(None);
+        };
+        self.lease(*len).map_err(PeerError::Failed)
+    }
+
+    /// A lease of this machine's memory for `len` bytes this node sends,
+    /// held until they are sent; none with no floor here. A refusal ends
+    /// the send as the mesh's own error.
+    fn hold_sent(self, len: u64) -> Result<Option<Leased>, MeshError> {
+        self.lease(len)
+            .map_err(|err| MeshError::Io(format!("organ mesh send: {err}")))
+    }
+
+    /// A lease of `len` bytes of this machine's memory, within the call's
+    /// deadline; none with no floor here.
+    fn lease(self, len: u64) -> Result<Option<Leased>, HostError> {
+        let Some(floor) = self.floor else {
             return Ok(None);
         };
         let held = floor
             .0
-            .lease(*len, self.deadline, &|| false)
-            .map_err(|refused| {
-                PeerError::Failed(match refused {
-                    FloorRefusal::Floor { needed, available } => HostError::Io(io::Error::new(
-                        io::ErrorKind::OutOfMemory,
-                        format!(
-                            "this node's memory floor: {needed} bytes needed, {available} available"
-                        ),
-                    )),
-                    FloorRefusal::Deadline => HostError::DeadlineExceeded,
-                })
-            })?;
+            .lease(len, self.deadline, &|| false)
+            .map_err(refused_here)?;
         Ok(Some(Leased::new(held)))
+    }
+}
+
+/// This node's floor's refusal, as the call's error.
+fn refused_here(refused: FloorRefusal) -> HostError {
+    match refused {
+        FloorRefusal::Floor { needed, available } => HostError::Io(io::Error::new(
+            io::ErrorKind::OutOfMemory,
+            format!("this node's memory floor: {needed} bytes needed, {available} available"),
+        )),
+        FloorRefusal::Deadline => HostError::DeadlineExceeded,
     }
 }
 
@@ -149,8 +172,9 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
 /// read or was lent, vault inputs first, each with the version it read.
 /// The organ's asks are answered here by `asks`, and every ask's receipt
 /// line lands in `asks` as a local call's would. What comes back leases
-/// `floor`, this machine's, before it is allocated. Under a mesh stop's
-/// cancel the call is dropped there once the cancel comes, and it says
+/// `floor`, this machine's, before it is allocated, and what goes out
+/// leases it while it crosses. Under a mesh stop's cancel the call is
+/// dropped there once the cancel comes, and it says
 /// [`HostError::Interrupted`] (FIX 4756).
 pub(crate) async fn call_on(
     conn: &dyn MeshConnection,
@@ -173,7 +197,9 @@ pub(crate) async fn call_on(
         wire.push(PeerInput {
             read: read.map(|read| (read.artifact.to_hex(), read.version)),
             media_type: input.media_type.clone(),
-            bytes: put(conn, &input.bytes, &mut sent).await.map_err(absent)?,
+            bytes: put(conn, &input.bytes, &mut sent, here)
+                .await
+                .map_err(absent)?,
         });
     }
     let peer = PeerCall {
@@ -192,7 +218,7 @@ pub(crate) async fn call_on(
     let carried = if encoded.len() <= INLINE {
         Carried::Inline(ByteBuf::from(encoded))
     } else {
-        put(conn, &encoded, &mut sent).await.map_err(absent)?
+        put(conn, &encoded, &mut sent, here).await.map_err(absent)?
     };
     let mut stream = conn.open_stream().await.map_err(absent)?;
     stream
@@ -210,7 +236,7 @@ pub(crate) async fn call_on(
                 incoming = conn.accept_stream() => match incoming {
                     // An ask this side failed to answer leaves the organ
                     // a refusal from its own host; the call goes on.
-                    Ok(ask) => drop(answer(conn, ask, asks, &mut sent).await),
+                    Ok(ask) => drop(answer(conn, ask, asks, &mut sent, here).await),
                     Err(err) => break Err(err),
                 },
             }
@@ -308,20 +334,30 @@ async fn received(
 }
 
 /// Answers one ask the serving node sent back, through this side's
-/// handler for its verb.
+/// handler for its verb. The answer, value and data, leases `here` until
+/// it is sent; a refusal there leaves the organ its own host's refusal.
 async fn answer(
     conn: &dyn MeshConnection,
     mut stream: Box<dyn MeshStream>,
     asks: &AskHandlers<'_>,
     sent: &mut HashSet<Hash32>,
+    here: Here<'_>,
 ) -> Result<(), MeshError> {
     let ask: PeerAsk = decode(&stream.recv().await?)?;
     let (answered, signed) = run_handler(&ask, asks);
+    let _held = match &answered {
+        Ok(Answered { value, data, .. }) => {
+            let value_len = rmp_serde::to_vec_named(value).map_or(0, |bytes| bytes.len() as u64);
+            let data_len = data.as_ref().map_or(0, |bytes| bytes.len() as u64);
+            here.hold_sent(value_len.saturating_add(data_len))?
+        }
+        Err(_) => None,
+    };
     let answered = match answered {
         Ok(Answered { value, data, fetch }) => Ok(PeerAnswered {
             value,
             data: match data {
-                Some(bytes) => Some(put(conn, &bytes, sent).await?),
+                Some(bytes) => Some(put(conn, &bytes, sent, here).await?),
                 None => None,
             },
             fetch,

@@ -98,7 +98,16 @@ pub(crate) async fn search_resident(
     match ResidenceRpc::connect(vault, config, budgets).await? {
         // More hits than one page carries come a page at a time (FIX 8865).
         Some(mut rpc) if limit > budgets.search_limit => {
-            super::search::search_pages(vault, &mut rpc, query, limit, &selector_wire, scope, caller).await
+            super::search::search_pages(
+                vault,
+                &mut rpc,
+                query,
+                limit,
+                &selector_wire,
+                scope,
+                caller,
+            )
+            .await
         }
         Some(mut rpc) => {
             let reply: SearchReply =
