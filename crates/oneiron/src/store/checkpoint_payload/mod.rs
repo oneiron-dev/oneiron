@@ -30,6 +30,7 @@ use oneiron_crypto::Purpose;
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result, StoreError};
+use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason};
 use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::store::key_custody::{
@@ -307,22 +308,28 @@ pub(crate) fn read_key(
 /// generation, from the image's manifest), recorded in the one plan the
 /// restore's claim keys use, so its fork copies these leaves as well. Each
 /// answer stands alone, in order: a live leaf opens; a retired one's rows are
-/// dropped and recorded as erased; an error (a missing leaf, or no source
-/// binding) is the caller's to weigh under KS-4's restore rules, and never
-/// stops the census of the others.
+/// dropped and recorded as erased; a refusal (a missing leaf, or no source
+/// binding, each `custody_key_missing`) is the caller's to weigh under KS-4's
+/// restore rules, and never stops the census of the others.
 pub(crate) fn require_all(
     plan: &mut CustodyPlan,
     required: &[(PayloadItem, u64)],
-) -> Result<Vec<Result<Requirement>>> {
+) -> Result<Vec<std::result::Result<Requirement, Rejected>>> {
     ensure_enabled()?;
     Ok(required
         .iter()
         .map(|(item, generation)| {
-            let source = plan.source().ok_or_else(corrupt)?;
+            let source = plan.source().ok_or_else(custody_missing)?;
             let subject = item.subject(source)?;
-            plan.require(&subject.at(*generation))
+            plan.require_rejected(&subject.at(*generation))
         })
         .collect())
+}
+
+/// A restore whose custody holds no compartment it needs: KS-4's lost
+/// custody, by name.
+fn custody_missing() -> Rejected {
+    Rejected::new(RestoreAdmissionReason::CustodyKeyMissing, corrupt())
 }
 
 /// How a restore opens one compartment its image names (KS7-5).
@@ -337,17 +344,18 @@ pub(crate) enum CompartmentAccess {
 
 /// What a restore opens each compartment `required` names with, in order,
 /// through `plan`, the one plan its claim keys use ([`require_all`]). A
-/// missing leaf refuses, as KS-4's lost custody does: an image supplies a
-/// binding, never a key (ARCH-0038, a restore needs the key custody).
+/// missing leaf refuses, as KS-4's lost custody does, `custody_key_missing`:
+/// an image supplies a binding, never a key (ARCH-0038, a restore needs the
+/// key custody).
 ///
 /// # Errors
 ///
-/// A missing leaf or source binding, a leaf that does not read, and custody
-/// faults.
+/// A missing leaf or source binding (`custody_key_missing`), a leaf that
+/// does not read, and custody faults, each typed by its kind.
 pub(crate) fn compartment_access(
     plan: &mut CustodyPlan,
     required: &[(PayloadItem, u64)],
-) -> Result<Vec<CompartmentAccess>> {
+) -> std::result::Result<Vec<CompartmentAccess>, Rejected> {
     let answers = require_all(plan, required)?;
     let source = plan.source().cloned();
     required
@@ -356,8 +364,9 @@ pub(crate) fn compartment_access(
         .map(|((item, generation), answer)| match answer? {
             Requirement::Retired => Ok(CompartmentAccess::Retired),
             Requirement::Live => {
-                let binding = source.as_ref().ok_or_else(corrupt)?;
-                read_key(LocalCustody::at(binding), item, *generation).map(CompartmentAccess::Open)
+                let binding = source.as_ref().ok_or_else(custody_missing)?;
+                let key = read_key(LocalCustody::at(binding), item, *generation)?;
+                Ok(CompartmentAccess::Open(key))
             }
         })
         .collect()
