@@ -7,7 +7,8 @@
 //!
 //! An erase reaches them ([`erase`]): an erased caller is kept in its erased
 //! form, an erased skill's cases go, and so does a case naming an erased row,
-//! found through the cases' [`index`].
+//! found through the cases' [`index`]. A call's own caller may record the
+//! answer it should have given ([`amend`]), which its case then expects.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -33,9 +34,13 @@ use crate::skill_hub::HubFile;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
+mod amend;
 mod erase;
 mod index;
 
+pub use self::amend::{
+    CallableAmendOutcome, CallableAmendReceipt, CallableAmendRequest, amend_callable_case,
+};
 pub(crate) use self::erase::{erase_callable_case_actor_in_txn, erase_callable_cases_in_txn};
 
 /// Most frozen cases one skill keeps: as a new one lands, the oldest past
@@ -80,8 +85,12 @@ struct FrozenCall {
     source_rows: Option<Vec<EntityId>>,
     /// JSON text.
     arguments: String,
-    /// JSON text: the answer that passed the return contract.
+    /// JSON text: the answer that passed the return contract, or the one
+    /// its caller later recorded in its place ([`amend`]).
     answer: String,
+    /// When its caller last recorded the answer in its place; `None` keeps
+    /// the answer the call gave.
+    amended_at: Option<u64>,
 }
 
 /// Where a call that passed was made.
@@ -128,6 +137,7 @@ pub(super) fn freeze_callable_case(
         source_rows: None,
         arguments,
         answer: text,
+        amended_at: None,
     };
     vault.with_write_txn_grouped(|txn| {
         // The side-row wall admits the texts as it does other caller text.

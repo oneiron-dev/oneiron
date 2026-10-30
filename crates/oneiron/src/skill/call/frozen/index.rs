@@ -130,6 +130,23 @@ pub(super) fn forget_source_in_txn(
     Ok(())
 }
 
+/// The keys of the cases indexed under `receipt`, a caller's receipt: its
+/// calls whose sources are unknown. A receipt too long to index has none.
+pub(super) fn receipt_case_keys_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    receipt: &str,
+) -> Result<Vec<Vec<u8>>> {
+    let Ok(prefix) = receipt_prefix(receipt) else {
+        return Ok(Vec::new());
+    };
+    Ok(INDEX
+        .scan_keys(store, txn, &prefix)?
+        .into_iter()
+        .filter_map(|entry| entry.get(prefix.len()..).map(<[u8]>::to_vec))
+        .collect())
+}
+
 /// Each receipt that cases with unknown sources are indexed under, once, in
 /// key order, with the keys of its cases.
 pub(super) fn receipt_cases_in_txn(

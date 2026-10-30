@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1213 facade rows, 4399 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1165.
+// UniFFI census: 1214 facade rows, 4402 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1166.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -49642,6 +49642,38 @@ pub struct CallableCardView {
     pub arguments: crate::WireJson,
     #[serde(rename = "returns")]
     pub returns: crate::WireJson,
+}
+
+/// `oneiron::skill::call::frozen::amend::CallableAmendRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CallableAmendRequest {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "answer")]
+    pub answer: crate::WireJson,
+}
+
+/// `oneiron::skill::call::frozen::amend::CallableAmendOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CallableAmendOutcome {
+    #[serde(rename = "refrozen")]
+    Refrozen,
+    #[serde(rename = "no_case")]
+    NoCase,
+    #[serde(rename = "over_limit")]
+    OverLimit,
+}
+
+/// `oneiron::skill::call::frozen::amend::CallableAmendReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CallableAmendReceipt {
+    #[serde(rename = "outcome")]
+    pub outcome: CallableAmendOutcome,
+    #[serde(rename = "skill", default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
 }
 
 /// `oneiron::verbs::skill_execution::SkillPackReceiptRequest`.

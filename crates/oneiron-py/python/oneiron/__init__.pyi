@@ -1350,6 +1350,8 @@ class Oneiron:
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
+        @property
+        def callable(self) -> "Oneiron._VaultSkillsCallableVerbs": ...
         def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
@@ -1406,6 +1408,9 @@ class Oneiron:
             """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
         def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
             """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+    class _VaultSkillsCallableVerbs:
+        def amend(self, spec: Facade.CallableAmendRequest) -> Facade.CallableAmendReceipt:
+            """The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."""
     class _VaultSkillsOutcomesVerbs:
         def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""

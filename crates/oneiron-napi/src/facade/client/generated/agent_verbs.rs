@@ -7618,6 +7618,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_callable_amend(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.callable.amend", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_pack_receipt(
         &self,
         input: serde_json::Value,

@@ -1112,6 +1112,7 @@ pub(crate) fn mcp_agent_verb_input(
         "self.skills.save" => a.spec.clone().ok_or_else(invalid),
         "self.skills.fork" => a.spec.clone().ok_or_else(invalid),
         "self.skills.callables" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.skills.callable.amend" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.pack_receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.outcomes.project" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.outcomes.get" => a.spec.clone().ok_or_else(invalid),
@@ -4131,6 +4132,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.skills.callables" => {}
+        "vault.skills.callable.amend" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.skills.pack_receipt" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -20002,6 +20006,14 @@ async fn execute_agent_verb_row_on(
             let output = oneiron::task_verb::sdk::self_skills_callables(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.skills.callable.amend" => {
+            let input: oneiron::skill::helper::CallableAmendRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_skills_callable_amend(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.skills.pack_receipt" => {

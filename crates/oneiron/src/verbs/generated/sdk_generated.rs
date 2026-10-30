@@ -4727,6 +4727,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.skills.callable.amend",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill::helper::CallableAmendRequest,
+                >(),
+            ),
+            (
                 "vault.skills.pack_receipt",
                 crate::code_run::vault_read::request_schema::<SkillPackReceiptRequest>(),
             ),
@@ -16443,6 +16449,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.skills.callables" => &[],
+        "vault.skills.callable.amend" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.skills.pack_receipt" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21811,6 +21824,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.skills.callables" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.skills.callable.amend" => {
+            let _input: crate::skill::helper::CallableAmendRequest = decode(value.clone())?;
+        }
         "vault.skills.pack_receipt" => {
             let _input: SkillPackReceiptRequest = decode(value.clone())?;
         }
@@ -24837,6 +24853,9 @@ pub fn invoke(
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "vault.skills.callable.amend" => {
+            encode(vault_skills_callable_amend(memory, decode(value)?)?)
+        }
         "vault.skills.pack_receipt" => encode(vault_skills_pack_receipt(memory, decode(value)?)?),
         "vault.skills.outcomes.project" => {
             encode(vault_skills_outcomes_project(memory, decode(value)?)?)
@@ -32791,6 +32810,17 @@ pub fn self_skills_callables(
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
     memory.skill_callables()
+}
+pub fn vault_skills_callable_amend(
+    memory: &Memory<'_>,
+    input: crate::skill::helper::CallableAmendRequest,
+) -> MemoryResult<crate::skill::helper::CallableAmendReceipt> {
+    crate::skill::helper::amend_callable_case(
+        memory.vault(),
+        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_skills_pack_receipt(
     memory: &Memory<'_>,
