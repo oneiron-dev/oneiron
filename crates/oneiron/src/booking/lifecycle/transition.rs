@@ -250,9 +250,7 @@ fn confirm_in_writer(
     wtxn: &mut heed::RwTxn<'_>,
     now_utc: u64,
 ) -> Result<ConfirmOutcome, BookingError> {
-    if spec.intake.len() > 32 {
-        return Err(refused("booking confirm carries too many intake answers"));
-    }
+    // Every answer is kept; only each one's shape is checked.
     let mut intake_keys = std::collections::BTreeSet::new();
     for answer in &spec.intake {
         if answer.field_key.trim().is_empty()
@@ -311,14 +309,27 @@ fn confirm_in_writer(
     }
 
     // (3) Fresh availability, read while we hold the writer.
-    let solved = oracle.solve(&SolveRequest {
-        event_type: hold.event_type.clone(),
-        window: confirm_solve_window(hold.slot)?,
-        constraint: hold.constraint.clone(),
-        visitor_tz: hold.visitor_tz.clone(),
-    })?;
+    let solve_over = |window: crate::temporal::TimeRange| {
+        oracle.solve(&SolveRequest {
+            event_type: hold.event_type.clone(),
+            window,
+            constraint: hold.constraint.clone(),
+            visitor_tz: hold.visitor_tz.clone(),
+        })
+    };
+    let solved = solve_over(confirm_solve_window(hold.slot)?)?;
+    // The wide solve carries the alternatives, and the oracle offers the flex
+    // pool only where no ordinary slot exists in its window: a held flex
+    // slot is hidden there whenever an ordinary one is near. So a held slot
+    // the wide solve does not offer is asked again over exactly its own
+    // interval, under the same ordinary-before-flex rule.
+    let offered = offers_slot(&solved.slots, hold.slot)
+        || offers_slot(
+            &solve_over(inclusive_occurrence(hold.slot)?)?.slots,
+            hold.slot,
+        );
     // (4) Someone else took it. No EVENT, no claim, no passport.
-    if !offers_slot(&solved.slots, hold.slot) {
+    if !offered {
         return Ok(ConfirmOutcome::Taken {
             alternatives: solved.slots,
         });
