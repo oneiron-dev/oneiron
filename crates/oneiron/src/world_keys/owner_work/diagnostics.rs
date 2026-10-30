@@ -452,9 +452,9 @@ impl Vault {
                 OwnerWorkBody::PublishBundle { home } => ExecutorObservation::BundlePublication(
                     self.publication_diagnostics(request, home)?,
                 ),
-                OwnerWorkBody::Root { .. } | OwnerWorkBody::Custody { .. } => {
-                    ExecutorObservation::NotReported
-                }
+                OwnerWorkBody::Root { .. }
+                | OwnerWorkBody::Custody { .. }
+                | OwnerWorkBody::ExportSecret(_) => ExecutorObservation::NotReported,
             }
         };
         Ok(Some(OwnerWorkDiagnostics {

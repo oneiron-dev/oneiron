@@ -191,10 +191,15 @@ impl Vault {
                 "claim is not consolidatable"
             };
             self.clear_claim_vad_outputs_in_txn(&mut wtxn, claim_id, now)?;
+            // Nothing is left to consolidate: an owed debt settles with the
+            // cleared outputs (FIX 9598).
+            crate::store::settle_claim_vad_in_txn(&self.store, &mut wtxn, claim_id)?;
             wtxn.commit()?;
             return Err(Error::InvalidClaimBody(message));
         }
         let result = self.consolidate_claim_vad_staged(&mut wtxn, claim_id, claim_body, now)?;
+        // The debt clears only with a consolidation that commits (FIX 9598).
+        crate::store::settle_claim_vad_in_txn(&self.store, &mut wtxn, claim_id)?;
         wtxn.commit()?;
         Ok(result)
     }
