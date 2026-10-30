@@ -53,6 +53,7 @@ use crate::thread_passport::{
 };
 
 mod adapter;
+mod plan_store;
 
 /// Prefix of every Gmail send plan's content ref.
 pub const GMAIL_SEND_PLAN_REF_PREFIX: &str = "gmail:plan:v1:";
@@ -529,9 +530,11 @@ impl GmailSendAuthority<'_> {
 
 /// OF-327 execution sink for a member's Gmail send.
 ///
-/// Holds the frozen plans the host composed, keyed by content ref. The sink
+/// Holds the frozen plans the host composed, keyed by content ref, and reads
+/// back one the host kept ([`GmailSendPlan::keep`]) by its ref. The sink
 /// sends only a plan whose ref the dispatched intent names, from this
-/// adapter's mailbox, to the recipient the dispatch door bound.
+/// adapter's mailbox or a send-as alias it lists, to the recipient the
+/// dispatch door bound.
 pub struct GmailSendSink<'a, W> {
     vault: &'a Vault,
     adapter: &'a GmailDelegatedAdapter,
@@ -595,12 +598,18 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
         if request.calendar_invite.is_some() {
             return OutboundExecutionOutcome::failed("gmail_send_calendar_invite_unsupported");
         }
-        let Some(plan) = request
-            .intent
-            .content_ref
-            .as_deref()
-            .and_then(|content_ref| self.plans.get(content_ref))
-        else {
+        let Some(content_ref) = request.intent.content_ref.as_deref() else {
+            return OutboundExecutionOutcome::failed("gmail_send_plan_missing");
+        };
+        // A plan its host kept is read back by its ref (FIX 1053).
+        if !self.plans.contains_key(content_ref) {
+            match GmailSendPlan::kept(self.vault, content_ref) {
+                Ok(Some(plan)) => self.add_plan(plan),
+                Ok(None) => {}
+                Err(_) => return OutboundExecutionOutcome::failed("gmail_send_plan_unreadable"),
+            }
+        }
+        let Some(plan) = self.plans.get(content_ref) else {
             return OutboundExecutionOutcome::failed("gmail_send_plan_missing");
         };
         let recipient = request.counterparty_ref.unwrap_or(&request.intent.target);
@@ -686,6 +695,9 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     rfc_message_id.into_string(),
                 );
                 fields.insert(RECEIPT_RFC_MESSAGE_ID_SOURCE.to_owned(), source.to_owned());
+                if let Err(error) = GmailSendPlan::drop_kept(self.vault, &plan.content_ref) {
+                    tracing::warn!(%error, "a delivered gmail send's kept plan stays until it is dropped");
+                }
                 OutboundExecutionOutcome::delivered_to_channel(format!(
                     "gmail:{}",
                     sent.gmail_message_id
