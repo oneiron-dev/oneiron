@@ -87,6 +87,11 @@ pub(super) const CACHE_BODY_MAX_LEN: usize = 512 * 1024;
 /// the pending-consent ledger requires `gate.pending.`.
 pub(super) const QUARANTINE_REASON_CODE: &str = "gate.pending.booking.anti_abuse.borderline";
 
+/// The reason code an owner restore closes a quarantine record's pending
+/// review row with (FIX 7851).
+pub(super) const QUARANTINE_RESTORE_REASON_CODE: &str =
+    "gate.allow.owner_booking_quarantine_restore";
+
 /// Predicate of the minimal CLAIM body a quarantined submission leaves
 /// behind: the durable content the owner reviews from the pending gate row.
 /// The default policy manifest's `booking.` prefix rule rates it
