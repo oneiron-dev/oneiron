@@ -170,6 +170,8 @@ pub(super) struct Ask<'a> {
     pub(super) state: &'a serde_json::Value,
     /// Where the host's binding lets the judge's call be served.
     pub(super) locality: ModelLocality,
+    /// Host-attested keyless bit, read beside the locality stamp (FIX 10592).
+    pub(super) keyless: bool,
 }
 
 /// The verdict a check records, the typed decision behind it and what its
@@ -259,7 +261,7 @@ pub(super) async fn verdict(
             step: &step,
             guard: model.guard,
         },
-        request: judge_shell(model, serde_json::json!({}), ask.locality),
+        request: judge_shell(model, serde_json::json!({}), ask.locality, ask.keyless),
         seal: &seal,
     };
     let deadline = RetrievalDeadline::hard(
