@@ -135,14 +135,27 @@ impl DocxReanchor {
             return Ok(None);
         }
         let limits = vault.text_limits_in_txn(txn)?;
+        // Both DOCX reads run in the host's memory (FIX 10651); a resource
+        // refusal is the engine's error, never a quiet drift (FIX 10587).
+        let resources = crate::office_body::document_resources();
         let read = |version| -> Result<Option<Paragraphs>> {
-            Ok(vault
-                .read_blob_artifact_version_in_txn(txn, artifact, version)?
-                .and_then(|bytes| {
-                    oneiron_docedit::preflight_with_limits(&bytes, limits.docx).ok()?;
-                    let document = oneiron_docedit::Document::parse(&bytes).ok()?;
-                    Some(Paragraphs::new(docx_anchor_blocks(&document)))
-                }))
+            let Some(bytes) = vault.read_blob_artifact_version_in_txn(txn, artifact, version)?
+            else {
+                return Ok(None);
+            };
+            let parsed = resources.docx(|| {
+                oneiron_docedit::preflight_with_limits(&bytes, limits.docx)?;
+                oneiron_docedit::Document::parse(&bytes)
+            });
+            match parsed {
+                Ok(document) => Ok(Some(Paragraphs::new(docx_anchor_blocks(&document)))),
+                Err(error) => {
+                    if let Some(refusal) = oneiron_docedit::docx_resource(&error) {
+                        return Err(crate::office_body::document_refused(refusal));
+                    }
+                    Ok(None)
+                }
+            }
         };
         let (before, after) = (read(from)?, read(to)?);
         let shares_ids = match (&before, &after) {
