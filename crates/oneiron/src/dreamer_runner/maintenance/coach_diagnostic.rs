@@ -624,9 +624,10 @@ fn skill_in_force(
 }
 
 /// The manifest's row in force: present, read by a resolved policy that is not fail-closed,
-/// and among its contributors, trusted; each revision its body's digest (FIX 7344). Its row
-/// records no time its body took effect, and the row's own time moves with any rewrite of the
-/// same body, so its evidence counts from the pass that first proves it.
+/// and among its contributors, trusted; each revision its body's digest (FIX 7344). It is in
+/// force from the second this vault first trusted that body, which a rewrite of the same body
+/// keeps (FIX 10936); the row's own time moves with any such rewrite, so it is never read. A
+/// stamp with no time (the bootstrap seed's) counts from the pass that first proves it.
 fn manifest_in_force(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -663,9 +664,15 @@ fn manifest_in_force(
     if !trusted_contributors.contains(&(manifest, revision)) {
         return Ok(EffectiveRevision::Unknown);
     }
+    let from = crate::gate::manifest_authenticity::manifest_trusted_at(
+        &vault.store,
+        txn,
+        &manifest,
+        body,
+    )?;
     Ok(EffectiveRevision::InForce {
         revision: bytes_to_hex_lower(&revision),
-        from: None,
+        from,
         proof: EffectProof::PolicyManifest {
             manifest,
             revision,

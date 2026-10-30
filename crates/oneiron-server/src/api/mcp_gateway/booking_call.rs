@@ -42,8 +42,10 @@ const MCP_BOOKING_HOLDER_STREAM_CONTEXT: &str =
 
 /// The caller of one `tools/call`: for a booking tool called with no
 /// credential by an attested holder the vault no longer records as its live
-/// owner, that holder as a booking caller ([`booking_context`]); for every
-/// other call, the caller `owner_call::resolve_mcp_caller` resolves.
+/// owner, that holder as a booking caller ([`booking_context`]); for a
+/// member door called with no credential by a member his supervisor signed
+/// it for, that member (FIX 1302, `person_call`); for every other call, the
+/// caller `owner_call::resolve_mcp_caller` resolves.
 pub(super) async fn resolve_tool_caller(
     mode: McpSurfaceMode,
     request_id: &str,
@@ -53,6 +55,11 @@ pub(super) async fn resolve_tool_caller(
     server: &Arc<SyncServer>,
     params: Option<&Value>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    if let Some(person) =
+        super::person_call::tool_caller(mode, request_id, headers, connection, server, params)
+    {
+        return person;
+    }
     let holder = booking_holder(mode, headers, connection, server, params);
     resolve_holder_or_caller(
         mode, request_id, headers, connection, locality, server, holder,
@@ -65,7 +72,8 @@ pub(super) async fn resolve_tool_caller(
 /// `oneiron/wakes`. An attested holder with no credential the vault no
 /// longer records as its live owner is his booking caller, as for a booking
 /// tool call ([`booking_context`]), so a client that initializes first
-/// reaches the booking tools; every other caller as
+/// reaches the booking tools; a member his supervisor signed it for, that
+/// member (FIX 1302, `person_call`); every other caller as
 /// `owner_call::resolve_mcp_caller` resolves it.
 pub(super) async fn resolve_handshake_caller(
     mode: McpSurfaceMode,
@@ -75,6 +83,11 @@ pub(super) async fn resolve_handshake_caller(
     locality: oneiron::claim::CallerLocality,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    if let Some(person) =
+        super::person_call::handshake_caller(mode, request_id, headers, connection, server)
+    {
+        return person;
+    }
     let holder = uncredentialed_holder(headers, connection, server);
     resolve_holder_or_caller(
         mode, request_id, headers, connection, locality, server, holder,
@@ -84,7 +97,8 @@ pub(super) async fn resolve_handshake_caller(
 
 /// What `tools/list` lists for `actor` (FIX 5934): the endpoint's frozen
 /// listing, the same bytes for every caller, except a stale owner sign-in's
-/// booking caller, who is listed only the booking tools he may call.
+/// booking caller, who is listed only the booking tools he may call, and a
+/// member's own caller, who is listed only the member doors (FIX 1302).
 pub(super) fn tools_listing(
     server: &SyncServer,
     mode: McpSurfaceMode,
@@ -95,26 +109,24 @@ pub(super) fn tools_listing(
         .map_err(super::admission::mcp_surface_unavailable)?
         .listing()
         .clone();
-    if !actor
+    let listed: fn(&str) -> bool = if super::person_call::is_person_caller(actor) {
+        super::person_call::is_person_door
+    } else if actor
         .auth
         .as_ref()
         .is_some_and(CoreAuth::is_attested_booking_holder)
     {
+        |name| crate::api::booking::booking_payer_verbs().any(|verb| verb == name)
+    } else {
         return Ok(listing);
-    }
+    };
     let Value::Array(tools) = listing else {
         return Ok(Value::Array(Vec::new()));
     };
     Ok(Value::Array(
         tools
             .into_iter()
-            .filter(|tool| {
-                tool.get("name")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| {
-                        crate::api::booking::booking_payer_verbs().any(|verb| verb == name)
-                    })
-            })
+            .filter(|tool| tool.get("name").and_then(Value::as_str).is_some_and(listed))
             .collect(),
     ))
 }
@@ -149,7 +161,9 @@ async fn resolve_holder_or_caller(
 /// The owner a claimed `tools/call` invocation is keyed by: for a booking
 /// tool called with no credential by an attested holder, that holder, live
 /// owner or not, whose call books as `resolve_tool_caller` resolves it; for
-/// every other call, as `owner_call::invocation_owner` keys and judges it.
+/// a member door called with no credential by a member his supervisor
+/// signed it for, that member (FIX 1302); for every other call, as
+/// `owner_call::invocation_owner` keys and judges it.
 pub(super) fn invocation_owner(
     mode: McpSurfaceMode,
     headers: &HeaderMap,
@@ -157,6 +171,11 @@ pub(super) fn invocation_owner(
     server: &SyncServer,
     params: Option<&Value>,
 ) -> Result<String, McpGatewayError> {
+    if let Some(holder) =
+        super::person_call::tool_holder(mode, headers, connection, server, params)
+    {
+        return Ok(holder.to_hex());
+    }
     if let Some(holder) = booking_holder(mode, headers, connection, server, params) {
         return Ok(holder.to_hex());
     }
