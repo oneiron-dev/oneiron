@@ -1,6 +1,9 @@
 //! The projector's import of delivered connector send receipts as source
 //! events.
 
+use std::collections::BTreeSet;
+use std::sync::{Mutex, OnceLock};
+
 use super::claims::{CommError, CommResult, KEY_PARTY_KEY};
 use super::parties::resolve_or_create_party_in_txn;
 use super::projector::storage_failure;
@@ -36,7 +39,10 @@ struct DeliveredSend {
 /// skipped, and the receipts after it still import; it is tried again on the
 /// next call. Only a storage failure ends the call.
 pub(super) fn import_delivered_send_receipts(vault: &Vault, max_imports: usize) -> CommResult<()> {
-    let receipts = crate::receipt::durable_send_receipts(vault)?;
+    let (receipts, undecodable) = crate::receipt::durable_send_receipts(vault)?;
+    for task_ref in &undecodable {
+        warn_undecodable_send_receipt_once(task_ref);
+    }
     let fresh = {
         let rtxn = vault.store.env.read_txn()?;
         let mut fresh = Vec::new();
@@ -173,6 +179,23 @@ fn imported_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, send: &DeliveredSend) -
             Ok(true)
         }
         _ => Err(CommError::InvalidRecord),
+    }
+}
+
+/// An undecodable send receipt row is skipped by the import, said once per
+/// process per row (FIX 11952): the pass imports the rows that decode.
+fn warn_undecodable_send_receipt_once(task_ref: &str) {
+    static LOGGED: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
+    let first = LOGGED
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(task_ref.to_owned());
+    if first {
+        tracing::warn!(
+            task_ref,
+            "an undecodable send receipt row is skipped by the comm import"
+        );
     }
 }
 
