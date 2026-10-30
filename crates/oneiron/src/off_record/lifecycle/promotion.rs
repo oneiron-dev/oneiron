@@ -205,7 +205,8 @@ impl OffRecordSession<'_> {
     ///
     /// A result MESSAGE a plan keeps lands with its hold on the body, read
     /// out of this room (FIX 365); a body the room spilled to a file is in
-    /// the vault's `bodies/` before the transaction, pinned until it commits.
+    /// the vault's `bodies/` before the transaction, pinned until it ends,
+    /// and gone then unless a row of it names it (FIX 3633).
     ///
     /// [`appends`]: crate::session_overlay::PromotePlan::appends
     pub(super) fn promote_plans<T>(
@@ -217,8 +218,8 @@ impl OffRecordSession<'_> {
     ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
         let floor = FloorWrites::new(&self.vault.store).saving(self.entry.overlay.clone());
         #[cfg(unix)]
-        let _bodies = floor.import_result_bodies(self.vault, &self.session_ref, &plans)?;
-        let (landed, checked) = self.vault.with_write_txn_grouped(|wtxn| {
+        let bodies = floor.import_result_bodies(self.vault, &self.session_ref, &plans)?;
+        let saved = self.vault.with_write_txn_grouped(|wtxn| {
             let checked = check(wtxn)?;
             let promoted_at = self.vault.store.clock.now_recorded_at();
             plans
@@ -254,7 +255,11 @@ impl OffRecordSession<'_> {
                 })
                 .collect::<Result<Vec<_>>>()
                 .map(|landed| (landed, checked))
-        })?;
+        });
+        // A copy no row of the save names, refused or skipped, leaves now.
+        #[cfg(unix)]
+        self.vault.discard_unnamed_promoted_bodies(bodies);
+        let (landed, checked) = saved?;
         // Committed. Publish the RAM state, then drop the kept rows and
         // journal entries from the room — in that order, and never before.
         for (plan, (_, held)) in plans.iter().zip(&landed) {

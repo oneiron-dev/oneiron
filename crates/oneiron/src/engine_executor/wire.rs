@@ -88,8 +88,14 @@ pub(super) fn heal_executor_reply(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    heal_executor_text(&text)
+}
 
-    let (candidate, trailing) = partition_reply(&text);
+/// [`heal_executor_reply`] over a reply that finished cleanly, as its text:
+/// the post-hook view a step heals, with no copy of the reply made for it
+/// (FIX 448).
+pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecutorReply> {
+    let (candidate, trailing) = partition_reply(text);
     let (cleaned_trailing, trailing_discards) =
         partition_top_level_console_blocks(trailing, ConsoleRegion::Trailing)?;
     let trailing_speak = cleaned_trailing.trim();

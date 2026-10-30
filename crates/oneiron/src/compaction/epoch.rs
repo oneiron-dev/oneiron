@@ -43,11 +43,6 @@ pub const EPOCH_SUMMARY_BODY_VERSION: u64 = 1;
 /// for grains are display-layer property owned elsewhere.
 pub const EPOCH_SUMMARY_LEVEL: u64 = 0;
 
-/// The width at which a conversation window's `DerivedFrom` set was once
-/// cut. Nothing cuts it now (OF-013): every TURN and MESSAGE the window was
-/// read from is a source, as erasure and disclosure need.
-pub const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
-
 /// Hard cap on the sources a host-numbered log's summary derives from.
 ///
 /// For an executor run the `DerivedFrom` set IS the erasure and disclosure
@@ -821,9 +816,9 @@ fn next_epoch(prior: Option<PriorEpoch>) -> Result<u64> {
 /// and the summary itself, a turn no promotion names, so promoting the
 /// room's turns never carries it.
 ///
-/// A source withdrawn before the mint keeps its edge: base erasure cannot
-/// mark an overlay summary, so the room's render walks the lineage and the
-/// summary reads as withdrawn there. Such a summary takes no vector.
+/// A source erased, withdrawn or purged before the mint takes no edge, as a
+/// dependency needs its row (FIX 3448): the summary is born withdrawn in the
+/// room, its keyframe only, marked stale there, with no text and no vector.
 #[expect(
     clippy::too_many_arguments,
     reason = "the base mint's arguments plus the room's route, inline vector and a self-written \
@@ -860,7 +855,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
     let occurred = TimeRange { start: at, end: at };
     let summary_id = session.read_view()?.clock().entity_id()?;
     let intent_id = session.read_view()?.clock().entity_id()?;
-    let body = encode_epoch_summary_body(&EpochSummaryBody {
+    let summary = EpochSummaryBody {
         v: EPOCH_SUMMARY_BODY_VERSION,
         session: session_ref.to_hex(),
         epoch,
@@ -869,7 +864,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
         level: EPOCH_SUMMARY_LEVEL,
         text: product.summary_text.clone(),
         actor: byline.entity_ref().to_hex(),
-    })?;
+    };
     let scope = JournalScope::new(*session_ref, summary_id);
     // A self-written summary's home parts are its sources too (FIX 4465 B).
     let derived = summary_dependencies(request, writer);
@@ -884,6 +879,14 @@ pub(super) fn mint_epoch_summary_in_overlay(
         source_run: source_run.clone(),
     };
     session.overlay_write_routed(route, |wtxn, apply| {
+        let view = session.read_view()?;
+        let live = super::epoch_intent::standing_in(&view, wtxn, &derived)?;
+        let withdrawn = live.len() < derived.len();
+        let data = if withdrawn {
+            WithdrawnKeyframe::of_body(&summary)?.encode()?
+        } else {
+            encode_epoch_summary_body(&summary)?
+        };
         apply(
             wtxn,
             entry(
@@ -893,14 +896,14 @@ pub(super) fn mint_epoch_summary_in_overlay(
                     entity_type: ENTITY_TYPE_SUMMARY,
                     occurred,
                     learned_at: at,
-                    data: body,
+                    data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
                 },
             ),
         )?;
-        for target in &derived {
+        for target in &live {
             apply(
                 wtxn,
                 entry(
@@ -915,18 +918,20 @@ pub(super) fn mint_epoch_summary_in_overlay(
                 ),
             )?;
         }
-        apply(
-            wtxn,
-            entry(
-                JournalRole::TurnOwnedArtifact,
-                BatchOp::Text {
-                    id: summary_id,
-                    fields: vec![("content".to_owned(), product.summary_text.clone())],
-                },
-            ),
-        )?;
-        let view = session.read_view()?;
-        let withdrawn = super::epoch_intent::any_withdrawn_in(&view, wtxn, &derived)?;
+        if withdrawn {
+            crate::ports::stage_stale_mark_in_txn(&view, wtxn, &summary_id, at)?;
+        } else {
+            apply(
+                wtxn,
+                entry(
+                    JournalRole::TurnOwnedArtifact,
+                    BatchOp::Text {
+                        id: summary_id,
+                        fields: vec![("content".to_owned(), product.summary_text.clone())],
+                    },
+                ),
+            )?;
+        }
         if let Some(op) = super::epoch_vector::room_vector_op(vector, summary_id, withdrawn) {
             apply(wtxn, entry(JournalRole::TurnOwnedArtifact, op))?;
         }
@@ -944,7 +949,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
             summary_id,
             at,
             intent,
-            &request.sources,
+            &live,
         ) {
             apply(wtxn, entry(JournalRole::TurnOwnedArtifact, op))?;
         }

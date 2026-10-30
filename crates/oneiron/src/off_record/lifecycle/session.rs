@@ -812,38 +812,17 @@ impl OffRecordSession<'_> {
         CK: SideKey,
         CC: SideCodec<CV>,
     {
-        route.require_recording(&self.session_ref)?;
-        let target = route.target();
-        if target == RouteTarget::Discard {
-            unreachable!("anonymous recording refused above");
-        }
-        let overlay = self.entry.overlay.clone();
-        // A stretch on record writes into base only while its saver holds.
-        let check = self.saver_check_for(route)?;
-        let (segment, total) = self.with_saver_write_txn(check, |wtxn| {
-            let segment = match target {
-                RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
-                RouteTarget::Base | RouteTarget::Discard => None,
-            };
-            route.revalidate()?;
-            let view = self.vault.store.session_view(overlay.clone())?;
-            accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-            let base = counter.get(&self.vault.store, wtxn, counter_key)?;
-            let delta = self.overlay_counter_delta(counter, counter_key)?;
-            let (next_counter, total) = update_counter(base, delta, target)?;
-            if target == RouteTarget::Overlay {
-                table.put(&view, wtxn, key, value)?;
-                counter.put(&view, wtxn, counter_key, &next_counter)?;
-            } else {
-                table.put(self.vault, wtxn, key, value)?;
-                counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
-            }
-            Ok((segment, total))
-        })?;
-        if let Some(segment) = segment {
-            segment.commit()?;
-        }
-        Ok(total)
+        self.side_table_compare_and_put_with_counter_routed_and(
+            route,
+            table,
+            key,
+            value,
+            accepts_current,
+            counter,
+            counter_key,
+            update_counter,
+            |_, _| Ok(()),
+        )
     }
 
     /// [`Self::side_table_compare_and_put_with_counter_routed`], with `also`
@@ -897,7 +876,7 @@ impl OffRecordSession<'_> {
                 counter.put(&view, wtxn, counter_key, &next_counter)?;
                 also(wtxn, RoutedDbs::Session(&view))?;
             } else {
-                table.put(&self.vault.store, wtxn, key, value)?;
+                table.put(self.vault, wtxn, key, value)?;
                 counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
                 also(wtxn, RoutedDbs::Base(self.vault))?;
             }

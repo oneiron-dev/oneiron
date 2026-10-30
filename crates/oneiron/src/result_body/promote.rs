@@ -1,20 +1,18 @@
 //! Bringing an off-record result body into the vault's `bodies/`.
 
-use super::{RAW_OUTPUT_SECRETS, ResultBodyPin, raw_output_handle};
-use crate::code_run::ResultOccurrence;
+use super::ResultBodyPin;
 use crate::memory::MessageResultAttachment;
 use crate::side_table::SideTableDbs;
 use crate::store::{BodyKeyRow, body_key_row_in_txn};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{Error, Result, Vault};
 
 impl Vault {
     /// Copies the result body `digest`, of `len` bytes, from the body
     /// directory of the off-record session `session_ref` into the vault's
-    /// `bodies/`, checked against its digest and synced, and keeps the room's
-    /// secret mark (`secret`: the occurrence the base row will name, and the
-    /// scan's reason) on that occurrence in the base vault: all before any
-    /// base row names it. A body `bodies/` holds already stays as it is. Any
-    /// other comes in as a new vault instance, minted here, before the save's
+    /// `bodies/`, checked against its digest and synced, before any base row
+    /// names it; its marks come with that row, in the save's checked
+    /// transaction (FIX 3633). A body `bodies/` holds already stays as it is.
+    /// Any other comes in as a new vault instance, minted here, before the save's
     /// transaction opens: sealed again under its key on a sealed vault (the
     /// session's key, `key` its row in the room, is never copied or wrapped
     /// again), plain on a plain one. The save's transaction commits its row
@@ -33,7 +31,6 @@ impl Vault {
         digest: &[u8; 32],
         len: u64,
         key: Option<&BodyKeyRow>,
-        secret: Option<(ResultOccurrence, &str)>,
     ) -> Result<ResultBodyPin> {
         let held = self.pin_result_body(*digest);
         let target = self.store.body_dir()?;
@@ -45,33 +42,27 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             body_key_row_in_txn(&self.store, &rtxn, digest)?
         };
-        let pin = match source {
-            _ if target.holds_pair(digest, vault_row.as_ref())? => held,
+        match source {
+            _ if target.holds_pair(digest, vault_row.as_ref())? => Ok(held),
             Some(file) => {
                 let instance = self.store.body_mint()?.mint()?;
                 let promoted = *instance.instance();
                 target.import_promoted(digest, len, file, instance)?;
-                self.pin_promoted_result_body(*digest, promoted)
+                Ok(self.pin_promoted_result_body(*digest, promoted))
             }
-            None => return Err(Error::CorruptedIndex("off-record result body missing")),
-        };
-        if let Some((occurrence, reason)) = secret {
-            let key = occurrence.mark_key(&raw_output_handle(digest));
-            self.with_write_txn_grouped(|txn| {
-                RAW_OUTPUT_SECRETS.put(&self.store, txn, &key, &reason.to_owned())
-            })?;
+            None => Err(Error::CorruptedIndex("off-record result body missing")),
         }
-        Ok(pin)
     }
 
     /// The body a result MESSAGE holds, before a save keeps the MESSAGE out
-    /// of the off-record session `session_ref` as `message` (FIX 365): a
-    /// body the room spilled to a file comes into `bodies/` through
-    /// [`Self::promote_off_record_result_body`], with the room's secret mark
-    /// on the producer's occurrence (read through `room`, the room's
-    /// composed view) kept on the MESSAGE's. An inline body travels in its
+    /// of the off-record session `session_ref` (FIX 365): a
+    /// body the room spilled to a file (its key row read through `room`, the
+    /// room's composed view) comes into `bodies/` through
+    /// [`Self::promote_off_record_result_body`]. An inline body travels in its
     /// row, which the save copies in its own transaction. Either way the pin
-    /// keeps the collector off the body until that transaction commits.
+    /// keeps the collector off the body until that transaction commits, and
+    /// the room's marks on the producer's occurrence come onto the MESSAGE's
+    /// only there (FIX 3633).
     ///
     /// # Errors
     ///
@@ -80,7 +71,6 @@ impl Vault {
         &self,
         session_ref: &str,
         room: &impl SideTableDbs,
-        message: EntityId,
         attachment: &MessageResultAttachment,
     ) -> Result<ResultBodyPin> {
         let output = attachment.output()?;
@@ -97,18 +87,11 @@ impl Vault {
         if !spilled {
             return Ok(self.pin_result_body(output.raw_blake3));
         }
-        let producer = ResultOccurrence::of(Some(attachment.source.run_id), &output)?;
-        let secret = {
-            let rtxn = self.store.env.read_txn()?;
-            RAW_OUTPUT_SECRETS.get(room, &rtxn, &producer.mark_key(&output.handle))?
-        };
-        let held = ResultOccurrence::of(Some(message), &output)?;
         self.promote_off_record_result_body(
             session_ref,
             &output.raw_blake3,
             output.raw_len,
             key.as_ref(),
-            secret.as_deref().map(|reason| (held, reason)),
         )
     }
 }
