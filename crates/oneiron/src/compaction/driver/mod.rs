@@ -226,6 +226,9 @@ pub struct CompactionRequest {
     /// `DerivedFrom` set, so erasing one retires the summary and a reader
     /// who may not read one reads no summary.
     pub sources: Vec<EntityId>,
+    /// Whether the engine read this window's text from `sources` itself,
+    /// rather than receiving caller-asserted or outcome-scanned ids (FIX 6999).
+    pub window_read_from_sources: bool,
     /// What the agent asked the summary to keep (`self.compact({note})`,
     /// `self.fold(span, {note})`), as free text. Unlike a pin it need not
     /// occur in the window, and no check holds the summary to it.
@@ -281,6 +284,7 @@ impl CompactionRequest {
             },
             pins,
             sources,
+            window_read_from_sources: false,
             note: None,
             log: WindowLog::Conversation,
         })
@@ -776,6 +780,7 @@ impl CompactionDriver {
             window,
             Vec::new(),
             sources,
+            false,
             WindowLog::Conversation,
         )
     }
@@ -787,6 +792,7 @@ impl CompactionDriver {
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
         sources: Vec<EntityId>,
+        window_read_from_sources: bool,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
         let prior = match log {
@@ -804,6 +810,7 @@ impl CompactionDriver {
             sources,
             prior,
             None,
+            window_read_from_sources,
             log,
         )
     }
@@ -821,6 +828,7 @@ impl CompactionDriver {
         sources: Vec<EntityId>,
         prior: Option<crate::compaction::PriorEpoch>,
         note: Option<String>,
+        window_read_from_sources: bool,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, request } = &self.state else {
@@ -846,6 +854,7 @@ impl CompactionDriver {
             watermark,
             pins,
             sources,
+            window_read_from_sources,
             note,
             log,
         };

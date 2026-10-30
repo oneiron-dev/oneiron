@@ -134,11 +134,11 @@ impl HomePart {
     }
 }
 
-/// One read row of a home part.
+/// One home part and every row its text was read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomeItem {
     part: HomePart,
-    row: EntityId,
+    rows: Vec<EntityId>,
     text: String,
 }
 
@@ -205,7 +205,7 @@ pub fn load_compaction_home(
     match read.compile_persona(&identity.person, None) {
         Ok(persona) => home.items.push(HomeItem {
             part: HomePart::Voice,
-            row: identity.person,
+            rows: persona.made_by.inputs,
             text: persona.value.to_string(),
         }),
         Err(_) => home.absent.push((HomePart::Voice, "no_readable_persona")),
@@ -231,7 +231,7 @@ pub fn load_compaction_home(
             entries.sort_by(|a, b| b.learned_at.cmp(&a.learned_at).then(b.id.cmp(&a.id)));
             home.items.extend(entries.into_iter().map(|entry| HomeItem {
                 part: HomePart::Diary,
-                row: entry.id,
+                rows: vec![entry.id],
                 text: entry.markdown,
             }));
         }
@@ -273,7 +273,7 @@ fn lessons_of(agent: EntityId, rows: impl Iterator<Item = ReadRow>) -> Vec<HomeI
         };
         lessons.push(HomeItem {
             part: HomePart::Lessons,
-            row: id,
+            rows: vec![id],
             text: format!("{}: {text}", body.predicate),
         });
     }
@@ -310,11 +310,12 @@ impl CompactionHome {
             } else {
                 cut = true;
             }
-            refs.push(CompactionHomeRef {
+            let state = if fits { HOME_PART_WORN } else { "truncated" }.to_owned();
+            refs.extend(item.rows.iter().map(|row| CompactionHomeRef {
                 part: item.part.as_str().to_owned(),
-                row: Some(item.row),
-                state: if fits { HOME_PART_WORN } else { "truncated" }.to_owned(),
-            });
+                row: Some(*row),
+                state: state.clone(),
+            }));
         }
         for (part, why) in &self.absent {
             refs.push(CompactionHomeRef {
