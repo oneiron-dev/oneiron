@@ -157,6 +157,7 @@ pub fn record_solo_receipt(vault: &Vault, attempt: AttemptId, now: u64) -> Resul
         outcome: None,
         at: now,
     };
+    drop(txn);
     receipt.validate()?;
     record_team_receipt(vault, &receipt)?;
     Ok(true)
