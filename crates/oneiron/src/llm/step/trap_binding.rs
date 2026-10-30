@@ -156,10 +156,21 @@ pub(super) fn trap_binding_read_in_txn(
     TRAP_BINDING.get(&vault.store, rtxn, anchor)
 }
 
-/// Every trap binding this device holds, by its anchor.
-pub(super) fn trap_bindings(vault: &Vault) -> Result<Vec<(EntityId, TrapBindingRow)>> {
+pub(super) fn trap_binding_read(
+    vault: &Vault,
+    anchor: &EntityId,
+) -> Result<Option<TrapBindingRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    TRAP_BINDING.scan(&vault.store, &rtxn)
+    trap_binding_read_in_txn(vault, &rtxn, anchor)
+}
+
+/// Every binding in one recovery transaction's snapshot. The Sent-marker
+/// healer filters to attempt-scoped rows before it reads each trap head.
+pub(super) fn trap_binding_rows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, TrapBindingRow)>> {
+    TRAP_BINDING.scan(&vault.store, rtxn)
 }
 
 /// One open `dreamer.trap` wait: created, waiting or sent, not yet consumed.

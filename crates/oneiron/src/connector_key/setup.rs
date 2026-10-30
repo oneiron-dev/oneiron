@@ -17,6 +17,9 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::time::Duration;
 
+use serde::Deserialize;
+use zeroize::{Zeroize, Zeroizing};
+
 use super::normalize_connector_key;
 use super::qualification::{GroundingOracle, QualificationConnector, QualificationPlan};
 use super::record::ConnectorKeyStatus;
@@ -24,15 +27,20 @@ use super::txn::read_connector_key_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{Error, Result};
 use crate::skill_hub::pack_catalog::{
-    MAX_SETUP_PERMISSIONS, PackSetupAuth, PackSetupCheckRecord, PackSetupConnection,
-    PackSetupGrantRef, PackSetupKeyRef, PackSetupPermission, PackSetupSecret, PackSetupSession,
-    PackSetupView, live_custody_in_txn, pin_connection_custody_in_txn,
+    PackSetupActor, PackSetupAuth, PackSetupCheckRecord, PackSetupConnection,
+    PackSetupConnectionState, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermission,
+    PackSetupSecret, PackSetupSession, PackSetupView, live_custody_in_txn,
+    pin_connection_custody_in_txn,
 };
 use crate::{EntityId, Vault};
 
+// An agent's `allow`, put to the owner as a decision ask.
+mod allow_ask;
 mod grants;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
 mod sent_check;
+
+pub use allow_ask::{PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE, PackSetupOwnerAsk};
 
 /// The actor class every pack-connection grant is narrowed to.
 pub const PACK_CONNECTION_ACTOR_CLASS: &str = "pack-connection";
@@ -48,6 +56,9 @@ pub const BROWSER_SESSION_CHECK: &str = "browser.session";
 /// server. Only a served host with a `[native_mail]` server runs it.
 pub const NATIVE_MAIL_JMAP_CHECK: &str = "native_mail.jmap";
 const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
+/// Google's OAuth token endpoint: where a stored Gmail refresh token is
+/// exchanged for the access token its check presents.
+const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const MAX_CHECK_REPLY_BYTES: u64 = 64 * 1024;
 const MAX_CHECK_TEXT_BYTES: usize = 512;
 
@@ -167,6 +178,144 @@ impl ProviderConnectionChecks {
             body,
         })
     }
+
+    /// The Gmail profile read with the stored grant. A grant that carries a
+    /// refresh token and the OAuth client it was issued to (the shape
+    /// Google's own tools store) is first exchanged at Google's token
+    /// endpoint, here inside the credential door, and the scopes Google's
+    /// reply names stand as the scopes the credential holds. A grant that
+    /// carries only an access token presents it, and bare text is the access
+    /// token. An exchanged access token is presented once and never kept.
+    fn send_gmail_profile(
+        &self,
+        method: &reqwest::Method,
+        url: &str,
+        value: &[u8],
+    ) -> Result<CheckReply> {
+        let text = std::str::from_utf8(value)
+            .map_err(|_| invalid("the stored credential is not text"))?
+            .trim();
+        if !text.starts_with('{') {
+            return self.send(GMAIL_PROFILE_CHECK, method, url, value);
+        }
+        let grant: StoredGoogleGrant = serde_json::from_str(text)
+            .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
+        if let (Some(refresh_token), Some(client_id)) =
+            (present(&grant.refresh_token), present(&grant.client_id))
+        {
+            let (access_token, granted) = self.exchange_google_refresh(
+                refresh_token,
+                client_id,
+                present(&grant.client_secret),
+            )?;
+            let mut reply = self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())?;
+            reply.scopes = granted.or(reply.scopes);
+            return Ok(reply);
+        }
+        let access_token = present(&grant.access_token).ok_or_else(|| {
+            invalid(
+                "the stored Gmail grant holds neither an access token nor a refresh token with its OAuth client",
+            )
+        })?;
+        self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
+    }
+
+    /// Exchanges a stored refresh token for a fresh access token at Google's
+    /// token endpoint: the token, held only for the call that presents it,
+    /// and the scopes Google granted it, as its reply names them.
+    fn exchange_google_refresh(
+        &self,
+        refresh_token: &str,
+        client_id: &str,
+        client_secret: Option<&str>,
+    ) -> Result<(Zeroizing<String>, Option<String>)> {
+        let mut form = vec![
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id),
+        ];
+        if let Some(secret) = client_secret {
+            form.push(("client_secret", secret));
+        }
+        let response = self
+            .client
+            .post(GOOGLE_TOKEN_URL)
+            .form(&form)
+            .send()
+            .map_err(|error| {
+                Error::InvalidConfig(format!(
+                    "connection check could not reach Google's token endpoint: {}",
+                    error.without_url()
+                ))
+            })?;
+        let status = response.status().as_u16();
+        let mut body = Zeroizing::new(Vec::new());
+        response
+            .take(MAX_CHECK_REPLY_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| invalid("Google's token reply is unreadable"))?;
+        if body.len() as u64 > MAX_CHECK_REPLY_BYTES {
+            return Err(invalid("Google's token reply exceeds its bound"));
+        }
+        let mut reply: GoogleTokenReply = serde_json::from_slice(&body)
+            .map_err(|_| invalid("Google's token reply is not JSON"))?;
+        match reply.access_token.take().map(Zeroizing::new) {
+            Some(token) if (200..300).contains(&status) && !token.trim().is_empty() => {
+                Ok((token, reply.scope.take()))
+            }
+            _ => Err(Error::InvalidConfig(format!(
+                "pack setup: Google refused the stored refresh token (HTTP {status}): {}",
+                bounded(reply.error.as_deref().unwrap_or("no reason given"))
+            ))),
+        }
+    }
+}
+
+/// A stored Google grant, read inside the credential door and wiped on drop.
+#[derive(Deserialize)]
+struct StoredGoogleGrant {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    client_secret: Option<String>,
+}
+
+impl Drop for StoredGoogleGrant {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.client_secret.zeroize();
+    }
+}
+
+/// Google's token reply: the fresh access token, wiped on drop, and the
+/// space-separated scopes it holds.
+#[derive(Deserialize)]
+struct GoogleTokenReply {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl Drop for GoogleTokenReply {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+    }
+}
+
+/// A stored field's value, trimmed, when it holds one.
+fn present(field: &Option<String>) -> Option<&str> {
+    field
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 impl PackConnectionVerifier for ProviderConnectionChecks {
@@ -183,7 +332,11 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
         let mut reply = None;
         vault
             .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
-                reply = Some(self.send(check.check, &method, url, value)?);
+                reply = Some(if check.check == GMAIL_PROFILE_CHECK {
+                    self.send_gmail_profile(&method, url, value)?
+                } else {
+                    self.send(check.check, &method, url, value)?
+                });
                 Ok(())
             })
             .map_err(|error| error.to_string())?;
@@ -301,11 +454,12 @@ fn evidence_of(
     Ok(PackConnectionEvidence {
         account,
         provider_account,
+        // A header lists scopes comma-separated; an OAuth token reply,
+        // space-separated.
         scopes: scopes
             .map(|header| {
                 header
-                    .split(',')
-                    .map(str::trim)
+                    .split(|separator: char| separator == ',' || separator.is_whitespace())
                     .filter(|scope| !scope.is_empty())
                     .map(str::to_owned)
                     .collect()
@@ -442,9 +596,7 @@ fn declared_connection<'a>(
 }
 
 fn check_allowed(connection: &PackSetupConnection, allowed: &[String]) -> Result<()> {
-    if allowed.len() > MAX_SETUP_PERMISSIONS
-        || allowed.iter().any(|id| connection.permission(id).is_none())
-    {
+    if allowed.iter().any(|id| connection.permission(id).is_none()) {
         return Err(invalid("the connection asks for no such permission"));
     }
     if connection

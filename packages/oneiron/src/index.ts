@@ -1199,11 +1199,11 @@ export class Oneiron {
         },
       },
       setup: {
-        /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
+        /** The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing. */
         prepare: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as Facade.PackSetupReceipt),
-        /** A pack's guided setup as it stands, for the owner. */
+        /** A pack's guided setup as it stands, for the owner or an agent acting for the owner. */
         get: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupGet(input) as Facade.PackSetupReceipt),
-        /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
+        /** One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here. */
         answer: (input: Facade.PackSetupAnswerRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as Facade.PackSetupReceipt),
         /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),

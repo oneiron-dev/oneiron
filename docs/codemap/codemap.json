@@ -10038,7 +10038,7 @@
       "crate-vis": 5,
       "enum": 5,
       "fn": 6,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 4
      }
     },
@@ -10127,9 +10127,19 @@
      "purpose": "The solved-run index (CUA E8a; DESIGN-2 \"The Coach\", row E8): group, coverage, failure, dirty and seen rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 7,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/browser_library/index/all_groups.rs",
+     "purpose": "Every solved group, including generations the browser-programs Coach already processed (FIX 7606)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -19974,8 +19984,23 @@
      "surface": {
       "const": 8,
       "fn": 1,
+      "re-export": 1,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackSetupOwnerAsk"
+     ],
+     "path": "src/connector_key/setup/allow_ask.rs",
+     "purpose": "An `allow` from a setup verb as the owner's ask (OF-378)",
+     "surface": {
+      "const": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -19986,7 +20011,7 @@
      "purpose": "Pack connection grant and verification doors: allow, bind, verify and the checked-connection reads a pack…",
      "surface": {
       "crate-vis": 5,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -20313,7 +20338,7 @@
      "path": "src/consent/doors/owner.rs",
      "purpose": "The owner-proof doors: authenticate, bind, recheck and the proof's read key",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 5
      }
     },
@@ -27500,7 +27525,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 35,
+      "const": 36,
       "crate-vis": 11,
       "fn": 11,
       "re-export": 1,
@@ -28204,7 +28229,7 @@
       "const": 3,
       "crate-vis": 15,
       "fn": 1,
-      "mod": 20,
+      "mod": 21,
       "re-export": 10
      }
     },
@@ -28356,6 +28381,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CoachSiteSkillsReport"
+     ],
+     "path": "src/dreamer_runner/maintenance/site_skills.rs",
+     "purpose": "The Coach's site skills (CUA E8b, FIX 7606): each night, fixed code reads the same solved-run evidence…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/site_skills/distill.rs",
+     "purpose": "Deterministic rendering for the Coach's site skills (CUA E8b, FIX 7606): one candidate folder per site from…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -28476,7 +28525,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 4,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -28499,6 +28548,17 @@
       "enum": 1,
       "fn": 2,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/outage_due.rs",
+     "purpose": "Due-time index for provider-outage parks carrying a retry hint",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -28679,7 +28739,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProgramHoldReleaseAction",
@@ -42521,7 +42581,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 11,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -43323,7 +43383,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -43513,7 +43573,18 @@
      "path": "src/llm/step/trap_binding.rs",
      "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/trap_sent.rs",
+     "purpose": "Device-local presence index for traps whose current head is `Sent`",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -58958,7 +59029,7 @@
      "path": "src/runtime_hooks/grant.rs",
      "purpose": "Every hook has a grant (ARCH-0080 §6)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5,
       "struct": 1
      }
@@ -59022,7 +59093,7 @@
      "path": "src/runtime_hooks/mod.rs",
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 3,
       "re-export": 12
      }
@@ -63652,8 +63723,8 @@
      "path": "src/skill_hub/default_hub.rs",
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
+      "const": 2,
+      "crate-vis": 3,
       "fn": 13,
       "struct": 2
      }
@@ -63711,6 +63782,7 @@
      "path": "src/skill_hub/git_fetch.rs",
      "purpose": "Generic pinned Git subtree reads",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
@@ -63764,7 +63836,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 1,
-      "fn": 7,
+      "fn": 9,
       "re-export": 1,
       "struct": 2,
       "trait": 1
@@ -63868,7 +63940,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission.rs",
@@ -64014,7 +64086,7 @@
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 7,
       "enum": 4,
       "re-export": 2,
       "struct": 2
@@ -64027,7 +64099,7 @@
       "HookAuthor"
      ],
      "path": "src/skill_hub/pack_catalog/hooks/author.rs",
-     "purpose": "Who a pack hook's outcomes run as: the owner, or a foreign skill publisher",
+     "purpose": "Who a pack hook's outcomes run as: the owner, a resident agent, or a foreign skill publisher",
      "surface": {
       "const": 1,
       "crate-vis": 2,
@@ -64046,6 +64118,16 @@
       "crate-vis": 3,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/hooks/install.rs",
+     "purpose": "Pack hook binding writes: the owner's bind of an installed pack's hooks, the update rule's rebind and the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -64073,6 +64155,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackLens",
+      "PackLensComponent",
+      "PackLensEntry",
+      "PackLensProposeRequest"
+     ],
+     "path": "src/skill_hub/pack_catalog/lenses.rs",
+     "purpose": "Pack lenses (OF-250): a pack ships its lens with its skills, the face half beside the engine half (ARCH-0010)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 5,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -64081,7 +64181,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -64122,7 +64222,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 7,
-      "re-export": 19
+      "re-export": 22
      }
     },
     {
@@ -64138,10 +64238,29 @@
      "path": "src/skill_hub/pack_catalog/organs.rs",
      "purpose": "Pack organs (OF-575, ARCH-0075 §9): a PACK.md `organs:` key names folders under `organs/`, each with an…",
      "surface": {
-      "const": 1,
       "crate-vis": 4,
       "fn": 8,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/owner_activation.rs",
+     "purpose": "The owner's activation of a held hub Candidate (OF-213, OF-575): a pack held for its OSV advisories, or a…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/permission_card.rs",
+     "purpose": "A pack's permission card: the powers its source requests, and the widening an update over an installed…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -64275,11 +64394,23 @@
      "path": "src/skill_hub/pack_catalog/setup.rs",
      "purpose": "The typed `setup` key of PACK.md (OF-378): the accounts a pack needs, the connections it makes and how each…",
      "surface": {
-      "const": 4,
       "crate-vis": 2,
       "enum": 2,
       "fn": 8,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackSetupActor"
+     ],
+     "path": "src/skill_hub/pack_catalog/setup_actor.rs",
+     "purpose": "Who works a pack's guided setup (OF-378): the owner on their own proof, or an authenticated agent acting for…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1
      }
     },
     {
@@ -64316,8 +64447,22 @@
      "surface": {
       "crate-vis": 11,
       "enum": 2,
-      "fn": 3,
+      "fn": 6,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SlackInstallHold",
+      "SlackInstallRedeemed"
+     ],
+     "path": "src/skill_hub/pack_catalog/slack_install.rs",
+     "purpose": "Pending Slack OAuth installs (OF-519): the owner's proof snapshot waiting under one single-use state for…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -64330,7 +64475,8 @@
      "path": "src/skill_hub/pack_catalog/source.rs",
      "purpose": "Validated exact source trees",
      "surface": {
-      "fn": 9,
+      "crate-vis": 1,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -76804,7 +76950,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AiAnswer",
@@ -76833,23 +76979,17 @@
       "PackPutReceipt",
       "PackPutRequest",
       "PackRemoveRequest",
-      "PackSetupAnswerRequest",
-      "PackSetupCardActionInput",
-      "PackSetupReceipt",
-      "PackSetupRequest",
-      "PackSetupStoreSecret",
-      "PackSetupVerifyRequest",
       "PackTextFile"
      ],
      "path": "src/verbs/host.rs",
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 1,
       "enum": 6,
-      "fn": 24,
-      "re-export": 2,
-      "struct": 27
+      "fn": 16,
+      "re-export": 4,
+      "struct": 21
      }
     },
     {
@@ -76882,6 +77022,35 @@
       "enum": 1,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/host/local_pack_agent.rs",
+     "purpose": "`vault.packs.put` from a resident agent's own handle (ARCH-0080 §7): the agent replaces the `local` pack and…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackSetupAnswerRequest",
+      "PackSetupCardActionInput",
+      "PackSetupReceipt",
+      "PackSetupRequest",
+      "PackSetupStoreSecret",
+      "PackSetupVerifyRequest"
+     ],
+     "path": "src/verbs/host/pack_setup.rs",
+     "purpose": "The pack setup verbs' inputs, answers and calls (OF-378): `vault.packs.setup.prepare`, `.get`, `.answer` and…",
+     "surface": {
+      "const": 1,
+      "fn": 12,
+      "struct": 6
      }
     },
     {
@@ -82449,7 +82618,7 @@
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
     "browser_library": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -82666,7 +82835,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82834,7 +83003,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 176,
+     "files": 179,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83156,7 +83325,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 162,
+     "files": 163,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83590,9 +83759,9 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 89,
+     "files": 95,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
@@ -83793,7 +83962,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 102,
+     "files": 104,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83870,9 +84039,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 115,
+   "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5622,
+   "source_files": 5636,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89067,7 +89236,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 60,
+      "const": 61,
       "crate-vis": 1
      }
     },
@@ -99372,6 +99541,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_site_skills.rs",
+     "purpose": "The Coach's site skills on the host (CUA E8b, FIX 7606): the engine's fixed-code distill pass under the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -102613,7 +102792,7 @@
      "path": "src/api/facade/host_doors/packs.rs",
      "purpose": "The owner's pack, connector subscription, lens and pack setup doors",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 26
      }
     },
     {
@@ -105327,7 +105506,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/pack_routes.rs",
@@ -105353,7 +105532,27 @@
      "path": "src/api/owner_routes/pack_routes/schema.rs",
      "purpose": "The OpenAPI schemas of the row-less `/v1/owner/packs*` writes (FIX 11611 part D): `POST /v1/owner/packs`…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/pack_routes/setup_routes.rs",
+     "purpose": "`/v1/owner/packs/setup` and `/v1/owner/packs/slack`: the owner's guided setup of one pack (OF-378), and the…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/pack_routes/skill_routes.rs",
+     "purpose": "`/v1/owner/packs/skills`: hub skills import, restore, sync, take their permission and held-out activation…",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -106787,7 +106986,7 @@
      "path": "src/builtin_host/slack_app.rs",
      "purpose": "The served Slack app and the provider URLs of the built-in channels (OF-519): the manifest the owner creates…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -116456,14 +116655,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 103,
+     "files": 104,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 634,
+     "files": 636,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116960,9 +117159,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 31,
+   "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1458,
+   "source_files": 1461,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -119821,6 +120020,7 @@
       "PackSetupCheck",
       "PackSetupConnection",
       "PackSetupConnectionState",
+      "PackSetupOwnerAsk",
       "PackSetupPermission",
       "PackSetupPermissionState",
       "PackSetupReceipt",
@@ -121541,7 +121741,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1079,
-      "struct": 3294
+      "struct": 3295
      }
     },
     {
