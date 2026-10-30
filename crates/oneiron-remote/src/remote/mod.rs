@@ -33,6 +33,8 @@ use crate::error::{bad_request, forbidden, transport_error};
 
 // OF-469: a pinned authority checkpoint, fetched for adoption.
 mod checkpoint;
+// FIX 11454: a sealed custody change past the request ceiling, spooled whole.
+mod custody_submit;
 // FIX 3676: a kept whole-vault export, read and let go.
 mod export_transfer;
 mod origin;
@@ -47,7 +49,7 @@ use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
     ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
-    read_export, serialize_request,
+    read_export, serialize_request, serialize_whole, within_ceiling,
 };
 use self::wire::Wire;
 
@@ -308,8 +310,14 @@ impl RemoteClient {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<R, MemoryError> {
         self.note_receipt_ref(None);
+        let body = serialize_whole(request)?;
+        // A sealed custody change past the ceiling goes to the owner route
+        // that spools it whole, whatever its length (FIX 11454).
+        if verb == custody_submit::CUSTODY_SUBMIT_VERB && body.len() > MAX_REMOTE_REQUEST_BYTES {
+            return self.custody_submit_spooled(body);
+        }
         let url = self.verb_url(verb)?;
-        let body = serialize_request(request)?;
+        let body = within_ceiling(body)?;
         let mut headers = self.turn_headers()?;
         headers.insert(
             INVOCATION_HEADER,

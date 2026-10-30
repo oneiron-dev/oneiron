@@ -1535,9 +1535,21 @@ class Oneiron:
         def __call__(self, format: str | None = None) -> dict[str, Any]:
             """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
+        @property
+        def transfer(self) -> "Oneiron._VaultExportTransferVerbs":
+            return Oneiron._VaultExportTransferVerbs(self._client)
         def scoped(self, spec):
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
             return json.loads(_translate(lambda: self._client.vault_export_scoped(json.dumps(spec))))
+    class _VaultExportTransferVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."""
+            return json.loads(_translate(lambda: self._client.vault_export_transfer_read(json.dumps(spec))))
+        def release(self, spec):
+            """Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."""
+            return json.loads(_translate(lambda: self._client.vault_export_transfer_release(json.dumps(spec))))
     class _VaultScopeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4010,6 +4022,9 @@ class Oneiron:
         def get(self, spec):
             """Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_get(json.dumps(spec))))
+        def plan(self, spec):
+            """Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_plan(json.dumps(spec))))
         def set(self, spec):
             """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_set(json.dumps(spec))))

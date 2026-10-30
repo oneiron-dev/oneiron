@@ -238,27 +238,13 @@ pub(super) fn forget_active_matches(
     Ok(receipts)
 }
 
-/// One receipt scope, its entity types as their registry kinds (FIX 8117).
-/// A type byte the registry does not name is the receipt's own fault, so it
-/// fails the read's output, never narrows or widens the set it reports.
+/// One receipt scope, its entity types as their registry kinds (FIX 8117),
+/// spelled as every wire spells them (FIX 10762): a pack's own type the
+/// static registry does not name travels as its decimal byte, never narrowed
+/// or widened.
 fn read_scope_from_engine(scope: oneiron::claim::ReadScope) -> BoundaryResult<NapiReadScope> {
-    let entity_types = scope
-        .entity_types
-        .map(|types| {
-            types
-                .into_iter()
-                .map(|entity_type| {
-                    oneiron::registry::entity_type_registry_entry(entity_type)
-                        .map(|entry| entry.kind.to_owned())
-                        .ok_or_else(|| {
-                            format!("read receipt names unregistered entity type {entity_type}")
-                        })
-                })
-                .collect::<BoundaryResult<Vec<_>>>()
-        })
-        .transpose()?;
     Ok(NapiReadScope {
-        entity_types,
+        entity_types: scope.entity_kinds(),
         max_sensitivity_band: u32::from(scope.max_sensitivity_band),
         include_stale: scope.include_stale,
         min_confidence: f64::from(scope.min_confidence),

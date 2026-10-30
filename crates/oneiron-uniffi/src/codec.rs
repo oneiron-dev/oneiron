@@ -794,7 +794,7 @@ impl Lower<sdk::NeighborsRequest> for (String, NeighborOpts) {
 impl Lift<oneiron::claim::ReadScope> for ReadScope {
     fn lift(scope: oneiron::claim::ReadScope) -> Result<Self, OneironError> {
         Ok(Self {
-            entity_types: scope.entity_types.map(|types| types.into_iter().collect()),
+            entity_types: scope.entity_kinds(),
             max_sensitivity_band: scope.max_sensitivity_band,
             include_stale: scope.include_stale,
             min_confidence: scope.min_confidence,

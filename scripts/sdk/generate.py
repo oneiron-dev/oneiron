@@ -831,6 +831,12 @@ def mcp_input_dispatch(row):
                  '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'
                  '// Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).\n'
                  'let surface = crate::api::facade::owner_binding::act_surface(auth);\n'
+                 '// A transfer is kept on the server, as on REST, and read through vault.export.transfer.read (FIX 11176).\n'
+                 'if input.delivery.unwrap_or_default() == oneiron::memory::ExportDelivery::Transfer {\n'
+                 '    let (transfer, listed) = crate::api::facade::mcp_export_transfer(server, auth, surface, &actor.destination(), &input, action).map_err(mcp_facade_error)?;\n'
+                 '    served.extend(listed);\n'
+                 '    return mcp_agent_verb_output(transfer, crate::mcp::McpPageSource::complete(1));\n'
+                 '}\n'
                  'let output = match (auth.verified_slip(), action) {\n'
                  '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, surface, actor.destination()).map(|(output, listed)| { served.extend(listed); output }),\n'
                  '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),\n'
@@ -983,7 +989,7 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
-        input: Value,
+        mut input: Value,
         actor: &McpCallContext,
         run: Option<McpCodeRun>,
         served: &mut McpServed,
@@ -993,7 +999,11 @@ pub(crate) async fn execute_agent_verb_input(
         // An owner's erase or revoke reads the restriction-only clock through
         // its hooks and door, as the engine classifies it (FIX 11201).
         let restrictive = crate::api::clock_ingress::restrictive_call(server, tool, Some(&input));
-        let produced = crate::api::clock_ingress::scoped(restrictive, super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks))).await;
+        // A custody row's value leaves the args before its hooks read them,
+        // and rides to its door scoped, as an HTTP body's does (FIX 11665).
+        let secret = crate::api::facade::lift_custody_secret(tool, &mut input);
+        let listed = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks));
+        let produced = crate::api::clock_ingress::scoped(restrictive, crate::api::facade::with_custody_secret(secret, listed)).await;
         served.extend(producers.take());
         produced
     }

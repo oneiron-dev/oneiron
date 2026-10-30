@@ -530,8 +530,10 @@ pub struct NeighborHit {
 /// One read scope on a receipt: the requested, ceiling, or applied tuple.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct ReadScope {
-    /// Admitted entity type bytes; absent means every registered type.
-    pub entity_types: Option<Vec<u8>>,
+    /// Admitted entity types as registry kinds (`CLAIM`, `MESSAGE`, ...),
+    /// as every wire spells them (FIX 10762); absent means every registered
+    /// type.
+    pub entity_types: Option<Vec<String>>,
     /// Highest admitted sensitivity band.
     pub max_sensitivity_band: u8,
     /// Whether stale claims are admitted.
