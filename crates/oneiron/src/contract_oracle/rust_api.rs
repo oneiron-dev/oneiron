@@ -349,7 +349,7 @@ impl Scan<'_> {
             }
         }
         for (export, mut target) in std::mem::take(&mut self.exports) {
-            let mut hops = BTreeSet::new();
+            let mut hops: BTreeSet<String> = BTreeSet::new();
             loop {
                 if let Some(members) = self.defined.get(&target) {
                     for member in members {
@@ -357,13 +357,13 @@ impl Scan<'_> {
                     }
                     break;
                 }
-                match self.aliases.get(&target) {
-                    Some(next) if hops.insert(target.clone()) => target = next.clone(),
-                    _ => {
-                        self.unresolved.insert(export);
-                        break;
-                    }
-                }
+                // A hop already taken is an alias cycle: unresolved too.
+                let next = self.aliases.get(&target).cloned();
+                let Some(next) = next.filter(|_| !hops.contains(&target)) else {
+                    self.unresolved.insert(export);
+                    break;
+                };
+                hops.insert(std::mem::replace(&mut target, next));
             }
         }
         RustPublicNames {
