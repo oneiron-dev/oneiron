@@ -27,7 +27,7 @@ pub(crate) mod xml;
 
 pub(crate) use structure::recount_slide_text;
 pub use structure::{
-    ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit,
+    ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, ShapeId, StructureEdit,
     StructureReport, structure_patch,
 };
 pub(crate) use text::{BREAK, cell_text};
