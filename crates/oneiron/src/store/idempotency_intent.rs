@@ -54,7 +54,9 @@ impl IdempotencyIntent {
             .as_bytes()
             .starts_with(crate::side_table::HTTP_IDEMPOTENCY_REPLY.prefix)
         {
-            return Err(Error::InvariantViolation("an idempotency intent outside its rows"));
+            return Err(Error::InvariantViolation(
+                "an idempotency intent outside its rows",
+            ));
         }
         Ok(Self(Arc::from(store_key)))
     }

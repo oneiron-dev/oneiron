@@ -1,10 +1,7 @@
 //! Actor-bound NOTE creation, edit and source-entity bridge.
 
 use super::documents::{NoteDocument, invalid, load_doc, store_doc};
-use super::{
-    NoteBody, NoteProgramEdit, NoteProgramEditOutcome,
-    encode_note_body,
-};
+use super::{NoteBody, NoteProgramEdit, NoteProgramEditOutcome, encode_note_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::memory::MemoryResult;

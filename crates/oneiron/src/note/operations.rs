@@ -30,9 +30,16 @@ pub struct NoteOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NoteChange {
-    Edit { base: Vec<u8>, edits: Vec<NoteScalarEdit> },
-    Cite { pin: NotePin },
-    SetTitle { title: String },
+    Edit {
+        base: Vec<u8>,
+        edits: Vec<NoteScalarEdit>,
+    },
+    Cite {
+        pin: NotePin,
+    },
+    SetTitle {
+        title: String,
+    },
 }
 
 /// Durable provenance authored only by the admission door. Commit messages
