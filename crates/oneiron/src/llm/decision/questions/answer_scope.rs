@@ -1,8 +1,9 @@
-//! OF-506 (FIX 1712, 1857, 11827): a caller reads its own standing
-//! question's answers, and what a refresh, a backfill, its outcome windows,
-//! labels and calibration pairs and a projection answer of them, through its
-//! own live lane. A question may be saved under one credential and read under
-//! a narrower one of the same principal; each item a reply holds then stays
+//! OF-506 (FIX 1712, 1857, 11827, 12060): a caller reads its own standing
+//! question, its answers, and what a refresh, a backfill, its outcome
+//! windows, labels and calibration pairs and a projection answer of them,
+//! through its own live lane. A question may be saved under one credential
+//! and read under a narrower one of the same principal; each item a reply
+//! holds (a unit or artifact ask of the question itself included) then stays
 //! only while that lane reads every row the item names, the way a listing
 //! door leaves out a row whose ref the lane does not read
 //! ([`crate::claim::ScopedRead::refs_readable_each`]). What the verbs write
@@ -19,14 +20,56 @@
 //! that gate opened to it before any filter here judges its lane.
 
 use super::{
-    CalibrationPair, GraphQuestionInput, OutcomeLabel, OutcomeWindowClose, ScheduledBackfill,
-    calibration_pairs, closed_outcome_windows, outcome_labels, project_bound_outcomes,
-    question_answers, schedule_backfill,
+    ArtifactUnits, CalibrationPair, GraphQuestionInput, OutcomeLabel, OutcomeWindowClose,
+    QuestionRecord, ScheduledBackfill, calibration_pairs, closed_outcome_windows, outcome_labels,
+    project_bound_outcomes, question_answers, read_question, schedule_backfill,
 };
+use crate::blob_artifact::ArtifactAskUnits;
 use crate::claim::ScopedRead;
 use crate::receipt::{QuestionAnswer, QuestionAnswersReply, QuestionAnswersRequest};
 use crate::settings::ReadDestination;
 use crate::{EntityId, Result, Vault};
+
+/// [`read_question`] as `lane`, the caller's own live lane, reads it (FIX
+/// 12060): the whole record for a full lane; for a narrowed one, the record
+/// with each unit, and each artifact ask, whose rows the lane does not read
+/// left out, all judged in one snapshot. An artifact ask names its artifact
+/// and each file a folder ask reads.
+///
+/// # Errors
+/// As [`read_question`], and a store failure judging the rows.
+pub fn read_question_in_lane(
+    vault: &Vault,
+    lane: &ScopedRead<'_>,
+    principal: EntityId,
+    id: EntityId,
+    version: Option<u32>,
+) -> Result<Option<QuestionRecord>> {
+    let record = read_question(vault, principal, id, version)?;
+    if reads_as_principal(lane) {
+        return Ok(record);
+    }
+    let Some(mut record) = record else {
+        return Ok(None);
+    };
+    let definition = &mut record.definition;
+    let sets: Vec<Vec<EntityId>> = definition
+        .units
+        .iter()
+        .map(|unit| vec![*unit])
+        .chain(definition.artifacts.iter().map(artifact_ask_rows))
+        .collect();
+    if sets.is_empty() {
+        return Ok(Some(record));
+    }
+    // One answer per set, units first, then artifact asks, in their order.
+    let mut each = lane.refs_readable_each(&sets)?.into_iter();
+    definition.units.retain(|_| each.next().unwrap_or(false));
+    definition
+        .artifacts
+        .retain(|_| each.next().unwrap_or(false));
+    Ok(Some(record))
+}
 
 /// [`question_answers`] as `lane`, the caller's own live lane, reads them:
 /// every answer for a full lane; for a narrowed one, each answer whose rows
@@ -207,6 +250,19 @@ fn lane_keeps<T>(
         .zip(each)
         .filter_map(|(item, read)| read.then_some(item))
         .collect())
+}
+
+/// The rows one artifact ask of a question names: its artifact, and each
+/// file a folder ask reads.
+fn artifact_ask_rows(ask: &ArtifactUnits) -> Vec<EntityId> {
+    let files: Vec<EntityId> = match &ask.selection {
+        ArtifactAskUnits::FolderItems { items, .. } => items
+            .iter()
+            .filter_map(|item| EntityId::from_hex(&item.artifact_ref).ok())
+            .collect(),
+        ArtifactAskUnits::SheetRows { .. } | ArtifactAskUnits::Paragraphs { .. } => Vec::new(),
+    };
+    std::iter::once(ask.artifact).chain(files).collect()
 }
 
 /// The rows one outcome label names: the answer it labels and its fact.
