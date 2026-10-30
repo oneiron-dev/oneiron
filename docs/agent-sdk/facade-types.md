@@ -6356,7 +6356,7 @@ export type AmendmentShareView = { class: AttributionLabel; share: number; subje
 /** `oneiron::verbs::skill_attribution::AmendmentJudgmentView` */
 export type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaSettlement` */
-export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
+export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; recorded_delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaReadRequest` */
 export type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null }
 /** `oneiron::verbs::skill_attribution::ProposalOpSpanView` */
@@ -8159,10 +8159,10 @@ export type NoteActor = string
 export type NoteAuthorship = { operation: string; actor: NoteActor; actor_class: string; grant?: string | null; command_hash: number[] }
 /** `oneiron::note::reads::NoteHistoryView` */
 export type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean }
-/** `oneiron::note::documents::NoteEdit` */
-export type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string }
+/** `oneiron::note::documents::NoteProgramEdit` */
+export type NoteProgramEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string }
 /** `oneiron::note::proposal_doors::NoteForkRequest` */
-export type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteEdit; reason?: string | null }
+export type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteProgramEdit; reason?: string | null }
 /** `oneiron::note::proposal_doors::NoteForkRecordView` */
 export type NoteForkRecordView = { note_ref: string; fork_ref: string; parent: string; frontier: number[]; actor?: string | null; rewrite: boolean; proposal_ref?: string | null; decided: boolean }
 /** `oneiron::note::proposal_doors::NoteForkView` */
@@ -8198,9 +8198,9 @@ export type NoteEditorCloseRequest = { binding: string }
 /** `oneiron::note::reads::NoteEditorClosed` */
 export type NoteEditorClosed = { closed: boolean }
 /** `oneiron::verbs::memory_requests::EditNoteRequest` */
-export type EditNoteRequest = { note_ref: string; edit: NoteEdit }
-/** `oneiron::note::documents::NoteEditOutcome` */
-export type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt }
+export type EditNoteRequest = { note_ref: string; edit: NoteProgramEdit }
+/** `oneiron::note::documents::NoteProgramEditOutcome` */
+export type NoteProgramEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt }
 /** `oneiron::note::lifecycle::NoteRefRequest` */
 export type NoteRefRequest = { note_ref: string }
 /** `oneiron::note::lifecycle::NoteSeal` */
