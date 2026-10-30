@@ -117,11 +117,14 @@ pub(super) struct OwnerWorkState {
     /// re-joins from pieces, a resumed fold seeds from them, and one
     /// commitment may serve requests on more than one secret.
     permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
-    /// Each (signer, commitment) whose permit set has been joined and
-    /// verified here, so a refold of it hashes no bytes again (FIX 12014).
-    /// The first join still verifies. A piece that changes a set drops its
-    /// verdict, and a merge keeps only the left's verdicts on unchanged sets.
-    verified_permit_sets: BTreeSet<([u8; 32], CustodyPermitPieces)>,
+    /// Each (signer, commitment) whose permit set a kept request joined and
+    /// verified here, with that request as the fold keeps it: the `Arc`
+    /// `requests` holds (FIX 12014, 12139). A later join of the same request
+    /// hands it out and copies no permit; one of another request on the set
+    /// hashes no bytes again. The first join still verifies. A piece that
+    /// changes a set drops its entry, and a merge keeps only the left's
+    /// entries on unchanged sets.
+    verified_permit_sets: BTreeMap<([u8; 32], CustodyPermitPieces), Arc<OwnerWorkRequest>>,
 }
 
 /// One admitted request as this install reads it. The body is the fold
@@ -399,7 +402,7 @@ fn apply_request(
     // A custody request in pieces is kept with its permits joined from its
     // signer's pieces at its parents; one whose pieces do not join there is
     // valid without effect (FIX 11866).
-    let Some(request) = permit_pieces::joined_request(&mut state.owner_work, &key, request) else {
+    let Some(request) = permit_pieces::joined_request(&state.owner_work, &key, request) else {
         state.owner_work.refused.insert(hash);
         return Ok(());
     };
@@ -426,10 +429,12 @@ fn apply_request(
     heads.superseded.extend(replaced);
     heads.live.insert(hash);
     custody::note_custody_revoke(work, &request);
+    let body = request.into_shared();
+    permit_pieces::keep_joined(work, key, &body);
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: Arc::new(request.into_owned()),
+            request: body,
             key,
             marks,
             narrow_only,
