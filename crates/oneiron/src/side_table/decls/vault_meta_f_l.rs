@@ -44,6 +44,9 @@ side_tables! {
     FEEDBACK_RECEIVED_DIGEST: VaultMeta b"feedback:received:v1:" Raw;
     /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
     FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
+    /// Each report cluster under every member ISSUE it copied a vector from (FIX 10835).
+    /// Key: id16(member) + id16(root).
+    FEEDBACK_REPORT_CLUSTER_BY_MEMBER: VaultMeta b"feedback:report-cluster-by-member:v1:" Raw;
     /// T2 report membership and vectors, keyed by the first ISSUE id.
     FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named
         => crate::feedback::intake::forget_report_cluster_source_in_txn;
