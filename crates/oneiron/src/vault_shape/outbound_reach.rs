@@ -12,9 +12,7 @@ use super::live::ShapeSources;
 use super::plan::ShapePlanItem;
 use super::reach::{ReachActor, ShapeReachFact, ShapeReachVerdict};
 use crate::error::Result;
-use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grants_in_txn,
-};
+use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope};
 use crate::{EntityId, Vault};
 
 /// The channel a scoped MCP grant's path names: the external tool rides the
@@ -28,10 +26,8 @@ pub(super) struct ReachOutbound {
     /// The actor it lets act, by the principal ref it was minted for.
     pub(super) principal: String,
     pub(super) scope: StandingOutboundGrantScope,
-    /// Its bound's digest, which the frontier pins.
+    /// Its stored row's digest, which the frontier pins.
     pub(super) digest: [u8; 32],
-    /// The grant as its row holds it, which decides its coverage.
-    pub(super) row: StandingOutboundGrant,
 }
 
 /// Whether one of `outbound` lets `actor_ref` do `verb` on `channel` without
@@ -43,7 +39,7 @@ pub(super) fn outbound_covers(
     channel: &str,
 ) -> bool {
     outbound.iter().any(|grant| {
-        grant.principal == actor_ref && grant.row.covers_effect(verb, channel, None, None)
+        grant.principal == actor_ref && grant.scope.matches_effect(verb, channel, None, None)
     })
 }
 
@@ -99,7 +95,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// A read failure.
+    /// A read failure or an unencodable grant row.
     pub(super) fn reach_outbound_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -107,18 +103,22 @@ impl Vault {
         sources: &mut ShapeSources,
     ) -> Result<Vec<ReachOutbound>> {
         let mut grants = Vec::new();
-        for grant in standing_outbound_grants_in_txn(&self.store, txn)? {
+        for (_, row) in crate::consent::standing_grant_rows_in_txn(&self.store, txn)? {
+            let Some(grant) = StandingOutboundGrant::from_row(&row) else {
+                continue;
+            };
             sources.list(grant.id);
             if grant.is_active_under_policy(policy_frontier) {
                 grants.push(ReachOutbound {
                     grant: grant.id,
-                    principal: grant.principal_ref.clone(),
-                    scope: grant.scope.clone(),
-                    digest: *grant.bound().digest().as_bytes(),
-                    row: grant,
+                    principal: grant.principal_ref,
+                    scope: grant.scope,
+                    digest: *blake3::hash(&crate::consent::encode_consent_grant_row(&row)?)
+                        .as_bytes(),
                 });
             }
         }
+        grants.sort_by_key(|grant| *grant.grant.as_bytes());
         Ok(grants)
     }
 }
