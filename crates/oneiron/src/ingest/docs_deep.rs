@@ -139,15 +139,30 @@ pub(crate) fn docs_source_put_changes(
     Ok(Some(previous) != imported_docs_source_body(next, kind))
 }
 
+/// The whole ASSET body `facts` names, read from its file and checked: the
+/// store-only half of the materializing row read, for a door with only
+/// `&Store`. The put's own write transaction replaces the row, so no release
+/// can run while it reads (FIX 5391).
+fn asset_file_body_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    facts: &crate::store::AssetBodyFacts,
+) -> Result<Vec<u8>> {
+    let key = crate::store::body_key_row_in_txn(store, txn, &facts.blake3)?;
+    crate::store::CheckedAssetBody::read_all(&store.body_dir()?, facts, key.as_ref())
+}
+
 /// Only the shared batch entity-put door calls this, before it stages a new
 /// body. Classify under a read borrow, release that borrow, then invalidate
-/// dependents in the same transaction as the replacement.
+/// dependents in the same transaction as the replacement. `asset_file` is the
+/// put's filed body, when `next` is its manifest rather than its bytes.
 pub(crate) fn invalidate_docs_source_before_put(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     kind: u8,
     next: &[u8],
+    asset_file: Option<crate::store::AssetBodyFacts>,
 ) -> Result<()> {
     if !matches!(
         kind,
@@ -162,7 +177,24 @@ pub(crate) fn invalidate_docs_source_before_put(
         if raw.len() < ENTITY_METADATA_HEADER_LEN {
             return Err(Error::CorruptedIndex("docs source header"));
         }
-        let previous = &raw[ENTITY_METADATA_HEADER_LEN..];
+        // A file-plane ASSET's row holds its manifest, not its body: the
+        // compare below reads the body's bytes (FIX 5391).
+        let file_previous = match crate::store::asset_file_of_raw_in_txn(store, &*txn, id, &raw)? {
+            Some(manifest) => Some(asset_file_body_in_txn(store, &*txn, &manifest.facts)?),
+            None => None,
+        };
+        let previous = file_previous
+            .as_deref()
+            .unwrap_or(&raw[ENTITY_METADATA_HEADER_LEN..]);
+        // A put that filed its body passes its manifest as `next`: the same
+        // read. Only an ASSET files its body; any other kind holds its bytes.
+        let file_next = match asset_file {
+            Some(facts) if kind == ENTITY_TYPE_ASSET => {
+                Some(asset_file_body_in_txn(store, &*txn, &facts)?)
+            }
+            _ => None,
+        };
+        let next = file_next.as_deref().unwrap_or(next);
         previous != next && docs_source_put_changes(store, txn, id, kind, previous, next)?
     };
     if changed {

@@ -51,11 +51,18 @@ impl ChannelIdentityAutonomyRung {
     }
 }
 
+/// What one read grant may see in one mailbox. A scoped envelope names at
+/// least one label or thread; a full-mailbox envelope names none and says so.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MailboxReadEnvelope {
     pub identity_ref: EntityId,
     pub label_allowlist: Vec<String>,
     pub thread_allowlist: Vec<String>,
+    /// The owner's explicit grant of the whole mailbox: every item inside the
+    /// date bounds, so with both bounds set it is a date-only scope. Both
+    /// allowlists stay empty when it is set; when it is not, at least one
+    /// allowlist names the scope.
+    pub full_mailbox: bool,
     /// Inclusive lower bound on mailbox item time, not a volume-window clock.
     pub not_before: Option<u64>,
     /// Inclusive upper bound on mailbox item time.

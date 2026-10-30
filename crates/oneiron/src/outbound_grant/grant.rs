@@ -1,4 +1,4 @@
-//! Standing grant record, status, and its validators.
+//! Standing grant record, its lifecycle, and its validators.
 
 use super::codec::{
     canonical_scoped_server, invalid_grant, non_empty_optional, non_empty_str, non_empty_string,
@@ -7,36 +7,10 @@ use super::scope::{ScopedMcpGrantMintIntent, StandingOutboundGrantScope, validat
 use crate::error::Result;
 use crate::genui::GrantMintIntent;
 
-/// StandingOutboundGrant lifecycle status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum StandingOutboundGrantStatus {
-    /// Grant is live and can authorize a matching outbound effect.
-    Active,
-    /// Grant has been revoked and must fail closed immediately.
-    Revoked,
-}
-
-impl StandingOutboundGrantStatus {
-    /// Returns the pinned on-disk status string.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Revoked => "revoked",
-        }
-    }
-
-    /// Parses a pinned on-disk status string.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "active" => Some(Self::Active),
-            "revoked" => Some(Self::Revoked),
-            _ => None,
-        }
-    }
-}
+// A standing outbound grant's lifecycle state is the standing consent
+// Grant's (`ConsentGrantStatus`): active, or revoked and failing closed at
+// once, under the same pinned on-disk strings.
+pub use crate::consent::ConsentGrantStatus as StandingOutboundGrantStatus;
 
 /// Vault-resident standing outbound-grant claim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -130,8 +104,12 @@ impl StandingOutboundGrant {
         Ok(grant)
     }
 
-    /// Returns a revoked version of this grant.
+    /// Returns a revoked version of this grant. A grant already revoked
+    /// stays as it was first revoked, its revocation time included.
     pub fn revoked(self, revoked_at: u64) -> Result<Self> {
+        if self.status == StandingOutboundGrantStatus::Revoked {
+            return Ok(self);
+        }
         let grant = Self {
             status: StandingOutboundGrantStatus::Revoked,
             revoked_at: Some(revoked_at),
@@ -154,14 +132,21 @@ impl StandingOutboundGrant {
         Ok(grant)
     }
 
+    /// Returns whether this grant can authorize anything now, as a standing
+    /// consent Grant's lifecycle answers it: its Scope admits effects, and it
+    /// is active and unrevoked. Its scope dial only narrows that authority.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        crate::federation::grant_scope::admits_preset(&self.authority_scope, "effect")
+            && self.status == StandingOutboundGrantStatus::Active
+            && self.revoked_at.is_none()
+    }
+
     /// Returns whether this active grant can still be evaluated under the
     /// supplied current policy-floor hash.
     #[must_use]
     pub fn is_active_under_policy(&self, read_frontier_hash: &[u8; 32]) -> bool {
-        crate::federation::grant_scope::admits_preset(&self.authority_scope, "effect")
-            && self.status == StandingOutboundGrantStatus::Active
-            && self.revoked_at.is_none()
-            && &self.read_frontier_hash == read_frontier_hash
+        self.is_active() && &self.read_frontier_hash == read_frontier_hash
     }
 
     /// Validates revocation, timestamp, and binding invariants.
