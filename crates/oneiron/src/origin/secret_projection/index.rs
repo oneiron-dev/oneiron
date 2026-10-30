@@ -25,6 +25,8 @@
 //! ([`refresh_repo_index_projection_in_txn`]).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use heed::RoTxn;
 
@@ -46,6 +48,9 @@ pub(crate) use invalidate::refresh_repo_index_projection_in_txn;
 
 /// The domain of a copy stamp's fingerprint.
 const REPO_INDEX_STAMP_CONTEXT: &str = "oneiron.repo-index-projection.stamp.v1";
+
+/// The domain of a mark generation's digest.
+const REPO_MARK_GENERATION_CONTEXT: &str = "oneiron.repo-index-projection.mark-generation.v1";
 
 /// What a sync release does with a mark failure no blob is tied to (a mark
 /// claim that does not decode and names no blob, or a store failure in the
@@ -239,6 +244,30 @@ impl RepoIndexMarks {
     /// No mark anywhere: every input is its stored bytes.
     pub(crate) fn is_empty(&self) -> bool {
         self.hashes.is_empty()
+    }
+
+    /// What these marks are, as one digest (FIX 10736): every readable
+    /// mark's id and every blob whose marks do not decode. Equal digests
+    /// are equal marks, so a table derived from one serves every reader of
+    /// the same marks ([`RepoMarkGenerationCache`]).
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    #[allow(
+        dead_code,
+        reason = "FIX 10736: its first reader is the sync residence copy generation (L03)"
+    )]
+    pub(crate) fn generation(&self) -> Result<[u8; 32]> {
+        let ids = self.facts.ids()?;
+        let mut hasher = blake3::Hasher::new_derive_key(REPO_MARK_GENERATION_CONTEXT);
+        hasher.update(&(ids.len() as u64).to_be_bytes());
+        for id in &ids {
+            hasher.update(id.as_bytes());
+        }
+        for hash in &self.unreadable {
+            hasher.update(hash);
+        }
+        Ok(*hasher.finalize().as_bytes())
     }
 
     /// Whether a mark covers the blob whose whole bytes hash to `raw_blake3`.
@@ -493,6 +522,57 @@ impl RepoIndexMarks {
             out.push((name, value));
         }
         Ok(out)
+    }
+}
+
+/// One table per mark generation (FIX 10736): a reader that derives a
+/// table from the marks (a copy generation, an alias table) keeps the last
+/// one it made, by its vault and the marks' [`RepoIndexMarks::generation`],
+/// and makes it again only when the marks move. It holds one table, so
+/// nothing past the newest marks stays.
+#[allow(
+    dead_code,
+    reason = "FIX 10736: its first reader is the sync residence copy generation (L03)"
+)]
+pub(crate) struct RepoMarkGenerationCache<T> {
+    kept: Mutex<Option<(PathBuf, [u8; 32], Arc<T>)>>,
+}
+
+#[allow(
+    dead_code,
+    reason = "FIX 10736: its first reader is the sync residence copy generation (L03)"
+)]
+impl<T> RepoMarkGenerationCache<T> {
+    /// An empty cache, for a `static`.
+    pub(crate) const fn new() -> Self {
+        Self {
+            kept: Mutex::new(None),
+        }
+    }
+
+    /// The table `vault`'s marks of `generation` derive: the kept one when
+    /// it is theirs, else what `make` derives now, kept in its place.
+    ///
+    /// # Errors
+    /// `make`'s.
+    pub(crate) fn get_or_make(
+        &self,
+        vault: &Vault,
+        generation: [u8; 32],
+        make: impl FnOnce() -> Result<T>,
+    ) -> Result<Arc<T>> {
+        let vault_path = vault.store.env.path().to_path_buf();
+        if let Some((path, kept, table)) =
+            &*self.kept.lock().unwrap_or_else(PoisonError::into_inner)
+            && *path == vault_path
+            && *kept == generation
+        {
+            return Ok(Arc::clone(table));
+        }
+        let table = Arc::new(make()?);
+        *self.kept.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((vault_path, generation, Arc::clone(&table)));
+        Ok(table)
     }
 }
 
