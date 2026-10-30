@@ -37,7 +37,7 @@ use crate::gate::{
 };
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
-    facade_provenance, verify_actor_binding, verify_actor_binding_in_txn,
+    facade_provenance, verify_actor_binding,
 };
 use crate::outbound_chokepoint::{
     FanoutAdmission, FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutHistory,
@@ -535,19 +535,6 @@ impl Memory<'_> {
     ) -> MemoryResult<EntityId> {
         let actor = owner.revalidate(self.vault())?;
         verify_actor_binding(self.vault(), actor, crate::EdgeActorClass::Human)?;
-        Ok(actor)
-    }
-
-    /// [`Self::reauthenticate_fanout_owner`] inside a write's own `txn`, so
-    /// the check opens no second read txn on the writer's thread (FIX 11354,
-    /// 6992): the same checks, errors and order.
-    pub(super) fn reauthenticate_fanout_owner_in_txn(
-        &self,
-        owner: &AuthenticatedOwner,
-        txn: &heed::RoTxn<'_>,
-    ) -> MemoryResult<EntityId> {
-        let actor = owner.revalidate_in_txn(self.vault(), txn)?;
-        verify_actor_binding_in_txn(self.vault(), txn, actor, crate::EdgeActorClass::Human)?;
         Ok(actor)
     }
 
