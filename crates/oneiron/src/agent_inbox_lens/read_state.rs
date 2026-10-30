@@ -120,6 +120,11 @@ pub struct InboxItemView {
     /// The NOTIFICATION a digest row names, as the caller now reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification: Option<NotificationRow>,
+    /// The card a meeting row carries, as it was delivered: the meeting's
+    /// prep pack, or its check-in with the answer buttons and the recording
+    /// drop (FIX 12004).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<crate::lens::GeneratedLens>,
 }
 
 /// One message's words on an opened row.
@@ -270,6 +275,7 @@ impl Memory<'_> {
         let notification = digest_notification(&item)
             .map(|id| self.inbox_mark(id, NotificationMark::Seen))
             .transpose()?;
+        let lens = crate::calendar::calendar_inbox_card_lens(self.vault(), &item.item_id)?;
         self.record_inbox_read_state(&item, AgentInboxReadState::Open, None)?;
         let mut row = InboxLensRow::from(item);
         row.read_state = Some(AgentInboxReadState::Open);
@@ -277,6 +283,7 @@ impl Memory<'_> {
             item: row,
             messages,
             notification,
+            lens,
         })
     }
 
@@ -306,6 +313,20 @@ impl Memory<'_> {
             until: input.until,
         })
     }
+}
+
+/// Whether `actor` closed the row `item_id` through its entry at
+/// `occurred_at`: its record says done, and no newer entry has arrived since.
+pub(crate) fn agent_inbox_row_done_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    item_id: &str,
+    occurred_at: u64,
+) -> Result<bool> {
+    Ok(READ_MARKS
+        .get(&vault.store, txn, &(actor, item_id.to_owned()))?
+        .is_some_and(|mark| mark.state == AgentInboxReadState::Done && occurred_at <= mark.through))
 }
 
 /// An erased actor's read records leave with it (FIX 3520's sweep).
