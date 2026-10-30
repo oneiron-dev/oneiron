@@ -2481,6 +2481,40 @@ async fn vault_runners_seats_top_up(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_runners_seats_resume(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.runners.seats.resume")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.runners.seats.resume", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.runners.seats.resume", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_runners_seats_resume(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_fanout_resume(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18193,6 +18227,28 @@ async fn vault_lenses_propose(
         actor,
         class,
         "vault.lenses.propose",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_lenses_propose_from_pack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.lenses.propose_from_pack",
         value,
         &producers,
     )?;
@@ -38534,6 +38590,9 @@ async fn call_verb_row(
         "vault.runners.seats.top_up" => {
             Box::pin(vault_runners_seats_top_up(server, call, input)).await
         }
+        "vault.runners.seats.resume" => {
+            Box::pin(vault_runners_seats_resume(server, call, input)).await
+        }
         "vault.fanout.resume" => Box::pin(vault_fanout_resume(server, call, input)).await,
         "vault.fanout.resume_as" => Box::pin(vault_fanout_resume_as(server, call, input)).await,
         "vault.fanout.ack" => Box::pin(vault_fanout_ack(server, call, input)).await,
@@ -39633,6 +39692,9 @@ async fn call_verb_row(
             .await
         }
         "vault.lenses.propose" => Box::pin(vault_lenses_propose(server, call, input)).await,
+        "vault.lenses.propose_from_pack" => {
+            Box::pin(vault_lenses_propose_from_pack(server, call, input)).await
+        }
         "vault.lenses.activate" => Box::pin(vault_lenses_activate(server, call, input)).await,
         "vault.lenses.deactivate" => Box::pin(vault_lenses_deactivate(server, call, input)).await,
         "vault.lenses.list" => Box::pin(vault_lenses_list(server, call, input)).await,

@@ -7711,6 +7711,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/session_delete.rs",
+     "purpose": "A room's delete of a row only it staged (FIX 10763)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/short_id.rs",
      "purpose": "—",
      "surface": {
@@ -15705,7 +15715,7 @@
      "path": "src/code_run/consent_wait/settle.rs",
      "purpose": "The answer and the settlement (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -24693,21 +24703,25 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunnerSeatCreditTopUpRequest",
       "RunnerSeatQuotasRequest",
       "RunnerSeatQuotasView",
       "RunnerSeatTopUpEffect",
-      "RunnerSeatTopUpReceipt"
+      "RunnerSeatTopUpReceipt",
+      "RunnerWorkResumeChoice",
+      "RunnerWorkResumeRequest",
+      "RunnerWorkResumeView",
+      "SkippedRunnerSeatView"
      ],
      "path": "src/dispatch_byoa/owner_doors.rs",
-     "purpose": "The owner's runner seat quota doors (FIX 7451): `vault.runners.seats.quotas` reads the named seats' quotas…",
+     "purpose": "The owner's runner seat doors: `vault.runners.seats.quotas` reads the named seats' quotas as their captures…",
      "surface": {
-      "enum": 1,
-      "fn": 2,
-      "struct": 4
+      "enum": 3,
+      "fn": 3,
+      "struct": 6
      }
     },
     {
@@ -31831,6 +31845,16 @@
       "enum": 3,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/carry/live.rs",
+     "purpose": "The live-body half of a held answer proposal's split (FIX 2115)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -42238,6 +42262,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/decision/questions/artifact_refresh/live.rs",
+     "purpose": "FIX 2115: an edit to a live body never exported moves no version, so a standing artifact question pins each…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/decision/questions/artifact_refresh/manual.rs",
      "purpose": "FIX 3085: `vault.questions.refresh` on a standing artifact question asks its artifacts by hand, now, beside…",
      "surface": {
@@ -46853,7 +46887,7 @@
      "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
      "surface": {
       "crate-vis": 4,
-      "fn": 14,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -48048,7 +48082,7 @@
      "path": "src/memory/witness/stream/lifecycle.rs",
      "purpose": "Terminal transitions and the host-driven quiet-stream pump",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 1
      }
@@ -50010,14 +50044,27 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LivePin"
+     ],
+     "path": "src/office_body/live_units.rs",
+     "purpose": "A live body's position when an ask read its artifact, and the units an edit never exported changed since…",
+     "surface": {
+      "crate-vis": 12,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/office_body/mod.rs",
      "purpose": "Live office body records and Vault doors",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 12
+      "crate-vis": 7,
+      "re-export": 13
      }
     },
     {
@@ -52864,7 +52911,7 @@
      "path": "src/outbound_consent/connector_call_code.rs",
      "purpose": "A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -76122,7 +76169,7 @@
      "path": "src/vault/raw_writes/session.rs",
      "purpose": "A bound raw handle inside the off-record session it names (FIX 8119, 8603), and the verified caller's…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -77592,7 +77639,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1241
+      "fn": 1243
      }
     },
     {
@@ -83330,7 +83377,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 167,
+     "files": 168,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83799,7 +83846,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84079,7 +84126,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 163,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84135,7 +84182,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -84795,7 +84842,7 @@
    },
    "over_bar": 110,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5708,
+   "source_files": 5712,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97272,7 +97319,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1209
+      "fn": 1211
      }
     },
     {
@@ -98760,7 +98807,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1210
+      "fn": 1212
      }
     },
     {
@@ -104233,9 +104280,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/runner_seat_doors.rs",
-     "purpose": "The owner's runner seat quota doors (FIX 7451): `vault.runners.seats.quotas` and…",
+     "purpose": "The owner's runner seat doors (FIX 7451, FIX 11067): `vault.runners.seats.quotas`…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -106399,7 +106446,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/pack_routes/table.rs",
@@ -111750,9 +111797,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/source/readmit.rs",
-     "purpose": "A bound source's re-admission of retained pushes at resume (FIX 9493): every row a retained result was…",
+     "purpose": "A bound source's re-admission of retained pushes at resume (FIX 9493) and before each delivery (FIX 10500)…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -112251,7 +112298,7 @@
      "path": "src/managed/restore.rs",
      "purpose": "The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md, its…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -112281,7 +112328,7 @@
      "path": "src/managed/restore/input.rs",
      "purpose": "The restore's two pipes and the plan on the input pipe: each descriptor proven the right end of a pipe…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -112350,7 +112397,7 @@
      "path": "src/managed/state_serve/admission.rs",
      "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -112364,13 +112411,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/carrier_watch.rs",
      "purpose": "A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -112402,6 +112449,16 @@
      "purpose": "Supervised vault startup, serving, and shutdown",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/deletion.rs",
+     "purpose": "The vault's deletion as a managed host reads it (FIX 11710): the marker every `Ping` reports to the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -112769,13 +112826,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/vm_outbox/diverged.rs",
      "purpose": "The guest carrier's member status read and the owner's answers to its diverged copies (FIX 11074, FIX 11242)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -112830,7 +112887,7 @@
      "path": "src/managed/vm_outbox/local.rs",
      "purpose": "One end's own outbox tree, as the carrier reads and writes it: through held directories, each part opened…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -117840,7 +117897,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 94,
+     "files": 95,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -118024,7 +118081,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1462,
+   "source_files": 1463,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -120291,6 +120348,7 @@
       "LinearProvenancePage",
       "LinearProvenanceRequest",
       "LinkedText",
+      "LivePin",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestBatchInput",
       "LiveRunRequestBoardRefreshRequest",
@@ -120748,6 +120806,7 @@
       "OfficeBodyView",
       "OmittedKnowledge",
       "OmittedNeighbor",
+      "OnSeatSpent",
       "OneironerBind",
       "OnlineAxisMeasurement",
       "OnlineAxisOutcome",
@@ -120866,6 +120925,7 @@
       "PackInstallStatus",
       "PackKind",
       "PackLearningContext",
+      "PackLensProposeRequest",
       "PackLineAtom",
       "PackPermissions",
       "PackPreviewRequest",
@@ -121587,11 +121647,15 @@
       "RunnerBudgetReservationsView",
       "RunnerSeat",
       "RunnerSeatCreditTopUpRequest",
+      "RunnerSeatPolicy",
       "RunnerSeatQuota",
       "RunnerSeatQuotasRequest",
       "RunnerSeatQuotasView",
       "RunnerSeatTopUpEffect",
       "RunnerSeatTopUpReceipt",
+      "RunnerWorkResumeChoice",
+      "RunnerWorkResumeRequest",
+      "RunnerWorkResumeView",
       "SavedIntentState",
       "SavedQueryArchiveRequest",
       "SavedQueryCreateRequest",
@@ -121985,6 +122049,7 @@
       "SkillTradeoffAsk",
       "SkillTradeoffPreferences",
       "SkillTradeoffQuestion",
+      "SkippedRunnerSeatView",
       "SlateDataClass",
       "SlateDisposition",
       "SlateDraftRow",
@@ -122611,8 +122676,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1082,
-      "struct": 3300
+      "enum": 1085,
+      "struct": 3305
      }
     },
     {
@@ -122925,7 +122990,7 @@
       "const": 4,
       "enum": 12,
       "fn": 6,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 4
      }
     },
@@ -122944,6 +123009,19 @@
       "const": 2,
       "enum": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PingDeletion"
+     ],
+     "path": "src/lib/ctl/deletion.rs",
+     "purpose": "A managed vault's deletion (FIX 11710): what every `Ping` says once its Owners deleted it, so the supervisor…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -123676,7 +123754,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 52,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -123685,7 +123763,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
