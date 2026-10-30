@@ -380,6 +380,7 @@ impl Vault {
         if let Some(at) = sync_work::left_env_body_collect_due_at(self)? {
             owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
+        sync_work::push_retained_work_due_at(self, &mut owed)?;
         let mut earliest: Option<u64> = None;
         for (sweep, at) in owed {
             let Runner::Engine { every, .. } = sweep.runner() else {

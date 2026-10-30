@@ -293,6 +293,21 @@ pub(crate) fn drain_retained_maintenance(vault: &Vault) -> Result<u64> {
     Ok(landed)
 }
 
+/// The earliest deadline of the Pending retained ops, or `None` when none
+/// waits: the same rows [`drain_retained_maintenance`] ends (FIX 11183).
+pub(crate) fn earliest_retained_deadline(vault: &Vault) -> Result<Option<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut earliest: Option<u64> = None;
+    for row in WORK.iter_from(vault, &txn, &[])? {
+        let (_, work) = row?;
+        if work.state != MaintenanceWorkState::Pending {
+            continue;
+        }
+        earliest = Some(earliest.map_or(work.deadline, |seen| seen.min(work.deadline)));
+    }
+    Ok(earliest)
+}
+
 /// Every retained maintenance operation and receipt, without bytes, by
 /// signer then row.
 pub fn maintenance_ingest_retained(vault: &Vault) -> Result<Vec<MaintenanceRetainedReceipt>> {

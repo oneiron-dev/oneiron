@@ -497,3 +497,16 @@ pub(crate) fn expire_retained_work(vault: &Vault) -> Result<u64> {
         Ok(ended)
     })
 }
+
+/// The earliest deadline of the retained batches, or `None` when none is
+/// retained: the same rows [`expire_retained_work`] ends (FIX 11183).
+pub(crate) fn earliest_retained_deadline(vault: &Vault) -> Result<Option<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut earliest: Option<u64> = None;
+    for row in vault.store.sync_queue.prefix_iter(&txn, DEFERRED_PREFIX)? {
+        let (_, value) = row?;
+        let deadline = DeferredWork::decode(&value)?.deadline;
+        earliest = Some(earliest.map_or(deadline, |seen| seen.min(deadline)));
+    }
+    Ok(earliest)
+}

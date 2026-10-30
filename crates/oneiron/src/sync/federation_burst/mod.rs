@@ -34,7 +34,7 @@ use crate::llm::NormalizedBurstInputs;
 use crate::sync::{SyncSelector, WindowKey, authorize_sync_selector};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 
-pub(crate) use queue::expire_retained_work;
+pub(crate) use queue::{earliest_retained_deadline, expire_retained_work};
 pub(in crate::sync) use queue::{DeferredWork, WorkKind};
 
 /// An admitted update as review evidence: each part it lands as, with the
