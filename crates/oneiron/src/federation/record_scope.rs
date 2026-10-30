@@ -30,10 +30,9 @@ mod stamping;
 mod tests;
 
 pub(crate) use self::stamping::{
-    has_stored_position, keep_unstamped_in_txn, restrict_stamp_in_txn, room_rows_placed,
-    settle_epoch_birth, settle_source_birth, stage_session_position, stamp_blob_project,
-    stamp_import_audience_birth, stamp_leader_project, stamp_put, stamp_task_birth,
-    stamp_task_fact,
+    has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
+    settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
+    stamp_leader_project, stamp_put, stamp_task_birth, stamp_task_fact,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

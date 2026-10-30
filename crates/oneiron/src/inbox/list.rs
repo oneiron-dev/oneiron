@@ -154,7 +154,7 @@ impl InboxMarkWriteScope {
     /// proof the content writer runs
     /// (`Vault::authorize_shared_content_write_in_txn`). A row stored with
     /// no position is marked on this node alone and asks no position: the
-    /// mark stamps none ([`crate::federation::record_scope::keep_unstamped_in_txn`]).
+    /// mark stamps none, as no local re-put does (FIX 6552, FIX 11925).
     fn admits_in(
         self,
         memory: &Memory<'_>,
@@ -189,11 +189,7 @@ impl InboxMarkWriteScope {
                     return Ok(false);
                 }
                 if crate::federation::record_scope::has_stored_position(&vault.store, txn, id)? {
-                    vault.authorize_shared_content_write_in_txn(
-                        txn,
-                        id,
-                        &memory.write_actor(),
-                    )?;
+                    vault.authorize_shared_content_write_in_txn(txn, id, &memory.write_actor())?;
                 }
                 Ok(true)
             }
@@ -355,13 +351,8 @@ impl Memory<'_> {
                 body.acked_by.insert(caller.clone(), true);
             }
             // A row stored with no position stays unstamped: the mark is this
-            // node's local-row act (Engine 09:39, FIX 6552).
-            let learned_at = crate::federation::record_scope::keep_unstamped_in_txn(
-                &self.vault().store,
-                wtxn,
-                id,
-                |wtxn| self.vault().put_notification_in_txn(wtxn, &id, &body),
-            )?;
+            // node's local re-put (Engine 09:39, FIX 6552; FIX 11925).
+            let learned_at = self.vault().put_notification_in_txn(wtxn, &id, &body)?;
             Ok(row_for(id, learned_at, body, &caller))
         })?;
         Ok(self.with_notification_actions(marked))
