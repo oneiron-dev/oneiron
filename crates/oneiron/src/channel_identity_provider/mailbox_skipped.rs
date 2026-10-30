@@ -13,6 +13,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 
 const SKIPPED_MESSAGES: SideTable<(EntityId, [u8; 32]), GmailSkippedMessage, Named> =
     SideTable::new(&side_table::GMAIL_MAILBOX_SKIPPED);
@@ -92,4 +93,20 @@ pub fn gmail_skipped_messages(
         .into_iter()
         .map(|(_, skipped)| skipped)
         .collect())
+}
+
+/// Drops every message set aside from `identity_id`'s mailbox, in the
+/// transaction that deletes the identity: a deleted identity leaves no
+/// skipped-message evidence behind.
+///
+/// # Errors
+///
+/// Store failure, which fails the deletion with it.
+pub(crate) fn drop_skipped_messages_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    identity_id: &EntityId,
+) -> Result<()> {
+    SKIPPED_MESSAGES.delete_from(store, txn, identity_id.as_bytes())?;
+    Ok(())
 }

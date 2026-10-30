@@ -1,6 +1,7 @@
 //! The agent's doors: `reveal`, `wait` and `describe` on a handle.
 
 use super::notice::{notify_reveal_ask_in_txn, settle_reveal_notices_in_txn};
+use super::replay::RevealCollection;
 use super::{
     HandleReveal, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAct,
     RevealAsker, RevealAuthority, RevealRow, SecretHandleCard, SecretProvenance,
@@ -93,6 +94,7 @@ impl Vault {
                 task: asker.task.clone(),
                 attempt: asker.attempt,
                 scope: None,
+                collected: None,
             };
             row.once_digest = Some(*row.ask_digest(&reveal).as_bytes());
             let grants = load_active_standing_grants(&self.store, txn)?;
@@ -116,8 +118,11 @@ impl Vault {
     /// out with a quiet use receipt; a grant revoked meanwhile files the ask
     /// now. An approved-once reveal spends its marker. Delivery stamps the T1
     /// lease, receipt first, in this same transaction, so a failure writes
-    /// nothing and spends nothing. A delivered reveal answers `granted` with
-    /// its receipt and no value.
+    /// nothing and spends nothing; the row keeps the durable step that
+    /// collected it. A delivered reveal answers `granted` with its receipt
+    /// and no value, except to a live re-attempt of that step, which reads
+    /// the value again under the reveal's lease, or `expired` once it lapsed
+    /// (FIX 11683).
     pub(crate) fn wait_secret_reveal(
         &self,
         asker: &RevealAsker,
@@ -170,7 +175,18 @@ impl Vault {
             };
             let state = row.state;
             match state {
-                SecretRevealState::Delivered => return answer(SecretRevealDecision::Granted, &row),
+                SecretRevealState::Delivered => {
+                    // A live re-attempt of the step that collected it reads
+                    // again; a refused re-read answers as before (FIX 11683).
+                    if row.collected_by(asker) {
+                        match self.reread_delivered_in(txn, asker, reveal, &row) {
+                            Ok(wait) => return Ok(wait),
+                            Err(Error::Secret(_) | Error::Gate(_) | Error::EntityNotFound) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    return answer(SecretRevealDecision::Granted, &row);
+                }
                 SecretRevealState::Denied => return answer(SecretRevealDecision::Denied, &row),
                 SecretRevealState::Expired => return answer(SecretRevealDecision::Expired, &row),
                 SecretRevealState::Unavailable => {
@@ -215,8 +231,12 @@ impl Vault {
                 }
             }
             if let Some(value) = person_value {
+                // A PERSON reveal keeps its own lease on its row, with a T1
+                // reveal lease's life, for its step's replay (FIX 11683).
                 row.state = SecretRevealState::Delivered;
                 row.delivered_at = Some(now);
+                row.lease = Some(self.store.clock.entity_id()?);
+                row.collected = Some(RevealCollection::person(asker, now));
                 REVEALS.put(&self.store, txn, reveal, &row)?;
                 Ok(SecretRevealWait {
                     decision: SecretRevealDecision::Granted,
@@ -224,6 +244,7 @@ impl Vault {
                     receipt: Some(row.receipt(*reveal)?),
                 })
             } else {
+                row.collected = Some(RevealCollection::custody(asker));
                 deliver_in_txn(self, txn, reveal, row)
             }
         })

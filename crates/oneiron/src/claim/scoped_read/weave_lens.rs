@@ -31,10 +31,11 @@ use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
     GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,
     LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole,
-    LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
-    SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
+    LensMount, LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText,
+    SectionAtom, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
 };
 use crate::provenance::EdgeRef;
+use crate::skill_hub::pack_catalog::{WEAVE_LENS_PACK_NAME, WEAVE_REPORT_LENS};
 use crate::{EntityId, Vault};
 
 // A loop decision row's lens cells (OF-499 A2).
@@ -43,8 +44,6 @@ mod loop_decisions;
 mod snapshot;
 pub(super) use snapshot::snapshot_still_served;
 
-/// The shipped skill whose SKILL.md is the render instruction.
-pub const WEAVE_REPORT_SKILL_NAME: &str = "weave-report";
 /// The skill's axes: the reader opened the period's notice; the reader
 /// marked none of the period's links, items or cards wrong.
 pub const WEAVE_LENS_READ_RATE_AXIS: &str = "read_rate";
@@ -67,12 +66,14 @@ fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("weave lens: {reason}"))
 }
 
-/// The shipped `weave-report` skill: its bootstrap seed id.
-pub fn weave_report_skill_id() -> Result<EntityId> {
-    EntityId::derive(
-        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
-        &[WEAVE_REPORT_SKILL_NAME.as_bytes()],
-    )
+/// The shipped `weave-report` skill's lens (ARCH-0063 §6): the first-party
+/// lens pack's [`WEAVE_REPORT_LENS`], mounted on that pack's skill, with the
+/// skill it mounts on. `None` while the pack is not installed Active.
+pub fn weave_report_lens(vault: &Vault) -> Result<Option<(LensMount, EntityId)>> {
+    let Some(entry) = vault.pack_lens_if_active(WEAVE_LENS_PACK_NAME, WEAVE_REPORT_LENS)? else {
+        return Ok(None);
+    };
+    Ok(Some((entry.mount()?, EntityId::from_hex(&entry.skill_id)?)))
 }
 
 /// The model's answer: a title, the wrong control's label, and sections
@@ -331,34 +332,44 @@ impl WeaveLiveLens {
     }
 }
 
-/// The weave-report skill as a live render loads it. No attempt stamps the
-/// load, so the read runs the attempt load's own checks: a live shared skill,
-/// active and approved, read from its exact stored package. `None` for a
-/// retired, unapproved or deleted skill, or one with no SKILL.md.
+/// The weave-report skill as a live render loads it, through its pack lens:
+/// the render runs only while the weave lens pack is Active and its lens
+/// mounts. No attempt stamps the load, so the read runs the attempt load's
+/// own checks: a live shared skill, active and approved, read from its exact
+/// stored package. `None` for a pack not Active, a retired, unapproved or
+/// deleted skill, or one with no SKILL.md.
 fn weave_report_instruction(vault: &Vault) -> Result<Option<(EntityId, String, String)>> {
-    let skill = weave_report_skill_id()?;
-    let txn = vault.store.env.read_txn()?;
-    if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, &skill)?.is_live() {
+    let Some((lens, skill)) = weave_report_lens(vault)? else {
         return Ok(None);
-    }
-    let record = match vault.read_skill_record_in_txn(&txn, &skill) {
-        Ok(record) => record,
-        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
-        Err(error) => return Err(error),
     };
-    if crate::skill::resident_of(&record)?.is_some() || !crate::skill::skill_loadable(&record) {
-        return Ok(None);
-    }
-    let instruction = vault
-        .runtime_skill_package_in_txn(&txn, &skill, &record)?
-        .and_then(|package| {
-            package
-                .files
-                .into_iter()
-                .find(|file| file.path == SKILL_FILE)
+    vault
+        .render_mounted_lens(&lens, || {
+            let txn = vault.store.env.read_txn()?;
+            if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, &skill)?.is_live() {
+                return Ok(None);
+            }
+            let record = match vault.read_skill_record_in_txn(&txn, &skill) {
+                Ok(record) => record,
+                Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            if crate::skill::resident_of(&record)?.is_some()
+                || !crate::skill::skill_loadable(&record)
+            {
+                return Ok(None);
+            }
+            let instruction = vault
+                .runtime_skill_package_in_txn(&txn, &skill, &record)?
+                .and_then(|package| {
+                    package
+                        .files
+                        .into_iter()
+                        .find(|file| file.path == SKILL_FILE)
+                })
+                .and_then(|file| String::from_utf8(file.content).ok());
+            Ok(instruction.map(|instruction| (skill, record.version, instruction)))
         })
-        .and_then(|file| String::from_utf8(file.content).ok());
-    Ok(instruction.map(|instruction| (skill, record.version, instruction)))
+        .map(Option::flatten)
 }
 
 /// The JSON schema the generate step's answer must meet.

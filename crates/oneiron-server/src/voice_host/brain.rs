@@ -112,14 +112,14 @@ pub struct ChatBrain {
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
     foreign: Vec<(oneiron::task_verb::sdk::ConnectorToolResult, Vec<EntityId>)>,
-    /// Every row this call's turns were made from so far: a safeguard
-    /// notice is not told which turn's sentence it judged.
-    said_ever: Vec<EntityId>,
+    /// The rows each of this call's turns was made from, by generation: a
+    /// safeguard notice is made from the turn whose sentence it judged.
+    said_by: BTreeMap<GenerationEpoch, Vec<EntityId>>,
 }
 
 /// One history message, beside the rows it was made from (FIX 4778): the
-/// person's words none, an answer its own turn's, a notice every turn's so
-/// far and the policy row it names, so each is known (FIX 6080).
+/// person's words none, an answer its own turn's, a notice the turn's it
+/// judged and the policy row it names, so each is known (FIX 6080, 5484).
 type HistoryEntry = (LlmMessage, Vec<EntityId>);
 
 /// The turn answering now.
@@ -179,7 +179,7 @@ impl ChatBrain {
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
-            said_ever: Vec::new(),
+            said_by: BTreeMap::new(),
         })
     }
 
@@ -527,7 +527,7 @@ impl Brain for ChatBrain {
                 text_message(LlmMessageRole::User, request.transcript.clone()),
                 Vec::new(),
             ));
-        self.said_ever.extend_from_slice(&said_from);
+        self.said_by.insert(generation, said_from.clone());
         let sources = Arc::new(Mutex::new(Some(TurnSources {
             said: said_from.clone(),
             found: request
@@ -583,10 +583,14 @@ impl Brain for ChatBrain {
 
     /// The notice enters the call's history as System context, so the next
     /// turn hears it; a turn already answering is not interrupted.
-    /// It is heard as made from every turn so far, whose sentence it may
-    /// have judged, and the policy row it names.
-    fn notice(&mut self, notice: &GateSystemNoticeRecord) -> oneiron::Result<()> {
-        let mut rows = self.said_ever.clone();
+    /// It is heard as made from the rows of `generation`, the turn whose
+    /// sentence it judged, and the policy row it names (FIX 5484).
+    fn notice(
+        &mut self,
+        generation: GenerationEpoch,
+        notice: &GateSystemNoticeRecord,
+    ) -> oneiron::Result<()> {
+        let mut rows = self.said_by.get(&generation).cloned().unwrap_or_default();
         rows.extend(notice_rows(notice));
         self.history
             .lock()

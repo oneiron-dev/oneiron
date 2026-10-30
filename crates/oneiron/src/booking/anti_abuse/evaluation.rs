@@ -159,6 +159,30 @@ pub(super) fn scoped_rules<'r>(
     })
 }
 
+/// The minimum notice the owner's activated `MinimumNotice` rule sets for
+/// one event type (FIX 9630): the row scoped to that event type, or else the
+/// page-wide row. `None` when no row is in scope, so the event type's own
+/// configured notice stands. The normal notice applies: no event type is
+/// classed high-value yet.
+#[must_use]
+pub fn effective_minimum_notice_secs(
+    rows: &[BookingAntiAbuseRuleRow],
+    page_ref: &EntityId,
+    event_type: &EventTypeKey,
+) -> Option<u64> {
+    let scoped = Some(event_type.clone());
+    let mut page_wide = None;
+    for row in scoped_rules(rows, page_ref, &scoped) {
+        if let BookingAntiAbuseRule::MinimumNotice { normal_secs, .. } = &row.rule {
+            if row.scope.event_type.is_some() {
+                return Some(normal_secs.get());
+            }
+            page_wide = Some(normal_secs.get());
+        }
+    }
+    page_wide
+}
+
 /// The strictest slot-list knobs across the rows in scope. A cache-TTL
 /// difference resolves toward the shorter (fresher) window, matching the
 /// under-block posture on listings.

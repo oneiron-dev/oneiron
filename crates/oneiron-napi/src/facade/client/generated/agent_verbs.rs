@@ -2175,6 +2175,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_optimize_tradeoff_asks_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.skills.optimize.tradeoff_asks.resolve",
+                js_json(input),
+            )
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_governance_get(
         &self,
         input: serde_json::Value,
@@ -9672,6 +9684,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consolidation.lineage", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_candidate_decisions(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.candidate_decisions", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

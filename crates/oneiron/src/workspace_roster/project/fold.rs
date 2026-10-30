@@ -250,7 +250,12 @@ fn slice_meet(a: &Scope, b: &Scope) -> Option<Scope> {
     Some(Scope {
         world: axis(a.world, b.world)?,
         facet: axis(a.facet, b.facet)?,
-        relationship: axis(a.relationship, b.relationship)?,
+        // A relationship set meets as one value: equal sets stay, two
+        // different sets meet to nothing.
+        relationship: match (&a.relationship, &b.relationship) {
+            (Some(left), Some(right)) if left != right => return None,
+            (left, right) => left.clone().or_else(|| right.clone()),
+        },
         project: axis(a.project, b.project)?,
         readable: a.readable.intersection(&b.readable).cloned().collect(),
         writable: a.writable.intersection(&b.writable).cloned().collect(),

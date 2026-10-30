@@ -46,7 +46,7 @@ struct Question {
     subject: EntityId,
     predicate: String,
     world: Option<EntityId>,
-    rel: Option<EntityId>,
+    rel: crate::claim::RelationshipScope,
     project: EntityId,
     facet: EntityId,
     scope: Vec<u8>,
@@ -86,7 +86,7 @@ fn question(body: &ClaimBody) -> Option<Question> {
         subject,
         predicate: body.predicate.clone(),
         world: body.world,
-        rel: body.rel,
+        rel: body.rel.clone(),
         project: body.scope_project,
         facet: body.scope_facet,
         scope: bytes(&canonical(&rmpv::Value::Map(fields))),
@@ -167,12 +167,13 @@ pub(crate) fn question_key(body: &ClaimBody) -> Option<[u8; 32]> {
     hasher.update(question.subject.as_bytes());
     hasher.update(&(question.predicate.len() as u64).to_le_bytes());
     hasher.update(question.predicate.as_bytes());
-    for id in [question.world, question.rel] {
-        match id {
-            Some(id) => hasher.update(&[1]).update(id.as_bytes()),
-            None => hasher.update(&[0]),
-        };
-    }
+    match question.world {
+        Some(id) => hasher.update(&[1]).update(id.as_bytes()),
+        None => hasher.update(&[0]),
+    };
+    hasher.update(&crate::claim::relationship_scope_transcript(
+        question.rel.as_ref(),
+    ));
     hasher.update(question.project.as_bytes());
     hasher.update(question.facet.as_bytes());
     hasher.update(&question.scope);

@@ -34,11 +34,16 @@ impl DecisionReadDoor {
 impl ReaderHost {
     /// What `model` costs per thousand units it reads, from its registry row's input price
     /// per million, as a durable generated read prices its model (FIX 11305); none when the
-    /// vault is gone or the row names no price.
+    /// vault is gone, the row names no price, or the price names no currency (FIX 11778:
+    /// unknown never prices).
     pub(super) fn cost_per_thousand(&self, model: &ModelId) -> Option<f64> {
         let vault = self.vault.upgrade()?;
         let row = vault.model_registry_row(model).ok().flatten()?;
-        let per_million: f64 = row.catalog.cost.as_ref()?.input_per_million.parse().ok()?;
+        let cost = row.catalog.cost.as_ref()?;
+        if cost.currency.is_none() {
+            return None;
+        }
+        let per_million: f64 = cost.input_per_million.parse().ok()?;
         (per_million.is_finite() && per_million >= 0.0).then(|| per_million / 1_000.0)
     }
 }

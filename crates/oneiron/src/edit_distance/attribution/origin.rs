@@ -114,7 +114,7 @@ fn birth_executor(vault: &Vault, proposal: ProposalArtifactRef) -> Result<Option
     let Ok(document) = retained.document() else {
         return Ok(None);
     };
-    Ok(crate::edit_distance::proposal_text::birth_process(document)
+    Ok(crate::edit_distance::proposal_text::birth_process(vault, document)?
         .filter(|process| process.class == crate::provenance::made_by::MadeByClass::Concluded)
         .map(|process| format!("{}@{}", process.identity, process.version))
         .filter(|stamp| {

@@ -350,7 +350,7 @@ fn ai_options(
             )
         })
         .collect::<MemoryResult<BTreeSet<_>>>()?;
-    let left = line.map(|line| line.read().remaining_units);
+    let left = line.and_then(|line| line.read().capped_remaining_units());
     // Text is the raw routes', which a run never reaches; a run with no
     // line calls no granted row.
     let granted: BTreeSet<AiOperation> = server

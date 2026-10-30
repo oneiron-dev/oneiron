@@ -9,6 +9,9 @@
 //! and the gate rules the write. This module finalizes what landed: the
 //! winner claim's actual approval, one team receipt for the run, and the
 //! attempt's terminal pack receipt, which a later anchored outcome settles.
+//! A run that discarded every candidate landed nothing: it is finalized
+//! with no winner, and its team receipt carries its failed outcome at once
+//! (FIX 9124).
 //! A strategy-default change still goes through the held-out KEEP and the one
 //! sealed BEAM shot, never through the generic promotion basis.
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,12 +30,12 @@ use crate::dreamer_runner::{DreamerClaimAuthoringAdmission, DreamerTournamentCla
 use crate::dreamer_tournament::{
     DreamerTournamentEvidenceStore, DreamerTournamentRunResult, DreamerTournamentStopReason,
 };
-use crate::learning::TypeRef;
+use crate::learning::{Anchor, TypeRef};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::{SkillLifecycle, SkillRole};
 use crate::team::{
     DecidedBy, PatternSkillRef, TeamAxis, TeamOutcome, TeamPattern, TeamReceipt, TeamShape,
-    record_team_receipt, settle_team_outcome,
+    record_team_receipt,
 };
 use crate::{AttemptId, ClaimApprovalStatus, EntityId, Error, Result, Vault};
 
@@ -83,6 +86,9 @@ pub enum TournamentStop {
     Consensus,
     RoundCap,
     ExhaustedRounds,
+    /// A round discarded every candidate: the run failed and landed no
+    /// claim.
+    AllDiscarded,
 }
 
 /// What the host observed about one tournament run's team.
@@ -105,6 +111,18 @@ pub struct TournamentTeam {
     pub calls: u64,
 }
 
+/// The winner a tournament run landed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoringWinner {
+    pub claim: EntityId,
+    pub candidate_ref: String,
+    pub branch: AttemptId,
+    pub score: u64,
+    /// The winner claim's approval as the gate left it: rank never approves.
+    pub approval: ClaimApprovalStatus,
+}
+
 /// One finalized tournament run on the campaign.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,20 +130,17 @@ pub struct AuthoringFinalization {
     pub root: AttemptId,
     pub attempt: AttemptId,
     pub run_id: String,
-    pub winner_claim: EntityId,
-    pub winner_candidate_ref: String,
-    pub winner_branch: AttemptId,
-    pub winner_score: u64,
+    /// `None` when the run discarded every candidate.
+    pub winner: Option<AuthoringWinner>,
     pub rounds_executed: u16,
     pub stop: TournamentStop,
-    /// The winner claim's approval as the gate left it: rank never approves.
-    pub approval: ClaimApprovalStatus,
     pub skill: ClaimAuthoringSkillPin,
     pub strategy: AuthoringStrategyPin,
     pub team_ref: String,
     /// The attempt's terminal pack receipt, stamped when it settles.
     pub terminal_receipt_ref: String,
-    /// The anchored outcome, once an observer settles it.
+    /// The anchored outcome, once an observer settles it; a failed run's
+    /// from its finalization.
     pub outcome: Option<TeamOutcome>,
     pub at: u64,
 }
@@ -328,11 +343,13 @@ pub(crate) fn tournament_start_check(
 /// Finalize one tournament run after the unchanged gated writer landed its
 /// winner: check the run's branch evidence and the winner claim, record the
 /// run's team receipt (a Market team decided by its pre-signed ranking rule)
-/// and join the attempt's terminal pack receipt.
+/// and join the attempt's terminal pack receipt. A run that discarded every
+/// candidate is finalized with no winner, and its team receipt carries its
+/// failed outcome, resting on that terminal receipt: no claim landed.
 /// # Errors
 /// An unbound campaign, a run attempt that is not a campaign experiment, a
-/// failed run with no winner, no persisted evidence for the winner, a winner
-/// claim that never landed, a
+/// winning run that names no winner, no persisted evidence for the winner, a
+/// winner claim that never landed, a
 /// rule signed after the work, a malformed or duplicate team receipt, an
 /// already-finalized run, or storage errors.
 pub fn finalize_claim_tournament(
@@ -359,30 +376,39 @@ pub fn finalize_claim_tournament(
             "the run attempt is not an experiment of this campaign",
         ));
     }
-    // A failed run (every candidate discarded) has no winner to finalize.
     let stop = match result.stop_reason {
         DreamerTournamentStopReason::Consensus => TournamentStop::Consensus,
         DreamerTournamentStopReason::RoundCap => TournamentStop::RoundCap,
         DreamerTournamentStopReason::ExhaustedRounds => TournamentStop::ExhaustedRounds,
-        DreamerTournamentStopReason::AllDiscarded => {
-            return Err(invalid("the tournament discarded every candidate"));
-        }
+        DreamerTournamentStopReason::AllDiscarded => TournamentStop::AllDiscarded,
     };
-    let winner = result
-        .winner
-        .as_ref()
-        .ok_or(invalid("the tournament result names no winner"))?;
     let evidence = DreamerTournamentEvidenceStore::new(vault).list_run(run_id)?;
-    if !evidence.iter().any(|row| {
-        row.branch_attempt == winner.branch_attempt && row.candidate_ref == winner.candidate_ref
-    }) {
-        return Err(invalid(
-            "the tournament winner has no persisted branch evidence",
-        ));
-    }
-    let claim = vault.get_claim(&winner.claim_id)?.ok_or(invalid(
-        "the tournament winner never landed through the gate",
-    ))?;
+    // A failed run (every candidate discarded) has no winner to check.
+    let winner = if stop == TournamentStop::AllDiscarded {
+        None
+    } else {
+        let winner = result
+            .winner
+            .as_ref()
+            .ok_or(invalid("the tournament result names no winner"))?;
+        if !evidence.iter().any(|row| {
+            row.branch_attempt == winner.branch_attempt && row.candidate_ref == winner.candidate_ref
+        }) {
+            return Err(invalid(
+                "the tournament winner has no persisted branch evidence",
+            ));
+        }
+        let claim = vault.get_claim(&winner.claim_id)?.ok_or(invalid(
+            "the tournament winner never landed through the gate",
+        ))?;
+        Some(AuthoringWinner {
+            claim: winner.claim_id,
+            candidate_ref: winner.candidate_ref.clone(),
+            branch: winner.branch_attempt,
+            score: winner.score,
+            approval: claim.approval,
+        })
+    };
     if team.rule_signed_at > at {
         return Err(invalid("the ranking rule must be signed before the work"));
     }
@@ -404,6 +430,15 @@ pub fn finalize_claim_tournament(
         ));
     }
     let team_ref = stamp.team_ref;
+    let terminal_receipt_ref = crate::receipt::attempt_pack_receipt_id(&attempt);
+    // The run landed no claim: that is its outcome, known now (CALL).
+    let outcome = winner.is_none().then(|| TeamOutcome {
+        receipt: terminal_receipt_ref.clone(),
+        anchor: Anchor::WorldOutcome,
+        success: false,
+        at,
+        critics: None,
+    });
     record_team_receipt(
         vault,
         &TeamReceipt {
@@ -428,7 +463,7 @@ pub fn finalize_claim_tournament(
             spend_cap: team.spend_cap,
             elapsed_secs: team.elapsed_secs,
             calls: Some(team.calls),
-            outcome: None,
+            outcome: outcome.clone(),
             at,
         },
     )?;
@@ -436,18 +471,14 @@ pub fn finalize_claim_tournament(
         root,
         attempt,
         run_id: run_id.to_owned(),
-        winner_claim: winner.claim_id,
-        winner_candidate_ref: winner.candidate_ref.clone(),
-        winner_branch: winner.branch_attempt,
-        winner_score: winner.score,
+        winner,
         rounds_executed: result.rounds_executed,
         stop,
-        approval: claim.approval,
         skill: campaign.skill,
         strategy: campaign.strategy,
         team_ref,
-        terminal_receipt_ref: crate::receipt::attempt_pack_receipt_id(&attempt),
-        outcome: None,
+        terminal_receipt_ref,
+        outcome,
         at,
     };
     vault.with_write_txn_grouped(|txn| {
@@ -474,9 +505,15 @@ pub fn authoring_runs(vault: &Vault, root: AttemptId) -> Result<Vec<AuthoringFin
 
 /// Settle a finalized run's anchored outcome on its team receipt, which
 /// feeds the existing payoff and learning evidence, and keep it on the run.
+/// The run's winner is the work the outcome judged: the outcome names and
+/// scores the critics that reviewed it, beside the team's bound
+/// deliverables' (FIX 12106), and the run keeps the outcome as settled. A
+/// failed run (every candidate discarded) has no winner, so only the
+/// deliverables' critics are named.
 /// # Errors
-/// An unknown or already-settled run, any [`settle_team_outcome`] refusal,
-/// or storage errors.
+/// An unknown or already-settled run, any
+/// [`settle_team_outcome`](crate::team::settle_team_outcome) refusal, or
+/// storage errors.
 pub fn settle_claim_tournament_outcome(
     vault: &Vault,
     root: AttemptId,
@@ -492,7 +529,17 @@ pub fn settle_claim_tournament_outcome(
     if run.outcome.is_some() {
         return Err(invalid("the tournament run's outcome is already settled"));
     }
-    settle_team_outcome(vault, &run.team_ref, &outcome)?;
+    let settled = crate::team::receipt::settle_team_work_outcome(
+        vault,
+        &run.team_ref,
+        &outcome,
+        &run.winner
+            .as_ref()
+            .map(|winner| winner.claim)
+            .into_iter()
+            .collect::<Vec<_>>(),
+    )?;
+    let outcome = settled.outcome.unwrap_or(outcome);
     vault.with_write_txn_grouped(|txn| {
         let mut run = AUTHORING_RUN
             .get(&vault.store, txn, &key)?

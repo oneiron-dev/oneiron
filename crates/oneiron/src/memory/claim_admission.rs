@@ -9,7 +9,8 @@ use crate::provenance::made_by::MadeByClass;
 use crate::{EntityId, Error};
 use serde::{Deserialize, Serialize};
 
-/// The explicit relationship position. The claim codec currently admits one relationship per row.
+/// The explicit relationship position: `all`, or a set of relationships.
+/// An empty list is the explicit empty set, never `all`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum ClaimRelationships {
@@ -71,8 +72,9 @@ impl ClaimScope {
             scope_facet_id: body.scope_facet.to_hex(),
             scope_relationship_id: body
                 .rel
-                .map_or(ClaimRelationships::All(AllRelationships::All), |id| {
-                    ClaimRelationships::Relationships(vec![id.to_hex()])
+                .as_ref()
+                .map_or(ClaimRelationships::All(AllRelationships::All), |ids| {
+                    ClaimRelationships::Relationships(ids.iter().map(|id| id.to_hex()).collect())
                 }),
             scope_project_id: body.scope_project.to_hex(),
         }
@@ -144,14 +146,11 @@ impl Memory<'_> {
         let project = self.resolve_ref(&input.scope.scope_project_id)?;
         let relationship = match &input.scope.scope_relationship_id {
             ClaimRelationships::All(AllRelationships::All) => None,
-            ClaimRelationships::Relationships(ids) if ids.len() == 1 => {
-                Some(self.resolve_ref(&ids[0])?)
-            }
-            ClaimRelationships::Relationships(_) => {
-                return Err(MemoryError::bad_request(
-                    "a claim relationship position is all or exactly one relationship",
-                ));
-            }
+            ClaimRelationships::Relationships(ids) => Some(
+                ids.iter()
+                    .map(|id| self.resolve_ref(id))
+                    .collect::<Result<std::collections::BTreeSet<EntityId>, _>>()?,
+            ),
         };
         if input.sensitivity.is_some_and(|band| band > 3) {
             return Err(MemoryError::bad_request("sensitivity must be in 0..=3"));
@@ -174,7 +173,7 @@ impl Memory<'_> {
             confidence: input.confidence,
             source: input.source.clone(),
             world_ref: (world != crate::claim::base_world_id()).then(|| world.to_hex()),
-            relationship_ref: relationship.map(|id| id.to_hex()),
+            relationship_ref: relationship.map(|ids| ids.iter().map(|id| id.to_hex()).collect()),
             scope: Some(serde_json::Value::Object(annotations)),
             valid_from: input.valid_from,
             valid_to: input.valid_to,

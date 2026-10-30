@@ -20,14 +20,14 @@ use crate::sync::loro_support::map_for_each_value_bytes;
 /// The authority blobs of one part, gathered before the copy reads the map
 /// (a read of the map inside its own walk would wait on itself), decoded the
 /// first time a door asks for them.
-pub(super) struct AuthorityBeside {
+pub(in crate::sync) struct AuthorityBeside {
     blobs: Vec<Vec<u8>>,
     rows: OnceCell<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>>,
 }
 
 impl AuthorityBeside {
     /// The AUTHORITY_LOG blobs of `entities` under the keys `copies` selects.
-    pub(super) fn gather(entities: &LoroMap, copies: impl Fn(&str) -> bool) -> Self {
+    pub(in crate::sync) fn gather(entities: &LoroMap, copies: impl Fn(&str) -> bool) -> Self {
         let mut blobs = Vec::new();
         map_for_each_value_bytes(entities, |key, value| {
             if let Some(blob) = value
@@ -45,7 +45,7 @@ impl AuthorityBeside {
 
     /// The gathered rows, decoded, by hash. A blob that is no canonical
     /// authority row is left out: its own door refuses it.
-    pub(super) fn rows(&self) -> Result<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>> {
+    pub(in crate::sync) fn rows(&self) -> Result<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>> {
         Ok(self
             .rows
             .get_or_init(|| {

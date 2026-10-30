@@ -120,7 +120,14 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_NOTE {
         super::super::validate_note_birth_put(store, wtxn, &fixed.id, data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-        super::super::claim_admission::validate_witness_message_body(data, fixed.replicated)?;
+        super::super::claim_admission::validate_witness_message_body(
+            store,
+            wtxn,
+            &fixed.id,
+            data,
+            fixed.replicated,
+            fixed.own_device,
+        )?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
@@ -128,7 +135,21 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
         pad_stored_body = crate::world_keys::admit_pad_put_in_txn(store, wtxn, &fixed.id, data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-        if fixed.replicated {
+        // History a window carries in two or more rows lands together: the
+        // row is judged beside the batch's other authority rows, as the
+        // ingest door judged it (FIX 11764).
+        if fixed.replicated
+            && let Some(beside) = fixed.authority_beside
+        {
+            validate_replicated_authority_log_beside_for_local_vault(
+                store,
+                wtxn,
+                &fixed.id,
+                data,
+                fixed.posture,
+                beside,
+            )?;
+        } else if fixed.replicated {
             validate_replicated_authority_log_for_local_vault(
                 store,
                 wtxn,

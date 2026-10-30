@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::skill_optimize::{
     GoalAxisKind, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, TradeoffChoice,
-    TradeoffRule, project_axes,
+    project_axes, project_rules_for_record,
 };
 use crate::workspace_roster::GoalRecord;
 use crate::{EntityId, Error, Result, Vault};
@@ -187,7 +187,14 @@ fn rule(record: &GoalRecord, axes: &[UpkeepAxis]) -> (UpkeepGoalVerdict, Vec<Str
     }
     let mut basis = Vec::new();
     if !losses.is_empty() {
-        let ruling = preference_rules(record, axes)
+        let specs: Vec<GoalAxisSpec> = axes
+            .iter()
+            .map(|axis| GoalAxisSpec {
+                name: axis.name.clone(),
+                kind: axis.kind,
+            })
+            .collect();
+        let ruling = project_rules_for_record(record, &specs)
             .into_iter()
             .find(|(rule, _)| rule.gains == gains && rule.losses == losses);
         match ruling {
@@ -219,46 +226,4 @@ fn rule(record: &GoalRecord, axes: &[UpkeepAxis]) -> (UpkeepGoalVerdict, Vec<Str
     }
     basis.extend(unmeasured);
     (UpkeepGoalVerdict::ScalarWin, basis)
-}
-
-/// The goal record's stated preferences over `axes` as ladder rules, read
-/// as L08-B's `project_rules` reads them: "prefer A over B" approves a
-/// vector that gains A and loses B, and rejects one that gains B and loses
-/// A; `+` joins several axes on a side. A preference that names no exact
-/// axis set stays prose. `project_rules` takes a skill-goal join this
-/// upkeep has none of; this copy goes once it takes the record.
-fn preference_rules(record: &GoalRecord, axes: &[UpkeepAxis]) -> Vec<(TradeoffRule, String)> {
-    let names = |side: &str| -> Option<BTreeSet<String>> {
-        let set: BTreeSet<String> = side.split('+').map(|name| name.trim().to_owned()).collect();
-        set.iter()
-            .all(|name| axes.iter().any(|axis| &axis.name == name))
-            .then_some(set)
-    };
-    let mut rules = Vec::new();
-    for (index, preference) in record.preferences.iter().enumerate() {
-        let (Some(prefer), Some(over)) = (names(&preference.prefer), names(&preference.over))
-        else {
-            continue;
-        };
-        if !prefer.is_disjoint(&over) {
-            continue;
-        }
-        rules.push((
-            TradeoffRule {
-                gains: prefer.clone(),
-                losses: over.clone(),
-                choice: TradeoffChoice::Approve,
-            },
-            format!("project_preference:{index}"),
-        ));
-        rules.push((
-            TradeoffRule {
-                gains: over,
-                losses: prefer,
-                choice: TradeoffChoice::Reject,
-            },
-            format!("project_preference:{index}:reverse"),
-        ));
-    }
-    rules
 }

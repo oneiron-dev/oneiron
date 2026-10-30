@@ -23,7 +23,6 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
 use crate::settings::ReadDestination;
-use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
 /// One run's result manifests, as its replay record names them, each with
@@ -330,7 +329,7 @@ impl Vault {
             if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
                 if only.is_none()
                     && cut == ExportCut::Archive
-                    && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+                    && row_live_in_txn(&self.store, &rtxn, &id)?
                 {
                     let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                         &self.store,
