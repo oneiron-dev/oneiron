@@ -27,15 +27,29 @@ impl CdpDriver {
         let (at, rebound) = match_target(target, &capture.rows, &capture.scope, known.as_ref())
             .ok_or_else(stale)?;
         let node = capture.nodes[at].ok_or_else(stale)?;
-        let resolved = self.page("DOM.resolveNode", json!({"backendNodeId": node}))?;
+        // On the row's own frame session (FIX 11576): an OOPIF row's node
+        // id is its frame's process's, and must never resolve on the
+        // page's session. One the read names on no session, or on two, is
+        // stale, as a row with no node is.
+        let session = self.row_session(&capture.ax, node).ok_or_else(stale)?;
+        let resolved = self.pipe.call(
+            Some(&session),
+            "DOM.resolveNode",
+            json!({"backendNodeId": node}),
+            Instant::now() + CALL,
+        )?;
         let object = resolved
             .pointer("/object/objectId")
             .cloned()
             .ok_or_else(stale)?;
         let node = json!({"backendNodeId": node, "objectId": object});
         // Read in its document now, and still in it when resolved.
-        let connected =
-            self.call_on(&node, "function() { return this.isConnected; }", json!([]))?;
+        let connected = self.call_on_in(
+            &session,
+            &node,
+            "function() { return this.isConnected; }",
+            json!([]),
+        )?;
         if connected != Value::Bool(true) {
             return Err(stale());
         }
@@ -44,6 +58,51 @@ impl CdpDriver {
             node,
             rebound,
         })
+    }
+
+    /// The session the row whose backend node is `node` resolves and reads
+    /// on (FIX 11576): its frame's own where the read names it there, else
+    /// the front tab's. None where no node of the read carries it, or
+    /// nodes on two sessions do: a foreign id is never resolved on the
+    /// page's session.
+    fn row_session(&self, ax: &[Value], node: u64) -> Option<String> {
+        let mut session = None;
+        let frames = ax
+            .iter()
+            .filter(|read| read.get("backendDOMNodeId").and_then(Value::as_u64) == Some(node))
+            .map(|read| read.get("frameId").and_then(Value::as_str));
+        for frame in frames {
+            let found = self.frame_session(frame);
+            if session.as_ref().is_some_and(|held| *held != found) {
+                return None;
+            }
+            session = Some(found);
+        }
+        session
+    }
+
+    /// `node`'s `function` on `session` (FIX 11576), as `call_on` calls it
+    /// on the front tab's session.
+    fn call_on_in(
+        &self,
+        session: &str,
+        node: &Value,
+        function: &str,
+        args: Value,
+    ) -> Result<Value, BrowserError> {
+        let result = self.pipe.call(
+            Some(session),
+            "Runtime.callFunctionOn",
+            json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
+            Instant::now() + CALL,
+        )?;
+        if let Some(error) = result.get("exceptionDetails") {
+            return Err(BrowserError::Protocol(self.thrown_text(error)));
+        }
+        Ok(result
+            .pointer("/result/value")
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     /// The viewport point, in CSS pixels, at fractions `x`, `y` of a held
