@@ -257,6 +257,22 @@ pub(in crate::authority) fn in_host_custody(state: &FoldState, key: &AuthorityKe
     false
 }
 
+/// Every key [`in_host_custody`] holds the host's: the marked keys, and each
+/// key whose admitters lead to one. Empty when no key is marked, so a vault
+/// the owner roots pays nothing (FIX 12196).
+pub(in crate::authority) fn host_custody_closure(state: &FoldState) -> BTreeSet<AuthorityKey> {
+    if state.host_custody_keys.is_empty() {
+        return BTreeSet::new();
+    }
+    state
+        .host_custody_keys
+        .iter()
+        .chain(state.key_admitters.keys())
+        .filter(|key| in_host_custody(state, key))
+        .cloned()
+        .collect()
+}
+
 pub(super) fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {
     state.machines.get(&machine)?.get(&MachineAdmitter::Roster)
 }

@@ -6,10 +6,10 @@
 //! one request. The broker's shape for the exchange adds the auth: Bearer
 //! for the OpenAI-compatible paths, `x-goog-api-key` for the Gemini API's.
 //!
-//! JSON and form bodies are capped at the broker's 16 MiB. A speech, clip or
-//! file reply streams back in 1 MiB frames, checked for the key and never
-//! rewritten, up to 512 MiB, and must finish within the provider's
-//! `timeout_secs`.
+//! A JSON or form body over 16 MiB travels in the broker's chunked call
+//! form, up to `MAX_STREAM` (512 MiB) (FIX 1895). Media replies stream
+//! back in 1 MiB frames, checked for the key and never rewritten, up to
+//! 512 MiB, within the provider's `timeout_secs` (FIX 1896).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -193,7 +193,7 @@ impl BrokerMedia {
         let body = std::mem::take(&mut *reply.body);
         // The broker hands the reply over whole: its bytes are charged on the
         // media-reply line and held with the call it was read for (FIX 8615).
-        let _held = charge_read(body.capacity());
+        let _held = charge_read(body.len());
         Ok((
             status,
             headers
