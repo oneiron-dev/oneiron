@@ -139,6 +139,36 @@ pub(in crate::sync) fn file_echo_equal(
     Ok(body.len() as u64 == len && *blake3::hash(body).as_bytes() == digest)
 }
 
+/// The row a point read serves for `blob`, what `doc` carries for `id`
+/// (FIX 5532): an ordinary body as it is, and a carrier `doc` binds by
+/// reference as the body it names under its header, read whole from the row
+/// stored here, inline or in its file, as the read was served before the
+/// file plane. `None` while that body is not here.
+///
+/// # Errors
+///
+/// Storage errors, and a body file that is missing or disagrees with its
+/// manifest.
+pub(in crate::sync) fn served_row(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    id: &EntityId,
+    blob: Vec<u8>,
+) -> Result<Option<Vec<u8>>> {
+    let Some(body) = references::bound_in(doc, id, &blob) else {
+        return Ok(Some(blob));
+    };
+    let txn = vault.store.env.read_txn()?;
+    let Some(stored) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?
+    else {
+        return Ok(None);
+    };
+    if !ref_echo_equal(&vault.store, &txn, id, &body, &stored, &blob)? {
+        return Ok(None);
+    }
+    vault.materialized_row_in_txn(&txn, id, stored).map(Some)
+}
+
 /// Whether the stored row `stored` of `id` is an ASSET whose body, inline or
 /// in its file, has exactly `facts`. An inline body is measured only when
 /// its length is the one `facts` names.

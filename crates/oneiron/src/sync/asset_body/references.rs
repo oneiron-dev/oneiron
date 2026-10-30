@@ -243,24 +243,25 @@ pub(crate) fn mirror_ref(vault: &Vault, doc: &LoroDoc, id: &EntityId, raw: &[u8]
 }
 
 /// Copies into `out` each reference of `source` whose exact carrier `out`
-/// holds: a filtered copy of a window carries a reference only beside the
-/// owner it kept, never alone.
+/// holds, and commits them: a filtered copy of a window carries a reference
+/// only beside the owner it kept, never alone. Nothing is written while the
+/// file plane is off.
 ///
 /// # Errors
 ///
 /// The map write's.
-#[allow(
-    dead_code,
-    reason = "the selector export's hook (sync/selector/authorize.rs) calls this"
-)]
 pub(crate) fn copy_refs_within(source: &LoroDoc, out: &LoroDoc) -> Result<()> {
     let kept = out.get_map("entities");
-    let refs = out.get_map(ASSET_BODY_REFS_MAP);
+    let mut copied = false;
     for body in bound_refs(source) {
         let key = body.key();
         if map_get_bytes(&kept, &key).is_some_and(|carrier| body.binds(&carrier)) {
-            map_insert_bytes(&refs, &key, &body.encode()?)?;
+            map_insert_bytes(&out.get_map(ASSET_BODY_REFS_MAP), &key, &body.encode()?)?;
+            copied = true;
         }
+    }
+    if copied {
+        out.commit();
     }
     Ok(())
 }
