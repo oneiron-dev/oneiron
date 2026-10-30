@@ -733,6 +733,16 @@ impl std::ops::Deref for Store {
     }
 }
 
+/// The deferred-commit leader holds a clone of the core (Engine ruling 10-30
+/// 23:09): it ends first, after the group it leads commits, so a clean close
+/// keeps every write it answered and no `Arc<StoreCore>` outlives the owner
+/// when `core` and then `owner` drop in their declared order.
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.core.group_commit.stop_deferred_commit_leader();
+    }
+}
+
 impl std::ops::Deref for StoreRead<'_> {
     type Target = StoreCore;
 
