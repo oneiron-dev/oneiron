@@ -8,8 +8,9 @@
 //! This module holds the item codec, the instance table ([`instance`]) and
 //! the custody glue a capture and a restore call: the binding pinned with
 //! the leaves it protects, the mint under the custody guard ([`capture`]),
-//! guarded reads and the restore plan for a list of compartments
-//! ([`compartment_access`]). Projection (KS7-2), the mixed sync carriers (KS7-3), erase,
+//! guarded reads, the restore plan for a list of compartments
+//! ([`compartment_access`]) and what the kept copies still need of them
+//! ([`kept`]). Projection (KS7-2), the mixed sync carriers (KS7-3), erase,
 //! hold and retention staging (KS7-4) and capture and restore (KS7-5) call
 //! them. Until KS7-6 flips [`CHECKPOINT_PAYLOADS_ENABLED`], every write here
 //! refuses and every read answers empty.
@@ -17,6 +18,7 @@
 
 pub(crate) mod capture;
 pub(crate) mod instance;
+pub(crate) mod kept;
 pub(crate) mod loro;
 pub(crate) mod retirement;
 pub(crate) mod rows;

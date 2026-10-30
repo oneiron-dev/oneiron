@@ -25,6 +25,7 @@ use crate::store::key_custody::{
 };
 
 use super::instance::{self, Lifecycle, PayloadInstance};
+use super::kept::KeptGenerations;
 use super::{CHECKPOINT_PAYLOADS_ENABLED, PayloadItem, Subtype, corrupt};
 
 /// What an owner's deletion does to its compartments (Engine 10-20 08:4x,
@@ -137,19 +138,25 @@ fn held_record(item: &PayloadItem) -> Option<[u8; 16]> {
 
 /// The kept-checkpoint inventory's answer for a retention retirement of
 /// `item` through `through`: whether no kept checkpoint still needs a
-/// generation at or below it. KS7-5 supplies the authenticated inventory of
-/// every kept manifest; until it does, no retention retirement is ready, and
-/// a missing inventory only ever delays a key (Engine 10-20 08:4x, ruling 3).
-fn kept_inventory_releases(_item: &PayloadItem, _through: u64) -> bool {
-    false
+/// generation at or below it. `kept` is the authenticated inventory of every
+/// kept manifest (KS7-5), read when a host's prune hands its kept copies
+/// over; with none, no retention retirement is ready, and a missing
+/// inventory only ever delays a key (Engine 10-20 08:4x, ruling 3).
+fn kept_inventory_releases(item: &PayloadItem, through: u64, kept: Option<&KeptGenerations>) -> bool {
+    kept.is_some_and(|kept| kept.releases(item, through))
 }
 
 /// The checkpoint payload client's rule for custody's finisher: an erase's
 /// leaf retires once no standing legal hold names its owner's record; a
-/// retention's once the kept inventory no longer needs it. A deferral delays
-/// only the key. An intent whose incarnation is not erased is damage and is
-/// refused by name.
-fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Result<bool> {
+/// retention's once the kept inventory `kept` no longer needs it. A deferral
+/// delays only the key. An intent whose incarnation is not erased is damage
+/// and is refused by name.
+fn ready_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    intent: &RetirementIntent,
+    kept: Option<&KeptGenerations>,
+) -> Result<bool> {
     let item = PayloadItem::decode(intent.subject.item()).ok_or_else(corrupt)?;
     if let Some(record) = held_record(&item)
         && crate::store::legal_hold::held_in_txn(store, txn, &record)?
@@ -157,7 +164,7 @@ fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Re
         return Ok(false);
     }
     match intent.cause {
-        RetireCause::Retention => Ok(kept_inventory_releases(&item, intent.through)),
+        RetireCause::Retention => Ok(kept_inventory_releases(&item, intent.through, kept)),
         RetireCause::Erase => {
             if instance::instance_in_txn(store, txn, &item)?
                 .is_some_and(|found| found.lifecycle != Lifecycle::Erased)
@@ -182,6 +189,24 @@ impl Store {
     /// An archived vault with a retirement standing, an intent this client
     /// refuses by name, and custody faults: the next pass retries.
     pub(crate) fn finish_checkpoint_payload_retirements(&self) -> Result<bool> {
+        self.finish_checkpoint_payload_retirements_kept(None)
+    }
+
+    /// [`Self::finish_checkpoint_payload_retirements`] with `kept`, the
+    /// inventory of every copy a host keeps (KS7-5): a retention's leaf also
+    /// retires once no kept copy names a generation at or below it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::finish_checkpoint_payload_retirements`].
+    pub(crate) fn finish_checkpoint_payload_retention(&self, kept: &KeptGenerations) -> Result<bool> {
+        self.finish_checkpoint_payload_retirements_kept(Some(kept))
+    }
+
+    fn finish_checkpoint_payload_retirements_kept(
+        &self,
+        kept: Option<&KeptGenerations>,
+    ) -> Result<bool> {
         if !CHECKPOINT_PAYLOADS_ENABLED {
             return Ok(false);
         }
@@ -190,7 +215,7 @@ impl Store {
         drop(txn);
         if owed {
             self.finish_custody_retirements(CustodyKind::CheckpointPayload, |txn, intent| {
-                ready_in_txn(self, txn, intent)
+                ready_in_txn(self, txn, intent, kept)
             })?;
         }
         Ok(owed)

@@ -302,6 +302,27 @@ impl Vault {
                 .get("vault_meta")
                 .map_or(&[][..], Vec::as_slice),
         )?;
+        // What its payload is sealed under lands beside it before it is
+        // written, for the host that keeps the copy (KS7-5). One that does
+        // not land keeps every leaf it would name: their retention waits.
+        let inventory = payload.as_ref().and_then(|payload| {
+            artifact::write_payload_inventory(
+                path,
+                &key,
+                kind,
+                &carried,
+                snapshot,
+                *blake3::hash(&bytes).as_bytes(),
+                &payload.streams.section,
+            )
+            .inspect_err(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a checkpoint's payload inventory did not land; its payload leaves stay kept"
+                );
+            })
+            .ok()
+        });
         tracing::info!(
             stage = "write",
             held = holder.is_some(),
@@ -323,7 +344,8 @@ impl Vault {
             |index| files.open(index),
             payload.as_ref().map(|payload| &payload.streams),
             budget,
-        )?;
+        )
+        .inspect_err(|_| remove_inventory(inventory.as_deref()))?;
         tracing::info!(
             stage = "chain",
             size = evidence.size,
@@ -334,6 +356,7 @@ impl Vault {
         // A checkpoint the chain does not take is no checkpoint.
         if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
             let _ = std::fs::remove_file(path);
+            remove_inventory(inventory.as_deref());
             return Err(error);
         }
         // Its holder is named by its checkpoint id, which its custodian
@@ -425,6 +448,13 @@ impl Vault {
 /// Milliseconds since `started`, for a stage's log.
 fn elapsed_ms(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Removes the payload inventory a write that did not land left beside it.
+fn remove_inventory(inventory: Option<&Path>) {
+    if let Some(inventory) = inventory {
+        let _ = std::fs::remove_file(inventory);
+    }
 }
 
 /// The checkpoint fact of the backup `evidence` describes, whose image is
