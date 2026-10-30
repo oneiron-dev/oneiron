@@ -19,15 +19,17 @@
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due.
 
+mod report;
 mod schedule;
-mod sweep_work;
 mod sweeps;
 mod sync_work;
 #[cfg(test)]
 mod tests;
 mod wake;
 
-pub use self::sweep_work::{HardEraseWork, SecretLiftWork};
+pub use self::report::{
+    HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
+};
 pub(crate) use self::wake::note_wake_in_txn;
 
 use std::sync::Arc;
@@ -37,11 +39,11 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::Vault;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 
 use self::schedule::SweepState;
 
-/// One sweep the housekeeping pass knows. The engine runs the first thirteen;
+/// One sweep the housekeeping pass knows. The engine runs the first fourteen;
 /// the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,6 +78,9 @@ pub enum HousekeepingSweep {
     /// no door places files a lift proposal. Idle when no run is queued, and
     /// paused while the owner's switch is off.
     SecretLiftHistory,
+    /// Finishes owed claim VAD consolidations (FIX 9598): an approval whose
+    /// writer stopped, or whose consolidation failed, before it was done.
+    ClaimVadDebt,
     /// Raises the found-key notices left due past one write's share (OF-560,
     /// FIX 2648), for a vault no later write comes to.
     FoundKeyNotices,
@@ -134,7 +139,7 @@ const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -147,6 +152,7 @@ impl HousekeepingSweep {
         Self::PprCacheEviction,
         Self::SharedActMaturity,
         Self::SecretLiftHistory,
+        Self::ClaimVadDebt,
         Self::FoundKeyNotices,
         Self::EsignReminders,
         Self::ConsultSettlement,
@@ -171,6 +177,7 @@ impl HousekeepingSweep {
             Self::PprCacheEviction => "ppr_cache_eviction",
             Self::SharedActMaturity => "shared_act_maturity",
             Self::SecretLiftHistory => "secret_lift_history",
+            Self::ClaimVadDebt => "claim_vad_debt",
             Self::FoundKeyNotices => "found_key_notices",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
@@ -191,8 +198,10 @@ impl HousekeepingSweep {
     /// deadline makes the maturity sweep due then (its start notes it), and
     /// it runs hourly besides, for an act an objection withdrawal released.
     /// The lift sweep looks for a queued run every fifteen minutes, and a run
-    /// left unfinished at a pass's deadline is due again at once; the
-    /// found-key drain looks for due notices as often.
+    /// left unfinished at a pass's deadline is due again at once. Owed claim
+    /// VAD work runs at open, for an approval a stopped process left, and
+    /// every fifteen minutes. The found-key drain looks for due notices every
+    /// fifteen minutes.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -216,6 +225,10 @@ impl HousekeepingSweep {
             },
             Self::HardEraseSweep | Self::PprCacheEviction => engine(DAY),
             Self::SharedActMaturity => engine(HOUR),
+            Self::ClaimVadDebt => Runner::Engine {
+                every: 15 * MINUTE,
+                at_open: true,
+            },
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
             Self::ConsultSettlement => Runner::Host(HostOnlyReason::NeedsHostDigestRoute),
             Self::PolicyHoldPrune => Runner::Host(HostOnlyReason::NeedsAuthenticatedOwner),
@@ -286,193 +299,6 @@ impl Deadline {
     fn passed(&self) -> bool {
         self.stopped() || self.at.is_some_and(|at| Instant::now() >= at)
     }
-}
-
-/// What one pass did, one row per sweep in [`HousekeepingSweep::ALL`] order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HousekeepingReport {
-    /// The vault clock when the pass began, in seconds.
-    pub started_at: u64,
-    pub sweeps: Vec<SweepReport>,
-}
-
-impl HousekeepingReport {
-    /// Sweeps that ran this pass.
-    pub fn ran(&self) -> usize {
-        self.count(|outcome| matches!(outcome, SweepOutcome::Ran { .. }))
-    }
-
-    /// Sweeps that failed or panicked this pass, or ran but could not finish
-    /// some of their items.
-    pub fn failed(&self) -> usize {
-        self.count(|outcome| match outcome {
-            SweepOutcome::Failed { .. } | SweepOutcome::Panicked => true,
-            SweepOutcome::Ran { work, .. } => work.items_failed() > 0,
-            _ => false,
-        })
-    }
-
-    /// Due sweeps the budget left for a later pass.
-    pub fn out_of_budget(&self) -> usize {
-        self.count(|outcome| matches!(outcome, SweepOutcome::OutOfBudget))
-    }
-
-    /// The row of one sweep.
-    pub fn sweep(&self, sweep: HousekeepingSweep) -> Option<&SweepOutcome> {
-        self.sweeps
-            .iter()
-            .find(|row| row.sweep == sweep)
-            .map(|row| &row.outcome)
-    }
-
-    fn count(&self, matches: impl Fn(&SweepOutcome) -> bool) -> usize {
-        self.sweeps
-            .iter()
-            .filter(|row| matches(&row.outcome))
-            .count()
-    }
-}
-
-/// One sweep's row in a [`HousekeepingReport`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SweepReport {
-    pub sweep: HousekeepingSweep,
-    #[serde(flatten)]
-    pub outcome: SweepOutcome,
-}
-
-/// What became of one sweep in one pass.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum SweepOutcome {
-    /// The sweep ran. `complete` is false when it stopped at its bound with
-    /// work left; it is due again on the next pass.
-    Ran { work: SweepWork, complete: bool },
-    /// Not due before `due_at` (vault clock, seconds).
-    NotDue { due_at: u64 },
-    /// Due, but the pass's budget was spent; it runs on a later pass, ahead
-    /// of sweeps that fell due after it.
-    OutOfBudget,
-    /// The sweep returned an error. It is retried on a later pass.
-    Failed {
-        #[serde(serialize_with = "serialize_error_kind")]
-        kind: ErrorKind,
-    },
-    /// The sweep panicked. It is retried on a later pass.
-    Panicked,
-    /// The engine does not run this sweep.
-    HostOnly { reason: HostOnlyReason },
-}
-
-/// The counts one sweep run reports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SweepWork {
-    SecretLeases {
-        expired: u64,
-        /// Files a revoke or an expiry had kept that this run removed.
-        files_removed: u64,
-        /// Files still kept: not removable yet, or not the file the vault
-        /// wrote. Retried on later runs; never a failed item, so they hold
-        /// no other lease's expiry back.
-        files_kept: u64,
-    },
-    CriticalConfirms {
-        demoted: u64,
-        pages: u64,
-    },
-    SymbolLeases {
-        released: u64,
-    },
-    VoicePrints {
-        pruned: u64,
-    },
-    EsignExpiry {
-        documents: u64,
-        expired: u64,
-        failed: u64,
-    },
-    EsignSeals {
-        documents: u64,
-        enqueued: u64,
-        failed: u64,
-    },
-    Commitments {
-        lapsed: u64,
-        close_hooks_repaired: u64,
-    },
-    GateDecisions {
-        removed: u64,
-    },
-    HardErase(HardEraseWork),
-    PprCache {
-        evicted: u64,
-        deps_cleaned: u64,
-    },
-    SharedActs {
-        /// Matured-act notices written to live Owners.
-        noticed: u64,
-    },
-    SecretLift(SecretLiftWork),
-    FoundKeyNotices {
-        /// Due records whose notices were raised.
-        records: u64,
-    },
-}
-
-impl SweepWork {
-    /// Items the run could not finish: each is retried on a later pass, after
-    /// the backoff.
-    pub fn items_failed(&self) -> u64 {
-        match *self {
-            Self::EsignExpiry { failed, .. } | Self::EsignSeals { failed, .. } => failed,
-            Self::HardErase(work) => work
-                .jobs_failed
-                .saturating_add(work.obligations_undecodable),
-            Self::SecretLift(work) => work.failed,
-            _ => 0,
-        }
-    }
-
-    /// Whether the run found nothing to do.
-    pub fn is_idle(&self) -> bool {
-        match *self {
-            Self::SecretLeases {
-                expired,
-                files_removed,
-                files_kept,
-            } => expired == 0 && files_removed == 0 && files_kept == 0,
-            Self::CriticalConfirms { demoted, .. } => demoted == 0,
-            Self::SymbolLeases { released } => released == 0,
-            Self::VoicePrints { pruned } => pruned == 0,
-            Self::EsignExpiry {
-                expired, failed, ..
-            } => expired == 0 && failed == 0,
-            Self::EsignSeals {
-                enqueued, failed, ..
-            } => enqueued == 0 && failed == 0,
-            Self::Commitments {
-                lapsed,
-                close_hooks_repaired,
-            } => lapsed == 0 && close_hooks_repaired == 0,
-            Self::GateDecisions { removed } => removed == 0,
-            Self::HardErase(work) => work == HardEraseWork::default(),
-            Self::PprCache {
-                evicted,
-                deps_cleaned,
-            } => evicted == 0 && deps_cleaned == 0,
-            Self::SharedActs { noticed } => noticed == 0,
-            Self::SecretLift(work) => work == SecretLiftWork::default(),
-            Self::FoundKeyNotices { records } => records == 0,
-        }
-    }
-}
-
-fn serialize_error_kind<S: serde::Serializer>(
-    kind: &ErrorKind,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    serializer.collect_str(&format_args!("{kind:?}"))
 }
 
 /// Per-handle housekeeping state: one pass at a time, and whether this handle
