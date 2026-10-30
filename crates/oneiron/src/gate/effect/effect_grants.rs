@@ -186,10 +186,12 @@ pub(super) fn touch_standing_outbound_grant_in_txn(
     crate::ports::EntityStoreMaintenance::port_outbound_grant_touch(store, wtxn, id, grant, used_at)
 }
 
-/// OF-374: the envelope slot an `email/send` would spend when its sender row's
-/// autonomy resolves `AutonomousWithinEnvelope`, proven on the Gate's writer
-/// snapshot and not yet written. `effect_key` is the canonical mail digest an
-/// owner press would bind, so an exact replay of one send finds its own slot.
+/// OF-374: what an `email/send` meets at its sender row's envelope when that
+/// row's autonomy resolves `AutonomousWithinEnvelope`, proven on the Gate's
+/// writer snapshot and not yet written: the slot it would spend, or (FIX
+/// 7948) its place in the line of a full window. `effect_key` is the
+/// canonical mail digest an owner press would bind, so an exact replay of
+/// one send finds its own slot and a send that comes back finds its place.
 ///
 /// FIX 1158: a send whose host supplied its relationship context (and
 /// counterparty class) reads only that context's autonomy row, so a
@@ -197,14 +199,15 @@ pub(super) fn touch_standing_outbound_grant_in_txn(
 /// envelope matches a send of that class. With no context supplied, only an
 /// unambiguous envelope admits: exactly one context on this row at that rung,
 /// with no counterparty-class pin. Either way it is bound to the effect's own
-/// actor, and anything else is `None`: the send keeps its press.
-pub(super) fn channel_identity_envelope_reservation_in_txn(
+/// actor. Anything else is `None`, and a grant that refuses is a denial:
+/// either way the send keeps its press.
+pub(super) fn channel_identity_envelope_admission_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     effect_key: [u8; 32],
     now: u64,
-) -> Result<Option<crate::outbound_grant::ChannelIdentityGrantReservation>> {
+) -> Result<Option<crate::outbound_grant::ChannelIdentityGrantAdmission>> {
     use crate::channel_identity_autonomy::{
         AutonomyReader, ChannelIdentityAutonomyRung, ChannelIdentityEffectCandidate,
     };
@@ -264,9 +267,10 @@ pub(super) fn channel_identity_envelope_reservation_in_txn(
         counterparty_class,
         effect_key,
     };
-    crate::outbound_grant::reserve_channel_identity_grant_in_txn(
+    crate::outbound_grant::admit_channel_identity_grant_in_txn(
         store, txn, &grant_ref, &candidate, now,
     )
+    .map(Some)
 }
 
 /// FIX 5238 (L02 seam): the Grant live on THIS writer that covers `effect`,

@@ -1,8 +1,8 @@
 //! New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert.
 
 use super::budget::{
-    charge_once, co_actor_exhausted, rate_paced, rate_window_result, spend_price_in_txn,
-    spend_reserve,
+    charge_once, co_actor_exhausted, envelope_window_result, rate_paced, rate_window_result,
+    spend_price_in_txn, spend_reserve,
 };
 use super::dedupe;
 use super::replay::{
@@ -406,6 +406,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         if count >= ceiling.cap {
             return ceiling_hold(vault, wtxn, intent_id, &prepared, count);
         }
+    }
+    // FIX 7948: a send its sender's envelope allowed, met by a full window,
+    // keeps its place in the envelope's line under this writer and comes back
+    // when the window opens: nothing is recorded or charged, and no one is
+    // asked for a press.
+    if let Some(wait) = governance.retain_envelope_wait_in_txn(&vault.store, &mut wtxn)? {
+        wtxn.commit().map_err(Error::from)?;
+        return Ok(envelope_window_result(intent_id, &wait));
     }
 
     // OF-427: a co-actor key that is not the primary's is preflighted

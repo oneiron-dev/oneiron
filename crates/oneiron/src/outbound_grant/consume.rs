@@ -18,6 +18,10 @@ use crate::store::Store;
 /// One usage row per immutable envelope, shared by all grants naming it.
 pub const CHANNEL_IDENTITY_GRANT_USAGE_PREFIX: &[u8] = b"outbound_grant:channel_identity_usage:v1:";
 
+/// The reason a send its sender's envelope covers names while it waits in
+/// that envelope's line for a full window to open.
+pub const CHANNEL_IDENTITY_WINDOW_WAIT_REASON: &str = "gate.pending.channel_identity_window_wait";
+
 /// One envelope's usage window: the window start, the spent
 /// `(effect_key, fingerprint)` pairs, and the line of actions retained for a
 /// later window. Keyed by the envelope id.
@@ -489,24 +493,4 @@ fn reserved(
         prior,
         next,
     }))
-}
-
-/// The Gate's envelope release: the slot `candidate` would spend, proven on
-/// the caller's transaction as [`admit_channel_identity_grant_in_txn`]
-/// proves it, without writing. `None` is a denial or a full window; a full
-/// window keeps no place here, so the Gate's send keeps its press.
-pub(crate) fn reserve_channel_identity_grant_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    grant_ref: &EntityId,
-    candidate: &ChannelIdentityEffectCandidate,
-    now: u64,
-) -> Result<Option<ChannelIdentityGrantReservation>> {
-    Ok(
-        match admit_channel_identity_grant_in_txn(store, txn, grant_ref, candidate, now)? {
-            ChannelIdentityGrantAdmission::Reserved(reservation) => Some(*reservation),
-            ChannelIdentityGrantAdmission::WindowWait(_)
-            | ChannelIdentityGrantAdmission::Denied => None,
-        },
-    )
 }

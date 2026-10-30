@@ -141,10 +141,14 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         .provider_wait
         .and_then(|wait| wait.not_before)
         .filter(|_| held_by_provider_wait);
-    // A ceiling reached under the writer lock parks the send as Held.
+    // A ceiling reached under the writer lock parks the send as Held, and so
+    // does a full window that paces it (FIX 7948).
     let parked = parked.or(effect_result
         .ceiling_count
-        .map(|_| OutboundDispatchOutcome::Held));
+        .map(|_| OutboundDispatchOutcome::Held)
+        .or(effect_result
+            .paced_until
+            .map(|_| OutboundDispatchOutcome::Held)));
     let outcome = if effect_result.dedupe_suppressed {
         OutboundDispatchOutcome::Suppressed
     } else {
@@ -172,6 +176,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         held_approval_actor: effect_result.approval_actor,
         provider_wait: settlement.provider_wait,
         provider_wait_held_until,
+        paced_until: effect_result.paced_until,
         budget_reservation: settlement.reservation.map(|reservation| reservation.status),
     })
 }
