@@ -216,7 +216,9 @@ pub use federation_activation::federation_grant_activation;
 // hand-maintained name list to drift out of date. The globs are also the
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
-pub(crate) use admission::{AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_authority_work};
+pub(crate) use admission::{
+    AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_authority_work, measure_custody_permits,
+};
 pub use admission::{
     AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
