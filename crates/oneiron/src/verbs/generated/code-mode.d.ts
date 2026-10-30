@@ -2725,7 +2725,7 @@ declare namespace Sdk {
   type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
   type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
   type RepoViewsGetInput = { work: EntityId };
-  type RepoWorkFile = { path: string; content_hash_blake3: string };
+  type RepoWorkFile = { path: string; content_hash_blake3: string; projection?: RepoFileProjectionView | null };
   type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] };
   type RepoViewsGetOutput = RepoWorkView;
   type RepoViewsReadInput = { work: EntityId; path: string; why?: string | null };

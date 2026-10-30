@@ -13445,6 +13445,7 @@ class RepoViewsGetInput(TypedDict):
 class RepoWorkFile(TypedDict):
     path: str
     content_hash_blake3: str
+    projection: NotRequired[RepoFileProjectionView | None]
 class RepoWorkView(TypedDict):
     work: EntityId
     repo: EntityId

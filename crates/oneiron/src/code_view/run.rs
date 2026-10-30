@@ -10,23 +10,31 @@ use std::path::{Path, PathBuf};
 use super::{CodeViewSet, VIEW_RECEIPTS, ViewReceipt, relative};
 use crate::error::{Error, Result};
 use crate::memory::repo_doors::RepoRunStamp;
+use crate::origin::secret_projection::RepoFileProjectionView;
 use crate::{EntityId, Vault};
 
 impl CodeViewSet<'_> {
     /// A run's work (FIX 6867): a fresh view of `contents` whose receipt
     /// binds the stamp `admit` builds from the admission it judges in the
-    /// receipt's own writer, under the new view id. A refusal writes no
-    /// receipt and removes the view's directory.
+    /// receipt's own writer, under the new view id, and keeps how each
+    /// masked file differs from its stored blob (`projections`, FIX 8965).
+    /// A refusal writes no receipt and removes the view's directory.
     pub(crate) fn materialize_tree_for_run<R>(
         &self,
         actor: EntityId,
         fork_hash: [u8; 32],
         contents: &BTreeMap<String, Vec<u8>>,
+        projections: BTreeMap<String, RepoFileProjectionView>,
         admit: impl FnOnce(&heed::RoTxn<'_>, EntityId) -> Result<std::result::Result<RepoRunStamp, R>>,
     ) -> Result<std::result::Result<ViewReceipt, R>> {
-        self.materialize_checked(actor, fork_hash, None, contents, |txn, view_id| {
-            Ok(admit(txn, view_id)?.map(Some))
-        })
+        self.materialize_checked(
+            actor,
+            fork_hash,
+            None,
+            contents,
+            projections,
+            |txn, view_id| Ok(admit(txn, view_id)?.map(Some)),
+        )
     }
 
     /// The materializer both callers share: allocates the view, copies each
@@ -38,6 +46,7 @@ impl CodeViewSet<'_> {
         fork_hash: [u8; 32],
         base: Option<(EntityId, EntityId)>,
         contents: &BTreeMap<String, Vec<u8>>,
+        projections: BTreeMap<String, RepoFileProjectionView>,
         admit: impl FnOnce(
             &heed::RoTxn<'_>,
             EntityId,
@@ -110,6 +119,7 @@ impl CodeViewSet<'_> {
                     base,
                     files,
                     run,
+                    projections,
                 };
                 VIEW_RECEIPTS.put(&self.vault.store, txn, &view_id, &receipt)?;
                 Ok(Ok(receipt))

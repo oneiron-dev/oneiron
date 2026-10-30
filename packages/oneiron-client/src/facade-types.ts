@@ -5415,7 +5415,7 @@ export type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapsh
 /** `oneiron::memory::repo_doors::types::RepoViewsGetInput` */
 export type RepoViewsGetInput = { work: EntityId }
 /** `oneiron::memory::repo_doors::types::RepoWorkFile` */
-export type RepoWorkFile = { path: string; content_hash_blake3: string }
+export type RepoWorkFile = { path: string; content_hash_blake3: string; projection?: RepoFileProjectionView | null }
 /** `oneiron::memory::repo_doors::types::RepoWorkView` */
 export type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] }
 /** `oneiron::memory::repo_doors::types::RepoViewsGetOutput` */
