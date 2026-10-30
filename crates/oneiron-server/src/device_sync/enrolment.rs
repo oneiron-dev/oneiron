@@ -21,6 +21,9 @@ use crate::commands::credential_file;
 use crate::config::KeystoreConfig;
 use crate::config::device_sync::{parse_machine, validate_home_url};
 
+mod home_bind;
+pub(crate) use home_bind::bind_enrolled_machine;
+
 /// What a device keeps from its enrolment, beside its credential.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,7 +184,9 @@ const REDEEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// possession of that request over the same redemption, and a pin the home
 /// returns must be exactly the one the link names. With the possession proof
 /// a home that already holds this machine live in its class pairs it again,
-/// credential only (FIX 8636); the answer says whether it did.
+/// credential only (FIX 8636); the answer says whether it did. This machine's
+/// mesh endpoint key and its two binding proofs go along, for the home to
+/// bind and grant the sync ALPN (FIX 3374).
 pub(crate) fn enrol(
     vault: &oneiron::Vault,
     files: &EnrolmentFiles,
@@ -236,6 +241,7 @@ pub(crate) fn enrol(
         pin_ref.as_ref(),
     )?;
     let possession = vault.machine_possession_proof(&request, &transcript)?;
+    let mesh = mesh_identity(vault);
     let body = serde_json::json!({
         "code": code,
         "holder_ref": holder_ref,
@@ -252,6 +258,7 @@ pub(crate) fn enrol(
             "machine_proof": hex(&request.machine_proof),
         },
         "machine_possession": hex(&possession),
+        "mesh": mesh,
     });
     let response = reqwest::blocking::Client::builder()
         // A redirect would send the code and the signed request on to
@@ -305,6 +312,15 @@ pub(crate) fn enrol(
     record.validate()?;
     files.write(&format!("v2.cred.{slip}.{}", hex(key.as_bytes())), &record)?;
     Ok((record, paired.re_paired))
+}
+
+/// This machine's mesh endpoint key and the two proofs that bind it to its
+/// MACHINE, read as the vault's local owner, for the home to bind with the
+/// enrolment. `None` when they cannot be read: the machine enrols as before
+/// and dials the home at its URL.
+fn mesh_identity(vault: &oneiron::Vault) -> Option<oneiron::authority::MeshBindingIdentity> {
+    let owner = crate::owner::local_owner(vault).ok()?;
+    vault.mesh_binding_identity_as_owner(&owner).ok()
 }
 
 /// Whether a redemption may go to `origin`: `https`, whose certificate and

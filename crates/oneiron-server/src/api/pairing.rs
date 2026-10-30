@@ -172,6 +172,7 @@ pub(super) async fn oauth_exchange(
         home: None,
         re_paired: false,
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
+        mesh: None,
     }))
 }
 
@@ -192,6 +193,11 @@ pub(super) struct RedeemLink {
     /// and class, credential only (FIX 8636). Read only beside `machine`.
     #[serde(default)]
     machine_possession: Option<String>,
+    /// The joining machine's mesh endpoint key and the two proofs that bind
+    /// it (FIX 3374): with them the home binds that endpoint and grants it
+    /// the sync ALPN. Read only beside `machine`.
+    #[serde(default)]
+    mesh: Option<oneiron::authority::MeshBindingIdentity>,
 }
 /// [`MachineEnrolmentRequest`] on the wire: hex ids and keys, base64 for the
 /// 1600-byte encryption key.
@@ -249,6 +255,10 @@ pub(super) struct Paired {
     /// Whom the paired slip may message (FIX 3899): the reach the owner set
     /// on the link, `vault` when he set none.
     comm: oneiron::authority::CommReach,
+    /// This home's own mesh address, for the machine a machine link just
+    /// added, when its mesh listener runs (FIX 3374).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mesh: Option<oneiron::authority::MeshMachineAddress>,
 }
 #[derive(Serialize)]
 pub(super) struct PairedHome {
@@ -339,12 +349,21 @@ pub(super) async fn redeem(
         .is_some()
         .then(|| paired_home(server.vault()))
         .flatten();
+    // The machine a machine link enrolled has its mesh endpoint bound and
+    // the sync ALPN granted (FIX 3374). The pairing stands without it.
+    let mesh = match (&machine, &request.mesh) {
+        (Some(machine), Some(identity)) if redeemed.machine.is_some() => {
+            crate::device_sync::bind_enrolled_machine(&server, machine, identity)
+        }
+        _ => None,
+    };
     Ok(Json(Paired {
         token,
         pin: redeemed.pin,
         home,
         re_paired: redeemed.re_paired,
         comm: oneiron::authority::effective_slip_comm(redeemed.slip.claims.comm),
+        mesh,
     }))
 }
 
