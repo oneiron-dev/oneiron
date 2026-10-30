@@ -259,8 +259,8 @@ pub use safeguard::{
     CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened, screen_then_claim,
 };
 pub use series::{
-    ExpansionPage, SeriesDtStart, SeriesExceptionKey, exception_identity, expand_master_window,
-    expand_window, expand_window_page, mask_master_exceptions,
+    ExpansionCursor, ExpansionPage, SeriesDtStart, SeriesExceptionKey, exception_identity,
+    expand_master_window, expand_window, expand_window_page, mask_master_exceptions,
 };
 pub use tz::{WallTime, utc_to_wall, wall_to_utc};
 
