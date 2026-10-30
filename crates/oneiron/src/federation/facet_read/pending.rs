@@ -53,7 +53,7 @@ pub(crate) enum Hold {
 /// Why a held stamp retired.
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ended {
+pub(crate) enum Ended {
     /// Its wait ended before its row came.
     Expired = 1,
     /// The grant it came under no longer confers, or its staged receipt left
@@ -195,6 +195,67 @@ fn receipt_value(ended: Ended, held_at: u64, now: u64, grant: Option<EntityId>) 
         None => value.push(0),
     }
     value
+}
+
+/// One retired facet stamp's receipt, named by its key, its kind and its
+/// facet and grant ids: never parked content, never a secret.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParkedFacetReceipt {
+    /// The row the stamp was held ahead of.
+    pub(crate) src: EntityId,
+    /// The facet the stamp names.
+    pub(crate) facet: EntityId,
+    /// The lane that held it: its sender's key.
+    pub(crate) lane: String,
+    /// Why it retired.
+    pub(crate) ended: Ended,
+    /// The grant it was held under, when there was one.
+    pub(crate) grant: Option<EntityId>,
+}
+
+/// Every retired facet stamp's receipt, in key order, in one read
+/// transaction. A row that does not decode is left out.
+#[cfg(feature = "sync")]
+pub(crate) fn parked_facet_receipts(vault: &Vault) -> Result<Vec<ParkedFacetReceipt>> {
+    let txn = vault.store.env.read_txn()?;
+    let rows = RECEIPT.scan(&vault.store, &txn)?;
+    drop(txn);
+    Ok(rows
+        .into_iter()
+        .filter_map(|((src, facet, lane), value)| {
+            let (ended, grant) = read_receipt(&value)?;
+            Some(ParkedFacetReceipt {
+                src: src.0,
+                facet: facet.0,
+                lane,
+                ended,
+                grant,
+            })
+        })
+        .collect())
+}
+
+/// [`receipt_value`] read back: why the stamp retired and the grant it was
+/// held under; `None` for a row that does not decode.
+#[cfg(feature = "sync")]
+fn read_receipt(value: &[u8]) -> Option<(Ended, Option<EntityId>)> {
+    let (ended, rest) = value.split_first()?;
+    let ended = match ended {
+        1 => Ended::Expired,
+        2 => Ended::AuthorityEnded,
+        _ => return None,
+    };
+    let rest = rest.get(16..)?;
+    let (grant, edge) = match rest.split_first()? {
+        (0, edge) => (None, edge),
+        (1, rest) => {
+            let (grant, edge) = rest.split_first_chunk::<16>()?;
+            (Some(EntityId::from_bytes(*grant).ok()?), edge)
+        }
+        _ => return None,
+    };
+    edge.is_empty().then_some((ended, grant))
 }
 
 /// The keys among `rows` that retire by `now`, judged in `txn`, each with
