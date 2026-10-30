@@ -399,6 +399,9 @@ struct ProjectorIndexDelta {
     /// The heads the rule minted, superseded or retracted. The index reads
     /// none of them; an in-write projection reports them to its writer.
     heads: Vec<EntityId>,
+    /// The contacts whose type-132 rows a STOP re-derived. The index reads
+    /// none of them; they go to the live-window mirror with the heads.
+    contacts: Vec<EntityId>,
     /// Whether the step stamped its source event `projected`, a write of the
     /// event's own row.
     source_stamped: bool,
@@ -406,12 +409,14 @@ struct ProjectorIndexDelta {
 
 impl ProjectorIndexDelta {
     /// The rows the step for `event_id` wrote: the source event when it was
-    /// stamped, the heads, and the gates it consumed.
+    /// stamped, the heads, the contact rows it re-derived, and the gates it
+    /// consumed.
     fn written_rows(&self, event_id: EntityId) -> BTreeSet<EntityId> {
         self.source_stamped
             .then_some(event_id)
             .into_iter()
             .chain(self.heads.iter().copied())
+            .chain(self.contacts.iter().copied())
             .chain(self.consumed_gate_ids.iter().map(|(_, gate_id)| *gate_id))
             .collect()
     }

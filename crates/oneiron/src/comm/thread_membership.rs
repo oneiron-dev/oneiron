@@ -293,6 +293,7 @@ pub(super) fn apply_thread_membership_in_txn(
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
                 heads,
+                contacts: Vec::new(),
                 source_stamped: false,
             })
         }
@@ -359,6 +360,7 @@ pub(super) fn apply_thread_membership_in_txn(
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
                 heads,
+                contacts: Vec::new(),
                 source_stamped: false,
             })
         }

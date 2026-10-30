@@ -98,10 +98,12 @@ impl ServedConnectorCallHost {
 impl Presenting {
     /// Runs `exchange` with this credential, inside its door, and clears
     /// what came back there. `presented` is what the door released. `row`
-    /// is the call's governing key and tool: inside the door, the last point
-    /// before the credential leaves, their durable issuer binding is read
-    /// again, and while an issuer change the owner has not accepted holds
-    /// the row, nothing is presented or sent (FIX 9303).
+    /// is the call's governing key and tool: their durable issuer binding is
+    /// read before the door opens, so a held send opens no door and counts
+    /// no grant redemption (FIX 12097), and again inside the door, the last
+    /// point before the credential leaves. While an issuer change the owner
+    /// has not accepted holds the row, nothing is presented or sent (FIX
+    /// 9303).
     pub(super) fn send(
         self,
         vault: &Vault,
@@ -112,6 +114,18 @@ impl Presenting {
         let Some(door) = self.door else {
             return exchange.run(None, None);
         };
+        if let Some((key_ref, tool)) = row {
+            match vault.connector_issuer_hold(key_ref, tool) {
+                Ok(Some(reason)) => return Sent::held(reason),
+                Ok(None) => {}
+                // A binding that cannot be read sends nothing, as the read
+                // inside the door answers it.
+                Err(error) => {
+                    tracing::warn!(%error, "connector issuer binding not read");
+                    return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None);
+                }
+            }
+        }
         let mut sent = None;
         let mut held = None;
         let mut present = |value: &[u8]| -> oneiron::Result<()> {

@@ -8,8 +8,9 @@
 //! channel. A quiet stream is not an ended one: a read that times out
 //! reads on while the worker waits. What the stream says while the round
 //! waits is handled as the read after an answer handles it: a request this
-//! client does not serve is refused, and the next question or the call's
-//! reply is kept for the read after the answer, the pump holding on
+//! client does not serve is refused, the call's issuer binding read again
+//! before the kept header goes out (FIX 9303), and the next question or the
+//! call's reply is kept for the read after the answer, the pump holding on
 //! meanwhile. A stream that ends or fails while the round waits ends the
 //! exchange: nothing is left to send an answer to. Each event comes with the
 //! stream's last event id as it was read, which a round's resume state keeps
@@ -20,7 +21,7 @@ use std::sync::mpsc::RecvTimeoutError;
 
 use zeroize::Zeroizing;
 
-use super::live_exchange::Next;
+use super::live_exchange::{AnswerReceipts, Next};
 use super::reply_read::{EventStream, terminal};
 use super::*;
 
@@ -108,7 +109,11 @@ impl Pump {
     }
 
     /// Waits for the round's answer while the stream is read on.
-    pub(super) fn wait_answer(&mut self, session: &LiveSession) -> Waited {
+    pub(super) fn wait_answer(
+        &mut self,
+        session: &LiveSession,
+        receipts: &AnswerReceipts,
+    ) -> Waited {
         if self.closed {
             return Waited::Closed;
         }
@@ -128,7 +133,7 @@ impl Pump {
                         Ok(StreamEvent::Request(request))
                             if stream_question(&request).is_none() =>
                         {
-                            session.refuse(&request);
+                            session.refuse_unheld(&request, receipts);
                         }
                         event @ Ok(StreamEvent::Request(_) | StreamEvent::Answer(..)) => {
                             self.early = Some(Said {
@@ -147,10 +152,11 @@ impl Pump {
     /// call's reply ends it, another form `elicitation/create` opens the
     /// next round under its own request id and the stream's last event id
     /// as that request was read (FIX 9157), and any other server request is
-    /// refused.
+    /// refused once the call's issuer binding is read again (FIX 9303).
     pub(super) fn read_round(
         &mut self,
         session: &LiveSession,
+        receipts: &AnswerReceipts,
         request_id: &mut KeptWire,
         last_event_id: &mut Option<Zeroizing<String>>,
         timeout: Duration,
@@ -172,7 +178,7 @@ impl Pump {
                         *last_event_id = said.last_event_id;
                         return Next::Asked(vec![question]);
                     }
-                    None => session.refuse(&request),
+                    None => session.refuse_unheld(&request, receipts),
                 },
                 Ok(StreamEvent::End) | Err(()) => {
                     return Next::Over(WorkerEvent::Failed {

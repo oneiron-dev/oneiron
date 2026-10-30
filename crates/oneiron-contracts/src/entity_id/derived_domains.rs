@@ -285,6 +285,10 @@ pub const CHANNEL_IDENTITY_AUTONOMY: &[u8] = b"oneiron/channel-identity-autonomy
 /// FIX 10125). Parts: the source's canonical tree content hash (32 bytes).
 pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
 
+/// The filed wording of one commitment reminder (`commitment_wake::reminder_wording`,
+/// FIX 12000). Parts: the reminder's content ref.
+pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminder-wording:v1:";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 57] = [

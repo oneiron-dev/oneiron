@@ -162,7 +162,9 @@ pub fn convert_messages_to_skill(
             refined.files.clone(),
             crate::skill_hub::SkillPackageFormat::Native,
         )?;
-        vault.put_skill_record_in_txn(wtxn, &id, &record, occurred, learned_at)?;
+        // The stored record is the package's, with the site notes its tree
+        // gives (FIX 11958).
+        vault.put_skill_record_in_txn(wtxn, &id, &package.record, occurred, learned_at)?;
         vault.persist_hub_package_in_txn(wtxn, &id, &package)?;
         Ok(match merge_target {
             Some(existing) => ConvertOutcome::MergeProposed {

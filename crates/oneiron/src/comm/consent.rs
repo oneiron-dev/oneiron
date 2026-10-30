@@ -704,14 +704,15 @@ pub(crate) fn supersede_party_opt_out_head_in_txn(
 /// `channel_class`, inside the projector's own write transaction.
 ///
 /// Claims moved; the cache follows in the SAME transaction, so the gate's
-/// type-132-fed fold can never observe the old suppression state.
+/// type-132-fed fold can never observe the old suppression state. Answers the
+/// contacts whose rows it re-derived.
 pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     party_ref: EntityId,
     channel_class: &str,
     now: u64,
-) -> CommResult<()> {
+) -> CommResult<Vec<EntityId>> {
     rematerialize_subject_contacts_in_txn(
         vault,
         wtxn,
@@ -738,14 +739,15 @@ pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
 /// Each key's contacts come from the full scan the send gate also uses:
 /// the party-channel index (ONE-1868) cannot prove it lists every contact.
 /// Channel scope stays the fold's class match, so an email STOP never
-/// re-derives a telegram contact.
+/// re-derives a telegram contact. Answers the contacts whose rows it
+/// re-derived.
 fn rematerialize_subject_contacts_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     subjects: &BTreeSet<EntityId>,
     channel_class: &str,
     now: u64,
-) -> CommResult<()> {
+) -> CommResult<Vec<EntityId>> {
     let mut parties = subjects.clone();
     parties.extend(crate::identity_redirect::outbound_redirect_heads_in_txn(
         &vault.store,
@@ -757,14 +759,17 @@ fn rematerialize_subject_contacts_in_txn(
         party_keys.extend(active_comm_party_key_in_txn(&vault.store, &*wtxn, party)?);
     }
     let channel_class = normalize_channel_class(channel_class);
+    let mut contacts = Vec::new();
     for party_key in party_keys {
-        crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
-            vault,
-            wtxn,
-            &party_key,
-            Some(&channel_class),
-            now,
-        )?;
+        contacts.extend(
+            crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
+                vault,
+                wtxn,
+                &party_key,
+                Some(&channel_class),
+                now,
+            )?,
+        );
     }
-    Ok(())
+    Ok(contacts)
 }
