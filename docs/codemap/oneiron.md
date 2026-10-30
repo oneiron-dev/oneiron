@@ -1591,8 +1591,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/record/key_record.rs` | src | m | 7 struct · 2 enum · 10 fn · 8 crate-vis | CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry, ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeySpec, ConnectorKeyStatus, PendingConnectorCharter +1 | Key and catalog registry shapes: status, call class, catalog entry, key spec/record with validate, charter… |
 | `src/connector_key/record/mod.rs` | src | s | 2 re-export · 7 crate-vis | — | Connector key record vocabulary facade |
 | `src/connector_key/record/scoped.rs` | src | s | 14 crate-vis | — | Scoped-capability identity and channel rules: normalization, canonical segments, provenance minting… |
-| `src/connector_key/setup.rs` | src | m | 3 struct · 1 trait · 1 fn · 8 const | PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks | Guided pack setup's grants and connection checks (OF-378) |
-| `src/connector_key/setup/grants.rs` | src | m | 5 fn · 5 crate-vis | — | Pack connection grant and verification doors: allow, bind, verify and the checked-connection reads a pack… |
+| `src/connector_key/setup.rs` | src | m | 3 struct · 1 trait · 1 fn · 8 const · 1 re-export | PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks | Guided pack setup's grants and connection checks (OF-378) |
+| `src/connector_key/setup/allow_ask.rs` | src | s | 1 struct · 2 fn · 2 const | PackSetupOwnerAsk | An `allow` from a setup verb as the owner's ask (OF-378) |
+| `src/connector_key/setup/grants.rs` | src | m | 6 fn · 5 crate-vis | — | Pack connection grant and verification doors: allow, bind, verify and the checked-connection reads a pack… |
 | `src/connector_key/setup/sent_check.rs` | src | s | 2 crate-vis | — | `self.use`'s own provider checks (OF-560, FIX 4491, FIX 7647): the same read-only provider call a pack setup… |
 | `src/connector_key/slate.rs` | src | L | 10 struct · 3 enum · 37 fn · 2 const · 18 crate-vis | ConnectorGrantSlate, SlateCapability, SlateDataClass, SlateDisposition, SlateDraftRow, SlateElicitationManifest, SlateFacetNarrow, SlateHolderNarrow +5 | ARCH-0072 typed per-capability grant slates |
 | `src/connector_key/slate_draft.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings, SlateTrait | ARCH-0072's memory-informed drafter |
@@ -1614,7 +1615,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/doors.rs` | src | L | 2 struct · 11 fn · 26 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
 | `src/consent/doors/grants.rs` | src | s | 5 fn · 5 crate-vis | — | The owner's consent acts: approve once, standing grants, denials, revokes and reuse receipts |
 | `src/consent/doors/lineage.rs` | src | s | 4 crate-vis | — | The opener's lineage and its forks never settle their own proposal (DEC-0006 "Proposals, settlements and the… |
-| `src/consent/doors/owner.rs` | src | s | 5 fn · 1 crate-vis | — | The owner-proof doors: authenticate, bind, recheck and the proof's read key |
+| `src/consent/doors/owner.rs` | src | s | 5 fn · 3 crate-vis | — | The owner-proof doors: authenticate, bind, recheck and the proof's read key |
 | `src/consent/doors/person_credential.rs` | src | s | 1 fn | — | A person's own slip bound to their proof (FIX 4707): the HTTP door of a world's settings holders, who need… |
 | `src/consent/doors/queue_check.rs` | src | s | 4 crate-vis | — | The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved… |
 | `src/consent/doors/read.rs` | src | s | 5 fn · 1 crate-vis | — | The consent reads: grant rows, active standing grants, the evaluator door and the registry |
@@ -4665,11 +4666,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/body.rs` | src | m | 8 struct · 2 trait · 13 fn · 1 type · 2 const · 2 crate-vis | HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookPreparation, HookRunContext, HookSettledCallRef, HookVerdict +2 | The seam between the runner and the hook sandbox (ARCH-0080 §6) |
 | `src/runtime_hooks/dial.rs` | src | s | 2 fn | — | The vault's hook switch, `hooks.enabled` (ARCH-0080 §10) |
 | `src/runtime_hooks/filter.rs` | src | s | 6 crate-vis | — | The filters a fact passes in Rust before any sandbox starts (ARCH-0080 §4 Filters) |
-| `src/runtime_hooks/grant.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | HookGrant | Every hook has a grant (ARCH-0080 §6) |
+| `src/runtime_hooks/grant.rs` | src | s | 1 struct · 5 fn · 4 crate-vis | HookGrant | Every hook has a grant (ARCH-0080 §6) |
 | `src/runtime_hooks/host.rs` | src | s | 1 struct · 2 fn · 1 const | BudgetHit | `host.budget.hit` (ARCH-0080 §5): a budget line spent under its exhaustion policy |
 | `src/runtime_hooks/host_doors.rs` | src | s | 7 struct · 1 enum · 5 fn | HostBudgetAccounting, HostBudgetHitRequest, HostBudgetHitResult, HostCompactRequest, HostCompactResult, HostWakeKind, HostWakeRequest, HostWakeResult | Typed host triggers (ARCH-0080 §5) |
 | `src/runtime_hooks/lineage.rs` | src | s | 2 struct · 1 enum · 2 fn · 5 crate-vis | HookCheck, HookCheckReason, LineageLink | Causal lineage and the cycle check (ARCH-0080 §4 Lineage and loops) |
-| `src/runtime_hooks/mod.rs` | src | s | 3 mod · 12 re-export · 6 crate-vis | — | Runtime hooks (ARCH-0080) |
+| `src/runtime_hooks/mod.rs` | src | s | 3 mod · 12 re-export · 7 crate-vis | — | Runtime hooks (ARCH-0080) |
 | `src/runtime_hooks/outcome.rs` | src | s | 6 struct · 1 enum · 1 fn · 4 crate-vis | BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge, ProposedNote | The one outcome a hook body returns (ARCH-0080 §4 Outcomes) |
 | `src/runtime_hooks/pack_line.rs` | src | s | 1 fn · 1 crate-vis | — | The pack lines generative fact hooks' `ai.verdict` asks spend on (FIX 10075): one per pack and author, held… |
 | `src/runtime_hooks/read.rs` | src | m | 8 crate-vis | — | The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane… |
@@ -5039,16 +5040,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/claim_refinement.rs` | src | m | 3 struct · 1 enum · 10 fn · 2 crate-vis | ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt, LocalClaimRefinement | Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission |
 | `src/skill_hub/claim_refinement_tests.rs` | test | m | — | — | Claim refinements use the same typed question and independent held-out rule |
 | `src/skill_hub/decisions.rs` | src | s | 2 struct · 1 fn · 4 crate-vis | ClaimReplayDecisions, UsefulUpstreamDecisions | The merge doors' typed questions (OF-493) on the host's ladder: the one useful-upstream yes/no both doors… |
-| `src/skill_hub/default_hub.rs` | src | m | 2 struct · 13 fn · 1 const · 4 crate-vis | DefaultSkillHub, ModelCatalogSync | First-party library source: offline seeding, immutable Git ref, explicit import |
+| `src/skill_hub/default_hub.rs` | src | m | 2 struct · 13 fn · 2 const · 3 crate-vis | DefaultSkillHub, ModelCatalogSync | First-party library source: offline seeding, immutable Git ref, explicit import |
 | `src/skill_hub/default_hub/tests.rs` | test | s | — | — | — |
 | `src/skill_hub/doors.rs` | src | m | 2 enum · 8 fn · 1 const · 5 crate-vis | HubDependencyResolution, HubSyncDisposition | Skill hub import, update and dependency doors |
 | `src/skill_hub/folder.rs` | src | m | 5 crate-vis | — | Strict portable SKILL.md frontmatter subset used by real hub transports |
 | `src/skill_hub/fork_source.rs` | src | s | 2 crate-vis | — | A fork copies real files and edits source identity before hashing the new tree |
-| `src/skill_hub/git_fetch.rs` | src | m | 1 struct · 3 fn | GitEndpointSkillHubAdapter | Generic pinned Git subtree reads |
+| `src/skill_hub/git_fetch.rs` | src | m | 1 struct · 3 fn · 1 crate-vis | GitEndpointSkillHubAdapter | Generic pinned Git subtree reads |
 | `src/skill_hub/git_process.rs` | src | s | 3 crate-vis | — | Private disposable object store; all Git processes use the GitWire boundary |
 | `src/skill_hub/http_fetch.rs` | src | m | 1 struct · 1 fn · 1 crate-vis | HttpEndpointSkillHubAdapter | Generic bounded static HTTP index |
 | `src/skill_hub/hub_owner.rs` | src | m | 3 fn · 4 crate-vis | — | Served hub skill doors (OF-213): the owner imports a skill from a configured hub ref, refetches one at its… |
-| `src/skill_hub/import_receipt.rs` | src | m | 2 struct · 1 enum · 1 trait · 7 fn · 1 re-export · 6 crate-vis | HubImportReceipt, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator | Source receipts and admitted-publisher ingress beside content dedup, never in place of it |
+| `src/skill_hub/import_receipt.rs` | src | m | 2 struct · 1 enum · 1 trait · 9 fn · 1 re-export · 6 crate-vis | HubImportReceipt, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator | Source receipts and admitted-publisher ingress beside content dedup, never in place of it |
 | `src/skill_hub/import_receipt/fitted.rs` | src | s | 9 crate-vis | — | The marketplace import in two halves (FIX 9752) |
 | `src/skill_hub/import_receipt/rule_fit.rs` | src | s | 2 struct · 1 enum · 1 trait · 3 fn · 2 crate-vis | CallerPermissions, HoldsNothing, RuleSkillFit, SkillFitSetting | The deterministic skill fit and the owner's setting that picks it (FIX 9752, owner law ARCH-0053 "Everything… |
 | `src/skill_hub/index.rs` | src | m | 1 const · 19 crate-vis | — | Skill provenance and capability indexes |
@@ -5056,7 +5057,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/mod.rs` | src | s | 2 mod · 19 re-export · 21 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `src/skill_hub/osv.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 3 crate-vis | DependencyCoordinate, DependencyScanStatus, OsvDevClient, OsvQuery, SkillInstallAdvisories | Dependency-only OSV queries on dynamic installs, using the existing scan ledger |
 | `src/skill_hub/osv/tests.rs` | test | s | — | — | — |
-| `src/skill_hub/pack_catalog/admission.rs` | src | L | 7 fn · 11 crate-vis | — | Post-fit installation of pinned pack source; requested powers stay inert |
+| `src/skill_hub/pack_catalog/admission.rs` | src | m | 7 fn · 11 crate-vis | — | Post-fit installation of pinned pack source; requested powers stay inert |
 | `src/skill_hub/pack_catalog/admission_tests.rs` | test | XL | — | — | Caller-visible pack admission, re-consent, runtime and transaction laws |
 | `src/skill_hub/pack_catalog/admission_types.rs` | src | s | 8 struct · 3 enum · 2 trait · 8 fn | BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus +5 | Source-bound post-fit decisions and install receipts; install never grants authority |
 | `src/skill_hub/pack_catalog/advisories.rs` | src | s | 4 crate-vis | — | OSV advisories for a pack tree and each bundled skill (OF-213) |
@@ -5067,16 +5068,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/bundled_skills.rs` | src | m | 6 crate-vis | — | Bundled skills traverse the same pinned hub import, scanner and provenance doors |
 | `src/skill_hub/pack_catalog/codec.rs` | src | s | 4 crate-vis | — | Canonical source-bearing ASSET envelopes: immutable content, not authority |
 | `src/skill_hub/pack_catalog/doors.rs` | src | s | 3 fn · 3 crate-vis | — | Source staging/readback |
-| `src/skill_hub/pack_catalog/hooks.rs` | src | m | 2 struct · 4 enum · 2 re-export · 9 crate-vis | HookActorClass, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHook | The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A) |
-| `src/skill_hub/pack_catalog/hooks/author.rs` | src | s | 1 enum · 1 const · 2 crate-vis | HookAuthor | Who a pack hook's outcomes run as: the owner, or a foreign skill publisher |
+| `src/skill_hub/pack_catalog/hooks.rs` | src | m | 2 struct · 4 enum · 2 re-export · 7 crate-vis | HookActorClass, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHook | The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A) |
+| `src/skill_hub/pack_catalog/hooks/author.rs` | src | s | 1 enum · 1 const · 2 crate-vis | HookAuthor | Who a pack hook's outcomes run as: the owner, a resident agent, or a foreign skill publisher |
 | `src/skill_hub/pack_catalog/hooks/bindings.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | PackHookBinding | Pack hook bindings: the stored row, its read doors and the owner's bind and enable switches |
+| `src/skill_hub/pack_catalog/hooks/install.rs` | src | m | 5 crate-vis | — | Pack hook binding writes: the owner's bind of an installed pack's hooks, the update rule's rebind and the… |
 | `src/skill_hub/pack_catalog/hub_install.rs` | src | s | 3 fn | — | Served hub install (OF-519, OF-213): the owner names a configured hub, a folder and a pin; fetch, the… |
 | `src/skill_hub/pack_catalog/import_notice.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | PackImportPreview | The owner's import check for a travelling AgentPack (FIX 5493, owner ruling 1-EXPORT = B plus an import… |
-| `src/skill_hub/pack_catalog/local.rs` | src | s | 2 fn · 1 const · 1 crate-vis | — | The owner's own pack install, `vault.packs.put` (ARCH-0080 §8, slice 1), and the vault's `local` pack |
+| `src/skill_hub/pack_catalog/lenses.rs` | src | m | 4 struct · 8 fn · 2 const · 5 crate-vis | PackLens, PackLensComponent, PackLensEntry, PackLensProposeRequest | Pack lenses (OF-250): a pack ships its lens with its skills, the face half beside the engine half (ARCH-0010) |
+| `src/skill_hub/pack_catalog/local.rs` | src | s | 3 fn · 1 const · 1 crate-vis | — | The owner's own pack install, `vault.packs.put` (ARCH-0080 §8, slice 1), and the vault's `local` pack |
 | `src/skill_hub/pack_catalog/manifest.rs` | src | m | 1 struct · 2 enum · 1 fn · 5 crate-vis | PackAdapter, PackKind, PackManifest | Closed PACK.md manifest parser |
 | `src/skill_hub/pack_catalog/migrations.rs` | src | s | 1 struct · 2 crate-vis | PackMigration | Predicate migration maps a pack ships in PACK.md (ARCH-0059 §4, rung 1) |
-| `src/skill_hub/pack_catalog/mod.rs` | src | s | 19 re-export · 7 crate-vis | — | Exact, inert PACK.md source catalogs |
-| `src/skill_hub/pack_catalog/organs.rs` | src | m | 5 struct · 8 fn · 1 const · 4 crate-vis | PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree | Pack organs (OF-575, ARCH-0075 §9): a PACK.md `organs:` key names folders under `organs/`, each with an… |
+| `src/skill_hub/pack_catalog/mod.rs` | src | s | 22 re-export · 7 crate-vis | — | Exact, inert PACK.md source catalogs |
+| `src/skill_hub/pack_catalog/organs.rs` | src | m | 5 struct · 8 fn · 4 crate-vis | PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree | Pack organs (OF-575, ARCH-0075 §9): a PACK.md `organs:` key names folders under `organs/`, each with an… |
+| `src/skill_hub/pack_catalog/owner_activation.rs` | src | s | 1 fn | — | The owner's activation of a held hub Candidate (OF-213, OF-575): a pack held for its OSV advisories, or a… |
+| `src/skill_hub/pack_catalog/permission_card.rs` | src | s | 1 crate-vis | — | A pack's permission card: the powers its source requests, and the widening an update over an installed… |
 | `src/skill_hub/pack_catalog/qualify.rs` | src | m | 7 struct · 3 fn · 2 crate-vis | ConnectorPackQualification, PackConnectorReceipt, PackHookQualification, PackHookReplay, ProbePackQualifier, QualifiedPackFitPolicy, SetupCheckQualifier | Connector packs use the engine's real wire probes, never a publisher's grade |
 | `src/skill_hub/pack_catalog/removal.rs` | src | s | 1 fn | — | The owner's removal door (OF-519) |
 | `src/skill_hub/pack_catalog/route_halt.rs` | src | s | 4 crate-vis | — | A catalog connector's route halts wherever the pack install it is bound to leaves the vault, in the… |
@@ -5087,10 +5092,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/script_policy.rs` | src | m | 1 crate-vis | — | Closed Python install profile over a maintained grammar, not token spelling |
 | `src/skill_hub/pack_catalog/script_runtime.rs` | src | m | 3 struct · 2 fn · 3 crate-vis | PackScriptGrant, PackScriptOutcome, PackScriptRun | Foreign pack scripts run only through the existing propose-only code-mode VM |
 | `src/skill_hub/pack_catalog/script_runtime/tests.rs` | test | L | — | — | — |
-| `src/skill_hub/pack_catalog/setup.rs` | src | m | 5 struct · 2 enum · 8 fn · 4 const · 2 crate-vis | PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission, PackSetupRisk, PackSetupSecret | The typed `setup` key of PACK.md (OF-378): the accounts a pack needs, the connections it makes and how each… |
+| `src/skill_hub/pack_catalog/setup.rs` | src | m | 5 struct · 2 enum · 8 fn · 2 crate-vis | PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission, PackSetupRisk, PackSetupSecret | The typed `setup` key of PACK.md (OF-378): the accounts a pack needs, the connections it makes and how each… |
+| `src/skill_hub/pack_catalog/setup_actor.rs` | src | s | 1 enum · 3 crate-vis | PackSetupActor | Who works a pack's guided setup (OF-378): the owner on their own proof, or an authenticated agent acting for… |
 | `src/skill_hub/pack_catalog/setup_cards.rs` | src | m | 1 enum · 3 fn | PackSetupCardAction | The guided setup as GenUI cards (OF-378), composed from the existing closed atom kit: a checklist of… |
-| `src/skill_hub/pack_catalog/setup_session.rs` | src | m | 9 struct · 2 enum · 3 fn · 11 crate-vis | PackSetupAnswer, PackSetupCheck, PackSetupCheckRecord, PackSetupConnectionState, PackSetupCustodyRef, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermissionState +3 | Source-bound guided pack setup (OF-378) |
-| `src/skill_hub/pack_catalog/source.rs` | src | s | 2 struct · 9 fn | PackSection, PackSource | Validated exact source trees |
+| `src/skill_hub/pack_catalog/setup_session.rs` | src | m | 9 struct · 2 enum · 6 fn · 11 crate-vis | PackSetupAnswer, PackSetupCheck, PackSetupCheckRecord, PackSetupConnectionState, PackSetupCustodyRef, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermissionState +3 | Source-bound guided pack setup (OF-378) |
+| `src/skill_hub/pack_catalog/slack_install.rs` | src | s | 2 struct · 2 fn | SlackInstallHold, SlackInstallRedeemed | Pending Slack OAuth installs (OF-519): the owner's proof snapshot waiting under one single-use state for… |
+| `src/skill_hub/pack_catalog/source.rs` | src | s | 2 struct · 11 fn · 1 crate-vis | PackSection, PackSource | Validated exact source trees |
 | `src/skill_hub/pack_catalog/tests.rs` | test | m | 1 crate-vis | — | Source custody tests: exact bytes, inert imports, generic/replay parity and rollback |
 | `src/skill_hub/pack_catalog/tool_schema.rs` | src | m | 6 crate-vis | — | Closed Draft 2020-12 tool-schema profile: resource-aware nodes, not a JSON rewrite |
 | `src/skill_hub/pack_catalog/transport.rs` | src | s | 1 trait · 2 fn · 3 crate-vis | PackSourceAdapter | Generic Git/HTTP source fetch composes with the post-fit pack install door |
@@ -6116,9 +6123,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/grants.rs` | src | s | 2 struct · 2 enum · 1 fn · 1 crate-vis | GrantAnswer, GrantAnswerRequest, GrantAnswered, GrantRequestedScope | `self.grants.answer` (FIX 1379): the general answer to an access request, by the vault's owner or by the… |
 | `src/verbs/guest_document.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest | Typed guest document sharing over live Connect grants (ARCH-0043) |
 | `src/verbs/guest_revoke.rs` | src | s | 1 struct · 3 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
-| `src/verbs/host.rs` | src | L | 27 struct · 6 enum · 24 fn · 2 const · 2 re-export · 1 crate-vis | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
+| `src/verbs/host.rs` | src | m | 21 struct · 6 enum · 16 fn · 1 const · 4 re-export · 1 crate-vis | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +19 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/verbs/host/ask_image.rs` | src | s | 3 struct | AskImageAnswer, AskImageReceipt, AskImageRequest | `ai.ask_image`'s input, answer and receipt (OF-329, FIX 679): one question about an image's pixels to the… |
 | `src/verbs/host/hooks_replay.rs` | src | s | 3 struct · 1 enum · 3 fn · 2 const | HookReplayOutcome, HookReplayRow, HooksReplayPage, HooksReplayRequest | `vault.hooks.replay`'s input, page and owner call: a dry run of a hook's body over past facts or saved verb… |
+| `src/verbs/host/local_pack_agent.rs` | src | s | 1 fn | — | `vault.packs.put` from a resident agent's own handle (ARCH-0080 §7): the agent replaces the `local` pack and… |
+| `src/verbs/host/pack_setup.rs` | src | m | 6 struct · 12 fn · 1 const | PackSetupAnswerRequest, PackSetupCardActionInput, PackSetupReceipt, PackSetupRequest, PackSetupStoreSecret, PackSetupVerifyRequest | The pack setup verbs' inputs, answers and calls (OF-378): `vault.packs.setup.prepare`, `.get`, `.answer` and… |
 | `src/verbs/hub.rs` | src | m | 23 struct · 2 enum · 20 fn · 1 crate-vis | HookGrantRequest, HookGrantSetRequest, HookGrantView, HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt +17 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
 | `src/verbs/identity_topology.rs` | src | m | 18 struct · 10 enum · 5 fn · 1 re-export | IdentityAmendment, IdentityAssertDistinctRequest, IdentityEntityRequest, IdentityEventAction, IdentityEventRequest, IdentityEvidence, IdentityFacetRequest, IdentityFacetSpec +20 | Typed identity-topology calls over the engine's append-only op family |
 | `src/verbs/identity_topology/ops.rs` | src | m | 10 fn | — | Owner authority and DTO projection; topology effects stay in the owning engine doors |
