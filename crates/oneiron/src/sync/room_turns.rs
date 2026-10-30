@@ -267,9 +267,7 @@ pub(crate) fn scrub_deleted_room_turns(
             }
         }
     }
-    if doomed.is_empty()
-        && erased.is_empty()
-        && super::room_parts::unlisted_parts(&map).is_empty()
+    if doomed.is_empty() && erased.is_empty() && super::room_parts::unlisted_parts(&map).is_empty()
     {
         return Ok(false);
     }
