@@ -15,10 +15,11 @@
 //! - Agreed: every part must name the request, the sealing second and the
 //!   count the first part names, at its own place. Any disagreement drops
 //!   the whole set, logged by its key alone. Once this vault folds the
-//!   request's signed result, a part is admitted only while its head agrees
-//!   with it: the part count the copy it names is cut into, and the second
-//!   the copy this install keeps was sealed at, if it keeps one (FIX 12294).
-//!   A refused part is logged by its key alone and drops only itself.
+//!   request's signed result, a part whose head disagrees with it (the part
+//!   count the copy it names is cut into, or the second the copy this
+//!   install keeps was sealed at) is admitted, never kept, and its set
+//!   leaves at the next prune (FIX 12294): refusing it would refuse the
+//!   whole update of a peer that has not folded the result yet.
 //! - Joined once: the runs are joined by `carrier_parts::join_parts`, which
 //!   checks the cut and the host's memory before it copies a byte, and the
 //!   joined copy is kept only once it stands, as a copy in one row is.
@@ -145,14 +146,13 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
 
 /// Admits one part under `row_key`, the map key after its prefix: one that
 /// decodes, filed under its own request and place, in its sealing month's
-/// base window. When `vault` folds the request's signed result, its head
-/// must agree with it (FIX 12294; L03 05:1x): the part count the copy that
-/// result names is cut into ([`part_count_of`]; a result that names no copy
-/// has none), and the second the copy this install keeps for the request
-/// was sealed at, if it keeps one. A refused part is that row's refusal
-/// alone: no other part of its set is touched, and a set left without it
-/// waits as any incomplete set does. With no result folded, whether the
-/// parts join to the copy it names is judged where the copy is kept.
+/// base window. When `vault` folds the request's signed result and the
+/// head disagrees with it (the part count the copy that result names is cut
+/// into, [`part_count_of`], none for a result that names no copy; or the
+/// second the copy this install keeps was sealed at), the part is admitted
+/// and logged, never kept, and its set leaves at the next prune
+/// ([`done_part_rows`], FIX 12294). Whether the parts join to the copy the
+/// result names is judged where the copy is kept.
 /// `None` for bytes that are no part.
 pub(super) fn admit_part(
     vault: &Vault,
@@ -202,14 +202,14 @@ fn admit_part_head(
     if count != Some(u64::from(part.count))
         || kept_at.is_some_and(|sealed_at| sealed_at != part.sealed_at)
     {
-        // The row's key alone: never a byte of the run.
-        tracing::warn!(
+        // Admitted, never kept, as a one-part copy the result does not name
+        // is: the join judges the copy against the result, and the prune
+        // drops the set (`done_part_rows`). The row's key alone: never a
+        // byte of the run.
+        tracing::debug!(
             request = row_key,
-            "an export secret supplement part its request's signed result does not name was refused"
+            "an export secret supplement part its request's signed result does not name; it leaves at the next prune"
         );
-        return Err(refused(
-            "export secret supplement part its request's signed result does not name",
-        ));
     }
     Ok(())
 }
@@ -340,6 +340,24 @@ fn part_sets(map: &LoroMap) -> BTreeMap<[u8; 32], Vec<String>> {
     sets
 }
 
+/// Whether a part row of `request`'s set in `map` carries a count the
+/// request's folded result does not cut its copy into (FIX 12294): that set
+/// never joins to the copy the result names, so it leaves its window.
+fn count_unnamed(map: &LoroMap, fold: &AuthorityFold, request: &[u8; 32], rows: &[String]) -> bool {
+    let Some(answer) = fold.owner_work_result(request) else {
+        return false;
+    };
+    let count = answer
+        .outcome
+        .sealed_output()
+        .map_or(Some(0), part_count_of);
+    rows.iter().any(|row| {
+        map_get_bytes(map, row)
+            .and_then(|bytes| OutputPart::decode(&bytes))
+            .is_some_and(|part| Some(u64::from(part.count)) != count)
+    })
+}
+
 /// The key of each part row of `map` due to leave its window, with
 /// `fenced` this vault's erase fences on `fold`: every row of a request
 /// whose rows are done, of a set that disagrees, or of a copy that joins
@@ -353,6 +371,7 @@ pub(super) fn done_part_rows(
     for (request, rows) in part_sets(map) {
         let gone = KeptExportOutput::request_rows_done(fold, &request, fenced)
             || fold.export_supplement_imported(&request)
+            || count_unnamed(map, fold, &request, &rows)
             || match join(map, &request) {
                 Joined::Copy(output) => output.row_done(fold, fenced),
                 Joined::Waiting => false,
