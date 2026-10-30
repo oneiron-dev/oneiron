@@ -104,6 +104,9 @@ const LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX: &str = "linkedin:inbox_sync:";
 const LINKEDIN_INBOX_SYNC_SOURCE: &str = "imported";
 const LINKEDIN_INBOX_SYNC_TIER: &str = "external";
 const LINKEDIN_INBOX_SYNC_CLAIMED_VALUE: &[u8] = b"claimed";
+/// The start of a seat's poll-cursor key in the inbox-sync seen table; no
+/// hex16 message key can begin with it.
+const LINKEDIN_INBOX_SYNC_CURSOR_KEY_PREFIX: &str = "cursor:";
 
 const MAX_LINKEDIN_ADDRESS_BYTES: usize = 512;
 const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
@@ -117,8 +120,12 @@ const MAX_LINKEDIN_MESSAGE_TEXT_BYTES: usize = 16 * 1024;
 const MAX_LINKEDIN_INTENT_REF_BYTES: usize = 512;
 const MAX_LINKEDIN_ERROR_CODE_BYTES: usize = 96;
 const MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 366 * 24 * 60 * 60;
+/// The threads one inbox poll reads; the rest wait in the seat's cursor for
+/// the next poll (FIX 8790).
 const MAX_LINKEDIN_INBOX_THREADS_PER_POLL: usize = 250;
-const MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_THREAD: usize = 1_000;
+/// The messages of one conversation one inbox poll handles; the rest wait in
+/// the seat's cursor for a later poll (FIX 8790).
+const MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_POLL: usize = 1_000;
 const DEFAULT_LINKEDIN_SEND_VERIFY_ATTEMPTS: usize = 3;
 const MAX_LINKEDIN_SEND_VERIFY_ATTEMPTS: usize = 25;
 const LINKEDIN_SEND_VERIFY_BACKOFF_INITIAL_MS: u64 = 25;
@@ -436,9 +443,6 @@ impl LinkedInMcpConnectorAdapter {
             };
             if seen_thread_ids.insert(thread_id.clone()) {
                 thread_ids.push(thread_id);
-            }
-            if thread_ids.len() > MAX_LINKEDIN_INBOX_THREADS_PER_POLL {
-                return Err(Error::IndexOverflow("LinkedIn inbox threads"));
             }
         }
         Ok(thread_ids)
