@@ -625,6 +625,10 @@ side_tables! {
     /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
     /// secret value. Key: u8 (owner kind) + id16.
     REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
+    /// A source record a derived text was written from that a repo mark covered by its media
+    /// bytes, not its id, bound to that blob's whole BLAKE3, so it stays marked once erased as a
+    /// snapshot record does (FIX 10887). A hash, no value. Key: id16 (the source).
+    REPO_DERIVED_SOURCE_BLOB: VaultMeta b"repo_index:derived_source_blob:v1:" Named;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named

@@ -20,7 +20,8 @@ use crate::embed::{EgressDecision, EgressPredicate, EmbedderLocality, InputKind}
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_projection::index::{
-    RepoDerivedIndexSources, RepoIndexMarks, opaque_index_text, repo_derived_index_sources_in,
+    RepoDerivedIndexSources, RepoIndexMarks, bind_envelope_sources_in_txn, opaque_index_text,
+    repo_derived_index_sources_in,
 };
 use crate::ports::EntityStoreRead;
 
@@ -212,6 +213,7 @@ impl Vault {
                 report.superseded += 1;
                 continue;
             };
+            bind_envelope_sources_in_txn(&self.store, &mut wtxn, &sources)?;
             put_ready_in_txn(
                 &self.store,
                 &mut wtxn,
