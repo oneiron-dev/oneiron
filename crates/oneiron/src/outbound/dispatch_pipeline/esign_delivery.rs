@@ -84,7 +84,10 @@ struct FrozenCall {
 
 /// The completed call `dispatch_ref` admitted: call 0 of its dispatch
 /// attempt, the one OF-327 ran the e-sign sink for. `None` while no such call
-/// completed, or for one on another channel.
+/// completed, or for one on another channel. FIX 6644 (L10 09:41, Engine
+/// 10:13): the attempt and the frozen send ref are the act's
+/// `ledger_identity` when its dispatch named one, else `dispatch_ref`, as the
+/// pin is `ledger_identity_ref.unwrap_or(intent_ref)`.
 ///
 /// The outer error is the store's own failure, the ledger-wide attempt
 /// index's included. The inner one is this send's own data not reading: its
@@ -94,8 +97,10 @@ pub(crate) fn esign_delivery_call_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     dispatch_ref: &str,
+    ledger_identity: Option<&str>,
 ) -> Result<Result<Option<EsignDeliveryCall>>> {
-    let Ok(attempt_id) = outbound_dispatch_attempt_id(dispatch_ref) else {
+    let identity = ledger_identity.unwrap_or(dispatch_ref);
+    let Ok(attempt_id) = outbound_dispatch_attempt_id(identity) else {
         return Ok(Err(Error::InvariantViolation("e-sign dispatch attempt id")));
     };
     check_intent_attempt_format_in_txn(vault, txn).map_err(|error| match error {
@@ -119,7 +124,7 @@ pub(crate) fn esign_delivery_call_in_txn(
         return Ok(Ok(None));
     }
     // FIX 6424: the send ref frozen with the call is this dispatch's own.
-    if frozen.approval_send_ref.as_deref() != Some(dispatch_ref) {
+    if frozen.approval_send_ref.as_deref() != Some(identity) {
         return Ok(Err(Error::InvariantViolation(
             "e-sign dispatch logical send ref",
         )));
