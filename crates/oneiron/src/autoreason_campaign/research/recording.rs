@@ -64,7 +64,8 @@ fn put_new_node_in_txn(
 /// it that let a row land. A controller weaves only a claim it wrote. A claim
 /// past Proposed stands for anyone but the owner only under the owner's
 /// auto-weave grant for its writer, scoped to this campaign (`campaign`),
-/// its skill or the claim's project ([`auto_weave_granted`]).
+/// its skill or the claim's project, for which the gate's Allow stands in
+/// until an owner can mint that grant ([`auto_weave_granted`]).
 fn weave_claim_landing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -117,11 +118,18 @@ fn weave_claim_landing_in_txn(
     Ok((body.approval, decision.decision_id.to_hex()))
 }
 
+/// Whether the gate's Allow alone still stands in for the owner's
+/// auto-weave grant. Until an owner can mint a weave-scoped grant through a
+/// door, it does, so a weave past Proposed keeps today's path; a ruling that
+/// asks for the scoped grant alone sets this to false (CALLS `FIX 3433
+/// auto-weave grant`).
+const GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT: bool = true;
+
 /// Whether the gate's decision on a weave claim carries an owner auto-weave
 /// grant (FIX 3433): an Allow whose record names the owner's weave-scoped
 /// Grant for `writer` (`gate.allow.weave_grant` and its `grant_ref`), still
-/// active and scoped to one of `scopes`. The gate's Allow alone is the
-/// writer's ceilings and source trust, never this grant.
+/// active and scoped to one of `scopes`; or, while
+/// [`GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT`] holds, the gate's Allow alone.
 fn auto_weave_granted(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -129,8 +137,11 @@ fn auto_weave_granted(
     writer: crate::WriteActor,
     scopes: &[WeaveScope],
 ) -> Result<bool> {
-    Ok(decision.outcome == OUTCOME_ALLOW
-        && crate::gate::weave_grant::decision_names_weave_grant_in_txn(
+    if decision.outcome != OUTCOME_ALLOW {
+        return Ok(false);
+    }
+    Ok(GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT
+        || crate::gate::weave_grant::decision_names_weave_grant_in_txn(
             &vault.store,
             txn,
             decision,
