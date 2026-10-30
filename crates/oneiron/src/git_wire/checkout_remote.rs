@@ -37,15 +37,19 @@ impl GitWire<'_> {
         Ok(self)
     }
 
+    /// The custody remote policy every leased materialization passes, door
+    /// or none (FIX 8785): a door checkout's source is this vault's origin
+    /// store and inherits no remote at all; a checkout with no door inherits
+    /// no credential: no helper, header, rewrite or include, and no remote
+    /// URL that carries a token. A plain remote stays, as it works today.
     pub(super) fn preflight_checkout_remote(&self, repo: &GitWireRepo) -> GitWireResult<()> {
-        if self.checkout_door.is_none() {
-            return Ok(());
-        }
-        let serving_root = crate::origin::smart_http::origin_serving_root(self.vault)?;
-        if repo.common_dir().parent() != Some(serving_root.as_path()) {
-            return Err(invalid(
-                "door checkout requires this vault's origin repository",
-            ));
+        if self.checkout_door.is_some() {
+            let serving_root = crate::origin::smart_http::origin_serving_root(self.vault)?;
+            if repo.common_dir().parent() != Some(serving_root.as_path()) {
+                return Err(invalid(
+                    "door checkout requires this vault's origin repository",
+                ));
+            }
         }
         // A linked worktree inherits common config. Refuse a source carrying
         // remote/credential/include/rewrite config instead of shadowing it:
@@ -57,26 +61,25 @@ impl GitWire<'_> {
                 os_args(&["config", "--local", "--null", "--list"]),
             ),
         )?;
+        let door = self.checkout_door.is_some();
         for row in config
             .stdout
             .split(|b| *b == 0)
             .filter(|row| !row.is_empty())
         {
-            let key = row.split(|b| *b == b'\n').next().unwrap_or_default();
-            let key = String::from_utf8_lossy(key).to_ascii_lowercase();
-            if [
-                "remote.",
-                "credential.",
-                "http.",
-                "url.",
-                "include.",
-                "includeif.",
-            ]
-            .iter()
-            .any(|prefix| key.starts_with(prefix))
-            {
+            let mut parts = row.splitn(2, |b| *b == b'\n');
+            let key =
+                String::from_utf8_lossy(parts.next().unwrap_or_default()).to_ascii_lowercase();
+            let value = String::from_utf8_lossy(parts.next().unwrap_or_default());
+            let inherited_credential = ["credential.", "http.", "url.", "include.", "includeif."]
+                .iter()
+                .any(|prefix| key.starts_with(prefix))
+                || (key.starts_with("remote.")
+                    && (key.ends_with(".url") || key.ends_with(".pushurl"))
+                    && url_carries_credential(&value));
+            if inherited_credential || (door && key.starts_with("remote.")) {
                 return Err(invalid(
-                    "door checkout refuses inherited remote or credential configuration",
+                    "leased checkout refuses inherited remote or credential configuration",
                 ));
             }
         }
@@ -89,11 +92,11 @@ impl GitWire<'_> {
         tree: &Path,
         lease: &CheckoutLeaseAct,
     ) -> GitWireResult<()> {
+        let _guard = lock_repository(repo.common_dir())?;
+        self.preflight_checkout_remote(repo)?;
         if self.checkout_door.is_none() {
             return Ok(());
         }
-        let _guard = lock_repository(repo.common_dir())?;
-        self.preflight_checkout_remote(repo)?;
         self.configure_checkout_remote_named(repo, tree, lease, served_repo_name(repo)?)
     }
 
@@ -152,4 +155,19 @@ pub(super) fn served_repo_name(repo: &GitWireRepo) -> GitWireResult<&str> {
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_suffix(".git"))
         .ok_or_else(|| invalid("door checkout requires a served bare repository"))
+}
+
+/// Whether a remote URL names a credential in its userinfo: any userinfo on
+/// HTTP(S) (a token passed as the user), a password on any other scheme. An
+/// SSH user such as `git@host` is not a credential.
+fn url_carries_credential(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let Some((userinfo, _)) = authority.rsplit_once('@') else {
+        return false;
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    scheme == "http" || scheme == "https" || userinfo.contains(':')
 }

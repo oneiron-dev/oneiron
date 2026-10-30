@@ -179,7 +179,7 @@ pub(super) struct ReceivePackIntent {
     pub(super) refs: Vec<ReceivePackIntentRef>,
     pointers: Vec<(String, String, u64)>,
     #[serde(default)]
-    push: Option<GitPushStamp>,
+    pub(super) push: Option<GitPushStamp>,
     // What the scan came to, written with the push's marks (FIX 8032): the
     // only source its outcomes' `scan` reads.
     scan: ReceivePackScanSummary,

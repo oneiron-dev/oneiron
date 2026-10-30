@@ -16,8 +16,8 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_PASSPORT,
 };
 use crate::calendar::passport::{
-    carries_admitted_uid, encode_passport_value, index_passport_uid, live_passport_for,
-    live_passports_for_event, supersede_calendar_passport,
+    admitted_passports_for_event_in_txn, carries_admitted_uid, encode_passport_value,
+    index_passport_uid, live_passport_for, supersede_calendar_passport,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::entity_id::EntityId;
@@ -192,14 +192,19 @@ pub struct CalendarRemoteObjectRow {
     pub content_hash: [u8; 32],
     /// When the row was last refreshed.
     pub last_seen_at: u64,
+    /// The archived copy (`hex#vN`) of the ICS this seat last pulled.
+    pub source_blob_ref: Option<String>,
 }
 
 /// Writes one local EVENT to the seat's remote calendar.
 ///
-/// The UID is preserved (or minted once for a locally originated EVENT), the
-/// SEQUENCE bumps only when this seat already carries a passport for that UID,
-/// the durable outbox row is staged BEFORE the provider call, and the expected
-/// ETag rides as the conditional precondition. A precondition failure records
+/// The UID is preserved (or minted once for a locally originated EVENT) and
+/// the SEQUENCE bumps only when this seat already holds that UID. Both derive
+/// from admitted passports and the seat's own remote copy, never from a
+/// pending, rejected or stale passport proposal. The resource renders over its
+/// archived source so fields the render does not own survive, the durable
+/// outbox row is staged BEFORE the provider call, and the expected ETag rides
+/// as the conditional precondition. A precondition failure records
 /// `reconcile_required`, refreshes the local view of the remote object, and
 /// returns [`CalendarConnectorError::EtagMismatch`] — it never overwrites blind.
 ///
@@ -226,7 +231,10 @@ pub fn write_calendar_event(
     // that would replace the master and erase its siblings.
     let event_ref = super::resource::master_for(vault, event_ref)?;
     let system = seat.config.system.as_str();
-    let passports = live_passports_for_event(vault, &event_ref)?;
+    let passports = {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        admitted_passports_for_event_in_txn(vault, &rtxn, &event_ref)?
+    };
     let own = passports
         .iter()
         .find(|(_, value)| value.system == system)
@@ -235,6 +243,8 @@ pub fn write_calendar_event(
         Some(value) => value.uid.clone(),
         None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
     };
+    let calendar_ref = seat.config.calendar_ref.as_str();
+    let source = super::resource::archived_source(vault, system, calendar_ref, &uid, event_ref)?;
     let outbox_id = derive_outbox_id(
         system,
         &seat.config.calendar_ref,
@@ -246,7 +256,15 @@ pub fn write_calendar_event(
         ensure_outbox_matches(&row, seat, transport, event_ref, &uid)?;
         match row.state {
             CalendarWriteOutboxState::Prepared => {
-                let ics = render_owner_vevent(vault, &event_ref, &uid, row.sequence, now)?.ics;
+                let ics = render_owner_vevent(
+                    vault,
+                    &event_ref,
+                    &uid,
+                    row.sequence,
+                    now,
+                    source.as_deref(),
+                )?
+                .ics;
                 let rendered_hash = ics_content_hash(&ics, &uid)?;
                 if rendered_hash != row.content_hash {
                     return Err(CalendarConnectorError::Outbox {
@@ -291,18 +309,21 @@ pub fn write_calendar_event(
         }
     }
 
-    let floor = super::resource::sequence_floor(vault, event_ref, &uid)?;
-    let sequence = if own.is_some() {
+    // The seat's own remote copy is provider truth, not a proposal: the next
+    // write must exceed the SEQUENCE it already holds.
+    let object = read_remote_object(vault, system, calendar_ref, &uid)?;
+    let floor = super::resource::sequence_floor(vault, event_ref, &uid)?
+        .max(object.as_ref().map_or(0, |row| row.last_sequence));
+    let sequence = if own.is_some() || object.is_some() {
         floor
             .checked_add(1)
             .ok_or_else(|| ingest_error("calendar sequence overflow"))?
     } else {
         floor
     };
-    let rendered = render_owner_vevent(vault, &event_ref, &uid, sequence, now)?;
+    let rendered = render_owner_vevent(vault, &event_ref, &uid, sequence, now, source.as_deref())?;
     let ics = rendered.ics;
     let content_hash = ics_content_hash(&ics, &uid)?;
-    let object = read_remote_object(vault, system, &seat.config.calendar_ref, &uid)?;
     let expected_etag = object.as_ref().and_then(|row| row.etag.clone());
     let href = object.as_ref().and_then(|row| row.href.clone());
     let mut row = CalendarWriteOutboxRow {
@@ -446,6 +467,10 @@ fn finish_remote_applied_write(
         });
     }
 
+    // The write kept every unowned field of the archived source, so that
+    // source stays the base the next write renders over.
+    let source_blob_ref = read_remote_object(vault, &row.system, &row.calendar_ref, &row.uid)?
+        .and_then(|prior| prior.source_blob_ref);
     write_remote_object(
         vault,
         &CalendarRemoteObjectRow {
@@ -457,6 +482,7 @@ fn finish_remote_applied_write(
             last_sequence: receipt.sequence,
             content_hash: row.content_hash,
             last_seen_at: now,
+            source_blob_ref,
         },
     )?;
 
@@ -629,6 +655,7 @@ struct StoredRemoteObjectRow {
     last_sequence: u32,
     content_hash: [u8; 32],
     last_seen_at: u64,
+    source_blob_ref: Option<String>,
 }
 
 fn remote_object_digest(system: &str, calendar_ref: &str, uid: &str) -> [u8; 32] {
@@ -683,6 +710,7 @@ pub(super) fn read_remote_object(
         last_sequence: stored.last_sequence,
         content_hash: stored.content_hash,
         last_seen_at: stored.last_seen_at,
+        source_blob_ref: stored.source_blob_ref,
     }))
 }
 
@@ -699,6 +727,7 @@ pub(super) fn write_remote_object(
         last_sequence: row.last_sequence,
         content_hash: row.content_hash,
         last_seen_at: row.last_seen_at,
+        source_blob_ref: row.source_blob_ref.clone(),
     };
     let digest = remote_object_digest(&row.system, &row.calendar_ref, &row.uid);
     vault.try_with_write_txn_grouped(|wtxn| {
