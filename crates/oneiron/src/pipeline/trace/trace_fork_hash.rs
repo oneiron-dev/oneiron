@@ -637,6 +637,7 @@ fn fork_hash_hyde_attempt(
     }
     if let Some(expansion) = expansion {
         fork_hash_bool(hasher, true);
+        fork_hash_str(hasher, &expansion.grounded_query);
         fork_hash_len(hasher, expansion.embedding.len());
         for value in &expansion.embedding {
             fork_hash_f32(hasher, *value);
