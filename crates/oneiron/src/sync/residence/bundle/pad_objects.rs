@@ -704,9 +704,10 @@ pub(crate) fn refill_pad_object(
 }
 
 /// The vault and the home `txn` names this vault's pad objects for: the
-/// vault id its authority folds to (the zero id before its genesis), and
-/// this install's machine id (the zero id before it has one). One read
-/// names both, with the objects it reads (PAD-1).
+/// vault id its authority folds to (`None` before its genesis: no vault, so
+/// no capture is named for it, FIX 11826), and this install's machine id
+/// (the zero id before it has one). One read names both, with the objects
+/// it reads (PAD-1).
 ///
 /// # Errors
 ///
@@ -714,21 +715,19 @@ pub(crate) fn refill_pad_object(
 pub(crate) fn pad_objects_identity_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<([u8; 32], EntityId)> {
-    let vault_id = vault
-        .authority_view_readonly_in_txn(txn)?
-        .vault_id
-        .unwrap_or_default();
+) -> Result<(Option<[u8; 32]>, EntityId)> {
+    let vault_id = vault.authority_view_readonly_in_txn(txn)?.vault_id;
     let home = crate::identity::read_machine_id_in_txn(vault, txn)?
         .unwrap_or_else(|| EntityId::from_bytes_unchecked([0; 16]));
     Ok((vault_id, home))
 }
 
 /// The home's current pad objects in `txn`, named for this vault and this
-/// home ([`pad_objects_identity_in_txn`]).
+/// home ([`pad_objects_identity_in_txn`]): the zero vault id before its
+/// genesis, as served before.
 pub(crate) fn index_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CurrentPadObjects> {
     let (vault_id, home) = pad_objects_identity_in_txn(vault, txn)?;
-    current_pad_objects_in_txn(&vault.store, txn, vault_id, home)
+    current_pad_objects_in_txn(&vault.store, txn, vault_id.unwrap_or_default(), home)
 }
 
 /// `current` as its list serves it: newest first, entries kept where `keep`

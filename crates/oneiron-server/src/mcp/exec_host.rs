@@ -582,6 +582,10 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .as_ref()
                 .and_then(|auth| auth.verified_slip())
                 .cloned();
+            // The run's read scope (FIX 11768): its seat is born under it.
+            // A scope the vault cannot read is not born.
+            let worlds = run_read_worlds(&vault, opener.as_ref(), placement.0)
+                .map_err(McpCodeExecutionError::RunBinding)?;
             let mut seat = seats
                 .lock()
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
@@ -618,6 +622,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &config,
                         verbs,
                         opener.as_ref(),
+                        worlds,
                         reader_seat,
                         seat.as_mut(),
                     );
@@ -645,6 +650,46 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     }
 }
 
+/// The worlds a run — `execute`'s, or a turn program's seat — may read
+/// (FIX 11768): the opener slip's worlds axis — its named set, every world
+/// the vault holds for `All`, none for `Bottom` or no slip at all — plus
+/// the request's own `world_ref` when it names one absent from the set.
+/// The seat birth pre-filters to the routes their orders name; empty
+/// inherits, as before.
+///
+/// `All` meets the authority fold's worlds: the only world enumeration
+/// this host may read without a vault-shape door. An unlisted world
+/// inherits, so it narrows no meet: meeting the fold's worlds meets every
+/// world that can refuse.
+///
+/// # Errors
+///
+/// The `All` enumeration read the vault and failed: the run is not born.
+/// The binding carries a fixed opaque string, never the vault's text.
+pub(crate) fn run_read_worlds(
+    vault: &Vault,
+    opener: Option<&oneiron::authority::VerifiedSlip>,
+    world_ref: Option<EntityId>,
+) -> Result<Vec<EntityId>, String> {
+    let mut worlds: Vec<EntityId> = match opener.map(|slip| &slip.scope().worlds) {
+        Some(oneiron::federation::ScopeAxis::Some(set)) => set.iter().map(|id| id.0).collect(),
+        Some(oneiron::federation::ScopeAxis::All) => vault
+            .authority_fold()
+            .map_err(|_| "the run's worlds did not read".to_owned())?
+            .worlds
+            .keys()
+            .copied()
+            .collect(),
+        Some(oneiron::federation::ScopeAxis::Bottom) | None => Vec::new(),
+    };
+    if let Some(world) = world_ref
+        && !worlds.contains(&world)
+    {
+        worlds.push(world);
+    }
+    Ok(worlds)
+}
+
 /// Enters the EXISTING sandbox/REPL substrate for one durable run.
 ///
 /// This is the whole of what `execute_code` means now: bind the gated write at
@@ -665,6 +710,7 @@ fn run_engine_native_code_mode(
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
     opener: Option<&oneiron::authority::VerifiedSlip>,
+    worlds: Vec<EntityId>,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
@@ -688,6 +734,7 @@ fn run_engine_native_code_mode(
         format!("mcp-execute-code:{}", config.run_id.to_hex()),
         None,
         Vec::new(),
+        worlds,
     )
     .map_err(McpCodeExecutionError::RunBinding)?;
     enter_engine_native_run(
@@ -880,12 +927,14 @@ fn planned_seat(plan: Option<&SpawnPlanReceipt>) -> Option<oneiron::ModelId> {
 /// task from the host's capability profile. A run, a reader child and a
 /// summary job are each born on one this way. `parent_at`, the cutoff of the
 /// parent a child is born under, bounds a fresh pick (FIX 8230); `None`, the
-/// seat budget alone.
+/// seat budget alone. `worlds` is the run's read scope (FIX 11768): the
+/// birth pre-filters to the routes their orders name; empty inherits.
 pub(crate) fn run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
     parent_at: Option<Instant>,
+    worlds: Vec<EntityId>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     seat_for(
@@ -894,6 +943,7 @@ pub(crate) fn run_seat(
         run_id,
         SeatPin::Base(None),
         parent_at,
+        worlds,
         task,
     )
 }
@@ -911,24 +961,35 @@ impl dyn McpCodeModeProvider + '_ {
         bound: &GatedActorWrite<'_>,
         run_id: EntityId,
         parent_at: Option<Instant>,
+        worlds: Vec<EntityId>,
         task: impl FnOnce(&str) -> SeatTask,
     ) -> Result<Option<ModelSeat>, String> {
-        seat_for(vault, self, run_id, SeatPin::Routed(bound), parent_at, task)
+        seat_for(
+            vault,
+            self,
+            run_id,
+            SeatPin::Routed(bound),
+            parent_at,
+            worlds,
+            task,
+        )
     }
 }
 
 /// An agent run's seat (DOOR-111 S5), born as `run_seat` births one and
 /// stamped with `type_ref`, the stamp its dispatch carried, so the run's
 /// route reads with its own stamp. A manifest-free vault still bears none.
+/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is.
 pub(crate) fn task_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
     type_ref: &TaskTypeRef,
+    worlds: Vec<EntityId>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, task)
+    seat_for(vault, provider, run_id, pin, None, worlds, task)
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -948,6 +1009,7 @@ fn seat_for(
     run_id: EntityId,
     pin: SeatPin<'_, '_>,
     parent_at: Option<Instant>,
+    worlds: Vec<EntityId>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let has_seat = vault
@@ -969,7 +1031,10 @@ fn seat_for(
     let facet = provider
         .seat_facet()
         .ok_or("manifest-backed run requires a capability profile")?;
-    let task = task(facet);
+    let mut task = task(facet);
+    // The run's read scope (FIX 11768): the birth pre-filters to the routes
+    // these worlds' orders name. Empty inherits, as before.
+    task.worlds = worlds;
     match pin {
         // A typed run is born on its description route when one applies (FIX 11307).
         SeatPin::Base(Some(type_ref)) => {
@@ -991,6 +1056,7 @@ fn seat_for(
 /// froze, OF-541) is born on the seat its plan picked (`planned_seat`).
 /// An agent's run is born on a model its definition lists (`listed`, FIX
 /// 4472); a run with no agent, or an agent that lists none, passes none.
+/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is.
 pub(crate) fn engine_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
@@ -998,9 +1064,10 @@ pub(crate) fn engine_run_seat(
     warm_scope: String,
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
+    worlds: Vec<EntityId>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    run_seat(vault, provider, config.run_id, None, |facet| {
+    run_seat(vault, provider, config.run_id, None, worlds, |facet| {
         engine_seat_task(config, facet, warm_scope, model, listed)
     })
 }
@@ -1015,9 +1082,10 @@ pub(crate) fn task_engine_run_seat(
     type_ref: &TaskTypeRef,
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
+    worlds: Vec<EntityId>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    task_run_seat(vault, provider, config.run_id, type_ref, |facet| {
+    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
         engine_seat_task(config, facet, warm_scope, model, listed)
     })
 }
@@ -1045,6 +1113,8 @@ fn engine_seat_task(
         override_model,
         override_effort: None,
         listed,
+        // Stamped by `seat_for` from the run's read scope (FIX 11768).
+        worlds: Vec::new(),
     }
 }
 

@@ -175,6 +175,7 @@ impl PipelineBuilder<'_> {
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let mut phonetic_channel_index = None;
+            let mut ppr_channel_index = None;
             let blend_weights = match self.blend_weights_override {
                 Some(weights) => weights,
                 None => retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?,
@@ -428,14 +429,14 @@ impl PipelineBuilder<'_> {
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
                 let ppr_results = ppr.scores;
                 let deferred_cache_write = ppr.deferred_cache_write;
-                acc.admit_channel(
+                ppr_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Ppr,
                     ppr_results,
                     &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
-                )?;
+                )?);
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
@@ -547,6 +548,7 @@ impl PipelineBuilder<'_> {
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
                     &acc.trace_ranked_lists,
+                    phonetic_channel_index.as_slice(),
                     trace_candidate_limit,
                 ));
             }
@@ -570,6 +572,7 @@ impl PipelineBuilder<'_> {
                     vector: vector_channel_index,
                     text: text_channel_index,
                     phonetic: phonetic_channel_index,
+                    ppr: ppr_channel_index,
                 },
                 &self.read,
                 rtxn,
@@ -630,6 +633,7 @@ impl PipelineBuilder<'_> {
                             vector: vector_channel_index,
                             text: text_channel_index,
                             phonetic: phonetic_channel_index,
+                            ppr: ppr_channel_index,
                         },
                         temporal_now,
                         codebase_scope_active,

@@ -103,11 +103,18 @@ pub struct IdempotencyEntry {
     /// answers "response erased" until it expires (KS-2B2).
     #[serde(default)]
     pub erased: bool,
+    /// The writes committed while this entry stood as its request's intent,
+    /// on the threads that served the request, each counted in the write's
+    /// own transaction (FIX 10379): an intent that counts any says they
+    /// landed though its reply was never kept. Zero for any other entry.
+    #[serde(default)]
+    pub committed_writes: u32,
     /// The erase of its stamped caller drops the entry rather than leaving
     /// its erased form: a self-hosted non-core keyed route's verified
     /// individual caller's, as the host marks it (FIX 7357). Any other
     /// owner's erase leaves the erased form, as for every entry. Kept last
-    /// and written only when set, so every other entry's row is as before.
+    /// and written only when set: the compact encoding is positional, so a
+    /// field it skips must have none after it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub erase_drops: bool,
 }

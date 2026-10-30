@@ -13,7 +13,7 @@ use crate::identity_topology::{
     ProposalOutcome, ProposalRuling, TopologySeal, fold_identity_topology_log,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, caps};
-use crate::{EdgeActorClass, EntityId, WriteActor};
+use crate::{EdgeActorClass, EntityId};
 
 fn outcome(value: ProposalOutcome) -> ClusterTopologyOutcome {
     match value {
@@ -192,7 +192,7 @@ impl Memory<'_> {
             source,
             approval,
             confidence: 1.0,
-            actor: Some(WriteActor::new(self.actor(), self.actor_class())),
+            actor: Some(self.write_actor()),
         })
     }
 
