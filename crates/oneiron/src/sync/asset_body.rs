@@ -3,8 +3,9 @@
 //! A file-plane ASSET row holds a manifest in place of its body. A window
 //! carries it by reference (FIX 5489, [`references`]): the row's bytes are
 //! the carrier, its reference rides beside it in the same commit, and the
-//! body moves outside Loro, by the frames of `sync::transport`. An echo of
-//! a body, inline or by reference, is the same row. Each helper asks
+//! body moves outside Loro, by the frames of `sync::transport` a socket's
+//! [`session::AssetBodySession`] drives. An echo of a body, inline or by
+//! reference, is the same row. Each helper asks
 //! [`ASSET_FILE_PLANE`] first: off, no row is a file row, no reference is
 //! read, and every caller keeps its exact behaviour.
 //!
@@ -13,7 +14,14 @@
 //! ([`asset_body_file_of_row`]). A peer's bytes are read as a manifest only
 //! where a reference binds them.
 
+mod landing;
 pub(crate) mod references;
+mod send;
+#[allow(
+    dead_code,
+    reason = "the socket hooks call it: client inbound dispatch and upkeep, server handler (NOTES)"
+)]
+pub(crate) mod session;
 
 use std::collections::BTreeSet;
 
