@@ -24,7 +24,9 @@ use super::super::types::{
     RecordedOutboundOutcome,
 };
 use super::checkpoint::call;
-use super::{AttemptCallKey, INTENT_ATTEMPT_INDEX, force_sync, get_ledger_record, put_erased_record};
+use super::{
+    AttemptCallKey, INTENT_ATTEMPT_INDEX, force_sync, get_ledger_record, put_erased_record,
+};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::error::Error;
@@ -109,7 +111,8 @@ impl Vault {
         force_sync(self)?;
         if erased {
             self.finish_connector_resume_retirements_after_commit();
-            self.store.finish_checkpoint_payload_retirements_after_commit();
+            self.store
+                .finish_checkpoint_payload_retirements_after_commit();
         }
         Ok(erased)
     }
