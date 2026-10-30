@@ -200,14 +200,37 @@ impl Vault {
         self.routed_payload(id, true)
     }
 
-    /// [`Self::report_routed_payload`] with no text: the content-free
-    /// signature lane's projection, which never carries a report's text and
-    /// spends no disclosure receipt.
-    pub(super) fn report_signature_payload(
-        &self,
-        id: &EntityId,
-    ) -> Result<Option<ReportRoutedPayload>> {
-        self.routed_payload(id, false)
+    /// The outbound view of an already-read `issue` (FIX 9366, merged send
+    /// read): the same filter [`Self::routed_payload`] applies, pure of IO.
+    /// `None` for a local, duplicate, rejected or denied report; otherwise
+    /// the content-free signature with its route, plus the request only when
+    /// `with_text` and the live view stands approved.
+    pub(super) fn routed_payload_from_issue(
+        issue: &ReportIssue,
+        with_text: bool,
+    ) -> Option<ReportRoutedPayload> {
+        if matches!(issue.route, ReportRoute::OwnerInbox)
+            || matches!(
+                issue.review.status,
+                ReportStatus::Duplicate | ReportStatus::Rejected
+            )
+            || issue.disclosure == ReportDisclosure::Denied
+        {
+            return None;
+        }
+        // The read gave the live view: an issue-once approval, or a standing
+        // grant live now.
+        let approved = with_text && issue.disclosure == ReportDisclosure::Approved;
+        Some(ReportRoutedPayload {
+            signature: ReportSignature {
+                issue_ref: issue.issue_ref.clone(),
+                subject_hash: *blake3::hash(issue.request.subject_ref.as_bytes()).as_bytes(),
+                category: issue.request.category,
+                kind: issue.request.kind,
+            },
+            route: issue.route.clone(),
+            disclosed: approved.then(|| issue.request.clone()),
+        })
     }
 
     fn routed_payload(
@@ -219,28 +242,7 @@ impl Vault {
         let Some(issue) = super::store::read(self, &txn, id)? else {
             return Ok(None);
         };
-        if matches!(issue.route, ReportRoute::OwnerInbox)
-            || matches!(
-                issue.review.status,
-                ReportStatus::Duplicate | ReportStatus::Rejected
-            )
-            || issue.disclosure == ReportDisclosure::Denied
-        {
-            return Ok(None);
-        }
-        // The read gave the live view: an issue-once approval, or a standing
-        // grant live now.
-        let approved = with_text && issue.disclosure == ReportDisclosure::Approved;
-        Ok(Some(ReportRoutedPayload {
-            signature: ReportSignature {
-                issue_ref: issue.issue_ref,
-                subject_hash: *blake3::hash(issue.request.subject_ref.as_bytes()).as_bytes(),
-                category: issue.request.category,
-                kind: issue.request.kind,
-            },
-            route: issue.route,
-            disclosed: approved.then_some(issue.request),
-        }))
+        Ok(Self::routed_payload_from_issue(&issue, with_text))
     }
 }
 
