@@ -43,6 +43,17 @@ fn stored_rule_set(
     }
 }
 
+/// The compiled selection law as `txn` reads it: the stored overlay over the
+/// builtins, as [`Vault::channel_identity_selection_rules`] reads it on a
+/// snapshot of its own.
+pub(crate) fn channel_identity_selection_rules_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+) -> ChannelIdentitySelectionResult<ChannelIdentitySelectionRuleSet> {
+    let stored = stored_rule_set(dbs, txn)?;
+    compile_channel_identity_selection(stored.as_ref())
+}
+
 /// Erasing `actor` from the selection law (FIX 3520): each row it last wrote
 /// keeps its effect, its writer kind, its time and the set's revision, and
 /// names no writer. One-way, in the erase's own transaction. A stored set
@@ -172,8 +183,7 @@ impl Vault {
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
-        let stored = stored_rule_set(&self.store, &rtxn)?;
-        compile_channel_identity_selection(stored.as_ref())
+        channel_identity_selection_rules_in_txn(&self.store, &rtxn)
     }
 
     /// Amends the selection law under compare-and-swap on `expected_revision`.

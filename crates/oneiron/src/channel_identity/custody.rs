@@ -19,6 +19,7 @@
 
 use std::marker::PhantomData;
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::{
     SECRET_SCOPE_READ, SecretBinding, SecretCustodyStatus, read_secret_custody_admission_in_txn,
@@ -646,10 +647,18 @@ pub(crate) struct DelegatedCustodyProof<'txn> {
     channel: String,
     address: String,
     custody_record_ref: String,
+    /// The custody record `custody_record_ref` named in the proving read.
+    custody_record_id: EntityId,
     _txn: PhantomData<&'txn ()>,
 }
 
 impl DelegatedCustodyProof<'_> {
+    /// The custody record the proving read resolved the grant's name to.
+    #[must_use]
+    pub(super) const fn custody_record_id(&self) -> EntityId {
+        self.custody_record_id
+    }
+
     /// Whether this proof covers exactly `(channel, address, grant)`.
     ///
     /// The ADDRESS arm is the one that matters: a two-way `(channel, record)`
@@ -743,6 +752,7 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
         channel: channel.to_owned(),
         address: address.to_owned(),
         custody_record_ref: grant.custody_record_ref.clone(),
+        custody_record_id: id,
         _txn: PhantomData,
     })
 }
