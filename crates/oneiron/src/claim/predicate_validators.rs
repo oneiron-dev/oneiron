@@ -429,14 +429,12 @@ fn conflict_value_uses_repo_schema(value: &Value) -> bool {
 ///   SHARED validator [`crate::provenance::validate_edge_provenance_value`]
 ///   — the pinned key vocabulary lives in exactly one place, so vocabulary
 ///   growth flows through here with zero edits;
-/// * the write-time validated `actor_class` must be persisted in EXACTLY
-///   one place: as an `actor_class` key in the value record (accepted only
-///   once the shared vocabulary carries that key) or as the engine-owned
-///   `{"actor_class": u8}` map on the wrapper's `evid`
-///   ([`crate::provenance::decode_actor_class_evidence`]). Present in both
-///   → ambiguous, rejected; present in neither → rejected. A provenance
-///   Claim without a persisted class can never participate in flag refresh,
-///   and the class is never defaulted (D13).
+/// * the write-time validated `actor_class` must be persisted as the
+///   `actor_class` key of the value record, and the wrapper's `evid` must
+///   be absent: present in both → ambiguous, rejected; absent from the
+///   record → rejected. A provenance Claim without a persisted class can
+///   never participate in flag refresh, and the class is never defaulted
+///   (D13).
 ///
 /// ONE-1159 fix-wave adds two WRAPPER-axis checks the door previously
 /// skipped (D18 treats the wrapper's lifecycle fields as opaque):
@@ -462,16 +460,11 @@ pub(super) fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Resu
     // rules are unchanged and vocabulary growth (ONE-1138's 10-key shape)
     // flows through this one call with zero edits.
     let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
-    // Presence-only probe for the value-record `actor_class` key: VALIDITY
-    // of the key's value is the shared decoder's responsibility above (and a body
-    // key outside the pinned vocabulary was already rejected there), so
-    // this never duplicates shape logic.
-    let value_has_actor_class = matches!(
-        &body.value,
-        Value::Map(entries) if entries.iter().any(|(key, _)| {
-            key.as_str() == Some(crate::provenance::EVIDENCE_KEY_ACTOR_CLASS)
-        })
-    );
+    // Presence of the value-record `actor_class` key, read off the decoded
+    // record: VALIDITY of the key's value is the shared decoder's
+    // responsibility above (and a body key outside the pinned vocabulary
+    // was already rejected there), so this never duplicates shape logic.
+    let value_has_actor_class = record.actor_class.is_some();
     match (value_has_actor_class, body.evidence.as_ref()) {
         (true, Some(_)) => {
             return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
@@ -479,8 +472,10 @@ pub(super) fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Resu
             )));
         }
         (true, None) => {}
-        (false, evidence) => {
-            crate::provenance::decode_actor_class_evidence(evidence)?;
+        (false, _) => {
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "provenance claim is missing its persisted actor_class evidence",
+            )));
         }
     }
 

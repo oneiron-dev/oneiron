@@ -74,8 +74,6 @@ pub struct VaultDoctorReport {
 pub enum VaultDoctorHnswRecordState {
     /// No `hnsw_config` row is present.
     Missing,
-    /// Legacy row shape without metric/structure tags.
-    Legacy,
     /// Current row shape with all compatibility fields.
     Current,
     /// Row exists but does not match any known compatibility encoding.
@@ -188,14 +186,6 @@ fn doctor_hnsw(
             vector_dimensions: None,
             m_max_0: None,
             ef_construction: None,
-            distance_metric: None,
-            index_structure: None,
-        }),
-        Ok(HnswCompatibilityState::Legacy(config)) => Ok(VaultDoctorHnswReport {
-            record_state: VaultDoctorHnswRecordState::Legacy,
-            vector_dimensions: Some(config.dimensions),
-            m_max_0: Some(config.m_max_0),
-            ef_construction: Some(config.ef_construction),
             distance_metric: None,
             index_structure: None,
         }),

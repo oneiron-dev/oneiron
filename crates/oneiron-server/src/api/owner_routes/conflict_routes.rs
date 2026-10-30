@@ -15,7 +15,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -27,7 +26,7 @@ use oneiron::dreamer_consolidation::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -37,14 +36,63 @@ use crate::server::SyncServer;
 /// The most conflicts one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/conflicts", get(list))
-        .route("/conflicts/settle", post(settle))
-        .route("/conflicts/settled", get(settled))
-        .route("/conflicts/revert", post(revert))
-        .route("/conflicts/review", post(resume_review))
-        .route("/conflicts/review/revoke", post(hold_review))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conflicts",
+                summary: "Every unanswered contradiction, oldest first.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/settle",
+                summary: "The owner's answer to one marker.",
+                row: None,
+            },
+            post(settle),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conflicts/settled",
+                summary: "The standing settlements, the Dreamer's among them, newest first.",
+                row: None,
+            },
+            get(settled),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/revert",
+                summary: "The owner's revert of one settlement.",
+                row: None,
+            },
+            post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/review",
+                summary: "Ends the owner's hold on the Dreamer's review of one subject or of every subject in the vault, so it settles them through its ladder again.",
+                row: None,
+            },
+            post(resume_review),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/review/revoke",
+                summary: "Holds the Dreamer's review on exactly that scope; it leaves those conflicts here for the owner until /review ends the hold.",
+                row: None,
+            },
+            post(hold_review),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

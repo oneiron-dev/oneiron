@@ -79,7 +79,10 @@ enum SpendPiece {
     /// The actor is the scope's agent.
     Agent { scope: u32 },
     /// The actor is the scope's payer, its yes taken by `granted_by`.
-    Payer { scope: u32, granted_by: EntityId },
+    Payer {
+        scope: u32,
+        granted_by: Option<EntityId>,
+    },
 }
 
 impl ActorContent for SpendCompartment {
@@ -181,12 +184,23 @@ fn rejoin_in_txn(
         let payer = match (skeleton.payer_at_ms, opened_payer) {
             (Some(at_ms), Some((party, granted_by))) => Some(SpendPayer {
                 party,
-                granted_by,
+                granted_by: match granted_by {
+                    Some(id) if erased(&id)? => None,
+                    kept => kept,
+                },
                 at_ms,
             }),
             (Some(_), None) => match here.and_then(|here| here.payer) {
-                Some(payer) if !erased(&payer.party)? && !erased(&payer.granted_by)? => Some(payer),
-                _ => None,
+                Some(payer) if erased(&payer.party)? => None,
+                Some(mut payer) => {
+                    if let Some(grantor) = payer.granted_by
+                        && erased(&grantor)?
+                    {
+                        payer.granted_by = None;
+                    }
+                    Some(payer)
+                }
+                None => None,
             },
             (None, _) => None,
         };
@@ -213,7 +227,7 @@ impl HomeTable for FreeTimeSpendRows {
     type Rows = Self;
     type Actor = SpendCompartment;
     const TABLE: &'static SideTableDecl = &side_table::AGENT_DISPATCH_SPEND_SCOPE;
-    const SCHEMA_VERSION: u16 = 2;
+    const SCHEMA_VERSION: u16 = 3;
 
     /// No try still spends under an open scope of a free-time tree: each has
     /// ended, or is a free-time item that never started, which the move
@@ -451,4 +465,55 @@ fn follows(here: &SpendScope, carried: &SpendScope) -> bool {
         && carried.shown_at_ms >= here.shown_at_ms
         && (here.state == SpendState::Open || carried.state == SpendState::Closed)
         && (here.closed_at.is_none() || here.closed_at == carried.closed_at)
+}
+
+/// Forgets `actor` in every local spend scope, in its erase's transaction
+/// (FIX 11777): an erased agent or payer party leaves `None`, and an erased
+/// grantor leaves `granted_by` as `None` with the party kept, its spend still
+/// on the party's standing. A row that does not read is passed over with a
+/// WARN and never fails the erase.
+pub(crate) fn erase_spend_scope_actor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    let mut scrubbed = Vec::new();
+    for row in SCOPE.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, value) = row?;
+        let scope = <String as crate::side_table::SideKey>::decode_key(&key)
+            .ok_or_else(|| crate::error::Error::InvalidConfig("unreadable key".to_owned()))
+            .and_then(|id| SCOPE.decode_value(&value).map(|scope| (id, scope)));
+        let (id, mut scope) = match scope {
+            Ok(row) => row,
+            Err(error) => {
+                tracing::warn!(%error, "an actor erase passed over a spend scope that does not read");
+                continue;
+            }
+        };
+        let mut hit = false;
+        if scope.agent == Some(*actor) {
+            scope.agent = None;
+            hit = true;
+        }
+        if scope
+            .payer
+            .as_ref()
+            .is_some_and(|payer| payer.party == *actor)
+        {
+            scope.payer = None;
+            hit = true;
+        } else if let Some(payer) = &mut scope.payer
+            && payer.granted_by == Some(*actor)
+        {
+            payer.granted_by = None;
+            hit = true;
+        }
+        if hit {
+            scrubbed.push((id, scope));
+        }
+    }
+    for (id, scope) in &scrubbed {
+        SCOPE.put(&vault.store, txn, id, scope)?;
+    }
+    Ok(())
 }

@@ -232,6 +232,7 @@ pub fn seal_conversation_flight<'a>(
         window.messages,
         pins,
         window.sources,
+        true,
         WindowLog::Conversation,
     ) else {
         driver.backend().end_flight();
