@@ -19,12 +19,13 @@
 use std::collections::BTreeSet;
 
 use loro::json::{JsonOpContent, JsonSchema, ListOp, MapOp, MovableListOp, TextOp};
-use loro::{ContainerID, ContainerType, ID, LoroValue, PeerID};
+use loro::{ContainerID, ContainerType, ID, LoroDoc, LoroValue, PeerID};
 
 use super::rows::HeldEdit;
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::Store;
 
 /// The root map an entity row is a register of.
 const ENTITIES_MAP: &str = "entities";
@@ -120,11 +121,17 @@ impl SyncSecretProjection {
     /// copy key names its source again, and every copy row carries the
     /// stored bytes or the visible diff applied to them. Placeholder or
     /// masked bytes never become a source row. Operation ids are kept: the
-    /// peer's pending identity is the canonical one.
+    /// peer's pending identity is the canonical one. `context` is this
+    /// window, read for a re-authored row kept under its own id (FIX 10874).
     ///
     /// # Errors
     /// The visible diff's own failure.
-    pub(crate) fn translate_history(&self, json: &mut JsonSchema) -> Result<TranslatedHistory> {
+    pub(crate) fn translate_history(
+        &self,
+        store: &Store,
+        context: Option<&LoroDoc>,
+        json: &mut JsonSchema,
+    ) -> Result<TranslatedHistory> {
         let mut out = TranslatedHistory::default();
         if self.is_empty() {
             return Ok(out);
@@ -147,8 +154,11 @@ impl SyncSecretProjection {
                             self.unalias_key(key, &mut out.sources);
                             continue;
                         };
-                        // A re-authored copy carries no edit (FIX 10729).
-                        let inbound = match self.reauthored_row(peer, &id, &bytes) {
+                        // A re-authored copy carries no edit (FIX 10729, FIX 10874).
+                        let reauthored = self.reauthored_row(peer, &id, &bytes).or_else(|| {
+                            self.reauthored_own_row(store, context, peer, &id, &bytes)
+                        });
+                        let inbound = match reauthored {
                             Some(row) => row,
                             None => self.source_row(&id, &bytes)?,
                         };

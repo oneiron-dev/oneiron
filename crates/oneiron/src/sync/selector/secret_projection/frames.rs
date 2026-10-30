@@ -240,7 +240,7 @@ impl SyncSecretProjection {
                 let mut json =
                     scratch.export_json_updates(&input.partial_start_vv, &input.partial_end_vv);
                 self.resolve_copy_carriers(store, &mut json);
-                let translated = self.translate_history(&mut json)?;
+                let translated = self.translate_history(store, context, &mut json)?;
                 if !translated.held.is_empty() {
                     return Ok(WindowAdmission::Held(translated.held));
                 }
