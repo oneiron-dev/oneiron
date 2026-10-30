@@ -547,25 +547,38 @@ pub(crate) fn craft_candidate_inbox_items(vault: &Vault) -> Result<Vec<AgentInbo
 }
 
 /// Every still-open candidate on `residents`, newest first, beside its
-/// resident.
+/// resident. Shells merged into a resident read as its own (FIX 9073); a
+/// candidate reached twice lists once, beside its stored resident.
 fn pending_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     residents: &[EntityId],
 ) -> Result<Vec<(EntityId, CraftCandidateView)>> {
-    let mut cards = Vec::new();
+    let mut cards: std::collections::BTreeMap<String, (EntityId, CraftCandidateView)> =
+        std::collections::BTreeMap::new();
     for resident in residents {
-        for id in vault.claims_for_subject_in_txn(rtxn, resident)? {
-            let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
-                continue;
-            };
-            if body.lifecycle == ClaimLifecycleStatus::Active
-                && let Some((_, _, card)) = candidate_card(&id, &body)
-            {
-                cards.push((*resident, card));
+        let subjects =
+            crate::skill_reliability::redirect_equivalent_subjects_in_txn(vault, rtxn, resident)?;
+        for subject in &subjects {
+            for id in vault.claims_for_subject_in_txn(rtxn, subject)? {
+                let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+                    continue;
+                };
+                if body.lifecycle == ClaimLifecycleStatus::Active
+                    && let Some((stored, _, card)) = candidate_card(&id, &body)
+                {
+                    let key = card.candidate_id.clone();
+                    match cards.get(&key) {
+                        Some((listed, _)) if *listed == stored || *resident != stored => {}
+                        _ => {
+                            cards.insert(key, (*resident, card));
+                        }
+                    }
+                }
             }
         }
     }
+    let mut cards: Vec<_> = cards.into_values().collect();
     cards.sort_by(|(_, a), (_, b)| {
         b.proposed_at
             .cmp(&a.proposed_at)

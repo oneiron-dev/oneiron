@@ -99,6 +99,9 @@ pub struct EvalMeasurementRequest {
     /// The seat's declared canary metric; `None` while none is declared.
     pub canary: Option<String>,
     pub method: MeasurementMethodPin,
+    /// The re-request generation: 0 for the first ask, N+1 to retry after N's
+    /// Partial with transient reasons (FIX 10442).
+    pub retry: u32,
 }
 
 /// Why a leg, a case or a whole measurement has no number.

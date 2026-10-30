@@ -6,9 +6,9 @@
 //! nothing switches the seat.
 
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalAxisPin, EvalMeasurementRequest, FloorSlicePolicy, HeldOutReplayNotes,
-    JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, OfferCandidate,
-    OfferModelPin, ScoreDirection, TrainingOfferDraft, eval_seat_canary,
+    EvalArmPin, EvalAxisPin, EvalMeasurementRequest, HeldOutReplayNotes, JUDGE_SCORE_AXIS,
+    JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, OfferCandidate, OfferModelPin,
+    ScoreDirection, TrainingOfferDraft, eval_seat_canary,
 };
 use oneiron::{Error, Vault};
 
@@ -62,9 +62,10 @@ pub(in crate::ai_host) fn attach_measured_card(
             direction: ScoreDirection::HigherIsBetter,
             units: JUDGE_SCORE_UNITS.to_owned(),
         },
-        floor_slices: FloorSlicePolicy::default(),
+        floor_slices: vault.offer_floor_slices(&draft.seat)?,
         canary: eval_seat_canary(&draft.seat).map(str::to_owned),
         method: MeasurementMethodPin::current(),
+        retry: 0,
     };
     let digest = match vault.request_eval_measurement(&request, now) {
         Ok(digest) => digest,

@@ -606,7 +606,18 @@ fn critiques(
                 *artifact.branch_attempt.as_bytes(),
                 artifact.artifact_id.clone(),
             );
-            let verdict_ref = declared_ref.or_else(|| reviewed.get(&key).copied());
+            // The review declared for this run names the critique (FIX 9078);
+            // a critique no review declares for it keeps the first in stored
+            // order, as before.
+            let verdict_ref = declared_ref.or_else(|| {
+                reviewed.get(&key).and_then(|reviews| {
+                    reviews
+                        .iter()
+                        .find(|(_, run)| *run == Some(member.attempt_ref))
+                        .map(|(verdict, _)| *verdict)
+                        .or_else(|| reviews.first().map(|(verdict, _)| *verdict))
+                })
+            });
             if let Some(listed) = seen.get(&key) {
                 // Listed under its first association; a later declared one
                 // still names the review the caller declared for the run.
@@ -625,15 +636,15 @@ fn critiques(
     Ok(critics)
 }
 
-/// The verdict claim of the stored review holding each critique (FIX 6380),
-/// from one pass over the stored reviews. A verdict ref that does not read
-/// is an issue, and so is a pass that fails: the critiques are listed
-/// still, naming no review.
+/// The verdict claim and declared run of every stored review holding each
+/// critique (FIX 6380, FIX 9078), from one pass over the stored reviews. A
+/// verdict ref that does not read is an issue, and so is a pass that fails:
+/// the critiques are listed still, naming no review.
 fn critique_reviews(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     issues: &mut Vec<ObservationIssue>,
-) -> BTreeMap<([u8; 16], String), EntityId> {
+) -> BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>> {
     match critique_review_refs_in_txn(vault, txn) {
         Ok((refs, unread)) => {
             for reason in unread {

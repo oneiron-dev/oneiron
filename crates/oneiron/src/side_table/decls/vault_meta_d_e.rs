@@ -395,6 +395,9 @@ side_tables! {
     EDIT_DISTANCE_JUDGE_AUDIT: VaultMeta b"edit_distance/judge_audit/v1\0" Raw;
     /// Monotonic counter behind EDIT_DISTANCE_JUDGE_AUDIT's sequence half. Key: ().
     EDIT_DISTANCE_JUDGE_AUDIT_SEQUENCE: VaultMeta b"edit_distance/judge_audit_sequence/v1" Raw;
+    /// Claim-to-receipt index bounding the teaching-copy erase (FIX 11347): the receipt ids taught
+    /// on one claim. Key: id16.
+    EDIT_DISTANCE_MINER_CLAIM_RECEIPTS: VaultMeta b"edit_distance/miner_claim_receipts/v1\0" Named;
     /// Mint-mark preventing a re-mint of the same substitution cluster, keyed by cluster handle. Key:
     /// hash32.
     EDIT_DISTANCE_MINER_MINT_MARK: VaultMeta b"edit_distance/miner_mint_mark/v1\0" Raw;

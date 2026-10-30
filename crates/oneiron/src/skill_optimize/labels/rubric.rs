@@ -4,15 +4,12 @@
 
 use super::*;
 
-/// The judge's rubric: from the bootstrap `judge` skill, through admitted
+/// The judge head: from the bootstrap `judge` skill, through admitted
 /// succession (`Supersedes`, new to old) to its newest revision, when that
-/// revision is live, shared, active and approved. The text is its stored
-/// package's SKILL.md, or a native revision's own instructions. `None` when no
-/// such revision or text exists.
-pub(crate) fn judge_rubric_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Option<JudgeRubric>> {
+/// revision is live. The walk alone, without the rubric's skill gates, so a
+/// judge imported under another id still has a head (FIX 9076). `None` when
+/// no live head exists.
+pub(crate) fn judge_head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
     let mut head = EntityId::derive(
         crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
         &[JUDGE_SKILL_ID.as_bytes()],
@@ -36,6 +33,21 @@ pub(crate) fn judge_rubric_in_txn(
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &head)?.is_live() {
         return Ok(None);
     }
+    Ok(Some(head))
+}
+
+/// The judge's rubric: from the bootstrap `judge` skill, through admitted
+/// succession (`Supersedes`, new to old) to its newest revision, when that
+/// revision is live, shared, active and approved. The text is its stored
+/// package's SKILL.md, or a native revision's own instructions. `None` when no
+/// such revision or text exists.
+pub(crate) fn judge_rubric_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<JudgeRubric>> {
+    let Some(head) = judge_head_in_txn(vault, txn)? else {
+        return Ok(None);
+    };
     let record = match vault.read_skill_record_in_txn(txn, &head) {
         Ok(record) => record,
         Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),

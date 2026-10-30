@@ -19,6 +19,11 @@ const RESULT_ID: SideTable<EntityId, Vec<u8>, Raw> =
 const CLAIM_TRUST: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::CRITIC_REVIEW_CLAIM_TRUST);
 
+/// Stored-review keys already reported unreadable (FIX 5251): each unreadable
+/// review is named once. Presence-only.
+const UNREADABLE_REPORTED: SideTable<Vec<u8>, (), Raw> =
+    SideTable::new(&side_table::CRITIC_UNREADABLE_REPORTED);
+
 pub(super) fn persist_review(
     vault: &Vault,
     request: &ReviewRequest,
@@ -302,15 +307,30 @@ pub(crate) fn declared_critiques_in_txn(
 ) -> Result<(BTreeMap<EntityId, Vec<DeclaredCritique>>, Vec<String>)> {
     let mut found: BTreeMap<EntityId, Vec<DeclaredCritique>> = BTreeMap::new();
     let mut unread = Vec::new();
+    // Reviews already reported unreadable stay silent (FIX 5251): the marks
+    // persist across calls, so each unreadable review is named once. A mark
+    // whose row reads again, or is gone, heals below.
+    let mut reported: BTreeSet<Vec<u8>> = UNREADABLE_REPORTED
+        .scan_keys(&vault.store, txn, &[])?
+        .collect::<Result<_>>()?;
+    let mut encountered = BTreeSet::new();
+    let mut to_mark = Vec::new();
+    let mut to_unmark = Vec::new();
     for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
         let (key, value) = row?;
+        encountered.insert(key.clone());
         let stored = match RESULT.decode_value(&value) {
             Ok(stored) => stored,
             Err(error) => {
-                let key = crate::entity_id::bytes_to_hex_lower(&key);
+                if reported.contains(&key) {
+                    continue;
+                }
+                let hex = crate::entity_id::bytes_to_hex_lower(&key);
                 unread.push(format!(
-                    "stored review {key} does not read, so the run it was declared for is unknown: {error}"
+                    "stored review {hex} does not read, so the run it was declared for is unknown: {error}"
                 ));
+                reported.insert(key.clone());
+                to_mark.push(key);
                 continue;
             }
         };
@@ -318,8 +338,9 @@ pub(crate) fn declared_critiques_in_txn(
             continue;
         };
         let verdict_ref = EntityId::from_hex(&stored.verdict).ok();
+        let mut row_unread = Vec::new();
         if verdict_ref.is_none() {
-            unread.push(format!(
+            row_unread.push(format!(
                 "review {} declared for run {} keeps a verdict ref that does not read",
                 stored.verdict,
                 run.to_hex()
@@ -334,7 +355,7 @@ pub(crate) fn declared_critiques_in_txn(
                     verdict_ref,
                     artifact,
                 }),
-                Err(error) => unread.push(format!(
+                Err(error) => row_unread.push(format!(
                     "critique {} of review {} declared for run {} does not read: {error}",
                     artifact.artifact_id,
                     stored.verdict,
@@ -342,22 +363,52 @@ pub(crate) fn declared_critiques_in_txn(
                 )),
             }
         }
+        if row_unread.is_empty() {
+            if reported.remove(&key) {
+                to_unmark.push(key);
+            }
+        } else if reported.contains(&key) {
+            continue;
+        } else {
+            unread.extend(row_unread);
+            reported.insert(key.clone());
+            to_mark.push(key);
+        }
+    }
+    for key in reported.difference(&encountered) {
+        to_unmark.push(key.clone());
+    }
+    if !(to_mark.is_empty() && to_unmark.is_empty())
+        && let Err(error) = vault.with_write_txn_grouped(|wtxn| {
+            for key in &to_mark {
+                UNREADABLE_REPORTED.put(&vault.store, wtxn, key, &())?;
+            }
+            for key in &to_unmark {
+                UNREADABLE_REPORTED.delete(&vault.store, wtxn, key)?;
+            }
+            Ok(())
+        })
+    {
+        tracing::warn!(%error, "the unreadable-review marks did not persist: the reviews report again");
     }
     Ok((found, unread))
 }
 
-/// The verdict claim of the stored review holding each in-scope critique,
-/// keyed by the critique's branch and artifact id, read in the caller's
-/// snapshot (FIX 6380): the way back from a critique found on its branch to
-/// the review that wrote it. A critique two reviews hold names the first in
-/// stored order. One line names each review whose verdict ref does not read;
-/// a review that does not decode is skipped here, as
-/// [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
+/// The verdict claim and declared run of every stored review holding each
+/// in-scope critique, keyed by the critique's branch and artifact id, read in
+/// the caller's snapshot (FIX 6380, FIX 9078): the way back from a critique
+/// found on its branch to the reviews that wrote it, in stored order. The
+/// caller picks the review declared for its run. One line names each review
+/// whose verdict ref does not read; a review that does not decode is skipped
+/// here, as [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
 pub(crate) fn critique_review_refs_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<(BTreeMap<([u8; 16], String), EntityId>, Vec<String>)> {
-    let mut refs = BTreeMap::new();
+) -> Result<(
+    BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>>,
+    Vec<String>,
+)> {
+    let mut refs: BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>> = BTreeMap::new();
     let mut unread = Vec::new();
     for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
         let (_, value) = row?;
@@ -374,7 +425,8 @@ pub(crate) fn critique_review_refs_in_txn(
         for artifact in stored.artifacts {
             if !artifact.out_of_scope {
                 refs.entry((*artifact.branch_attempt.as_bytes(), artifact.artifact_id))
-                    .or_insert(verdict);
+                    .or_default()
+                    .push((verdict, stored.spawn_attempt));
             }
         }
     }
