@@ -15582,7 +15582,7 @@
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -60454,7 +60454,7 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 21,
+      "crate-vis": 23,
       "re-export": 3
      }
     },
@@ -60468,7 +60468,7 @@
      "purpose": "An erased actor out of the reveal rows (FIX 3520)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1
      }
     },
@@ -60480,6 +60480,16 @@
      "purpose": "The agent's doors: `reveal`, `wait` and `describe` on a handle",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/close.rs",
+     "purpose": "A reveal closed with a named cause when its secret is erased (FIX 8350)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60527,6 +60537,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/notice.rs",
+     "purpose": "An asked reveal's inbox Ask (FIX 2355): one notice per live owner, so an open ask waits in the inbox, not…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -60549,15 +60569,37 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/replay.rs",
+     "purpose": "A granted `reveal.wait` made again by its step, resumed after a park (FIX 2360)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/scope.rs",
+     "purpose": "The reach of the owner's standing grant on a reveal (FIX 2354): this project, every project, this task or…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "HandleReveal",
       "OwnerSecretReveal",
+      "RevealGrantScope",
       "RevealTarget",
       "SecretHandleCard",
       "SecretProvenance",
       "SecretRevealAnswer",
       "SecretRevealAnswered",
       "SecretRevealAsk",
+      "SecretRevealCause",
       "SecretRevealDecision",
       "SecretRevealReceipt",
       "SecretRevealState"
@@ -60565,8 +60607,8 @@
      "path": "src/secret_custody/reveal/types.rs",
      "purpose": "The reveal's public value types: its states, decisions, receipts, asks and answers, and what a handle…",
      "surface": {
-      "enum": 5,
-      "fn": 3,
+      "enum": 7,
+      "fn": 5,
       "struct": 6
      }
     },
@@ -60900,7 +60942,7 @@
      "purpose": "Txn row reads/writes, teardown, lazy expiry, and the one stamping body",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1
      }
     },
@@ -67780,7 +67822,7 @@
      "path": "src/store/world_pad_custody.rs",
      "purpose": "The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -77451,9 +77493,9 @@
      "path": "src/verbs/secret.rs",
      "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret or person's value by its handle…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 8
      }
     },
@@ -83358,7 +83400,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 61,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83752,7 +83794,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5611,
+   "source_files": 5615,
    "test_files": 902
   },
   "oneiron-android": {
