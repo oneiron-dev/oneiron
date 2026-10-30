@@ -145,6 +145,11 @@ impl SyncConnection {
         // The host topology is authoritative even before the first socket
         // attempt, and its watcher remains active during reconnect backoff.
         // There is no fallback election on transport loss or cancellation.
+        // Its first election holds the host's admission (FIX 12036).
+        let mut left_rx = self.left.subscribe();
+        let Some(first_election) = self.admit_or_stop(&mut shutdown_rx, &mut left_rx).await else {
+            return Ok(());
+        };
         let _topology_watcher = self
             .config
             .client_config
@@ -157,9 +162,11 @@ impl SyncConnection {
                     self.config.client_config.residence_home_route.clone(),
                     self.config.client_config.server_url.clone(),
                     event_tx.clone(),
+                    self.batch_admission.clone(),
                 )
             })
             .transpose()?;
+        drop(first_election);
 
         // Observer A → outbound wiring: while attached, persisted local
         // updates arrive on `local_rx` below.
@@ -168,7 +175,6 @@ impl SyncConnection {
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
-        let mut left_rx = self.left.subscribe();
         let mut mode_rx = self.mode.subscribe();
         self.running.send_replace(true);
 
@@ -180,7 +186,7 @@ impl SyncConnection {
             }
             // The connect is one exchange under the host's admission; a
             // paused host is waited out before the dial (FIX 12036).
-            let Some(connect_batch) = self.admit_connect(&mut shutdown_rx, &mut left_rx).await
+            let Some(connect_batch) = self.admit_or_stop(&mut shutdown_rx, &mut left_rx).await
             else {
                 let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                 break;
@@ -260,7 +266,7 @@ impl SyncConnection {
             }
 
             // Check for queue overflow → re-bootstrap
-            self.handle_queue_overflow_check(&mut client, &event_tx, self.queue.is_full());
+            self.admitted_overflow_check(&mut client, &event_tx).await;
             if renegotiate {
                 continue;
             }

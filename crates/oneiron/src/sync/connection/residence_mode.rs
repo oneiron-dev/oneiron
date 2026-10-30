@@ -32,7 +32,8 @@ pub(super) const RENEGOTIATE_AT_ONCE: bool = true;
 impl SyncConnection {
     /// Resolves the mode at start, then on each wake whose committed home
     /// moved this machine in or out of the home, for the connection's whole
-    /// life. A federation lane keeps its configured mode and runs none.
+    /// life. A federation lane keeps its configured mode and runs none. Each
+    /// change holds the host's admission, a pause waited out (FIX 12036).
     pub(super) async fn run_residence_mode(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
@@ -46,6 +47,8 @@ impl SyncConnection {
         loop {
             match crate::sync::residence::local_is_elected_home(&vault) {
                 Ok(is_home) if home != Some(is_home) => {
+                    // `follow_home` resolves the mode afresh past a pause.
+                    let _change = self.admit_round().await;
                     if let Err(error) = self.follow_home(&vault) {
                         let _ = events.send(SyncEvent::Error(format!(
                             "Residence mode refresh failed: {error}"
