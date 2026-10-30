@@ -9,6 +9,7 @@
 //! the catalog's revision, under a receipt naming the catalog's suite
 //! report. The tool's setting stays the catalog slate's, read at call time.
 //!
+//! Each grant is a standing consent Grant row the owner's act mints.
 //! Consenting a tool again retires the actor's earlier grant and key for it.
 //! Every change to the catalog key's status or admission reaches its derived
 //! keys: suspension, a staged manifest or a protocol revision holds them;
@@ -26,8 +27,8 @@ use crate::error::{Error, Result};
 use crate::outbound_consent::DataClass;
 use crate::outbound_consent::tool_call::ToolGrantDataClass;
 use crate::outbound_grant::{
-    ScopedMcpGrantMintIntent, StandingOutboundGrantStatus,
-    standing_outbound_grant_ids_for_principal, standing_outbound_grant_in_txn,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
+    standing_outbound_grants_for_principal_in_txn,
 };
 use crate::store::Store;
 use crate::{EntityId, Vault};
@@ -51,10 +52,6 @@ use super::super::txn::{
 
 mod doors;
 
-/// The component every connector-consent grant names as its origin.
-pub const CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID: &str = "connector_consent";
-/// The owner act every connector-consent grant names.
-pub const CONNECTOR_CONSENT_ORIGIN_ACTION_ID: &str = "connector.consent";
 /// Why a per-grant key is suspended while its catalog connector is not
 /// Active, or while the catalog holds a staged change to the key's tool.
 /// The catalog's return lifts exactly this hold; nothing else does.
@@ -192,6 +189,7 @@ impl Vault {
             let manifest = tool_snapshot(&admitted.slate, &row.tool)?;
             self.retire_actor_tool_grants_in_txn(
                 wtxn,
+                owner,
                 &principal_ref,
                 &admitted.server,
                 &row.tool,
@@ -202,21 +200,18 @@ impl Vault {
             if row.headers {
                 tool_data_classes.push(ToolGrantDataClass::XMcpHeader);
             }
-            self.mint_scoped_mcp_outbound_grant_in_txn(
+            self.mint_standing_outbound_grant_in_txn(
                 wtxn,
-                &grant_id,
-                &ScopedMcpGrantMintIntent {
-                    principal_ref: principal_ref.clone(),
-                    origin_component_id: CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID.to_owned(),
-                    origin_action_id: CONNECTOR_CONSENT_ORIGIN_ACTION_ID.to_owned(),
-                    origin_receipt_ref: None,
+                owner,
+                grant_id,
+                &principal_ref,
+                StandingOutboundGrantScope::ScopedMcp {
                     server: admitted.server.clone(),
                     tool: row.tool.clone(),
                     data_class_ceiling: row.data_class_ceiling,
                     tool_data_classes,
                     endpoint_allowlist: vec![consent.endpoint.clone()],
                 },
-                at,
             )?;
             let capability = ScopedCapabilityProvenance::mint(&admitted.server, &grant_id)
                 .ok_or_else(|| invalid("the connector name has no scoped identity"))?;
@@ -294,7 +289,7 @@ impl Vault {
             match catalog.status {
                 ConnectorKeyStatus::Active => {}
                 ConnectorKeyStatus::Revoked => {
-                    self.retire_tool_grant_in_txn(wtxn, &capability.grant_id(), &server, at)?;
+                    self.retire_tool_grant_in_txn(wtxn, None, &capability.grant_id(), &server, at)?;
                     continue;
                 }
                 ConnectorKeyStatus::Pending | ConnectorKeyStatus::Suspended => {
@@ -325,7 +320,7 @@ impl Vault {
                 .then(|| (admitted, entry.name.clone()))
             });
             let Some((admitted, tool)) = carried else {
-                self.retire_tool_grant_in_txn(wtxn, &capability.grant_id(), &server, at)?;
+                self.retire_tool_grant_in_txn(wtxn, None, &capability.grant_id(), &server, at)?;
                 continue;
             };
             let current = record.protocol_revision.as_deref() == Some(admitted.revision.as_str())
@@ -403,44 +398,47 @@ impl Vault {
     }
 
     /// Retires the actor's live grants for one server and tool, so the call
-    /// driver's first-match scan never picks an older consent.
+    /// driver's first-match scan never picks an older consent. The owner's
+    /// re-consent revokes each as its act.
     fn retire_actor_tool_grants_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
         principal_ref: &str,
         server: &str,
         tool: &str,
         at: u64,
     ) -> Result<()> {
-        for id in standing_outbound_grant_ids_for_principal(&self.store, wtxn, principal_ref)? {
-            let Some(grant) = standing_outbound_grant_in_txn(&self.store, wtxn, &id)? else {
-                continue;
-            };
-            if grant.principal_ref == principal_ref
-                && grant.status == StandingOutboundGrantStatus::Active
+        for grant in
+            standing_outbound_grants_for_principal_in_txn(&self.store, wtxn, principal_ref)?
+        {
+            if grant.is_active()
                 && grant
                     .scope
                     .scoped_mcp_grant()
                     .is_some_and(|scope| scope.server == server && scope.tool == tool)
             {
-                self.retire_tool_grant_in_txn(wtxn, &id, server, at)?;
+                self.retire_tool_grant_in_txn(wtxn, Some(owner), &grant.id, server, at)?;
             }
         }
         Ok(())
     }
 
-    /// Revokes one scoped grant and every live per-grant key minted for it.
+    /// Revokes one scoped grant and every live per-grant key minted for it:
+    /// the owner's revoke, receipted, when `owner` is present, else the
+    /// engine's reduce-only retire as its catalog changes.
     fn retire_tool_grant_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
+        owner: Option<&AuthenticatedOwner>,
         grant_id: &EntityId,
         server: &str,
         at: u64,
     ) -> Result<()> {
-        if standing_outbound_grant_in_txn(&self.store, wtxn, grant_id)?
-            .is_some_and(|grant| grant.status == StandingOutboundGrantStatus::Active)
+        if let Some(grant) = standing_outbound_grant_in_txn(&self.store, wtxn, grant_id)?
+            .filter(StandingOutboundGrant::is_active)
         {
-            self.revoke_standing_outbound_grant_in_txn(wtxn, grant_id, at)?;
+            self.withdraw_standing_outbound_grant_in_txn(wtxn, owner, &grant)?;
         }
         let Some(capability) = ScopedCapabilityProvenance::mint(server, grant_id) else {
             return Ok(());

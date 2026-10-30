@@ -110,7 +110,7 @@ impl Vault {
 
     /// The principal's live scoped grant for exactly this server and tool:
     /// the one the call last ran under when it still matches, else the first
-    /// in index order. Each grant it reads is listed in `read`.
+    /// in id order. Each grant it reads is listed in `read`.
     fn connector_call_grant(
         &self,
         principal_ref: &str,
@@ -119,24 +119,22 @@ impl Vault {
         preferred: Option<EntityId>,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<Option<(EntityId, StandingOutboundGrant)>> {
-        let (ids, floor) = {
+        let (grants, floor) = {
             let txn = self.store.env.read_txn()?;
             let floor =
                 crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?;
-            let ids = crate::outbound_grant::standing_outbound_grant_ids_for_principal(
+            let grants = crate::outbound_grant::standing_outbound_grants_for_principal_in_txn(
                 &self.store,
                 &txn,
                 principal_ref,
             )?;
-            (ids, floor)
+            (grants, floor)
         };
         let mut first = None;
-        for id in ids {
-            let Some(grant) = self.get_standing_outbound_grant(&id)? else {
-                continue;
-            };
+        for grant in grants {
+            let id = grant.id;
             read.push(id);
-            if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&floor) {
+            if !grant.is_active_under_policy(&floor) {
                 continue;
             }
             let Some(scope) = grant.scope.scoped_mcp_grant() else {

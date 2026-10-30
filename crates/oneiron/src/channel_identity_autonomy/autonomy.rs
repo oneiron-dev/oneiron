@@ -12,21 +12,17 @@ use crate::channel_identity_selection::RelationshipContext;
 use crate::consent::{AuthenticatedOwner, GrantBound};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
-    standing_outbound_grant_in_txn,
-};
 
 use super::codec::{
-    AUTONOMY, action_bound, action_value, address, key, mode_from, mode_key, mode_value,
-    read_bound, read_from, read_value,
+    AUTONOMY, action_bound, action_grant_from_row, action_value, address, key, mode_from, mode_key,
+    mode_value, read_bound, read_from, read_value,
 };
 use super::envelopes::AutonomyReader;
 use super::invalid_autonomy;
 use super::types::{
-    ChannelIdentityActionEnvelope, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRequest,
-    ChannelIdentityAutonomyState, MailboxReadCandidate, PREDICATE_ACTION_ENVELOPE,
-    PREDICATE_AUTONOMY_MODE, PREDICATE_MAILBOX_READ_ENVELOPE,
+    ChannelIdentityActionEnvelope, ChannelIdentityActionGrant, ChannelIdentityAutonomyMode,
+    ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyState, MailboxReadCandidate,
+    PREDICATE_ACTION_ENVELOPE, PREDICATE_AUTONOMY_MODE, PREDICATE_MAILBOX_READ_ENVELOPE,
 };
 use crate::error::GateError;
 
@@ -217,37 +213,19 @@ impl Vault {
                     owner,
                     now,
                 )?;
-                let bound = action_bound(desired.actor_ref, envelope_ref, envelope, verb)?;
-                let receipt = self.create_standing_grant_in_txn(&mut txn, owner, bound.clone())?;
+                let frontier = crate::gate::resolve_policy_manifest(&self.store, &txn)?
+                    .read_frontier_hash()?;
+                let bound =
+                    action_bound(desired.actor_ref, envelope_ref, envelope, verb, &frontier)?;
                 let grant_ref = address("action_grant", &Value::from(bound.digest().to_hex()))?;
-                if self.store.port_entity_record(&txn, &grant_ref)?.is_some() {
+                if self
+                    .autonomy_reader()
+                    .autonomy_action_grant_in_txn(&txn, grant_ref)?
+                    .is_some()
+                {
                     return Err(invalid_autonomy());
                 }
-                let grant = StandingOutboundGrant {
-                    authority_scope: crate::federation::scope_codec::effect_preset(),
-                    principal_ref: desired.actor_ref.to_hex(),
-                    origin_component_id: "channel_identity.autonomy".to_owned(),
-                    origin_action_id: "apply".to_owned(),
-                    origin_receipt_ref: Some(receipt.decision_id().to_hex()),
-                    scope: StandingOutboundGrantScope::ChannelIdentityEnvelope {
-                        identity_ref: identity,
-                        envelope_ref,
-                        verb_class: verb.to_owned(),
-                    },
-                    status: StandingOutboundGrantStatus::Active,
-                    created_at: now,
-                    revoked_at: None,
-                    last_used_at: None,
-                    binding_diff_handle: bound.digest().as_bytes().to_vec(),
-                    read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &txn)?
-                        .read_frontier_hash()?,
-                };
-                self.apply_standing_outbound_grant_body(
-                    &mut txn,
-                    &grant_ref,
-                    now,
-                    crate::outbound_grant::encode_standing_outbound_grant_body(&grant)?,
-                )?;
+                self.create_standing_grant_in_txn(&mut txn, owner, bound)?;
                 Some(grant_ref)
             }
             _ => return Err(invalid_autonomy()),
@@ -290,41 +268,18 @@ impl Vault {
         }
         let envelope = self.autonomy_action_envelope(&txn, envelope_ref)?;
         let actor = self.autonomy_identity_actor(&txn, envelope.identity_ref)?;
-        let bound = action_bound(actor, *envelope_ref, &envelope, verb_class)?;
+        let frontier =
+            crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?;
+        let bound = action_bound(actor, *envelope_ref, &envelope, verb_class, &frontier)?;
         let reference = address("action_grant", &Value::from(bound.digest().to_hex()))?;
-        if let Some(grant) = standing_outbound_grant_in_txn(&self.store, &txn, &reference)? {
+        if let Some(grant) = self
+            .autonomy_reader()
+            .autonomy_action_grant_in_txn(&txn, reference)?
+        {
             self.validate_autonomy_action(&txn, &grant, now)?;
-            if grant.binding_diff_handle != bound.digest().as_bytes().to_vec() {
-                return Err(invalid_autonomy());
-            }
             return Ok(reference);
         }
-        let receipt = self.create_standing_grant_in_txn(&mut txn, owner, bound.clone())?;
-        let grant = StandingOutboundGrant {
-            authority_scope: crate::federation::scope_codec::effect_preset(),
-            principal_ref: actor.to_hex(),
-            origin_component_id: "channel_identity.autonomy".to_owned(),
-            origin_action_id: "owner_grant".to_owned(),
-            origin_receipt_ref: Some(receipt.decision_id().to_hex()),
-            scope: StandingOutboundGrantScope::ChannelIdentityEnvelope {
-                identity_ref: envelope.identity_ref,
-                envelope_ref: *envelope_ref,
-                verb_class: verb_class.to_owned(),
-            },
-            status: StandingOutboundGrantStatus::Active,
-            created_at: now,
-            revoked_at: None,
-            last_used_at: None,
-            binding_diff_handle: bound.digest().as_bytes().to_vec(),
-            read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &txn)?
-                .read_frontier_hash()?,
-        };
-        self.apply_standing_outbound_grant_body(
-            &mut txn,
-            &reference,
-            now,
-            crate::outbound_grant::encode_standing_outbound_grant_body(&grant)?,
-        )?;
+        self.create_standing_grant_in_txn(&mut txn, owner, bound)?;
         txn.commit()?;
         Ok(reference)
     }
@@ -459,7 +414,7 @@ impl Vault {
     pub(crate) fn validate_autonomy_action(
         &self,
         txn: &heed::RoTxn<'_>,
-        grant: &StandingOutboundGrant,
+        grant: &ChannelIdentityActionGrant,
         at: u64,
     ) -> Result<ChannelIdentityActionEnvelope> {
         self.autonomy_reader()
@@ -537,12 +492,13 @@ impl AutonomyReader<'_> {
         let (action_grant, action_envelope) = match (mode.rung.verb(), mode.action_grant_ref) {
             (None, None) => (None, None),
             (Some(verb), Some(reference)) => {
-                let action = standing_outbound_grant_in_txn(self.store, txn, &reference)?
+                let action = self
+                    .autonomy_action_grant_in_txn(txn, reference)?
                     .ok_or_else(invalid_autonomy)?;
                 let envelope = self.validate_autonomy_action(txn, &action, at)?;
                 if envelope.identity_ref != identity_ref
                     || envelope.relationship_context != mode.relationship_context
-                    || !matches!(&action.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { verb_class, .. } if verb_class == verb)
+                    || action.verb_class != verb
                 {
                     return Err(invalid_autonomy());
                 }
@@ -573,34 +529,53 @@ impl AutonomyReader<'_> {
         Ok(())
     }
 
+    /// The action grant an autonomy row names by `reference`: the standing
+    /// consent Grant row whose action bound it addresses, live or revoked.
+    pub(crate) fn autonomy_action_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reference: EntityId,
+    ) -> Result<Option<ChannelIdentityActionGrant>> {
+        for (_, row) in crate::consent::standing_grant_rows_in_txn(self.store, txn)? {
+            if let Some(grant) = action_grant_from_row(reference, &row)? {
+                return Ok(Some(grant));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Proves one action grant against its envelope at `at`: the envelope
+    /// stored by then, the grant's bound exactly the owner's action bound
+    /// over it for its identity's actor, its row live, and minted under the
+    /// current policy frontier.
     pub(crate) fn validate_autonomy_action(
         &self,
         txn: &heed::RoTxn<'_>,
-        grant: &StandingOutboundGrant,
+        grant: &ChannelIdentityActionGrant,
         at: u64,
     ) -> Result<ChannelIdentityActionEnvelope> {
-        let StandingOutboundGrantScope::ChannelIdentityEnvelope {
-            identity_ref,
-            envelope_ref,
-            verb_class,
-        } = &grant.scope
-        else {
-            return Err(invalid_autonomy());
-        };
-        let actor = self.autonomy_identity_actor(txn, *identity_ref)?;
+        let actor = self.autonomy_identity_actor(txn, grant.identity_ref)?;
         if self
-            .autonomy_row(txn, &key(PREDICATE_ACTION_ENVELOPE, &envelope_ref.to_hex()))?
+            .autonomy_row(
+                txn,
+                &key(PREDICATE_ACTION_ENVELOPE, &grant.envelope_ref.to_hex()),
+            )?
             .1
             > at
         {
             return Err(invalid_autonomy());
         }
-        let envelope = self.autonomy_action_envelope(txn, envelope_ref)?;
-        let bound = action_bound(actor, *envelope_ref, &envelope, verb_class)?;
-        if envelope.identity_ref != *identity_ref
-            || grant.principal_ref != actor.to_hex()
-            || grant.created_at > at
-            || grant.binding_diff_handle != bound.digest().as_bytes().to_vec()
+        let envelope = self.autonomy_action_envelope(txn, &grant.envelope_ref)?;
+        let bound = action_bound(
+            actor,
+            grant.envelope_ref,
+            &envelope,
+            &grant.verb_class,
+            &grant.policy_frontier,
+        )?;
+        if envelope.identity_ref != grant.identity_ref
+            || grant.actor_ref != actor
+            || grant.grant_ref != bound.digest().to_hex()
             || !grant.is_active_under_policy(
                 &crate::gate::resolve_policy_manifest(self.store, txn)?.read_frontier_hash()?,
             )
