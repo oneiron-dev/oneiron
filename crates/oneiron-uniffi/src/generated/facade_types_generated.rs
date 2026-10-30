@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1209 facade rows, 4378 generated types.
+// UniFFI census: 1209 facade rows, 4379 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1161.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -16528,6 +16528,12 @@ pub struct PackInstallReceipt {
     pub installed_at: u64,
     #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
     pub notices: Option<Vec<WorldRecipientNotice>>,
+    #[serde(
+        rename = "owner_activated",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_activated: Option<Vec<PackCandidateReason>>,
 }
 
 /// `oneiron::verbs::host::PackPutReceipt`.
@@ -17564,6 +17570,11 @@ pub struct HookSelector {
 pub enum HookAuthor {
     #[serde(rename = "owner")]
     Owner,
+    #[serde(rename = "agent")]
+    Agent {
+        #[serde(rename = "agent")]
+        agent: String,
+    },
     #[serde(rename = "foreign_actor")]
     ForeignActor {
         #[serde(rename = "actor_kind")]
@@ -17788,6 +17799,8 @@ pub struct HubHookReplay {
     pub hook: String,
     #[serde(rename = "entries")]
     pub entries: Vec<HookReplayRow>,
+    #[serde(rename = "unreplayed")]
+    pub unreplayed: bool,
 }
 
 /// `oneiron::verbs::hub::HubHookQualificationReceipt`.
@@ -19544,7 +19557,7 @@ pub struct ChannelSubscriptionRevoked {
     pub subscription: String,
 }
 
-/// `oneiron::verbs::host::PackSetupRequest`.
+/// `oneiron::verbs::host::pack_setup::PackSetupRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupRequest {
@@ -19775,7 +19788,7 @@ pub struct PackSetupView {
     pub ready: bool,
 }
 
-/// `oneiron::verbs::host::PackSetupStoreSecret`.
+/// `oneiron::verbs::host::pack_setup::PackSetupStoreSecret`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PackSetupStoreSecret {
     #[serde(rename = "door")]
@@ -19788,7 +19801,20 @@ pub struct PackSetupStoreSecret {
     pub effector: String,
 }
 
-/// `oneiron::verbs::host::PackSetupReceipt`.
+/// `oneiron::connector_key::setup::allow_ask::PackSetupOwnerAsk`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PackSetupOwnerAsk {
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "door")]
+    pub door: String,
+    #[serde(rename = "connection")]
+    pub connection: String,
+    #[serde(rename = "permissions")]
+    pub permissions: Vec<String>,
+}
+
+/// `oneiron::verbs::host::pack_setup::PackSetupReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PackSetupReceipt {
     #[serde(rename = "setup")]
@@ -19803,6 +19829,8 @@ pub struct PackSetupReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub store_secret: Option<PackSetupStoreSecret>,
+    #[serde(rename = "owner_ask", default, skip_serializing_if = "Option::is_none")]
+    pub owner_ask: Option<PackSetupOwnerAsk>,
 }
 
 /// `oneiron::skill_hub::pack_catalog::setup_session::PackSetupAnswer`.
@@ -19833,7 +19861,7 @@ pub enum PackSetupAnswer {
     },
 }
 
-/// `oneiron::verbs::host::PackSetupCardActionInput`.
+/// `oneiron::verbs::host::pack_setup::PackSetupCardActionInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupCardActionInput {
@@ -19843,7 +19871,7 @@ pub struct PackSetupCardActionInput {
     pub state: Option<std::collections::HashMap<String, SelfUiStateValue>>,
 }
 
-/// `oneiron::verbs::host::PackSetupAnswerRequest`.
+/// `oneiron::verbs::host::pack_setup::PackSetupAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupAnswerRequest {
@@ -19861,7 +19889,7 @@ pub struct PackSetupAnswerRequest {
     pub card_action: Option<PackSetupCardActionInput>,
 }
 
-/// `oneiron::verbs::host::PackSetupVerifyRequest`.
+/// `oneiron::verbs::host::pack_setup::PackSetupVerifyRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupVerifyRequest {
