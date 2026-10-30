@@ -17,7 +17,7 @@ pub(crate) async fn vault_disclosure_ceiling_get(
     let answer = async {
         let owner = owner_proof(auth, server, "vault.disclosure.ceiling.get")?;
         let server = Arc::clone(server);
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             server
                 .vault()
                 .model_disclosure_ceiling(&owner, input)
@@ -38,7 +38,7 @@ pub(crate) async fn vault_disclosure_ceiling_set(
     let answer = async {
         let owner = owner_proof(auth, server, "vault.disclosure.ceiling.set")?;
         let server = Arc::clone(server);
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             server
                 .vault()
                 .set_model_disclosure_ceiling(&owner, input)
@@ -59,7 +59,7 @@ pub(crate) async fn vault_disclosure_ceiling_clear(
     let answer = async {
         let owner = owner_proof(auth, server, "vault.disclosure.ceiling.clear")?;
         let server = Arc::clone(server);
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             server
                 .vault()
                 .clear_model_disclosure_ceiling(&owner, input)
@@ -80,7 +80,7 @@ pub(crate) async fn vault_disclosure_reveals(
     let answer: MemoryResult<Vec<RevealAskView>> = async {
         let owner = owner_proof(auth, server, "vault.disclosure.reveals")?;
         let server = Arc::clone(server);
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             oneiron::task_verb::sdk::disclosure_reveals_as_owner(server.vault(), &owner, input)
         })
         .await
@@ -98,7 +98,7 @@ pub(crate) async fn vault_disclosure_reveals_answer(
     let answer: MemoryResult<RevealAnsweredView> = async {
         let owner = owner_proof(auth, server, "vault.disclosure.reveals.answer")?;
         let server = Arc::clone(server);
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             oneiron::task_verb::sdk::answer_disclosure_reveal_as_owner(
                 server.vault(),
                 &owner,

@@ -212,7 +212,7 @@ impl HostSelfDispatcher<'_> {
         let dispatcher = AgentDispatcher::new(vault).observing_seats(&observe);
         let view = dispatcher.launch_planned_spawn_for_attempt(
             &leased,
-            &self.actor.entity_ref(),
+            &self.actor,
             &request,
             &spawn_host,
             Some(runner),

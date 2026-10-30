@@ -459,6 +459,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         retry_after: None,
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
+        legal_hold: None,
     }
 }
 
