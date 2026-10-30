@@ -54,8 +54,8 @@ pub use self::model::{
     InboxGroupReopen, InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
 };
 pub use self::unified::{
-    InboxGroupKind, InboxGroupResolution, InboxGroupResolveRequest, UnifiedInboxGroup,
-    UnifiedInboxGroupCursor, UnifiedInboxGroupPage,
+    InboxGroupKind, InboxGroupResolution, InboxGroupResolveRequest, InboxGroupResolveTarget,
+    UnifiedInboxGroup, UnifiedInboxGroupCursor, UnifiedInboxGroupPage,
 };
 
 pub(crate) use self::notification::notification_id;
