@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4384 declarations.
+Census: 1209 facade rows, 4385 declarations.
 Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -5915,6 +5915,11 @@ class ConnectorPackDelta(TypedDict):
 class ConnectorPackGrantsGetRequest(TypedDict):
     basis: ConnectorPackBasis
     actor: NotRequired[str | None]
+class ConnectorIssuerHaltView(TypedDict):
+    old_issuer: str
+    new_issuer: str
+    detected_at: int
+    dependent_rows: list[str]
 DataClass = Literal["public", "personal", "secret", "unclassified"]
 class ConnectorConsentRowView(TypedDict):
     tool: str
@@ -5928,6 +5933,7 @@ class ConnectorConsentView(TypedDict):
     connector: str
     actor: str
     status: str
+    issuer_halt: NotRequired[ConnectorIssuerHaltView | None]
     protocol_revision: NotRequired[str | None]
     ready: bool
     rows: list[ConnectorConsentRowView]
@@ -6131,6 +6137,7 @@ class ConnectorPendingManifestView(TypedDict):
 class ConnectorKeyView(TypedDict):
     id: str
     status: str
+    issuer_halt: NotRequired[ConnectorIssuerHaltView | None]
     secret_ref: NotRequired[str | None]
     protocol_revision: NotRequired[str | None]
     accepted_slate_revision: NotRequired[int | None]
@@ -17478,6 +17485,7 @@ class ConnectorView(TypedDict):
     key_ref: str
     entry: ConnectorEntry
     status: str
+    issuer_halt: NotRequired[ConnectorIssuerHaltView | None]
     secret_ref: NotRequired[str | None]
     key_generation: int
     registered_at: int
