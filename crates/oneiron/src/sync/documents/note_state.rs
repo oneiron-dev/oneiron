@@ -85,8 +85,7 @@ impl<'a> NoteStateEnvelope<'a> {
         let len = usize::try_from(len).map_err(|_| malformed())?;
         let (seal, rest) = rest.split_at_checked(len).ok_or_else(malformed)?;
         let (overrides_len, rest) = rest.split_at_checked(OVERRIDES_LEN).ok_or_else(malformed)?;
-        let overrides_len =
-            u32::from_be_bytes(overrides_len.try_into().map_err(|_| malformed())?);
+        let overrides_len = u32::from_be_bytes(overrides_len.try_into().map_err(|_| malformed())?);
         let overrides_len = usize::try_from(overrides_len).map_err(|_| malformed())?;
         if overrides_len > MAX_OVERRIDES_LEN {
             return Err(malformed());
