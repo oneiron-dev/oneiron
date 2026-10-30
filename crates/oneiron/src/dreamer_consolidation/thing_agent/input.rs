@@ -144,7 +144,7 @@ pub(super) fn lent_scope(request: &Scope, slices: &[&ExtractionSlice]) -> Scope 
     Scope {
         world: request.world,
         facet: request.facet,
-        relationship: request.relationship,
+        relationship: request.relationship.clone(),
         project: request.project,
         readable: slices
             .iter()

@@ -377,9 +377,7 @@ impl ScopedRead<'_> {
                 if let Some(world) = source_scope.world {
                     candidate = candidate.with_world(world);
                 }
-                if let Some(relationship) = source_scope.rel {
-                    candidate = candidate.with_relationship(relationship);
-                }
+                candidate = candidate.with_relationships(source_scope.rel.clone());
                 if let Some(scope) = &source_scope.scope {
                     candidate = candidate.with_scope(scope.clone());
                 }

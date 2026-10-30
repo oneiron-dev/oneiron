@@ -53,7 +53,15 @@ fn bucket_key(input: &ConsolidationRootBucket) -> Result<super::ConsolidationBuc
         predicate_root: input.predicate_root.clone(),
         world: parse(&input.world)?,
         facet: parse(&input.facet)?,
-        rel: parse(&input.relationship)?,
+        rel: input
+            .relationship
+            .as_ref()
+            .map(|ids| {
+                ids.iter()
+                    .map(|id| EntityId::from_hex(id))
+                    .collect::<std::result::Result<BTreeSet<_>, _>>()
+            })
+            .transpose()?,
         project: EntityId::from_hex(&input.project)?,
     })
 }
@@ -295,16 +303,11 @@ fn pinned_buckets_in_txn(
     let mut keys = BTreeSet::new();
     for input in &input.buckets {
         let key = bucket_key(&input.bucket)?;
-        let selectors: Vec<_> = [
-            Some(key.subject),
-            key.world,
-            key.facet,
-            key.rel,
-            Some(key.project),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let selectors: Vec<_> = [Some(key.subject), key.world, key.facet, Some(key.project)]
+            .into_iter()
+            .flatten()
+            .chain(key.rel.iter().flatten().copied())
+            .collect();
         require_readable(read, txn, &selectors)?;
         if !keys.insert(key.bucket_hash()) || input.evidence.is_empty() {
             return Err(invalid_consolidation(
@@ -394,15 +397,10 @@ pub(crate) fn source_ids(accounting: &ConsolidationRootAccounting) -> Result<Vec
     for bucket in &accounting.buckets {
         let key = bucket_key(&bucket.bucket)?;
         ids.extend(
-            [
-                Some(key.subject),
-                key.world,
-                key.facet,
-                key.rel,
-                Some(key.project),
-            ]
-            .into_iter()
-            .flatten(),
+            [Some(key.subject), key.world, key.facet, Some(key.project)]
+                .into_iter()
+                .flatten()
+                .chain(key.rel.iter().flatten().copied()),
         );
         for row in &bucket.pinned {
             ids.insert(reference(&row.reference)?.source_id);

@@ -33,9 +33,12 @@ pub struct Scope {
     #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
     #[schemars(with = "Option<String>")]
     pub facet: Option<EntityId>,
-    #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
-    #[schemars(with = "Option<String>")]
-    pub relationship: Option<EntityId>,
+    /// The relationship exposure the branch may serve: `None` is unbound,
+    /// `Some(empty)` the explicit empty set, otherwise exactly these
+    /// relationships.
+    #[serde(with = "oneiron_contracts::serialize::entity_ref::optional_set")]
+    #[schemars(with = "Option<Vec<String>>")]
+    pub relationship: Option<BTreeSet<EntityId>>,
     #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
     #[schemars(with = "Option<String>")]
     pub project: Option<EntityId>,
@@ -70,14 +73,11 @@ impl Scope {
         mut project_descends_from: impl FnMut(EntityId, EntityId) -> Result<bool>,
     ) -> Result<Self> {
         let widens = || Error::InvalidConfig("branch scope cannot widen its parent".into());
-        let axes = [
-            (self.world, child.world),
-            (self.facet, child.facet),
-            (self.relationship, child.relationship),
-        ];
+        let axes = [(self.world, child.world), (self.facet, child.facet)];
         if axes
             .into_iter()
             .any(|(parent, child)| parent.is_some() && parent != child)
+            || (self.relationship.is_some() && self.relationship != child.relationship)
             || !child.readable.is_subset(&self.readable)
             || !child.writable.is_subset(&self.writable)
         {

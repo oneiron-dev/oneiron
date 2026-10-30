@@ -271,7 +271,7 @@ fn derived_by(effective: &EffectiveMember, query_ref: EntityId) -> bool {
 /// membership it replaces.
 pub(crate) fn keep_isolation_stamps(body: &mut ClaimBody, from: &ClaimBody) {
     body.world = from.world;
-    body.rel = from.rel;
+    body.rel.clone_from(&from.rel);
     body.scope.clone_from(&from.scope);
     body.scope_facet = from.scope_facet;
     body.scope_project = from.scope_project;

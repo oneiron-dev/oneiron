@@ -465,7 +465,7 @@ fn neighbourhood_in(
     let axes = project.map(|project| Scope {
         world: plan.branch.world_ref,
         facet: plan.branch.facet_ref,
-        relationship: bound.and_then(|scope| scope.relationship),
+        relationship: bound.and_then(|scope| scope.relationship.clone()),
         project: Some(project),
         ..Scope::default()
     });

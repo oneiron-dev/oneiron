@@ -240,9 +240,7 @@ pub(in crate::dreamer_consolidation) fn standing(
     let facet = super::signals::facet(prior.body.scope.as_ref())?;
     let fits = keys.identity.world == axes.world
         && facet == axes.facet
-        && axes
-            .relationship
-            .is_none_or(|r| keys.identity.rel == Some(r))
+        && (axes.relationship.is_none() || keys.identity.rel == axes.relationship)
         && axes.project.is_none_or(|p| keys.identity.project == p);
     Ok(fits.then_some(standing))
 }
@@ -260,9 +258,7 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(rel) = body.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(body.rel.clone());
     if let Some(scope) = &body.scope {
         candidate = candidate.with_scope(scope.clone());
     }

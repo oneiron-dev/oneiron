@@ -16,7 +16,7 @@ use crate::ports::EntityStoreRead;
 /// `derived` on every audience axis of `source`.
 pub(super) fn copy_claim_axes(derived: &mut ClaimBody, source: &ClaimBody) {
     derived.world = source.world;
-    derived.rel = source.rel;
+    derived.rel.clone_from(&source.rel);
     derived.scope = source.scope.clone();
     derived.scope_facet = source.scope_facet;
     derived.scope_project = source.scope_project;
