@@ -70,9 +70,11 @@ impl BatchBuilder<'_> {
         // here, before the gate, VAD and lexical staging, as the projector's
         // source event in `wtxn`. An actor-bound batch's puts stay with the
         // door, gated for its actor.
-        if actor.is_none() {
-            crate::comm::route_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?;
-        }
+        let routed = if actor.is_none() {
+            crate::comm::route_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?
+        } else {
+            std::collections::BTreeSet::new()
+        };
         let text_index_trusted = if contains_text_op(&self.ops) {
             vault.ensure_text_index_trusted()?;
             true
@@ -89,7 +91,10 @@ impl BatchBuilder<'_> {
         let changes_claims = super::vad_postcommit::ops_change_proactivity(&self.ops)
             || super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &self.ops)?;
         let tasks = super::vad_postcommit::ops_put_tasks(&self.ops);
-        let rows = super::vad_postcommit::ops_written_rows(&self.ops);
+        // The sync rows name the routed source events and the heads they
+        // wrote beside the remaining ops.
+        let mut rows = super::vad_postcommit::ops_written_rows(&self.ops);
+        rows.extend(routed);
         let gate_mode = gate_mode
             .with_birth_mask(self.birth_mask)
             .with_text_births(std::mem::take(&mut self.text_births))
