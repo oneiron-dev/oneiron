@@ -38,7 +38,7 @@ pub fn skill_bootstrap_as_owner(
             let resident = source
                 .entity
                 .map(|entity| {
-                    super::sdk::skill_library_get_as_owner(
+                    super::skill_library_get_as_owner(
                         vault,
                         owner,
                         &HubSkillRequest { entity },

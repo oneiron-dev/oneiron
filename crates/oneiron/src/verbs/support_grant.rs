@@ -164,7 +164,7 @@ pub fn mint_support_grant_as(
     issuer: &HostSlipIssuer,
     input: SupportGrantMintRequest,
 ) -> MemoryResult<SupportGrantMintAnswer> {
-    let holder_key = super::sdk_shared_members::holder_key(&input.holder_key)?;
+    let holder_key = super::shared_members::holder_key(&input.holder_key)?;
     let minted = vault.mint_support_grant(
         owner,
         issuer,
@@ -268,7 +268,7 @@ fn host_signs<T>(memory: &Memory<'_>, verb: &str) -> MemoryResult<T> {
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{verb} is signed with the host's own key; an embedded vault holds none"),
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }
 
