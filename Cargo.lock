@@ -7923,6 +7923,7 @@ dependencies = [
  "heed",
  "icalendar",
  "icu_normalizer",
+ "im",
  "image",
  "jiff-tzdb",
  "jsonschema",

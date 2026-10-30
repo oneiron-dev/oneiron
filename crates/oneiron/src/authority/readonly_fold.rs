@@ -113,7 +113,9 @@ pub(crate) struct AuthorityCachedFold {
 /// empty: no row, checkpoint or format carries it.
 pub(crate) struct AuthorityContinuation {
     base: super::fold_resume::FoldBase,
-    ids: BTreeMap<crate::EntityId, AuthorityEntryHash>,
+    /// Persistent, so the next continuation shares it and adds only the
+    /// tail's (FIX 12308).
+    ids: im::OrdMap<crate::EntityId, AuthorityEntryHash>,
 }
 
 impl AuthorityContinuation {
@@ -126,7 +128,7 @@ impl AuthorityContinuation {
     }
 
     /// [`Self::of`] for `base`, resumed from `baseline` past `tail`: only
-    /// the tail's rows map anew (FIX 12282).
+    /// the tail's rows map anew (FIX 12282), into the baseline's shared map.
     fn past<'a>(
         baseline: &Self,
         base: super::fold_resume::FoldBase,
