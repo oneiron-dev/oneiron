@@ -35,6 +35,8 @@ impl crate::Vault {
         claimless: bool,
     ) -> std::result::Result<(), DeckCreateError> {
         let mut result = Ok(());
+        // Each cited NOTE is judged and loaded once (FIX 10746).
+        let mut reads = crate::note::DeckSpanReads::default();
         pins_mut(outline, &mut |pin| {
             if result.is_err() {
                 return;
@@ -48,7 +50,7 @@ impl crate::Vault {
                 && let Some(span) = engine_span(pin).filter(|span| span.claim.is_none())
             {
                 !self
-                    .observe_span_in_txn(txn, &span)
+                    .observe_span_in_txn(txn, &mut reads, &span)
                     .is_ok_and(|seen| seen.mapped)
             } else {
                 return;
