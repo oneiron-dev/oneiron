@@ -1,11 +1,13 @@
-//! A room's delete of a row only it staged (FIX 10763, FIX 11932).
+//! A room's delete of a row only it staged (FIX 10763, FIX 11932, FIX 12012).
 //!
 //! A raw handle bound inside an off-record session deletes a row its room
 //! put, which base never held, in the room: the row, its type and time
 //! index rows, its identity and name hints, its text, its vector and its
 //! graph node go from the room's overlay, and so does what in the room still
 //! names it, as base's delete takes each: its revision rows, its phonetic
-//! name rows, the room's edges from or to it and its staged position. Its
+//! name rows, the room's edges from or to it, its staged position and its
+//! session short-id alias; the dependency rows naming it as derived go the
+//! way a regeneration replaces them, since base's delete keeps them. Its
 //! conversation-DAG pin is withdrawn, as base withdraws it. Base holds
 //! nothing of it, so nothing is written there, and close drops the delete
 //! with the room. A row base holds keeps base's delete.
@@ -69,6 +71,8 @@ pub(super) fn stage_session_delete(
     crate::bm25::deindex_text(view, wtxn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(view, wtxn, id)?;
     super::delete_from_phonetic_postings(view, wtxn, id)?;
+    super::delete_short_id_rows_for_id(view, wtxn, id)?;
+    crate::ports::remove_dependency_rows_for_dependent_in_txn(view, wtxn, id)?;
     if view.vectors.stages_row(id.as_bytes()) {
         crate::hnsw::hnsw_deindex(view, wtxn, id)?;
         view.vectors.delete(wtxn, id.as_bytes())?;
