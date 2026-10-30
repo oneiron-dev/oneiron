@@ -104,18 +104,17 @@ impl FormualizerEngine {
     /// `limits` are the host's document ceilings (the vault's resolved
     /// `docedit_package_limits`); the writer runs under the stricter of each
     /// of them and its own, and every part it reads or changes fits them.
+    /// `resources` is the caller's port: the package and every part it reads
+    /// reserve through it (FIX 10588).
     pub fn recalculate_xlsx(
         &self,
         bytes: &[u8],
         limits: Limits,
         clock: &RecalcClock,
         location: Option<&DocumentLocation>,
+        resources: &oneiron_docedit::resource::Resources,
     ) -> Result<WorkbookRecalc> {
-        let package = Package::open(
-            bytes,
-            limits,
-            &oneiron_docedit::resource::Resources::measuring(),
-        )?;
+        let package = Package::open(bytes, limits, resources)?;
         crate::links::external_targets(&package)?;
         // Malformed content is refused outright before any link is read.
         let formulas = Formulas::read(&package)?;
@@ -990,7 +989,8 @@ fn keep_gated_bytes(before: &Package, after: &[u8], formulas: &Formulas) -> Resu
             None if name.ends_with(".rels") => {
                 let before_rels = before.part(name)?;
                 if before_rels.as_deref().is_some_and(|rels| {
-                    !route_workbook([], [rels], [], before.limits().xml).is_in_process()
+                    !route_workbook([], [rels], [], before.limits().xml, before.resources())
+                        .is_in_process()
                 }) {
                     return Err(unsupported(
                         "recalculation changes a relationship part with an external target",
@@ -1120,8 +1120,14 @@ pub(crate) fn external_formulas(package: &Package) -> Result<BTreeMap<(String, S
             .filter(|(_, node)| node.is(MAIN, "c"))
         {
             if let Some((_, formula)) = xml.child(index, MAIN, "f")?
-                && !route_workbook([], [], [formula.text.as_str()], package.limits().xml)
-                    .is_in_process()
+                && !route_workbook(
+                    [],
+                    [],
+                    [formula.text.as_str()],
+                    package.limits().xml,
+                    package.resources(),
+                )
+                .is_in_process()
             {
                 let address = cell
                     .attr("r")
