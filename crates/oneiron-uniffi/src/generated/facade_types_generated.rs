@@ -26906,6 +26906,8 @@ pub enum EvalCutAuthor {
         #[serde(rename = "person")]
         person: String,
     },
+    #[serde(rename = "probe_import")]
+    ProbeImport,
 }
 
 /// `oneiron::skill_optimize::eval_set::cut_audit::AuditCase`.

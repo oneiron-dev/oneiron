@@ -3424,7 +3424,7 @@ export type CohortRetirement = { reason: string; skill: EntityId; revision: stri
 /** `oneiron::skill_optimize::eval_set::cohort::EvalCohort` */
 export type EvalCohort = { id: EntityId; seat: EvalSeat; from: number; until: number; families: EntityId[]; cases: EntityId[]; membership_digest: string; rubric_revision: string; reference: boolean; cut_at: number; retired_at?: number | null; retirement?: CohortRetirement | null }
 /** `oneiron::skill_optimize::eval_set::cut_audit::EvalCutAuthor` */
-export type EvalCutAuthor = { kind: "skill"; attempt: EntityId; skill: EntityId; revision: string } | { kind: "owner"; person: EntityId }
+export type EvalCutAuthor = { kind: "skill"; attempt: EntityId; skill: EntityId; revision: string } | { kind: "owner"; person: EntityId } | { kind: "probe_import" }
 /** `oneiron::skill_optimize::eval_set::cut_audit::AuditCase` */
 export type AuditCase = { case: EntityId; family: EntityId; receipts: string[]; parents: EntityId[]; assigned_purpose: FamilyPurpose; effective_purpose: FamilyPurpose }
 /** `oneiron::skill_optimize::eval_set::cut_audit::AuditMethodPin` */
