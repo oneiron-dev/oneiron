@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+use oneiron::attempt_queue::AttemptQueue;
 use oneiron::sync::residence::FreeTimeArming;
 use oneiron::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
@@ -170,13 +170,9 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         let mut macro_admissible = None;
         let mut macro_error = None;
         let mut next: Option<CommitmentDeadline> = None;
-        for attempt in queue.list()? {
-            if !matches!(
-                attempt.state,
-                AttemptState::Queued | AttemptState::Scheduled
-            ) {
-                continue;
-            }
+        // The ready index holds exactly the Queued and Scheduled tries, so no
+        // other row of the ledger is decoded here (FIX 11940).
+        for attempt in queue.ready_rows()? {
             let placed_elsewhere = attempt
                 .placement
                 .as_ref()
