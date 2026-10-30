@@ -94,13 +94,19 @@ pub struct LinkedInMcpSendMessageRequest {
     pub intent_ref: String,
 }
 
+/// The start of a transport error code that says the tool was never called
+/// (a connector call held or refused before it sent): a `send_message` that
+/// fails so is a certain non-delivery.
+pub const LINKEDIN_TOOL_NOT_SENT_PREFIX: &str = "not_sent:";
+
 /// Minimal host transport used by the verified-send sink.
 ///
 /// Implementors should return stable error codes, not raw provider output or
-/// secrets. A `send_message` result is never success on its own: the message
-/// id it names (a `message` object's id, or a top-level `message_id`) is what
-/// verification looks for in the transcript, and a result naming none leaves
-/// the send ambiguous.
+/// secrets; a code starting with [`LINKEDIN_TOOL_NOT_SENT_PREFIX`] says the
+/// tool was never called. A `send_message` result is never success on its
+/// own: the message id it names (a `message` object's id, or a top-level
+/// `message_id`) is what verification looks for in the transcript, and a
+/// result naming none leaves the send ambiguous.
 pub trait LinkedInMcpSendTransport {
     fn send_message(
         &mut self,
@@ -365,6 +371,13 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                 sent_id
             }
             Err(err) => {
+                // A tool never called delivered nothing.
+                if err.starts_with(LINKEDIN_TOOL_NOT_SENT_PREFIX) {
+                    fields.insert(
+                        RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
+                        "false".to_owned(),
+                    );
+                }
                 fields.insert(
                     RECEIPT_FIELD_SEND_MESSAGE_RESULT.to_owned(),
                     "failed".to_owned(),

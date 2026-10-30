@@ -30,11 +30,12 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 /// their checks, whether or not any channel is Active.
 const RECONCILE_EVERY: Duration = Duration::from_secs(30);
 
-/// Installs this host's served transports on its vault (FIX 4435, 2096):
-/// the `[channel_endpoints]` provider APIs and the `[native_mail]` server,
-/// which every served sink on the vault sends through. Call it before any
-/// worker sends; a second install does nothing.
-pub(crate) fn install_served_transports(server: &SyncServer) {
+/// Installs this host's served transports on its vault (FIX 4435, 2096,
+/// 1168): the `[channel_endpoints]` provider APIs, the `[native_mail]`
+/// server and this server's connector calls, which every served sink on the
+/// vault sends through. Call it before any worker sends; a second install
+/// does nothing.
+pub(crate) fn install_served_transports(server: &Arc<SyncServer>) {
     // Config validation refused a bad endpoint at load; this only keeps a
     // host that skipped it on the public APIs.
     let endpoints = server
@@ -45,7 +46,9 @@ pub(crate) fn install_served_transports(server: &SyncServer) {
             tracing::warn!(%error, "[channel_endpoints] is invalid; the public provider APIs serve");
             ServedEndpoints::default()
         });
-    let mut transports = ServedTransports::new(endpoints);
+    let mut transports = ServedTransports::new(endpoints).with_connector_calls(Arc::new(
+        crate::connector_call_host::ServerConnectorCalls::new(server),
+    ));
     if let Some(mail) = &server.config.native_mail {
         match mail.stalwart() {
             Ok(placement) => transports = transports.with_native_mail(placement),

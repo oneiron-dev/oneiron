@@ -4,8 +4,11 @@
 //! `stickerdaniel/linkedin-mcp-server` tool surface. This module keeps that
 //! boundary local and testable: it maps recorded MCP read outputs into
 //! OF-247 `InboundSurfaceEventInput` values without starting a browser or
-//! touching a live LinkedIn session.
+//! touching a live LinkedIn session. Its production transports call those
+//! tools on the connector the owner installed, each as an admitted
+//! installed-tool call through the host's connector calls.
 
+mod connector_call_transport;
 mod conversation_parse;
 mod inbox_sync;
 mod normalize_keys;
@@ -24,6 +27,9 @@ use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::error::{Error, Result};
 use crate::surface_event::{InboundSurfaceEventInput, SurfaceCounterpartyStamp};
 
+pub use self::connector_call_transport::{
+    LinkedInConnectorCallTransport, linkedin_thread_id_from_key,
+};
 pub use self::inbox_sync::{
     LinkedInConversationMessage, LinkedInConversationMessageEvent, LinkedInInboxSyncConfig,
     LinkedInInboxSyncReport, LinkedInInboxSyncRunner, LinkedInMcpInboxSyncTransport,
@@ -53,8 +59,8 @@ pub use self::verified_connect::{
     LinkedInMcpConnectTransport, LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
 };
 pub use self::verified_send::{
-    LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink,
-    LinkedInVerifiedSendPlan,
+    LINKEDIN_TOOL_NOT_SENT_PREFIX, LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport,
+    LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan,
 };
 
 /// Stable Oneiron channel key for LinkedIn.
