@@ -47,7 +47,7 @@ mod write_budget;
 mod write_estimate;
 use crate::side_table::{self, Named, SideTable};
 pub use crate::store::custody_protocol;
-use crate::store::{ForkedCustodyDir, LiveCustody};
+use crate::store::{CopyGenerations, ForkedCustodyDir, LiveCustody};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 pub use admission::{
     AddedRecipient, AdmittedRestore, AnchorDisposition, CustodyAdmissionFacts, CustodyPositionFact,
@@ -171,7 +171,8 @@ impl SideRestoreSource<'static> {
         vault_dir: &Path,
         page_seal: Option<crate::world_keys::VaultPageSeal>,
     ) -> Result<Self> {
-        let first = crate::store::read_live_custody(vault_dir, page_seal.as_ref())?;
+        let no_copy = CopyGenerations::NoCopy;
+        let first = crate::store::read_live_custody(vault_dir, page_seal.as_ref(), &no_copy)?;
         Ok(Self(Source::Disk {
             dir: vault_dir.to_path_buf(),
             first,
@@ -501,10 +502,12 @@ impl Vault {
         restored_at: u64,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<(Self, RestoreReport)> {
-        let live = source.capture()?;
+        // The copy keeps the image's generations; the capture carries the others' bundles
+        // (FIX 11824).
+        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
+        let live = source.capture(&CopyGenerations::of_rows(&image.databases["sync_state"]))?;
         // What the source erased, those after the cut too (FIX 4753).
         let erased = source.erased_ids();
-        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
@@ -609,9 +612,10 @@ impl Vault {
         // The archive is admitted like the source before anything opens it
         // by name; a missing one is refused, not made.
         crate::store::admit_existing_vault_root(path)?;
-        let live = source.capture()?;
-        let erased = source.erased_ids();
+        // The source's capture carries only the bundles the archive does not keep (FIX 11824).
         let archive = Self::open_owned(path, config.clone())?;
+        let live = source.capture(&CopyGenerations::of_store(&archive.store))?;
+        let erased = source.erased_ids();
         let expected = pad_objects::expected_of(&archive, &live.pad_objects);
         let (dropped_gate_decisions, erased_pads, credentials, landing) =
             archive.store.activate_archived(&live, expected.as_ref())?;

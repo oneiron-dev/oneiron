@@ -86,28 +86,41 @@ pub(super) fn apply_permit_piece(
         )?,
         None => kit_signer(state, entry, hash)?,
     };
-    keep_piece(
+    if keep_piece(
         &mut state.owner_work.permit_pieces,
         (key, piece.commitment, piece.index),
         &Arc::new(piece.clone()),
-    );
+    ) {
+        // A set verified before this piece changed it is judged again.
+        state
+            .owner_work
+            .verified_permit_sets
+            .remove(&(key, piece.commitment));
+    }
     Ok(())
 }
 
 /// Keeps `piece` under `key`, or the lesser of it and the piece kept there.
+/// True when the piece kept under `key` changed.
 pub(super) fn keep_piece(
     pieces: &mut BTreeMap<PermitPieceKey, Arc<CustodyPermitPiece>>,
     key: PermitPieceKey,
     piece: &Arc<CustodyPermitPiece>,
-) {
-    pieces
-        .entry(key)
-        .and_modify(|held| {
-            if **piece < **held {
-                *held = Arc::clone(piece);
+) -> bool {
+    match pieces.entry(key) {
+        std::collections::btree_map::Entry::Occupied(mut held) => {
+            if **piece < **held.get() {
+                held.insert(Arc::clone(piece));
+                true
+            } else {
+                false
             }
-        })
-        .or_insert_with(|| Arc::clone(piece));
+        }
+        std::collections::btree_map::Entry::Vacant(slot) => {
+            slot.insert(Arc::clone(piece));
+            true
+        }
+    }
 }
 
 /// `request` as the fold keeps it, signed by `signer`, at `work`, the state
@@ -116,9 +129,11 @@ pub(super) fn keep_piece(
 /// kept, each run starting where the one before it ended, naming the
 /// request's own carrier (none for a kit request), and the whole set
 /// ascending, without a zero digest and hashing to the commitment
-/// ([`OwnerWorkRequest::validate`]). `None` when they do not join.
+/// ([`OwnerWorkRequest::validate`]). `None` when they do not join. A set
+/// already joined and verified here skips its hash again (FIX 12014); the
+/// first join still verifies.
 pub(super) fn joined_request<'r>(
-    work: &OwnerWorkState,
+    work: &mut OwnerWorkState,
     signer: &[u8; 32],
     request: &'r OwnerWorkRequest,
 ) -> Option<Cow<'r, OwnerWorkRequest>> {
@@ -142,7 +157,11 @@ pub(super) fn joined_request<'r>(
     if let OwnerWorkBody::Custody { recipients, .. } = &mut joined.work {
         *recipients = permits;
     }
-    joined.validate().ok()?;
+    let verified = (*signer, *commitment);
+    if !work.verified_permit_sets.contains(&verified) {
+        joined.validate().ok()?;
+        work.verified_permit_sets.insert(verified);
+    }
     Some(Cow::Owned(joined))
 }
 

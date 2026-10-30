@@ -2720,6 +2720,8 @@ class Oneiron:
             """The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."""
         def create_standing_grant(self, spec: Facade.CreateStandingGrantRequest) -> Facade.ConsentActReceipt:
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
+        def create_auto_weave_grant(self, spec: Facade.AutoWeaveGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."""
         def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
         def failure_signals_held(self, spec: Facade.EmptyRequest | None = None) -> Facade.HeldFailureSignalBatchView | None:

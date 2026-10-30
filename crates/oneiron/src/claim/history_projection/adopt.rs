@@ -133,12 +133,22 @@ impl Vault {
         let projected = project_machine_claim(&projection);
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &target)?
         else {
-            // Own receive pins a verified history before its live row lands,
-            // so the row is admitted under the pin when it does.
-            return match succession {
-                Succession::OwnReceive => Ok(verified),
-                Succession::Strict => Err(missing()),
-            };
+            // FIX 11926: a target row never delivered is built from the
+            // verified history alone, at the row header its signed birth
+            // binds. A row deleted here stays deleted, and a superseded
+            // history leaves the row to its successor, which travels on its
+            // own: both keep today's answer.
+            if self.machine_target_deleted_in_txn(txn, target)?
+                || projection.admits_successor_by(projection.superseded_by)
+            {
+                return match succession {
+                    Succession::OwnReceive => Ok(verified),
+                    Succession::Strict => Err(missing()),
+                };
+            }
+            let born = (rows.birth.occurred, rows.birth.learned_at);
+            self.put_machine_projection_in_txn(txn, target, &projected, born)?;
+            return Ok(verified);
         };
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine projection header"))?;
@@ -150,33 +160,65 @@ impl Vault {
         let successor = projection.admits_successor_by(crate::memory::claim_author(&previous))
             && !crate::authority::machine_claim_needs_history(&self.store, txn, &previous)?;
         if previous != projected && !successor {
-            crate::batch::apply_ops(
-                &self.store,
-                &self.config,
-                &self.analyzer,
-                txn,
-                vec![crate::batch::BatchOp::Put {
-                    id: target,
-                    entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-                    occurred: crate::TimeRange {
-                        start: header.occurred_start,
-                        end: projected
-                            .valid_to
-                            .unwrap_or(header.occurred_end)
-                            .max(header.occurred_start),
-                    },
-                    learned_at: header.learned_at,
-                    data: super::super::encode_claim_body(&projected)?,
-                    allow_maintenance: true,
-                    allow_reserved_predicate: true,
-                    hub_sync_imported: false,
-                }],
-                self.text_index_trusted
-                    .load(std::sync::atomic::Ordering::Acquire),
-                false,
-                false,
-            )?;
+            let occurred = crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            };
+            let at = (occurred, header.learned_at);
+            self.put_machine_projection_in_txn(txn, target, &projected, at)?;
         }
         Ok(verified)
+    }
+
+    /// Puts `projected` as `target`'s live CLAIM row through the put a
+    /// delivered row takes (both admit bands open), so the projection guard
+    /// admits it under the pin just stored. The row keeps `occurred`'s start
+    /// and ends where the projection's validity does, never before it starts.
+    fn put_machine_projection_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        target: EntityId,
+        projected: &ClaimBody,
+        (occurred, learned_at): (crate::TimeRange, u64),
+    ) -> Result<()> {
+        crate::batch::apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: target,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred: crate::TimeRange {
+                    start: occurred.start,
+                    end: projected
+                        .valid_to
+                        .unwrap_or(occurred.end)
+                        .max(occurred.start),
+                },
+                learned_at,
+                data: super::super::encode_claim_body(projected)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: true,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            false,
+        )?;
+        Ok(())
+    }
+
+    /// Whether `target` was deleted here: its local hard-delete marker, or
+    /// the fence of its stored row's applied deletion.
+    fn machine_target_deleted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<bool> {
+        use crate::ports::{DeletionMarker, TombstoneStoreRead};
+        let marked = |marker| self.store.port_deletion_marked(txn, marker, &target);
+        Ok(marked(DeletionMarker::HardDelete)? || marked(DeletionMarker::RowFence)?)
     }
 }

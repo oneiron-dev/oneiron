@@ -404,9 +404,11 @@ impl AuthorityStructure {
             // root's anchor alone (FIX 8498).
             AuthorityOp::FrontierJoin(FrontierJoin {
                 family: FrontierJoinFamily::Install(carrier),
+                ..
             }) => install_key(*carrier),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 family: FrontierJoinFamily::Anchor,
+                ..
             }) => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
             // The owner's kit push (FIX 6053): a stored root's anchor signs
             // it alone, as an anchored machine revision; no machine carries it.
@@ -477,9 +479,11 @@ impl AuthorityStructure {
             AuthorityOp::ExportAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 family: FrontierJoinFamily::Install(carrier),
+                ..
             }) => machine_key(*carrier) || self.removed.contains(carrier),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 family: FrontierJoinFamily::Anchor,
+                ..
             }) => {
                 !self.is_own_anchor(signer)
                     && !matches!(signer, AuthorityKey::Ed25519(anchor)

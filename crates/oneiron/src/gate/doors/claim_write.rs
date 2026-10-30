@@ -3,8 +3,10 @@
 mod closer;
 mod decision_context;
 mod reference_read;
+mod stored_close;
 
 pub(crate) use reference_read::unresolved_claim_reference;
+use stored_close::{closes_stored_row_only, closes_stored_value};
 
 use super::burst_inputs::claim_burst_inputs;
 use super::consent::{
@@ -20,10 +22,9 @@ use super::peripheral::{
     local_write_actor_entity_ref, validate_write_envelope, write_envelope_actor_ref,
 };
 use super::recorded::RecordedClaimGateDecision;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, VerifiedClaimTransition};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, DreamerIsolationClass,
-    claim_sensitivity_band, decode_claim_body, dreamer_isolation_class, encode_claim_body,
+    ClaimApprovalStatus, ClaimBody, DreamerIsolationClass, claim_sensitivity_band,
+    dreamer_isolation_class,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -38,8 +39,8 @@ use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
 use crate::gate::delegation_chain::evaluate_with_delegation_chain;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
+use crate::gate::weave_grant::{GATE_REASON_ALLOW_WEAVE_GRANT, landing_weave_grant_in_txn};
 use crate::llm::{AutoCheckCandidate, AutoCheckOutcome};
-use crate::ports::EntityStoreRead;
 use crate::store::{
     GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store, TrayRemoval,
     checker_hold_receipt_reason,
@@ -49,67 +50,6 @@ use crate::write_envelope::{SourceLineage, WriteEnvelope};
 /// The receipt reason of a write held because its value does not fit the auto
 /// checker's preview, so no checker could review all of it.
 const CHECKER_PARTIAL_VIEW_RECEIPT_REASON: &str = "checker_partial_view";
-
-/// Whether this write only closes the stored row: the row's own value, now
-/// closed, under a verified in-place transition. It admits nothing new, so no
-/// checker is consulted and none is required, whatever the value's length: a
-/// restriction always lands.
-fn closes_stored_value(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    body: &ClaimBody,
-    transition: Option<&VerifiedClaimTransition>,
-) -> bool {
-    closes_in_place(store, txn, id, body, transition)
-        && stored_claim_body(store, txn, id).is_some_and(|stored| stored.value == body.value)
-}
-
-/// Whether this write is the stored row's own close and nothing more: the
-/// stored Active body with only its lifecycle and `valid_to` changed, as the
-/// canonical lifecycle validator admits it. An edit that also moves approval
-/// or any other field is not one.
-fn closes_stored_row_only(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    body: &ClaimBody,
-    transition: Option<&VerifiedClaimTransition>,
-) -> bool {
-    closes_in_place(store, txn, id, body, transition)
-        && stored_claim_body(store, txn, id).is_some_and(|mut stored| {
-            if stored.lifecycle != ClaimLifecycleStatus::Active {
-                return false;
-            }
-            stored.lifecycle = body.lifecycle;
-            stored.valid_to = body.valid_to;
-            match (encode_claim_body(&stored), encode_claim_body(body)) {
-                (Ok(closed), Ok(written)) => closed == written,
-                _ => false,
-            }
-        })
-}
-
-/// A non-Active body under a verified in-place transition of the same row.
-fn closes_in_place(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    body: &ClaimBody,
-    transition: Option<&VerifiedClaimTransition>,
-) -> bool {
-    body.lifecycle != ClaimLifecycleStatus::Active
-        && transition.is_some_and(|proof| {
-            proof.predecessor().is_none()
-                && proof.matches_body(store, txn, id, body).unwrap_or(false)
-        })
-}
-
-/// The stored row's claim body, when it decodes.
-fn stored_claim_body(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Option<ClaimBody> {
-    let raw = store.port_entity_record(txn, id).ok().flatten()?.encode();
-    decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?, true).ok()
-}
 
 /// The claim write door.
 ///
@@ -586,6 +526,19 @@ fn check_claim_policy_for_write_with_record_inner(
             }
         }
 
+        // FIX 3433: an Allow landing past Proposed under the owner's
+        // auto-weave Grant records that Grant and a positive reason. It
+        // changes no verdict; any other landing records as before.
+        let weave_grant = if decision.outcome() == GateOutcome::Allow
+            && !attach_critical_confirm
+            && owner_write.is_none()
+            && !verified_close
+        {
+            landing_weave_grant_in_txn(store, &*wtxn, writing, body)?
+        } else {
+            None
+        };
+
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
         let created_at = mutation_recorded_at;
@@ -618,6 +571,11 @@ fn check_claim_policy_for_write_with_record_inner(
                 }))
                 .chain(decision.delegation_narrowing_receipt())
                 .chain(checker_receipt_reasons)
+                .chain(
+                    weave_grant
+                        .as_ref()
+                        .map(|_| GATE_REASON_ALLOW_WEAVE_GRANT.to_owned()),
+                )
                 .collect(),
             system_notices: Vec::new(),
             actor_class: input.actor.actor_class.clone(),
@@ -625,7 +583,7 @@ fn check_claim_policy_for_write_with_record_inner(
             content_kind: input.content_kind.as_str().to_owned(),
             policy_manifest_version: input.policy_manifest_version,
             claim_id: Some(*id.as_bytes()),
-            grant_ref: None,
+            grant_ref: weave_grant,
             diff_handle: binding.diff_handle.clone(),
             read_frontier_hash: binding.read_frontier_hash,
             context: decision_context::claim_decision_context(

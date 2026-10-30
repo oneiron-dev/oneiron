@@ -4524,6 +4524,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consent_create_auto_weave_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.create_auto_weave_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consent_registry(
         &self,
         input: serde_json::Value,
