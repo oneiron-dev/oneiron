@@ -92,9 +92,60 @@ impl<'a> ClaimReadView<'a> {
     }
 }
 
+/// What the claim read selectors read of a policy manifest: whether it fails
+/// closed, and its scoped Grants. Nothing else of the manifest decides a
+/// claim read, so a claim's access class verdict, held per reader in one
+/// serving txn, is held under it (FIX 11915).
+#[derive(Debug, Clone)]
+pub(crate) struct ClaimReadPolicy<'p> {
+    fails_closed: bool,
+    grants: std::borrow::Cow<'p, [PolicyScopedGrant]>,
+}
+
+impl<'p> ClaimReadPolicy<'p> {
+    /// What the claim read selectors read of `policy`.
+    pub(crate) fn of(policy: &'p PolicyManifestResolution) -> Self {
+        Self {
+            fails_closed: policy.diagnostics().loaded_manifest_forces_fail_closed()
+                || policy.is_fail_closed(),
+            grants: std::borrow::Cow::Borrowed(policy.scoped_grants()),
+        }
+    }
+
+    /// The same, owning its Grants.
+    pub(crate) fn into_owned(self) -> ClaimReadPolicy<'static> {
+        ClaimReadPolicy {
+            fails_closed: self.fails_closed,
+            grants: std::borrow::Cow::Owned(self.grants.into_owned()),
+        }
+    }
+
+    /// Whether `other` reads every claim as this does: the same fail-closed
+    /// standing and the same scoped Grants.
+    pub(crate) fn reads_as(&self, other: &ClaimReadPolicy<'_>) -> bool {
+        self.fails_closed == other.fails_closed && *self.grants == *other.grants
+    }
+}
+
 /// [`scoped_read_claim_allowed_with_scope`] over one claim's read view.
 pub(crate) fn scoped_read_claim_view_allowed(
     policy: &PolicyManifestResolution,
+    actor_key: &ScopedReadActorKey,
+    claim: &ClaimReadView<'_>,
+    explicit_scope: Option<&crate::federation::Scope>,
+) -> bool {
+    claim_read_policy_allows(
+        &ClaimReadPolicy::of(policy),
+        actor_key,
+        claim,
+        explicit_scope,
+    )
+}
+
+/// [`scoped_read_claim_view_allowed`] under what the claim read selectors
+/// read of the policy.
+pub(crate) fn claim_read_policy_allows(
+    policy: &ClaimReadPolicy<'_>,
     actor_key: &ScopedReadActorKey,
     claim: &ClaimReadView<'_>,
     explicit_scope: Option<&crate::federation::Scope>,
@@ -116,11 +167,7 @@ pub(crate) fn scoped_read_claim_view_allowed(
     if actor_key.vault_owner_ref().is_some() {
         return true;
     }
-    let diagnostics = policy.diagnostics();
-    if diagnostics.loaded_manifest_forces_fail_closed() {
-        return false;
-    }
-    if policy.is_fail_closed() {
+    if policy.fails_closed {
         return false;
     }
 
@@ -131,7 +178,7 @@ pub(crate) fn scoped_read_claim_view_allowed(
     }
     let mut saw_core_read_grant = false;
     for grant in policy
-        .scoped_grants()
+        .grants
         .iter()
         .filter(|grant| scoped_read_grant_has_read_effector(grant))
     {
