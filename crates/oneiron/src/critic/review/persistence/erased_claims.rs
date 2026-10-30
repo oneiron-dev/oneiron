@@ -65,8 +65,7 @@ pub(super) fn erase_review_claims_in_txn(
     })?;
     // A legal hold keeps the erased entity's own row whole: its stored
     // review and its trust stamp stay with it.
-    let entity_held =
-        crate::store::legal_hold::held_in_txn(&vault.store, wtxn, entity.as_bytes())?;
+    let entity_held = crate::store::legal_hold::held_in_txn(&vault.store, wtxn, entity.as_bytes())?;
     let mut torn_verdicts = Vec::new();
     let mut dissent = Vec::new();
     for verdict in verdicts {
@@ -142,7 +141,9 @@ fn withdraw_outcome_evidence_in_txn(
     let mut cells = BTreeSet::new();
     for ((digest, receipt), row) in crate::skill_attribution::erase_scan_in_txn(vault, wtxn, table)?
     {
-        let of_torn = torn.iter().any(|prefix| receipt.starts_with(prefix.as_str()));
+        let of_torn = torn
+            .iter()
+            .any(|prefix| receipt.starts_with(prefix.as_str()));
         let outcome_withdrawn =
             row.anchor != crate::learning::Anchor::WorldOutcome && receipts.contains(&receipt);
         if kept.contains(&receipt) || !(of_torn || outcome_withdrawn) {
