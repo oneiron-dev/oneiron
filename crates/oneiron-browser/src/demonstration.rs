@@ -146,6 +146,12 @@ pub struct RecordedStep {
     pub source_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_url: Option<String>,
+    /// The page it left as the browser holds its URL (FIX 11584): the raw
+    /// result behind the shown `result_url`, for the recorder lookups. None
+    /// where no distinct raw URL exists. Never serialized, so masked values
+    /// stay masked in `result_url`.
+    #[serde(skip)]
+    pub raw_result_url: Option<String>,
     /// The name of the row it acted on, as the outline shows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_name: Option<String>,
@@ -545,7 +551,8 @@ impl Recording {
             step.action = Some(demonstration_own_act_policy(action, edited));
         }
         if let (Some(tab), Some(url)) = (&step.result_tab, &step.result_url) {
-            self.pages.insert(tab.clone(), url.clone());
+            let raw = step.raw_result_url.as_deref().unwrap_or(url);
+            self.pages.insert(tab.clone(), raw.to_owned());
             self.shown_pages.insert(tab.clone(), url.clone());
         }
         self.push(step);
@@ -670,6 +677,7 @@ impl Recording {
             result_tab: Some(tab.to_owned()),
             source_url: url.or_else(|| self.shown_pages.get(tab).cloned()),
             result_url: None,
+            raw_result_url: None,
             target_name: None,
             effect_class: None,
             receipt: None,
