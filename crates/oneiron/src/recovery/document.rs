@@ -16,10 +16,10 @@ use std::collections::BTreeSet;
 
 #[cfg(feature = "sync")]
 use super::canonical::parse_id;
-use super::canonical::{ByteBudget, CanonicalSnapshot, id, invalid, pack};
+use super::canonical::{ByteBudget, CanonicalSnapshot, RecoveryBudgetOverrun, id, invalid, pack};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Result};
+use crate::error::Result;
 use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
 use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
 
@@ -140,7 +140,7 @@ pub(super) fn capture(
     txn: &heed::RoTxn<'_>,
     snapshot: &mut CanonicalSnapshot,
     budget: &mut ByteBudget,
-) -> Result<()> {
+) -> Result<Option<RecoveryBudgetOverrun>> {
     let ids: BTreeSet<_> = snapshot
         .entity_blobs
         .iter()
@@ -222,8 +222,12 @@ pub(super) fn capture(
         )?;
         snapshot.doc_snapshots.extend(retained);
     }
-    if let Some(overrun) = overrun {
-        tracing::warn!(%overrun, "canonical recovery measured NOTE births past its budget");
+    if let Some(overrun) = &overrun {
+        tracing::warn!(
+            required = overrun.required,
+            limit = overrun.limit,
+            "canonical recovery measured NOTE births past its budget"
+        );
     }
     for row in NOTE_RECEIPT.iter_from(&vault.store, txn, &[])? {
         let (receipt_id, receipt) = row?;
@@ -249,7 +253,7 @@ pub(super) fn capture(
     snapshot.document_heads.sort_by_key(|row| row.entity_id);
     snapshot.head_move_receipts.sort_by_key(|row| row.id);
     workflow::capture(vault, txn, snapshot, &ids, &required, budget)?;
-    Ok(())
+    Ok(overrun)
 }
 /// Takes `row` from `budget`: what it held before its birth was counted, as
 /// a refusal answers for it, and its birth only measured (Rule 5, FIX 6540),
@@ -258,7 +262,7 @@ pub(super) fn capture(
 fn take_document(
     budget: &mut ByteBudget,
     row: &CanonicalDocument,
-    overrun: &mut Option<ArtifactError>,
+    overrun: &mut Option<RecoveryBudgetOverrun>,
 ) -> Result<()> {
     let birth = row.birth_held();
     budget.take(row.held().saturating_sub(birth))?;
