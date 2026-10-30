@@ -23,19 +23,26 @@
 //!
 //! A `ThisMachine` home's piece stays in this install's key slots, replacing
 //! the piece an earlier data-key kit kept there, and the unlock here reads it
-//! back as one of the pieces (FIX 2063).
+//! back as one of the pieces (FIX 2063). A sealed vault's pages unlock before
+//! its machine id can be read, so there the pieces the host's keystore keeps
+//! for each install a carried device wrap names join the pieces given (FIX
+//! 11976).
 
-use super::{STATE, VaultDataKey};
+use std::sync::Arc;
+
+use oneiron_keystore::DeviceKeystore;
+
+use super::{CarriedVaultKey, STATE, VaultDataKey, VaultKeyUnlock, VaultKeyWrapKind};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::recovery::{
-    KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitSecretKind, RestoredKitSecret,
-    issue_vault_key_kit, restore_kit,
+    KitError, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
+    KitSecretKind, RestoredKitSecret, issue_vault_key_kit, join_kept_piece, restore_kit,
 };
 use crate::world_keys::kit::{kit_refused, resolve_homes};
 use crate::world_keys::kit_piece::keep_this_machine_piece;
-use crate::world_keys::refused;
+use crate::world_keys::{keystore_error, refused};
 
 /// A data-key kit just issued: its pieces for the owner to place, and its
 /// public facts. Nothing secret is stored or published.
@@ -54,24 +61,116 @@ pub struct IssuedVaultKeyKit {
     pub listed: bool,
 }
 
-/// The vault data key the data-key kit's `pieces` rebuild for the vault
-/// `vault_id`, checked against `commitment`, its key's. `named` is the id the
-/// owner names the kit by: another vault's is refused before any passphrase
-/// work. Every kit refusal names its fixed reason, never piece bytes.
+/// The vault data key the data-key kit's pieces in `unlock` rebuild for the
+/// vault `vault_id`, checked against the commitment `carried` names. The id
+/// the owner names the kit by must be `vault_id`: another vault's is refused
+/// before any passphrase work. With the keystore `unlock` names, this
+/// machine's own piece of the kit joins the pieces given (FIX 11976), as
+/// [`Vault::restore_kit_here`] joins it on an open vault. Every kit refusal
+/// names its fixed reason, never piece bytes.
 pub(super) fn open_kit(
     vault_id: &[u8; 32],
-    commitment: &[u8; 32],
-    named: &[u8; 32],
-    pieces: &[KitPiece],
-    passphrase: Option<&KitPassphrase>,
+    carried: &CarriedVaultKey,
+    unlock: &VaultKeyUnlock<'_>,
 ) -> Result<VaultDataKey> {
+    let VaultKeyUnlock::Kit {
+        vault_id: named,
+        pieces,
+        passphrase,
+        keystore,
+    } = unlock
+    else {
+        return Err(refused("the unlock carries no data-key kit pieces"));
+    };
     if named != vault_id {
         return Err(refused("the kit names another vault"));
     }
-    let pieces: Vec<&KitPiece> = pieces.iter().collect();
-    let secret = restore_kit(*vault_id, KitSecretKind::VaultKey, &pieces, passphrase)
+    let given: Vec<&KitPiece> = pieces.iter().collect();
+    let (kept, unreadable) = match keystore {
+        Some(keystore) => kept_pieces(keystore, vault_id, carried),
+        None => (Vec::new(), false),
+    };
+    let secret = restore_joined(*vault_id, &given, &kept, unreadable, *passphrase)
         .map_err(kit_refused)?;
-    committed_key(vault_id, commitment, secret)
+    committed_key(vault_id, carried.commitment(), secret)
+}
+
+/// The pieces of data-key kits `keystore` keeps for the vault `vault_id` (FIX
+/// 11976): a sealed vault's machine id is read only once its pages open, so
+/// the slots read are those of each install a device wrap in `carried` names,
+/// every current pair first, then every pending pair, as
+/// [`Vault::restore_kit_here`] reads them. And whether a pair held a piece
+/// that did not read: it is logged and left out.
+fn kept_pieces(
+    keystore: &Arc<dyn DeviceKeystore>,
+    vault_id: &[u8; 32],
+    carried: &CarriedVaultKey,
+) -> (Vec<KitPiece>, bool) {
+    let installs: Vec<crate::EntityId> = carried
+        .wrap_infos()
+        .into_iter()
+        .filter_map(|info| match &info.kind {
+            VaultKeyWrapKind::Device { install } => crate::EntityId::from_hex(install).ok(),
+            _ => None,
+        })
+        .collect();
+    let mut kept = Vec::new();
+    let mut unreadable = false;
+    for pair in [KitPiecePair::Current, KitPiecePair::Pending] {
+        for install in &installs {
+            let store = KitPieceStore::new(Arc::clone(keystore), *vault_id, *install.as_bytes());
+            match store.get(KitSecretKind::VaultKey, pair) {
+                Ok(Some(piece)) => kept.push(piece),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?keystore_error(error).kind(),
+                        "this machine's data-key kit piece did not read; unlocking with the \
+                         pieces given"
+                    );
+                    unreadable = true;
+                }
+            }
+        }
+    }
+    (kept, unreadable)
+}
+
+/// [`restore_kit`] over `given` joined by each piece of `kept` of their kit in
+/// turn, one piece per kit, then over `given` alone, until one finishes: a kit
+/// whose given pieces reach its threshold opens as it does with none kept. A
+/// refusal is the first attempt's; when none joined, a piece did not read
+/// (`unreadable`) and the pieces given fall short, it says so
+/// ([`KitError::KeptPieceUnreadable`]), as [`Vault::restore_kit_here`] does.
+fn restore_joined(
+    vault_id: [u8; 32],
+    given: &[&KitPiece],
+    kept: &[KitPiece],
+    unreadable: bool,
+    passphrase: Option<&KitPassphrase>,
+) -> std::result::Result<RestoredKitSecret, KitError> {
+    let mut kits = Vec::new();
+    let mut refusal = None;
+    for piece in kept {
+        let pieces = join_kept_piece(Some(piece), given);
+        if pieces.len() == given.len() || kits.contains(&piece.kit_id()) {
+            continue;
+        }
+        kits.push(piece.kit_id());
+        match restore_kit(vault_id, KitSecretKind::VaultKey, &pieces, passphrase) {
+            Ok(secret) => return Ok(secret),
+            Err(error) => {
+                refusal.get_or_insert(error);
+            }
+        }
+    }
+    let alone = restore_kit(vault_id, KitSecretKind::VaultKey, given, passphrase);
+    match (alone, refusal) {
+        (Ok(secret), _) => Ok(secret),
+        (Err(_), Some(first)) => Err(first),
+        (Err(KitError::NeedTwoPieces), None) if unreadable => Err(KitError::KeptPieceUnreadable),
+        (Err(error), None) => Err(error),
+    }
 }
 
 /// The data key a kit rebuilt for the vault `vault_id`, held only when it is
