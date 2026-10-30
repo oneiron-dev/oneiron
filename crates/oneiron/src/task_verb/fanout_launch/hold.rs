@@ -148,6 +148,9 @@ pub(in crate::task_verb) struct AskHold<'a> {
     pub(in crate::task_verb) statement: FanoutStatement,
     pub(in crate::task_verb) scope: String,
     pub(in crate::task_verb) effect: Option<AskEffect>,
+    /// The requester the ask was admitted under, which its release keeps
+    /// (FIX 11691).
+    pub(in crate::task_verb) requester: Option<crate::agent_dispatch::QueuedRequester>,
     pub(in crate::task_verb) now: u64,
 }
 
@@ -193,6 +196,7 @@ pub(in crate::task_verb) fn hold_ask_in(
         denied: false,
         choice_receipt_ref: None,
         shipped_policy_rows: governed.shipped_rows.clone(),
+        requester: hold.requester,
     };
     let admission = admit_fanout_with_history(
         &plan,

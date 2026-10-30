@@ -15,6 +15,17 @@ impl Vault {
     pub fn subscribe_credential_revocations(&self) -> tokio::sync::watch::Receiver<u64> {
         self.store.credential_revocations.subscribe()
     }
+
+    /// The vault's authority-log head (FIX 11743): a count that moves with
+    /// each authority write committed on this vault, by this process or by
+    /// another that opened it, a slip revoke among them. A stream that
+    /// judges a credential reads it beside the notice above, so a revoke the
+    /// notice never heard is judged again when the head has moved. It
+    /// carries no credential, and a move means only "judge again".
+    pub fn authority_log_head(&self) -> crate::error::Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        super::readonly_fold::authority_cache_generation(&self.store, &txn)
+    }
 }
 
 impl crate::store::Store {

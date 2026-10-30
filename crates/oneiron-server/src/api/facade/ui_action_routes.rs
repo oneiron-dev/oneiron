@@ -108,7 +108,7 @@ pub(crate) async fn vault_lenses_default(
     let rendered = {
         let server = Arc::clone(server);
         let auth = auth.clone();
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             let producers = oneiron::memory::ProducerRows::default();
             let rendered = credential_memory(&server.vault, Some(&auth), actor, class)
                 .at(auth.locality())
@@ -222,7 +222,7 @@ async fn event_answer(
         let current = state.clone();
         let event = request.event;
         let selected = request.selected_context;
-        tokio::task::spawn_blocking(move || -> MemoryResult<GeneratedUiValidatedAction> {
+        super::clock_ingress::run_blocking(move || -> MemoryResult<GeneratedUiValidatedAction> {
             let memory =
                 credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality());
             let validated = memory.lens_frame_event(&held.frame, &held.render, &current, &event)?;
@@ -305,7 +305,7 @@ async fn event_answer(
             let server = Arc::clone(&server);
             let credential = auth.idempotency_principal();
             let key = request.idempotency_key;
-            let queued = tokio::task::spawn_blocking(move || {
+            let queued = super::clock_ingress::run_blocking(move || {
                 crate::ai_host::queue_lens_callback(
                     &server.vault,
                     &credential,
