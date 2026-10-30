@@ -32,17 +32,45 @@ pub(super) const MANIFEST: SideTable<EntityId, CodeSymbolManifest, Raw> =
 pub(super) const REVISION_INDEX: SideTable<Vec<u8>, (), Raw> =
     SideTable::new(&side_table::CODE_SYMBOL_REVISION_INDEX);
 
+/// The symbol's id, by its repo, file document, name, kind and ordinal
+/// (ARCH-0050, FIX 7809): a rename keeps the document and an edit above the
+/// symbol keeps the rest, so neither moves the notes attached to it. Its
+/// path, fingerprint and version stay revision data. A revision naming no
+/// document is on the one its path's first op births.
 pub fn code_symbol_entity_id(repo_ref: &RepoRef, symbol: &CodeSymbolRevision) -> Result<EntityId> {
     validate_symbol_shape(symbol)?;
+    let repo = repo_identity_key(repo_ref);
+    let document = symbol
+        .document
+        .unwrap_or_else(|| crate::code_document::code_document_genesis_id(&repo, &symbol.path, 0));
     EntityId::derive(
         CODE_SYMBOL_ENTITY,
         &[
-            repo_identity_key(repo_ref).as_bytes(),
-            symbol.path.as_bytes(),
+            repo.as_bytes(),
+            &document,
             symbol.name.as_bytes(),
             symbol.kind.as_bytes(),
-            &symbol.fingerprint,
+            &symbol.ordinal.to_be_bytes(),
         ],
+    )
+}
+
+/// The file document `path` of `repo_ref` is, read in `txn`: the document
+/// a symbol extracted from it is a span on (FIX 7809).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn code_symbol_document_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    repo_ref: &RepoRef,
+    path: &str,
+) -> Result<[u8; 32]> {
+    crate::code_document::code_document_identity_in_txn(
+        store,
+        txn,
+        &repo_identity_key(repo_ref),
+        path,
     )
 }
 
