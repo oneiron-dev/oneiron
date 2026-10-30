@@ -161,6 +161,11 @@ pub(super) fn settle(
     // A retry shares the run's spend scope; only an end closes it.
     if !matches!(ended, FailureLadderOutcome::Retried { .. }) {
         AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
+        // FIX 11532: the solo run's team receipt, after its own end; a
+        // receipt failure logs and the end stands.
+        if let Err(error) = oneiron::team::record_solo_receipt(vault, attempt.id, now) {
+            tracing::warn!(%error, attempt = ?attempt.id, "a solo run's team receipt was not recorded");
+        }
     }
     Ok(())
 }
@@ -284,6 +289,11 @@ fn complete(
         confession.as_ref(),
     )?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
+    // FIX 11532: the solo run's team receipt, after its own close; a
+    // receipt failure logs and the run stays completed.
+    if let Err(error) = oneiron::team::record_solo_receipt(vault, attempt.id, now) {
+        tracing::warn!(%error, attempt = ?attempt.id, "a solo run's team receipt was not recorded");
+    }
     Ok(())
 }
 
