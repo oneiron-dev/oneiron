@@ -617,7 +617,9 @@ impl<'a> DreamerRunnerStore<'a> {
             return Err(invalid_dreamer_runner("invalid selection retry"));
         }
         self.vault.with_write_txn_grouped(|txn| {
-            self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), step_hashes)?;
+            let unpinned =
+                super::deferral::unpinned_step_hashes_in_txn(self, txn, source.id, step_hashes)?;
+            self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), &unpinned)?;
             self.attempts.requeue_in_txn(
                 txn,
                 crate::attempt_queue::RequeueAttempt {
