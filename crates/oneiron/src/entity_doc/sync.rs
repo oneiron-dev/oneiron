@@ -293,22 +293,28 @@ enum Plane {
 
 /// The one routing rule of every sync reader and writer: a head means the
 /// document; no head means the MESSAGE birth for a MESSAGE, the kind's birth
-/// for another kind whose body its field rule takes or whose row already
-/// names a document (FIX 11794), and the sequence rows for every other.
+/// for another kind whose body its field rule takes while its slot holds no
+/// sequence rows (FIX 11794), and the sequence rows for every other.
 fn plane_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Plane> {
     if let Some(head) = head_in(vault, txn, entity)? {
         return Ok(Plane::Document(head));
     }
     let unborn = match vault.get_entity_type_in_txn(txn, entity)? {
         Some(ENTITY_TYPE_MESSAGE) => true,
-        Some(kind) if birth_fields::field(kind).is_some() => vault
-            .store
-            .port_entity_raw(txn, entity)?
-            .is_some_and(|raw| {
-                raw.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
-                    pointer_of(body).is_some() || split_fields(kind, body, entity).is_some()
-                })
-            }),
+        // Text an earlier sync write kept in the slot's sequence rows stays
+        // there, and a row that names a document already takes no birth here.
+        Some(kind) if birth_fields::field(kind).is_some() => {
+            !vault
+                .store
+                .port_document_present(txn, DocumentSlot::of(*entity))?
+                && vault
+                    .store
+                    .port_entity_raw(txn, entity)?
+                    .is_some_and(|raw| {
+                        raw.get(ENTITY_METADATA_HEADER_LEN..)
+                            .is_some_and(|body| split_fields(kind, body, entity).is_some())
+                    })
+        }
         _ => false,
     };
     Ok(if unborn {
