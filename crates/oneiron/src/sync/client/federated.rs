@@ -11,8 +11,8 @@ use crate::sync::federation_burst::{
 };
 use crate::sync::ingest::{Delivery, watch_births, with_delivery};
 use crate::sync::selector::{
-    AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
-    encode_selector_vv_request, revalidate_admitted_facet_stamps,
+    AdmittedUpdate, FederationAdmissionRole, StagedParts, SyncSelector,
+    admit_peer_window_update_as, encode_selector_vv_request, revalidate_admitted_facet_stamps,
     revalidate_admitted_federated_claims, staged_births,
 };
 use crate::sync::transport;
@@ -360,37 +360,33 @@ impl SyncClient {
         // artifact permanently unimportable under its re-derived id even after the
         // operator installs the missing permit. Leaving the receipt Pending lets a
         // re-stage under the same receipt id re-evaluate once policy relaxes.
-        let admission_key = WindowKey::try_new(durable.window_key.as_str())
-            .ok_or(TransportError::InvalidWindowKey)?;
-        revalidate_admitted_federated_claims(
-            &self.vault,
-            &admission_key,
-            &staged.admitted_update,
-            durable.role,
-        )
-        .map_err(map_federated_admission_err)?;
-        revalidate_admitted_facet_stamps(&admission_key, &staged.admitted_update)
-            .map_err(map_federated_admission_err)?;
+        // Each staged part lands in its own window, the update's own first: a
+        // guest's CLAIMs in their foreign WORLD copies (FIX 3497, FIX 3663).
+        // Every part is judged before any imports.
+        let parts =
+            StagedParts::decode(&staged.admitted_update).map_err(map_federated_admission_err)?;
+        for (key, bytes) in parts.iter() {
+            revalidate_admitted_federated_claims(&self.vault, key, bytes, durable.role)
+                .map_err(map_federated_admission_err)?;
+            revalidate_admitted_facet_stamps(key, bytes).map_err(map_federated_admission_err)?;
+        }
         let births = staged_births(
             &self.vault,
-            &admission_key,
             (&durable.receipt_id, durable.staged_stamps_digest),
-            &staged.admitted_update,
+            &parts,
         )
         .map_err(map_federated_admission_err)?;
-        let window = self.ensure_window(&durable.window_key)?;
-        let vault = std::sync::Arc::clone(&self.vault);
-        let born = watch_births(&vault, births.births(), || {
-            self.import_accepted_window_update(
-                &durable.window_key,
-                &window,
-                &staged.admitted_update,
-            )
-        })?;
-        let released = births
-            .release(&self.vault, &admission_key, &born)
-            .map_err(map_federated_admission_err)?;
-        self.import_released_stamps(&durable.window_key, released)?;
+        for ((key, bytes), births) in parts.iter().zip(&births) {
+            let window = self.ensure_window(key.as_str())?;
+            let vault = std::sync::Arc::clone(&self.vault);
+            let born = watch_births(&vault, births.births(), || {
+                self.import_accepted_window_update(key.as_str(), &window, bytes)
+            })?;
+            let released = births
+                .release(&self.vault, key, &born)
+                .map_err(map_federated_admission_err)?;
+            self.import_released_stamps(key.as_str(), released)?;
+        }
         let expected_receipt = durable;
         let mut receipt = expected_receipt.clone();
         receipt.status = VaultImportStageStatus::Confirmed;

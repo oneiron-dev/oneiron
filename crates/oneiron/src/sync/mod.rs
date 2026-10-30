@@ -123,9 +123,9 @@ pub use selector::put_selector_test_federation_grant;
 pub use selector::{
     DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
     SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
-    admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
-    decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for, filtered_window_doc_for_peer,
+    admit_federated_window_update, admit_federated_window_update_under, authorize_sync_selector,
+    decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
+    encode_sync_selector, filtered_window_doc, filtered_window_doc_for, filtered_window_doc_for_peer,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,

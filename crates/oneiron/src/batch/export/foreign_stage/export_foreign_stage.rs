@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::sync::selector::{FederationAdmissionRole, admit_staged_window_update};
+use crate::sync::selector::{
+    FederationAdmissionRole, admit_staged_window_update, staged_guest_source,
+};
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::types::WindowKey;
 
@@ -282,11 +284,12 @@ pub fn stage_foreign_vault_import(
         remote,
         FederationAdmissionRole::Guest,
         &id,
+        staged_guest_source(classification).as_ref(),
     ) {
-        Ok(a) if a.bytes().len() <= MAX_DECODED_PAYLOAD_BYTES => {
-            a.hold_staged(vault, key)?;
+        Ok(a) if a.staged_len() <= MAX_DECODED_PAYLOAD_BYTES => {
+            a.hold_staged(vault)?;
             let stamps = a.staged_stamps();
-            (a.into_bytes(), stamps)
+            (a.into_staged(), stamps)
         }
         Ok(_) => {
             let failed = VaultImportStageReceipt {

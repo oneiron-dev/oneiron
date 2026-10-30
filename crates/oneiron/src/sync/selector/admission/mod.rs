@@ -24,8 +24,10 @@ use crate::error::RecordError;
 mod birth_scope;
 mod blobs;
 mod derived_world;
+mod pact_source;
 mod revalidate;
 mod routing;
+mod staged_parts;
 mod state;
 mod world_refs;
 
@@ -39,6 +41,12 @@ pub(in crate::sync) use self::revalidate::{
 pub use self::revalidate::put_selector_test_federation_grant;
 use self::blobs::copy_admitted_entities;
 pub(crate) use self::blobs::{admit_federated_entity_blob, FEDERATION_IMPORT_SOURCE};
+#[cfg(feature = "sync")]
+pub use self::pact_source::admit_federated_window_update_under;
+#[cfg(feature = "sync")]
+pub(crate) use self::pact_source::staged_guest_source;
+#[cfg(feature = "sync")]
+pub(crate) use self::staged_parts::StagedParts;
 
 /// Role carried by a member/guest federation import path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -82,7 +90,10 @@ enum ImportGrading {
 ///
 /// No facet stamp a peer sends onto a row this vault lacks is in the
 /// returned update. With no sender named here, nothing can bind such a stamp
-/// to its row's birth, so it is dropped (`copy_admitted_edges`).
+/// to its row's birth, so it is dropped (`copy_admitted_edges`). Nor does a
+/// guest's update name its source vault here, so its CLAIMs keep the
+/// sender's worlds: the door that names it, from the grant the update came
+/// under, is [`admit_federated_window_update_under`] (FIX 3663).
 #[cfg(feature = "sync")]
 pub fn admit_federated_window_update(
     vault: &Vault,
@@ -197,7 +208,10 @@ pub(in crate::sync) fn admit_peer_window_update_as(
 /// [`admit_federated_window_update`] for a foreign artifact staged under
 /// `receipt_id`. Its facet stamps onto rows this vault lacks wait under the
 /// receipt until the confirmation's import births the rows
-/// ([`staged_births`]).
+/// ([`staged_births`]). `source` is the vault the stage names as its sender
+/// ([`staged_guest_source`]): with one, its CLAIMs land in their foreign
+/// WORLD copies, in as many parts as they route to (FIX 3663), all of which
+/// the stage keeps ([`StagedParts`]).
 #[cfg(feature = "sync")]
 pub(crate) fn admit_staged_window_update(
     vault: &Vault,
@@ -205,6 +219,7 @@ pub(crate) fn admit_staged_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
     receipt_id: &[u8; 32],
+    source: Option<&[u8; 32]>,
 ) -> Result<AdmittedUpdate> {
     admit_window_update(
         vault,
@@ -215,7 +230,7 @@ pub(crate) fn admit_staged_window_update(
         ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
-        None,
+        source,
     )
 }
 
