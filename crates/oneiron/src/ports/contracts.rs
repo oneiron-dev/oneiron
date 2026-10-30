@@ -319,13 +319,16 @@ pub trait BlobStore: Transactions {
     ) -> Result<[u8; 32]>;
     fn port_blob_get(&self, txn: &Self::Read<'_>, hash: &[u8; 32]) -> Result<Option<Vec<u8>>>;
     /// [`Self::port_blob_put`] of the bytes `body` yields, staged as they
-    /// stream rather than held whole where the backend can (FIX 3677). The
-    /// default reads them whole.
+    /// stream rather than held whole where the backend can (FIX 3677). A
+    /// long body files under an instance of `mint`, which its caller took
+    /// before `txn` opened (KS-2A, FIX 6021); with none it stays in its row.
+    /// The default reads them whole.
     fn port_blob_put_staged(
         &self,
         txn: &mut Self::Write<'_>,
         reference: &EntityId,
         body: &mut dyn std::io::Read,
+        _mint: Option<&crate::store::BodyMint>,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<[u8; 32]> {
