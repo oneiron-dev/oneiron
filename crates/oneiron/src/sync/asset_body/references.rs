@@ -11,16 +11,26 @@
 //! Without a reference a carrier is an ordinary inline body, whatever its
 //! bytes: a peer's bytes are read as a manifest only where a reference
 //! declares them one. Key: the owner's canonical (lowercase) hex id. Value:
-//! [`AssetBodyRef::encode`]. Nothing writes the map yet, and the file plane
-//! is off ([`crate::store::ASSET_FILE_PLANE`]).
+//! [`AssetBodyRef::encode`]. The window mirror writes a reference in the
+//! commit that writes its carrier ([`mirror_ref`]); while the file plane is
+//! off ([`crate::store::ASSET_FILE_PLANE`]) nothing reads or writes the map.
 //!
 //! [`ASSET_BODY_REFS_MAP`]: crate::sync::schema::ASSET_BODY_REFS_MAP
 
+use loro::LoroDoc;
+
+use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::store::{AssetBodyFacts, AssetFileKind, AssetFileManifest};
+use crate::store::{
+    ASSET_FILE_PLANE, AssetBodyFacts, AssetFileKind, AssetFileManifest, asset_file_in_txn,
+};
+use crate::sync::loro_support::{
+    map_delete, map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
+};
+use crate::sync::schema::ASSET_BODY_REFS_MAP;
 
 /// The value's first byte: its format.
 const REF_FORMAT: u8 = 1;
@@ -163,6 +173,96 @@ impl AssetBodyRef {
                 .and_then(AssetFileManifest::decode)
                 .is_some_and(|manifest| manifest == self.manifest())
     }
+}
+
+/// The reference `doc` binds `carrier`, the bytes its `entities[id]` holds,
+/// with: `None` for an ordinary inline body, which no reference names, or
+/// whose reference binds another carrier, or one that does not decode.
+/// Always `None` while the file plane is off.
+pub(crate) fn bound_in(doc: &LoroDoc, id: &EntityId, carrier: &[u8]) -> Option<AssetBodyRef> {
+    if !ASSET_FILE_PLANE {
+        return None;
+    }
+    let key = id.to_hex();
+    let bytes = map_get_bytes(&doc.get_map(ASSET_BODY_REFS_MAP), &key)?;
+    AssetBodyRef::decode(&key, &bytes).filter(|body| body.binds(carrier))
+}
+
+/// Every reference `doc` holds that binds the carrier its `entities` map
+/// holds for the same id: the bodies the window moves by reference.
+pub(crate) fn bound_refs(doc: &LoroDoc) -> Vec<AssetBodyRef> {
+    let mut bound = Vec::new();
+    if !ASSET_FILE_PLANE {
+        return bound;
+    }
+    let entities = doc.get_map("entities");
+    map_for_each_value_bytes(&doc.get_map(ASSET_BODY_REFS_MAP), |key, bytes| {
+        if let Some(body) = bytes.and_then(|bytes| AssetBodyRef::decode(key, bytes))
+            && map_get_bytes(&entities, key).is_some_and(|carrier| body.binds(&carrier))
+        {
+            bound.push(body);
+        }
+    });
+    bound
+}
+
+/// Writes, in the commit that just wrote `raw`, the local row of `id`, as
+/// `entities[id]`, the reference that carrier owes (FIX 5489, FIX 5490): a
+/// file-plane ASSET's row is the carrier of its manifest, and takes its
+/// reference; any other row is an inline body and takes away a reference an
+/// earlier write left. The entity is written first and the reference second
+/// in every commit, so the two keys resolve together. Off the file plane
+/// nothing is read or written.
+///
+/// # Errors
+///
+/// Storage errors, a descriptor that disagrees with its row, and the map
+/// write's.
+pub(crate) fn mirror_ref(vault: &Vault, doc: &LoroDoc, id: &EntityId, raw: &[u8]) -> Result<()> {
+    if !ASSET_FILE_PLANE {
+        return Ok(());
+    }
+    let manifest = match EntityMetadataHeader::parse(raw) {
+        Some(header) if header.entity_type == ENTITY_TYPE_ASSET => {
+            let txn = vault.store.env.read_txn()?;
+            asset_file_in_txn(&vault.store, &txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?
+        }
+        _ => None,
+    };
+    let refs = doc.get_map(ASSET_BODY_REFS_MAP);
+    let key = id.to_hex();
+    match manifest {
+        Some(manifest) => map_insert_bytes(
+            &refs,
+            &key,
+            &AssetBodyRef::of_carrier(*id, raw, &manifest).encode()?,
+        ),
+        None if refs.get(&key).is_some() => map_delete(&refs, &key),
+        None => Ok(()),
+    }
+}
+
+/// Copies into `out` each reference of `source` whose exact carrier `out`
+/// holds: a filtered copy of a window carries a reference only beside the
+/// owner it kept, never alone.
+///
+/// # Errors
+///
+/// The map write's.
+#[allow(
+    dead_code,
+    reason = "the selector export's hook (sync/selector/authorize.rs) calls this"
+)]
+pub(crate) fn copy_refs_within(source: &LoroDoc, out: &LoroDoc) -> Result<()> {
+    let kept = out.get_map("entities");
+    let refs = out.get_map(ASSET_BODY_REFS_MAP);
+    for body in bound_refs(source) {
+        let key = body.key();
+        if map_get_bytes(&kept, &key).is_some_and(|carrier| body.binds(&carrier)) {
+            map_insert_bytes(&refs, &key, &body.encode()?)?;
+        }
+    }
+    Ok(())
 }
 
 /// A kind's byte in a reference: the manifest's code for it.

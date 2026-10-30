@@ -125,10 +125,18 @@ fn ships_whole(
     let (Some(stored), Some(carried)) = (vault.get_raw_in(rtxn, id)?, carried) else {
         return Ok(false);
     };
-    // A file-plane ASSET's carrier holds its body inline (FIX 5393).
+    // A file-plane ASSET's carrier holds its body inline (FIX 5393), or binds
+    // it by reference (FIX 5489).
     if stored != carried
         && !crate::sync::pack_sync::pack_echo_equal(&stored, &carried)
-        && !crate::sync::asset_body::file_echo_equal(&vault.store, rtxn, id, &stored, &carried)?
+        && !crate::sync::asset_body::doc_echo_equal(
+            &vault.store,
+            rtxn,
+            source,
+            id,
+            &stored,
+            &carried,
+        )?
     {
         return Ok(false);
     }
