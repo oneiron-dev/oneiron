@@ -29316,8 +29316,8 @@ async fn vault_questions_backfill(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.backfill")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.backfill", &value)?;
@@ -29382,7 +29382,7 @@ async fn vault_questions_outcome_windows(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.outcome_windows")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.outcome_windows", &value)?;
@@ -29450,8 +29450,8 @@ async fn vault_questions_refresh(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.refresh")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.refresh", &value)?;
@@ -29485,7 +29485,7 @@ async fn vault_questions_outcomes(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.outcomes")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.outcomes", &value)?;
@@ -29518,8 +29518,8 @@ async fn vault_questions_outcomes_project(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.outcomes.project")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.outcomes.project", &value)?;

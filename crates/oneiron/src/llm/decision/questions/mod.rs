@@ -26,7 +26,11 @@ mod windows;
 #[cfg(test)]
 mod standing_tests;
 
-pub use answer_scope::question_answers_in_lane;
+pub use answer_scope::{
+    answers_in_lane, calibration_pairs_in_lane, closed_outcome_windows_in_lane,
+    outcome_labels_in_lane, project_bound_outcomes_in_lane, question_answers_in_lane,
+    schedule_backfill_in_lane,
+};
 pub use answers::question_answers;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;

@@ -12,8 +12,10 @@
 //! the class it authenticated as (FIX 1588), that the pump answers for later,
 //! and the caller's own lane, frozen (OF-506, FIX 1857): create and edit save
 //! the version under it, so a narrowed credential's question reads inside its
-//! narrowing. The rows that read around that lane still refuse a narrowed
-//! record scope.
+//! narrowing. The rows that answer with a question's answers, joins,
+//! windows, labels or pairs (answers, refresh, backfill, outcome windows,
+//! outcomes and their projection) reply through the caller's own live lane
+//! (FIX 11827).
 //!
 //! Beside its answer, each door lists the rows that answer names
 //! (`host_door_lists`): an answer's claim, its unit, every source its
@@ -34,9 +36,10 @@ pub(crate) use self::question_outcomes::{
 
 use oneiron::llm::decision::questions::{
     AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionRecord,
-    QuestionScheduleHead, ScheduledBackfill, pause_question, question_call_budget, read_question,
-    read_question_schedule, refresh_artifact_question_now, refresh_standing_question_with,
-    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type, standing_ask_route,
+    QuestionScheduleHead, ScheduledBackfill, answers_in_lane, pause_question, question_call_budget,
+    read_question, read_question_schedule, refresh_artifact_question_now,
+    refresh_standing_question_with, run_graph_ask_receipted, schedule_backfill_in_lane,
+    select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
@@ -312,8 +315,9 @@ async fn vault_questions_pause_answer(
 /// `vault.questions.backfill`: schedules the caller's standing question's
 /// backfill over `expected_version`, due at `at` or now. The pump runs it
 /// as it runs the question's scheduled refresh: once, over each covered
-/// unit that version has not answered. Beside it, no row: the backfill
-/// lives in a side table.
+/// unit that version has not answered. A narrowed caller's reply names each
+/// join its own lane reads (OF-506, FIX 11827). Beside it, no row: the
+/// backfill lives in a side table.
 pub(crate) async fn vault_questions_backfill(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -333,10 +337,13 @@ async fn vault_questions_backfill_answer(
     const VERB: &str = "vault.questions.backfill";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<ScheduledBackfill> {
         let now = oneiron_vault_contract::now_ts();
-        Ok(schedule_backfill(
+        let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+        Ok(schedule_backfill_in_lane(
             server.vault(),
+            &lane,
             principal,
             input.id,
             input.expected_version,
@@ -395,7 +402,9 @@ async fn vault_questions_read_answer(
 /// class its version keeps, and answers every ask it has made of them, this
 /// one included, as `vault.questions.answers` lists them unpaged; an
 /// artifact whose earlier answers still wait for Keep is not asked again.
-/// The ladder runs on a blocking thread.
+/// A narrowed caller gets each answer its own lane reads (OF-506, FIX
+/// 11827); the refresh writes as it writes for anyone. The ladder runs on a
+/// blocking thread.
 /// Beside it, the rows each answer names ([`question_answer_rows`]).
 pub(crate) async fn vault_questions_refresh(
     server: &Arc<SyncServer>,
@@ -416,9 +425,11 @@ async fn vault_questions_refresh_answer(
     const VERB: &str = "vault.questions.refresh";
     let asker = asker(auth, server, VERB)?;
     let server = Arc::clone(server);
+    let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
         let vault = server.vault();
         let now = oneiron_vault_contract::now_ts();
+        let lane = asker_lane(vault, &auth, asker.entity_ref(), VERB)?;
         let bands = server.decision_host().bands();
         let asked = refresh_artifact_question_now(
             vault,
@@ -434,7 +445,10 @@ async fn vault_questions_refresh_answer(
             },
         )?;
         if let Some(asks) = asked {
-            return Ok(QuestionAnswer::union(Vec::new(), asks));
+            return Ok(answers_in_lane(
+                &lane,
+                QuestionAnswer::union(Vec::new(), asks),
+            )?);
         }
         // The answers are written, and the answerer answers, as the asker the
         // question's version keeps (FIX 9176).
@@ -457,7 +471,10 @@ async fn vault_questions_refresh_answer(
                 .with_posture(record.definition.posture))
             },
         )?;
-        Ok(QuestionAnswer::union(graph, Vec::new()))
+        Ok(answers_in_lane(
+            &lane,
+            QuestionAnswer::union(graph, Vec::new()),
+        )?)
     })
     .await
     .map_err(|_| internal(VERB))?
