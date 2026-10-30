@@ -209,9 +209,10 @@ mod carrier {
                     Some(OutboxDivergedAnswer::Keep) => (
                         format!("A {kind} outbox copy kept"),
                         format!(
-                            "You kept {end}'s copy of {member}, one the carrier never agreed on."
+                            "You kept {end}'s copy of {member}, one the carrier never agreed on: \
+                             it moves aside under its own name, where the carrier leaves it."
                         ),
-                        vec![action("Remove this copy", OutboxDivergedAnswer::Remove)],
+                        Vec::new(),
                     ),
                     Some(OutboxDivergedAnswer::Remove) => (
                         format!("A {kind} outbox copy is being removed"),
