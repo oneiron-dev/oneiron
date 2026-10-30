@@ -11,11 +11,13 @@
 //!   nothing; it only arms a *question*. [`outcome_from_machine_evidence`] takes
 //!   no clock, and the check-in wake carries no outcome.
 //! * **Cancellation has two homes.** Imported cancellation and feed absence are
-//!   CAL-00's `calendar.status` under the all-live-inbound-passports law and
-//!   never touch this predicate. Only an explicit lifecycle cancellation
-//!   established BEFORE the start records `cancelled_pre_start` here. This layer
-//!   writes one home and READS both: a check-in that consulted only its own
-//!   predicate would ask about a meeting the feed already called off.
+//!   CAL-00's `calendar.status` under the all-live-inbound-passports law. Only
+//!   an explicit cancellation established BEFORE the start — a lifecycle
+//!   cancellation, or an imported `METHOD:CANCEL`, `STATUS:CANCELLED` or
+//!   provider tombstone, citing its status claim — records
+//!   `cancelled_pre_start` here; absence alone never does. This layer writes
+//!   one home and READS both: a check-in that consulted only its own predicate
+//!   would ask about a meeting the feed already called off.
 //! * **The card has two independent doors.** An answer records an
 //!   owner-attested outcome; a recording drop stores a blob and infers nothing.
 //!   CAL-08 may later turn that blob into machine evidence.
@@ -152,11 +154,13 @@ pub struct EventOutcomeClaimValue {
 
 /// One piece of explicit machine evidence about an EVENT.
 ///
-/// Imported cancellation and feed absence are deliberately NOT arms here: they
-/// belong to CAL-00's `calendar.status` under the multi-source law, where a
-/// single source's absence supersedes only its own passport. `evidence_ref` is
-/// the caller's audit anchor — the ratified three-field wire value carries no
-/// evidence slot, so it never rides the claim.
+/// Feed absence is deliberately NOT an arm here: it belongs to CAL-00's
+/// `calendar.status` under the multi-source law, where a single source's
+/// absence supersedes only its own passport. An explicit imported
+/// cancellation arrives as [`Self::CancelReceived`], citing the status claim
+/// that recorded it. `evidence_ref` is the audit anchor: the ratified
+/// three-field wire value carries no evidence slot, so it rides the claim's
+/// evidence ([`record_machine_event_outcome`]), never the value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MachineOutcomeEvidence {
     /// An explicit lifecycle cancellation for this EVENT.
@@ -179,6 +183,19 @@ pub enum MachineOutcomeEvidence {
         evidence_ref: EntityId,
         observed_at: u64,
     },
+}
+
+impl MachineOutcomeEvidence {
+    /// The audit anchor this evidence cites.
+    #[must_use]
+    pub const fn evidence_ref(&self) -> EntityId {
+        match *self {
+            Self::CancelReceived { evidence_ref, .. }
+            | Self::Transcript { evidence_ref, .. }
+            | Self::JoinTelemetry { evidence_ref, .. }
+            | Self::ExplicitNoShow { evidence_ref, .. } => evidence_ref,
+        }
+    }
 }
 
 /// The signals that decide whether an EVENT is meeting-class.
@@ -276,12 +293,13 @@ pub fn record_event_outcome(
     source: ClaimSource,
 ) -> Result<EntityId> {
     vault.with_write_txn_grouped(|txn| {
-        record_event_outcome_in_txn(vault, txn, event_ref, value, source)
+        record_event_outcome_in_txn(vault, txn, event_ref, value, source, None)
     })
 }
 
 mod conditional;
 use conditional::record_event_outcome_in_txn;
+pub use conditional::record_machine_event_outcome;
 pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};
 
 /// Reads the EVENT's live outcome claim.
@@ -461,7 +479,7 @@ pub struct DueOutcomeCheckIn {
 ///   how a meeting went that the feed already said was called off.
 ///
 /// Suppressing the card mints nothing. A cancelled EVENT's outcome stays
-/// `unknown` unless separate evidence establishes one — only a lifecycle
+/// `unknown` unless separate evidence establishes one — only an explicit
 /// cancellation seen BEFORE the start earns `cancelled_pre_start`, and that goes
 /// through [`outcome_from_machine_evidence`].
 ///
