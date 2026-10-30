@@ -376,7 +376,16 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     Err(error) => return spent_or_deferred(error, ctx, &run.charges),
                 }
             }
-            let landed = match self.land_arc_work(ctx, attempt_id, &run, &rows, (params_hash, memo))
+            let landed = match self
+                .land_arc_work(
+                    ctx,
+                    &step_ctx,
+                    attempt_id,
+                    &mut run,
+                    &rows,
+                    (params_hash, memo),
+                )
+                .await
             {
                 Ok(landed) => landed,
                 Err(error) => return spent_or_deferred(error, ctx, &run.charges),

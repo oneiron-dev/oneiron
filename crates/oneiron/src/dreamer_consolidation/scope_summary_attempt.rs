@@ -44,6 +44,7 @@ mod arc_output;
 mod arc_part_merge;
 mod arc_reduce;
 mod arc_review;
+mod arc_synopsis;
 mod arc_turns;
 mod chunks;
 mod output;
