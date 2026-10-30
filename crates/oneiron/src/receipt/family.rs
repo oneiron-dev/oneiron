@@ -224,8 +224,8 @@ impl Vault {
     /// registry — invariant 9 allows exactly two human surfaces, so a lens
     /// that recomputed its own view would BE the forbidden third one.
     /// [`Vault::standing_outbound_grants_lens`] above is likewise a
-    /// COMPATIBILITY projection over the outbound grant family, kept for its
-    /// existing callers rather than promoted to a separate consent surface.
+    /// projection of the outbound grants' own rows in this registry, kept
+    /// for its callers rather than promoted to a separate consent surface.
     pub fn consent_registry_lens(
         &self,
         query: crate::consent::ConsentRegistryQuery,
@@ -347,6 +347,12 @@ pub(super) fn collect_receipt_records(
         records.extend(crate::edit_settle::settle_receipts(vault, query)?);
     }
 
+    // The outbound grant projection reads each grant's consent receipts on
+    // snapshots of its own, so it too runs before the shared `rtxn`.
+    if query.includes_kind(ReceiptKind::ScopedRead) {
+        records.extend(outbound_grant_receipts(vault, query)?);
+    }
+
     let rtxn = vault.store.env.read_txn()?;
     // ONE type-76 scan serves both kinds it projects; the projector-level
     // kind gate keeps a single-kind query from returning the other's rows.
@@ -357,7 +363,6 @@ pub(super) fn collect_receipt_records(
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
-        records.extend(outbound_grant_receipts(vault, &rtxn, query)?);
         // ED-09 (ONE-1765): the reservoir export. Same kind, own store, own
         // field class — an export IS a scoped read that left the vault, so it
         // mints no kind of its own, exactly as ONE-1762's escalations project
