@@ -206,6 +206,10 @@ families! {
         BLOB_ARTIFACT_DECK_ID_MARKS BLOB_ARTIFACT_HIGHWATER BLOB_ARTIFACT_VERSION_CLAIM
         CHECKPOINT_CHAIN_HEAD CHECKPOINT_PAYLOAD_INSTANCE COACH_DIAGNOSTIC_ISSUE_BY_KEY
         CODE_DOCUMENT_GENERATION;
+    // Id-only membership indexes, restored with the rows they index.
+    Class::Structure => COACH_AGENT_HEALTH_CARD_BY_SOURCE
+        DREAMER_IDENTITY_ASK_BY_SOURCE DREAMER_IDENTITY_HINT_BY_SOURCE
+        DREAMER_IDENTITY_INVERSE_BY_SOURCE FEEDBACK_REPORT_CLUSTER_BY_MEMBER;
     // A cloud registration slot's binding (G7): ids, the pinned issuer and
     // audience, the verified subject, a phase and a generation; its tokens
     // stay in the slot's sealed custody record.
