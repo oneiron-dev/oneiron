@@ -4,6 +4,7 @@
 //! role, side by side. A thing's branch first runs its scoped agent (FIX
 //! 7508, `thing_agent`), whose extracts are these same durable steps.
 use std::sync::Arc;
+use std::time::Instant;
 
 use rmpv::Value;
 
@@ -14,6 +15,7 @@ use super::partition::decode_partition_payload;
 use super::resources::{BranchResources, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
+use super::stage_log::{PartitionStages, ms_since};
 use super::step_charge::StepChargeTally;
 use super::thing_agent::{ThingPass, ThingPassEnd};
 use crate::attempt_queue::{AttemptId, ReadSetProducer};
@@ -24,6 +26,12 @@ use crate::llm::{
 };
 
 impl ConsolidationExecutor<'_> {
+    /// The partition's model work; `stages` takes the wall ms of its
+    /// correction read and its conflict resolution.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the run joins its payload, branch, wake, identity, charge tally and stage clock"
+    )]
     pub(super) async fn run_partition_attempt(
         &mut self,
         payload_input: &Value,
@@ -32,6 +40,7 @@ impl ConsolidationExecutor<'_> {
         attempt_id: AttemptId,
         run_id: Option<String>,
         charges: &mut StepChargeTally,
+        stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
         // A drain's pause parks the attempt before its preparation burns
         // more of the pass: its checkpoint exit resumes it. Only the pause
@@ -285,10 +294,12 @@ impl ConsolidationExecutor<'_> {
         }
         // Which listed claim each candidate corrects is decided beside the
         // extraction, as one typed pack over every child's candidates.
-        let corrects = match self
+        let corrections_started = Instant::now();
+        let decided = self
             .decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)
-            .await
-        {
+            .await;
+        stages.corrections_ms = ms_since(corrections_started);
+        let corrects = match decided {
             Ok(Some(corrects)) => corrects,
             Ok(None) => return Ok(PartitionRun::Trapped),
             Err(DurableStepError::SpentFinalizeRefused { usage }) => {
@@ -318,9 +329,19 @@ impl ConsolidationExecutor<'_> {
         );
         // Assembly verifies and collapses evidence across ALL child slots
         // before counting corroboration or routing coupled conflicts.
+        let resolve_started = Instant::now();
         let run = self
-            .resolve_conflicts(candidates, resources, ctx, (attempt_id, run_id), charges)
-            .await?;
+            .resolve_conflicts(
+                candidates,
+                resources,
+                ctx,
+                (attempt_id, run_id),
+                charges,
+                stages,
+            )
+            .await;
+        stages.resolve_ms = ms_since(resolve_started).saturating_sub(stages.gap_ms);
+        let run = run?;
         // A candidate whose correction waits on a role's answer is read again
         // when the attempt comes back; what the pass took is kept.
         Ok(if waiting {
