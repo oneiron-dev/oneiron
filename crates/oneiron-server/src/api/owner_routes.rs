@@ -118,7 +118,7 @@ type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
 /// One owner route leaf's table: each route's OpenAPI row beside the
 /// handler that serves it, one entry per method and path (FIX 8931).
-type OwnerTable = Vec<(OwnerRoute, MethodRouter<Arc<SyncServer>>)>;
+pub(super) type OwnerTable = Vec<(OwnerRoute, MethodRouter<Arc<SyncServer>>)>;
 
 /// Every `/v1/owner` route outside the off-record ones, each leaf's table
 /// read once: [`routes`] serves this list and [`owner_route_rows`] hands its
@@ -194,6 +194,7 @@ fn owner_tables() -> OwnerTable {
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
+        super::packs::owner_table(),
         carrier_table(),
     ]
     .into_iter()
@@ -202,9 +203,7 @@ fn owner_tables() -> OwnerTable {
 }
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    serve(owner_tables())
-        .merge(super::owner_origin::routes())
-        .merge(super::packs::routes())
+    serve(owner_tables()).merge(super::owner_origin::routes())
 }
 
 /// The vault VM outbox carrier's owner routes (FIX 11074); none off Linux,
