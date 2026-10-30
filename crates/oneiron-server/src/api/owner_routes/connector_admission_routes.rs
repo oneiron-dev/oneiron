@@ -16,7 +16,10 @@
 //! `/enabled` switches the connector off and on. `/refresh` lists the tools
 //! again: a change binds a delta slate and puts the key back to Pending at
 //! the revision the connector now answers, for the owner's stamp and a
-//! fresh `/qualify`. A catalog's per-grant keys follow each of these.
+//! fresh `/qualify`. One at the pinned revision that reaches further stages
+//! the delta beside the slate the key keeps routing on (FIX 11677):
+//! `/slate/staged/accept` stamps it, and `/qualify` or `/attest` swaps it
+//! in. A catalog's per-grant keys follow each of these.
 //!
 //! `/proxy` admits the OpenAI proxy for one paired actor (ARCH-0028): its
 //! own key on the proxy connector, over the proxy's fixed slate, stamped by
@@ -31,9 +34,8 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
-    ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
-    OwnerAttestedManifestQualifier, ProbeManifestQualifier, ResolvedConnectorManifest,
-    SlateDisposition, SlateManifest, SlateOwnerOverride, SlateToolManifest,
+    ConnectorKeySpec, ConnectorKeyStatus, ConnectorSlateDrafter, SlateDisposition, SlateManifest,
+    SlateOwnerOverride, SlateToolManifest,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
@@ -45,7 +47,6 @@ use oneiron::task_verb::sdk::{
     ProxyConnectorAdmitRequest, ProxyConnectorRegistration, ProxyConnectorRevokeWriteRequest,
 };
 use oneiron::{EntityId, Vault};
-use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
@@ -67,8 +68,11 @@ const CATALOG_CALL_CLASS: ConnectorCallClass = ConnectorCallClass::ScopedMcp;
 const OWNER_OFF_REASON: &str = "switched off by the owner";
 
 mod admitted;
+mod qualify;
 mod table;
-use self::admitted::{enabled, refresh};
+use self::admitted::{accept_staged, enabled, refresh};
+pub(crate) use self::qualify::qualify_connector;
+use self::qualify::{attest, qualify};
 pub(super) use self::table::owner_table;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -155,6 +159,10 @@ struct Refreshed {
     carried: Vec<String>,
     /// Tools the connector no longer lists.
     dropped: Vec<String>,
+    /// The new slate waits beside the one the key keeps routing on (FIX
+    /// 11677): the key stays as it was until the owner stamps the new slate
+    /// (`/slate/staged/accept`) and a fresh `/qualify` passes on it.
+    staged: bool,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -178,6 +186,9 @@ struct Setup {
     endpoint: Option<String>,
     key: KeyView,
     slate: Option<SlateView>,
+    /// A refresh's slate staged beside `slate`, which the key routes on
+    /// until this one qualifies (FIX 11677); none: no slate waits.
+    staged_slate: Option<SlateView>,
 }
 
 /// An engine refusal as the owner reads it: a fixed sentence about the
@@ -246,6 +257,20 @@ fn slate_of(
         .connector_slate(id)?
         .ok_or_else(|| OwnerError::NotFound("grant slate", id.to_hex()))?;
     Ok((id, slate))
+}
+
+/// The slate a refresh staged beside the one `record` routes on, if any.
+fn staged_slate_of(
+    vault: &Vault,
+    record: &ConnectorKeyRecord,
+) -> OwnerResult<Option<(EntityId, ConnectorGrantSlate)>> {
+    let Some(id) = record.staged_slate_ref else {
+        return Ok(None);
+    };
+    let slate = vault
+        .connector_slate(id)?
+        .ok_or_else(|| OwnerError::NotFound("staged grant slate", id.to_hex()))?;
+    Ok(Some((id, slate)))
 }
 
 /// Drafts with the model drafter `[models.decisions.connector_slate]` binds,
@@ -383,7 +408,8 @@ fn register_connector(
 }
 
 /// `GET /v1/owner/connectors/setup?connector=`: the connector's key, its
-/// admission state and its grant slate, for a resumed setup.
+/// admission state, its grant slate and any slate staged beside it, for a
+/// resumed setup.
 async fn setup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -402,12 +428,16 @@ async fn setup(
                 .transpose()?,
             None => None,
         };
+        let staged_slate = staged_slate_of(server.vault(), &catalog.record)?
+            .map(|(id, slate)| SlateView::new(server.vault(), id, &slate))
+            .transpose()?;
         Ok(Setup {
             endpoint: installed_endpoint(&server, &name),
             connector: name,
             summary: catalog.summary,
             key: KeyView::new(catalog.key, catalog.record)?,
             slate,
+            staged_slate,
         })
     })
     .await?;
@@ -447,6 +477,24 @@ pub(crate) fn accept_slate(
             "the connector slate changed since review".to_owned(),
         ));
     }
+    let view = stamp_reviewed(vault, owner, id, &current, request)?;
+    if admitted {
+        vault
+            .adopt_connector_slate_stamp(&catalog.key, unix_seconds_now())
+            .map_err(engine)?;
+    }
+    Ok(view)
+}
+
+/// The owner's stamp on slate `id` (now `current`) as `request` reviewed
+/// it, with the reach the stamp changes.
+fn stamp_reviewed(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    id: EntityId,
+    current: &ConnectorGrantSlate,
+    request: AcceptRequest,
+) -> OwnerResult<SlateView> {
     if request.all_manual && (!request.rows.is_empty() || request.facets.is_some()) {
         return Err(OwnerError::Invalid(
             "an all-manual accept takes no rows or facets".to_owned(),
@@ -486,211 +534,7 @@ pub(crate) fn accept_slate(
         vault.stamp_connector_slate(owner, id, request.revision, &overrides, facets)
     }
     .map_err(engine)?;
-    if admitted {
-        vault
-            .adopt_connector_slate_stamp(&catalog.key, unix_seconds_now())
-            .map_err(engine)?;
-    }
     Ok(SlateView::with_reach(id, &slate, reach))
-}
-
-/// `POST /v1/owner/connectors/qualify`: runs the probe suite through the
-/// installed endpoint with the owner's kit, activates the key, and
-/// approves the exact manifest the suite ran on. A key the suite already
-/// activated only has its staged manifest approved.
-async fn qualify(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<QualifyRequest>,
-) -> OwnerReply<KeyView> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let reply = blocking(move || qualify_connector(&server, &owner, &request)).await?;
-    Ok(Json(reply))
-}
-
-pub(crate) fn qualify_connector(
-    server: &SyncServer,
-    owner: &AuthenticatedOwner,
-    request: &QualifyRequest,
-) -> OwnerResult<KeyView> {
-    let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
-    let catalog = catalog(vault, &name)?;
-    let revision =
-        catalog.record.protocol_revision.clone().ok_or_else(|| {
-            OwnerError::Invalid("the connector pins no protocol revision".to_owned())
-        })?;
-    match catalog.record.status {
-        ConnectorKeyStatus::Pending => {
-            host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
-                probe(vault, &catalog, &endpoint, &revision, auth, &request.kit)
-            })
-            .map_err(engine)??;
-        }
-        ConnectorKeyStatus::Active if catalog.record.retained_manifest.is_none() => {}
-        _ => {
-            return Err(OwnerError::Refused(
-                "the connector is already admitted".to_owned(),
-            ));
-        }
-    }
-    let record = vault
-        .get_connector_key(&catalog.key)?
-        .ok_or_else(|| OwnerError::NotFound("connector key", catalog.key.to_hex()))?;
-    // After a refresh the suite may find no manifest change, or apply a
-    // proved narrow itself: nothing is left to approve.
-    if record.pending_manifest.is_none() && record.retained_manifest.is_some() {
-        return Ok(KeyView::new(catalog.key, record)?);
-    }
-    let approved = approve(vault, owner, catalog.key)?;
-    Ok(KeyView::new(catalog.key, approved)?)
-}
-
-/// Stages the resolved manifest under the suite, then runs the suite again
-/// to activate the key: two full runs on the one surface the owner stamped.
-/// `POST /v1/owner/connectors/attest`: CONNECTOR-QUALIFY = A (owner ruling
-/// 2026-10-30 05:52 JST). The owner attests a pending connector the probe
-/// suite cannot grade (one that returns no `oneiron/probe` evidence). Its
-/// tools are listed again and must match the slate he stamped; the manifest
-/// stages under his attestation and the key activates with an
-/// owner-attested receipt. Owner-only: no agent verb reaches it, and
-/// `/qualify` stays the default.
-async fn attest(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<AttestRequest>,
-) -> OwnerReply<KeyView> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let reply = blocking(move || attest_connector(&server, &owner, &request)).await?;
-    Ok(Json(reply))
-}
-
-fn attest_connector(
-    server: &SyncServer,
-    owner: &AuthenticatedOwner,
-    request: &AttestRequest,
-) -> OwnerResult<KeyView> {
-    let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
-    let catalog = catalog(vault, &name)?;
-    let revision =
-        catalog.record.protocol_revision.clone().ok_or_else(|| {
-            OwnerError::Invalid("the connector pins no protocol revision".to_owned())
-        })?;
-    if catalog.record.status != ConnectorKeyStatus::Pending {
-        return Err(OwnerError::Refused(
-            "the connector is already admitted".to_owned(),
-        ));
-    }
-    let resolved =
-        host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
-            let client = host::client().map_err(engine)?;
-            listed_as_stamped(vault, &catalog, &client, &endpoint, &revision, auth)
-        })
-        .map_err(engine)??;
-    let now = unix_seconds_now();
-    vault
-        .stage_connector_manifest(
-            &catalog.key,
-            resolved,
-            &revision,
-            &OwnerAttestedManifestQualifier { owner },
-            now,
-        )
-        .map_err(engine)?;
-    vault
-        .attest_connector_key(owner, &catalog.key, &revision, now)
-        .map_err(engine)?;
-    let approved = approve(vault, owner, catalog.key)?;
-    Ok(KeyView::new(catalog.key, approved)?)
-}
-
-/// The connector's tools, listed again at `revision` and resolved, when
-/// they are still the ones the owner stamped on its slate.
-fn listed_as_stamped(
-    vault: &Vault,
-    catalog: &Catalog,
-    client: &reqwest::blocking::Client,
-    endpoint: &str,
-    revision: &str,
-    auth: Option<&HeaderValue>,
-) -> OwnerResult<ResolvedConnectorManifest> {
-    let discovery = host::discover(client, endpoint, auth, Some(revision)).map_err(engine)?;
-    let (_, slate) = slate_of(vault, &catalog.record)?;
-    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
-    let classes = slate
-        .manifest()
-        .iter()
-        .map(|tool| {
-            (
-                tool.name.clone(),
-                ToolClass {
-                    data_class: tool.data_class,
-                    spends: tool.spends,
-                    price: tool.price.clone(),
-                },
-            )
-        })
-        .collect();
-    let listed = host::slate_manifest(&resolved, &discovery.tools, &classes);
-    if !same_manifest(&listed, &slate) {
-        return Err(OwnerError::Changed(
-            "the connector's tools changed since it was registered".to_owned(),
-        ));
-    }
-    Ok(resolved)
-}
-
-fn probe(
-    vault: &Vault,
-    catalog: &Catalog,
-    endpoint: &str,
-    revision: &str,
-    auth: Option<&HeaderValue>,
-    kit: &QualificationKit,
-) -> OwnerResult<()> {
-    let client = host::client().map_err(engine)?;
-    let resolved = listed_as_stamped(vault, catalog, &client, endpoint, revision, auth)?;
-    let connector = host::HttpQualificationConnector::new(
-        &client,
-        endpoint,
-        auth,
-        revision,
-        &kit.effect_state_uri,
-    );
-    let now = unix_seconds_now();
-    let staged_plan = kit.plan_for_run();
-    let suite = ProbeManifestQualifier {
-        connector: &connector,
-        plan: &staged_plan,
-        oracle: kit,
-    };
-    vault
-        .stage_connector_manifest(&catalog.key, resolved, revision, &suite, now)
-        .map_err(engine)?;
-    vault
-        .qualify_connector_key(
-            &catalog.key,
-            revision,
-            &connector,
-            &kit.plan_for_run(),
-            kit,
-            now,
-        )
-        .map_err(|error| match error {
-            ConnectorQualificationError::Probe(failure) => {
-                OwnerError::Refused(format!("the connector failed qualification: {failure}"))
-            }
-            ConnectorQualificationError::Vault(error) => engine(error),
-        })?;
-    // The kit that qualified the key is kept for an accepted issuer
-    // revision's re-run (FIX 9304); the qualify stands without it.
-    if let Err(error) = vault.keep_connector_qualification_kit(&catalog.key, kit) {
-        tracing::warn!(%error, "connector qualification kit not kept");
-    }
-    Ok(())
 }
 
 /// `POST /v1/owner/connectors/proxy`: admits the OpenAI proxy for one
@@ -757,33 +601,4 @@ fn by_name(manifest: &[SlateToolManifest]) -> BTreeMap<&str, &SlateToolManifest>
 fn same_manifest(listed: &SlateManifest, slate: &ConnectorGrantSlate) -> bool {
     by_name(&listed.tools) == by_name(slate.manifest())
         && listed.elicitation.as_ref() == slate.elicitation_manifest()
-}
-
-/// Approves the exact candidate qualification staged: the owner's qualify
-/// act accepts the manifest the suite ran on.
-fn approve(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    key: EntityId,
-) -> OwnerResult<ConnectorKeyRecord> {
-    let record = vault
-        .get_connector_key(&key)?
-        .ok_or_else(|| OwnerError::NotFound("connector key", key.to_hex()))?;
-    let pending = record
-        .pending_manifest
-        .ok_or_else(|| OwnerError::Invalid("the connector has no staged manifest".to_owned()))?;
-    let report = pending
-        .qualification_report_hash
-        .ok_or_else(|| OwnerError::Invalid("the staged manifest was never qualified".to_owned()))?;
-    let manifest_hash = pending.manifest.hash().map_err(engine)?;
-    vault
-        .approve_connector_manifest(
-            owner,
-            &key,
-            pending.candidate_id,
-            manifest_hash,
-            &report,
-            unix_seconds_now(),
-        )
-        .map_err(engine)
 }

@@ -5,7 +5,8 @@ use axum::routing::{get, post};
 
 use super::super::{OwnerRoute, OwnerTable};
 use super::{
-    accept, attest, enabled, proxy, qualify, refresh, register, revoke_proxy_write, setup,
+    accept, accept_staged, attest, enabled, proxy, qualify, refresh, register, revoke_proxy_write,
+    setup,
 };
 
 pub(in super::super) fn owner_table() -> OwnerTable {
@@ -36,6 +37,15 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 row: None,
             },
             post(accept),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/slate/staged/accept",
+                summary: "The owner's stamp on the slate a refresh staged beside an admitted connector's routing one, at the revision reviewed; the key keeps routing until qualify or attest swaps it in.",
+                row: None,
+            },
+            post(accept_staged),
         ),
         (
             OwnerRoute {
