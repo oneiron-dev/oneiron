@@ -108,6 +108,7 @@ mod support_repair_routes;
 mod training_swap_routes;
 mod usage_repair_routes;
 pub(super) mod vault_key_routes;
+pub(super) mod weave_digest_channel_routes;
 pub(super) mod weave_routes;
 pub(super) mod widen_proposal_routes;
 pub(super) mod wire_health_routes;
@@ -163,6 +164,7 @@ fn owner_tables() -> OwnerTable {
         agent_grant_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
+        weave_digest_channel_routes::owner_table(),
         pack_routes::owner_table(),
         pack_preview_routes::owner_table(),
         courtesy_delete_routes::owner_table(),

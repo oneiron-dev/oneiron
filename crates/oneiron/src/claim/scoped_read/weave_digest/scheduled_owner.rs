@@ -223,6 +223,8 @@ impl Vault {
         // His own exposure to the period, for the Coach (FIX 5495), in its
         // own write after the notice's; never his open.
         self.note_owner_weave_digest_notice(owner, scheduled_for, cadence, notice, now);
+        // The notice also goes to his own channel (FIX 1262).
+        self.send_weave_digest(reader, scheduled_for, notice);
         Ok(true)
     }
 

@@ -1128,7 +1128,7 @@ impl ScopedRead<'_> {
         ]
         .concat();
         before_commit()?;
-        self.vault.with_write_txn_grouped(|txn| {
+        let published = self.vault.with_write_txn_grouped(|txn| {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self.vault, txn)?;
             }
@@ -1189,7 +1189,19 @@ impl ScopedRead<'_> {
                 lens: None,
                 lens_refused: None,
             }))
-        })
+        })?;
+        // The period's inbox notice also goes to the reader's own channel
+        // once it has committed (FIX 1262); a period with no notice sends
+        // nothing.
+        if owner.is_none()
+            && let Some(digest) = &published
+            && let Ok(notice) =
+                crate::inbox::notification_id(&id.notification(digest.scheduled_for, now).source)
+        {
+            self.vault
+                .send_weave_digest(id, digest.scheduled_for, notice);
+        }
+        Ok(published)
     }
 }
 
