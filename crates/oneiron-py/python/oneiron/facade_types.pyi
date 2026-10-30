@@ -21220,32 +21220,32 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
-class NoteEditReplaceSpan(TypedDict):
+class NoteProgramEditReplaceSpan(TypedDict):
     kind: Literal["replace_span"]
     start: NoteAnchor
     end: NoteAnchor
     text: str
-class NoteEditInsertAfter(TypedDict):
+class NoteProgramEditInsertAfter(TypedDict):
     kind: Literal["insert_after"]
     anchor: NoteAnchor
     text: str
-class NoteEditAppendToSection(TypedDict):
+class NoteProgramEditAppendToSection(TypedDict):
     kind: Literal["append_to_section"]
     end: NoteAnchor
     text: str
-class NoteEditWholeText(TypedDict):
+class NoteProgramEditWholeText(TypedDict):
     kind: Literal["whole_text"]
     text: str
     timeout_ms: int
     base: NotRequired[NoteVersion | None]
-class NoteEditRewrite(TypedDict):
+class NoteProgramEditRewrite(TypedDict):
     kind: Literal["rewrite"]
     text: str
-NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
+NoteProgramEdit = NoteProgramEditReplaceSpan | NoteProgramEditInsertAfter | NoteProgramEditAppendToSection | NoteProgramEditWholeText | NoteProgramEditRewrite
 class NoteForkRequest(TypedDict):
     note_ref: str
     base: NoteVersion
-    edit: NoteEdit
+    edit: NoteProgramEdit
     reason: NotRequired[str | None]
 class NoteForkRecordView(TypedDict):
     note_ref: str
@@ -21324,20 +21324,20 @@ class NoteEditorClosed(TypedDict):
     closed: bool
 class EditNoteRequest(TypedDict):
     note_ref: str
-    edit: NoteEdit
-class NoteEditOutcomeEdited(TypedDict):
+    edit: NoteProgramEdit
+class NoteProgramEditOutcomeEdited(TypedDict):
     outcome: Literal["edited"]
     head: EntityId
-class NoteEditOutcomeRewriteFork(TypedDict):
+class NoteProgramEditOutcomeRewriteFork(TypedDict):
     outcome: Literal["rewrite_fork"]
     fork: EntityId
-class NoteEditOutcomeProposedFork(TypedDict):
+class NoteProgramEditOutcomeProposedFork(TypedDict):
     outcome: Literal["proposed_fork"]
     fork: EntityId
-class NoteEditOutcomeReviewRequired(TypedDict):
+class NoteProgramEditOutcomeReviewRequired(TypedDict):
     outcome: Literal["review_required"]
     receipt: CommitReceipt
-NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
+NoteProgramEditOutcome = NoteProgramEditOutcomeEdited | NoteProgramEditOutcomeRewriteFork | NoteProgramEditOutcomeProposedFork | NoteProgramEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
 class NoteSeal(TypedDict):
