@@ -156,10 +156,17 @@ impl NativeSealEngine {
                 });
             }
         };
-        if facts.revisions.len() != 1 {
-            return Err(SealError::InputInvalid {
-                code: crate::error::InputInvalidCode::MalformedXref,
-            });
+        // Unsigned prior revisions are admitted once each revision's own
+        // snapshot passes the prepared-input scan (FIX 6272); their count is
+        // in the call's counts (`seal_revisions`), never refused.
+        match facts.revisions.len() {
+            0 => {
+                return Err(SealError::InputInvalid {
+                    code: crate::error::InputInvalidCode::MalformedXref,
+                });
+            }
+            1 => {}
+            _ => pdf::admit_prior_revisions(&prepared.bytes, &facts.ends(), &limits)?,
         }
         let ctx = profile::SealContext {
             config: &self.config,
