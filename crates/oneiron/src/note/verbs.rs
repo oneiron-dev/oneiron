@@ -416,10 +416,12 @@ impl Vault {
                         head: note,
                         doc: doc.doc.fork(),
                     };
+                    // The fork's commits name the actor's stamp token (FIX 10930).
+                    let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
                     let replacement = candidate.apply(
                         &self.store.clock,
                         isolated_rewrite.as_ref().unwrap_or(edit),
-                        actor.entity_ref(),
+                        stamp,
                         self.store.clock.now_recorded_at(),
                     )?;
                     let rewrite = replacement.is_some();

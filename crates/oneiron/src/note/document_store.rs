@@ -306,6 +306,9 @@ impl Memory<'_> {
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.vault().new_entity_id()?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
+        // The brief's commits after its birth name the actor's stamp token
+        // (FIX 10930), read on a write of its own before the content write.
+        let stamp = crate::provenance::actor_stamp(self.vault(), actor)?;
         let body = encode_note_body(&NoteBody {
             kind,
             author_ref: super::NoteActor::Actor(self.actor()),
@@ -358,7 +361,7 @@ impl Memory<'_> {
             let doc = NoteDocument::birth(id, &markdown, &actor)?;
             for pin in pins {
                 validate_pin_source(self.vault(), content.read(), pin)?;
-                doc.add_pin(pin, &actor)?;
+                doc.add_pin(pin, stamp)?;
             }
             let now = self.vault().now_recorded_at();
             content.apply_batch(
@@ -387,6 +390,7 @@ impl Memory<'_> {
                         grant: None,
                         command_hash: *blake3::hash(&body).as_bytes(),
                     },
+                    stamp,
                 )?;
                 persist_authoritative(self.vault(), txn, &doc)?;
                 Ok(())
@@ -684,5 +688,6 @@ pub(crate) fn resolve_deck_pin_in_txn(
 
 mod deck;
 pub(crate) use deck::{
-    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn,
+    observe_deck_span_in_txn,
 };

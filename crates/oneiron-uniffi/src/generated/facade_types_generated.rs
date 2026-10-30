@@ -44833,6 +44833,8 @@ pub struct SlideJudgment {
     pub location: Option<SlideLocation>,
     #[serde(rename = "band_mode")]
     pub band_mode: BandMode,
+    #[serde(rename = "ceiling")]
+    pub ceiling: DecisionRung,
     #[serde(rename = "renderer")]
     pub renderer: String,
     #[serde(rename = "frontier")]

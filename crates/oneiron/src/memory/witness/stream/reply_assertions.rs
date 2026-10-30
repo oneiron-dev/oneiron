@@ -11,18 +11,22 @@
 //! itself (FIX 10259): a caller's own value is never overwritten. A
 //! continuation's terminal judges its set through the same check, its lane
 //! opened before its writer; its MESSAGE's envelope was fixed at birth, so
-//! only its receipt keeps the set. A Retry's reply never takes the set of
-//! the reply it answers again.
+//! only its receipt keeps the set, and the created records whose birth
+//! does not prove its writer made them are receipted `creation_not_proven`
+//! once it lands, as the witness program receipts its own (FIX 1211, FIX
+//! 11034). A Retry's reply never takes the set of the reply it answers
+//! again.
 
 use std::cell::Cell;
 
 use serde_json::Value;
 
+use super::super::assertions::unproven_creations_in;
 use super::super::program::unread_assertion_in;
 use super::*;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::error::Error;
-use crate::memory::{MemoryError, MemoryResult, WitnessAssertions, WitnessTurn};
+use crate::memory::{HostWriteOrigin, MemoryError, MemoryResult, WitnessAssertions, WitnessTurn};
 
 /// The MESSAGE metadata key a reply's admitted assertions are copied under:
 /// a noncanonical projection, the receipt being the record (FIX 10259).
@@ -95,6 +99,38 @@ pub(super) fn judge_in_txn(
         return Err(MemoryError::bad_request(refusal).into());
     }
     Ok(())
+}
+
+/// The pointers of the created records a continuation's terminal asserts
+/// whose stored birth does not prove its writer made them in the run its
+/// host bound, read in its writer's snapshot once `judge_in_txn` has read
+/// them all (FIX 1211, FIX 11034). A writer no host bound to a run proves
+/// no creation.
+pub(super) fn unproven_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    assertions: &WitnessAssertions,
+) -> Vec<String> {
+    let run = memory
+        .host_origin
+        .as_ref()
+        .and_then(HostWriteOrigin::bound_run);
+    unproven_creations_in(&memory.vault.store, txn, assertions, memory.actor(), run)
+}
+
+/// Receipts a landed terminal's unproven creations `creation_not_proven`,
+/// as the witness program receipts its own once its turn lands (FIX
+/// 11034). The reply stands whatever the receipt write does.
+pub(super) fn receipt_unproven(memory: &Memory<'_>, unproven: &Cell<Vec<String>>) {
+    let pointers = unproven.take();
+    if pointers.is_empty() {
+        return;
+    }
+    crate::receipt::receipt_creations_not_proven(
+        memory,
+        crate::gate::record_references::WITNESS_PROSE_ROW,
+        &pointers,
+    );
 }
 
 /// A terminal writer's result once it has closed: a refused assertion is

@@ -80,8 +80,11 @@ impl crate::Vault {
             index += 1;
         });
         let mut observed = Vec::with_capacity(spans.len());
+        // Each cited NOTE is judged and loaded once, however many pins cite
+        // it (FIX 10746).
+        let mut reads = crate::note::DeckSpanReads::default();
         for (pin, span) in spans {
-            let seen = self.observe_span_in_txn(txn, &span).ok();
+            let seen = self.observe_span_in_txn(txn, &mut reads, &span).ok();
             let lifecycle = match &span.claim {
                 Some(claim) => self
                     .get_claim_in_txn(txn, claim)?
@@ -101,11 +104,13 @@ impl crate::Vault {
     fn observe_span_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        reads: &mut crate::note::DeckSpanReads,
         span: &EngineSpan,
     ) -> Result<crate::note::DeckSpanObservation> {
         crate::note::observe_deck_span_in_txn(
             self,
             txn,
+            reads,
             span.document,
             span.claim,
             &span.start,
