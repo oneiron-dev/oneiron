@@ -556,3 +556,125 @@ pub(crate) fn trusted_review_in_txn(
         spawn_attempt: stored.spawn_attempt,
     }))
 }
+
+/// Re-keys the session tag of every review verdict and automatic outcome naming erased
+/// `entity` to one fresh opaque id (FIX 11363), its trust stamp with it. Gives back the
+/// verdicts it touched, for their cached rows' move.
+pub(crate) fn erase_review_session_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let named = entity.to_hex();
+    let mut opaque = None;
+    let mut verdicts = Vec::new();
+    for predicate in ["review.verdict", "review.automatic_outcome"] {
+        let mut ids = Vec::new();
+        vault.for_each_claim_with_predicate_in_txn(wtxn, predicate, |id, body| {
+            if body.session_tag.as_deref() == Some(named.as_str()) {
+                ids.push(id);
+            }
+            Ok(())
+        })?;
+        for id in ids {
+            let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+                continue;
+            };
+            let opaque_id = match opaque {
+                Some(opaque) => opaque,
+                None => {
+                    let id = vault.store.clock.entity_id()?;
+                    opaque = Some(id);
+                    id
+                }
+            };
+            body.session_tag = Some(opaque_id.to_hex());
+            rewrite_review_claim_in_txn(vault, wtxn, &id, &body)?;
+            if predicate == "review.verdict" {
+                verdicts.push(id);
+            }
+        }
+    }
+    Ok(verdicts)
+}
+
+/// Applies the erase's artifact rename map to every review verdict's findings (FIX
+/// 11368): the claim value names each finding's artifact ids.
+pub(crate) fn rewrite_verdict_artifact_ids_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let mut ids = Vec::new();
+    vault.for_each_claim_with_predicate_in_txn(wtxn, "review.verdict", |id, _| {
+        ids.push(id);
+        Ok(())
+    })?;
+    for id in ids {
+        let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+            continue;
+        };
+        let mut value = body.value.clone();
+        rename_value_strings(&mut value, renamed);
+        if value == body.value {
+            continue;
+        }
+        body.value = value;
+        rewrite_review_claim_in_txn(vault, wtxn, &id, &body)?;
+    }
+    Ok(())
+}
+
+/// Writes `body` over claim `id` in place, its header times kept, its trust stamp
+/// re-hashed over the rewritten bytes.
+fn rewrite_review_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    let raw = vault
+        .get_raw_in(wtxn, id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("review claim header"))?;
+    vault.put_reserved_claim_in_txn(
+        wtxn,
+        id,
+        body,
+        crate::temporal::TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        header.learned_at,
+    )?;
+    let digest = blake3::hash(&crate::claim::encode_claim_body(body)?);
+    CLAIM_TRUST.put(&vault.store, wtxn, id, digest.as_bytes())?;
+    Ok(())
+}
+
+/// Replaces every string in `value`, map keys included, that `renamed` maps.
+fn rename_value_strings(
+    value: &mut rmpv::Value,
+    renamed: &std::collections::BTreeMap<String, String>,
+) {
+    match value {
+        rmpv::Value::String(text) => {
+            if let Some(new) = text.as_str().and_then(|text| renamed.get(text)) {
+                *value = rmpv::Value::from(new.as_str());
+            }
+        }
+        rmpv::Value::Array(items) => {
+            for item in items {
+                rename_value_strings(item, renamed);
+            }
+        }
+        rmpv::Value::Map(entries) => {
+            for (key, item) in entries {
+                rename_value_strings(key, renamed);
+                rename_value_strings(item, renamed);
+            }
+        }
+        _ => {}
+    }
+}
