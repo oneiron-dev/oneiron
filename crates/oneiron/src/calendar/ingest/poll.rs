@@ -337,6 +337,7 @@ pub fn run_ics_feed_poll_with_screener(
                 now,
                 blob_ref: &blob_ref,
                 verdict_fold: VerdictFold::default(),
+                continuations: Some(Vec::new()),
             };
             admission.apply_feed(&feed)?;
             admission.sweep_absent_sources(&feed)?;

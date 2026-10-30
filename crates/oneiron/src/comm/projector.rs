@@ -503,6 +503,7 @@ fn project_event_in_txn(
                         (occurred_at, kind == CommEventKind::ThreadLeft),
                     )),
                     heads: Vec::new(),
+                    contacts: Vec::new(),
                     source_stamped: false,
                 }
             }
@@ -664,7 +665,7 @@ fn apply_projector_rule_in_txn(
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
-                rematerialize_party_channel_contact_cache_in_txn(
+                let contacts = rematerialize_party_channel_contact_cache_in_txn(
                     vault,
                     wtxn,
                     party_ref,
@@ -673,6 +674,7 @@ fn apply_projector_rule_in_txn(
                 )?;
                 Ok(ProjectorIndexDelta {
                     heads: minted.then_some(claim_id).into_iter().collect(),
+                    contacts,
                     ..ProjectorIndexDelta::default()
                 })
             } else {
@@ -722,7 +724,7 @@ fn apply_projector_rule_in_txn(
                 // The heads may have landed without the cache (replicated,
                 // or written beside the projector), so a STOP on a standing
                 // slot still leaves the contact row saying opted out.
-                rematerialize_party_channel_contact_cache_in_txn(
+                let contacts = rematerialize_party_channel_contact_cache_in_txn(
                     vault,
                     wtxn,
                     party_ref,
@@ -733,6 +735,7 @@ fn apply_projector_rule_in_txn(
                     consumed_gate_ids,
                     projected_thread_transition: None,
                     heads: Vec::new(),
+                    contacts,
                     source_stamped: false,
                 })
             }
