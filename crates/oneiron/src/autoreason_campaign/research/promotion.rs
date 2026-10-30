@@ -14,14 +14,14 @@ use super::super::beam_promotion::SealedRefereeMeasurement;
 use super::super::general::{DecideRules, Measurement, MetricRole, Verdict};
 use super::{
     CandidateRef, ResearchBudgetRead, ResearchGoalPin, ResearchTarget, binding, campaign_error,
-    check_goal_current, hex, invalid, nodes_in_txn, policy_digest, pruned_lineage,
+    check_goal_current, hex, invalid, nodes_in_txn, policy_digest, proposal_of, pruned_lineage,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{
-    EvalExposureKind, EvalRelease, SufficiencyCard, SufficiencyInput, skill_edit_verdict,
-    sufficiency_card,
+    EvalExposureKind, EvalRelease, SufficiencyCard, SufficiencyInput, skill_body_binding_digest,
+    skill_edit_verdict, skill_edit_verdict_in_txn, sufficiency_card,
 };
-use crate::{AttemptId, EntityId, Result, Vault};
+use crate::{AttemptId, EntityId, Error, Result, Vault};
 
 /// The held-out basis, confirmation and promotion of one candidate, keyed by
 /// root attempt then candidate attempt.
@@ -85,6 +85,10 @@ pub struct CampaignPromotionReceipt {
     pub referee_pin: String,
     /// The skill revision proposal whose gate verdict this stands on.
     pub skill_proposal: Option<EntityId>,
+    /// The skill the standing verdict revises; none for config campaigns.
+    pub skill: Option<EntityId>,
+    /// The scored proposal body's digest; none for config campaigns.
+    pub proposal_digest: Option<String>,
     pub disposition: PromotionDisposition,
     pub budget: ResearchBudgetRead,
     pub at: u64,
@@ -330,14 +334,14 @@ fn update_basis(
     vault: &Vault,
     root: AttemptId,
     candidate: AttemptId,
-    change: impl FnOnce(&mut PromotionBasis) -> Result<()>,
+    change: impl FnOnce(&mut PromotionBasis, &heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<PromotionBasis> {
     vault.with_write_txn_grouped(|txn| {
         let key = (*root.as_bytes(), *candidate.as_bytes());
         let mut basis = BASIS
             .get(&vault.store, txn, &key)?
             .ok_or(invalid("the candidate has no held-out basis"))?;
-        change(&mut basis)?;
+        change(&mut basis, txn)?;
         BASIS.put(&vault.store, txn, &key, &basis)?;
         Ok(basis)
     })
@@ -360,7 +364,7 @@ pub fn reserve_confirmation(
     let seat = binding
         .confirmation
         .ok_or(invalid("this campaign names no sealed confirmation cohort"))?;
-    let basis = update_basis(vault, root, candidate, |basis| {
+    let basis = update_basis(vault, root, candidate, |basis, _| {
         if basis.call != HeldOutCall::Promote {
             return Err(invalid(
                 "only a held-out Promote goes to sealed confirmation",
@@ -385,7 +389,7 @@ pub fn reserve_confirmation(
         Some(&basis.candidate_pin.config_sha256),
         at,
     )?;
-    update_basis(vault, root, candidate, |basis| {
+    update_basis(vault, root, candidate, |basis, _| {
         if let Some(confirmation) = &mut basis.confirmation {
             confirmation.exposure = Some(release.exposure.id);
         }
@@ -401,8 +405,9 @@ pub fn reserve_confirmation(
 /// # Errors
 /// An unbound campaign, no released confirmation, a settled candidate, a
 /// moved goal, an invalid sufficiency input, a skill campaign without its
-/// proposal (or a config campaign with one), a proposal scored under another
-/// goal, a retired cohort at the promotion serving, or storage errors.
+/// proposal (or a config campaign with one), a verdict for another staged
+/// proposal, skill, or scored content, a proposal scored under another goal,
+/// a retired cohort at the promotion serving, or storage errors.
 pub fn promote_measured(
     vault: &Vault,
     root: AttemptId,
@@ -428,10 +433,18 @@ pub fn promote_measured(
         return Err(invalid("the candidate's promotion is already settled"));
     }
     let card = sufficiency_card(outcome.sufficiency)?;
-    let gate_accepted = match (&binding.target, outcome.skill_proposal) {
-        (ResearchTarget::Skill { .. }, Some(proposal)) => {
+    let (gate_accepted, skill, proposal_digest) = match (&binding.target, outcome.skill_proposal) {
+        (ResearchTarget::Skill { skill }, Some(proposal)) => {
+            if proposal_of(&basis.candidate_pin) != Some(proposal) {
+                return Err(invalid(
+                    "the verdict's proposal is not the candidate's staged proposal",
+                ));
+            }
             let verdict = skill_edit_verdict(vault, &proposal)?
                 .ok_or(invalid("the skill proposal has no gate verdict"))?;
+            if verdict.skill != *skill {
+                return Err(invalid("the verdict's skill is not the campaign's skill"));
+            }
             let pin = binding
                 .goal
                 .as_ref()
@@ -439,9 +452,19 @@ pub fn promote_measured(
             if verdict.goal_id != Some(pin.goal_id) || verdict.goal_revision != pin.revision {
                 return Err(invalid("the skill verdict was scored under another goal"));
             }
-            verdict.accepted
+            let staged_now = vault
+                .get_skill_record(&proposal)?
+                .ok_or(invalid("the staged proposal moved since it was scored"))?;
+            if skill_body_binding_digest(&staged_now)? != verdict.proposal_digest {
+                return Err(invalid("the staged proposal moved since it was scored"));
+            }
+            (
+                verdict.accepted,
+                Some(verdict.skill),
+                Some(verdict.proposal_digest),
+            )
         }
-        (ResearchTarget::Config { .. }, None) => true,
+        (ResearchTarget::Config { .. }, None) => (true, None, None),
         _ => {
             return Err(invalid(
                 "a skill campaign names its proposal; a config campaign names none",
@@ -497,13 +520,52 @@ pub fn promote_measured(
         sealed_digest: outcome.sealed.digest().to_owned(),
         referee_pin: outcome.sealed.referee_pin().to_owned(),
         skill_proposal: outcome.skill_proposal,
+        skill,
+        proposal_digest,
         disposition,
         budget: super::research_budget(vault, root)?,
         at,
     };
-    update_basis(vault, root, candidate, |basis| {
+    update_basis(vault, root, candidate, |basis, txn| {
         if basis.promotion.is_some() {
             return Err(invalid("the candidate's promotion is already settled"));
+        }
+        if let Some(proposal) = outcome.skill_proposal {
+            if proposal_of(&basis.candidate_pin) != Some(proposal) {
+                return Err(invalid(
+                    "the verdict's proposal is not the candidate's staged proposal",
+                ));
+            }
+            let verdict = skill_edit_verdict_in_txn(vault, &*txn, &proposal)?
+                .ok_or(invalid("the skill proposal has no gate verdict"))?;
+            let ResearchTarget::Skill { skill } = &binding.target else {
+                return Err(invalid(
+                    "a skill campaign names its proposal; a config campaign names none",
+                ));
+            };
+            if verdict.skill != *skill {
+                return Err(invalid("the verdict's skill is not the campaign's skill"));
+            }
+            let pin = binding
+                .goal
+                .as_ref()
+                .ok_or(invalid("a skill campaign pins its goal"))?;
+            if verdict.goal_id != Some(pin.goal_id) || verdict.goal_revision != pin.revision {
+                return Err(invalid("the skill verdict was scored under another goal"));
+            }
+            let staged_now = match vault.read_skill_record_in_txn(&*txn, &proposal) {
+                Ok(record) => record,
+                Err(Error::EntityNotFound) => {
+                    return Err(invalid("the staged proposal moved since it was scored"));
+                }
+                Err(error) => return Err(error),
+            };
+            if skill_body_binding_digest(&staged_now)? != verdict.proposal_digest {
+                return Err(invalid("the staged proposal moved since it was scored"));
+            }
+            if verdict.accepted != gate_accepted {
+                return Err(invalid("the skill verdict changed since it was read"));
+            }
         }
         basis.promotion = Some(receipt.clone());
         Ok(())

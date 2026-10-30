@@ -25459,10 +25459,7 @@ pub struct BudgetLease {
 #[serde(tag = "kind")]
 pub enum DecideRules {
     #[serde(rename = "dominance")]
-    Dominance {
-        #[serde(rename = "min_primary_gain")]
-        min_primary_gain: f64,
-    },
+    Dominance,
     #[serde(rename = "of366")]
     Of366 {
         #[serde(rename = "verdict_epsilon")]
@@ -25898,6 +25895,8 @@ pub struct SelectionReceipt {
     pub root: AttemptId,
     #[serde(rename = "round")]
     pub round: u64,
+    #[serde(rename = "incumbent")]
+    pub incumbent: AttemptId,
     #[serde(rename = "step")]
     pub step: ResearchStep,
     #[serde(rename = "branches")]
@@ -26201,6 +26200,14 @@ pub struct CampaignPromotionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub skill_proposal: Option<String>,
+    #[serde(rename = "skill", default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+    #[serde(
+        rename = "proposal_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_digest: Option<String>,
     #[serde(rename = "disposition")]
     pub disposition: PromotionDisposition,
     #[serde(rename = "budget")]

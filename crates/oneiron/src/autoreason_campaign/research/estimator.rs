@@ -3,7 +3,7 @@
 //!
 //! "Each branch holds a Beta posterior over beating the incumbent." A
 //! branch's evidence is every node of its subtree: a measured node whose
-//! search reward beats the incumbent root's is a success; any other measured
+//! search reward beats the incumbent's is a success; any other measured
 //! node, and every buggy one, is a failure ("A failure is evidence").
 //! Posteriors warm start from the incumbent's side of the tree (a child
 //! starts from its parents' belief, at the root's prior strength), from the
@@ -26,7 +26,7 @@ use crate::{AttemptId, Result, Vault};
 
 /// The engine estimator's version. A benchmark names the version it
 /// measured, so a changed estimator must win again.
-pub const ENGINE_ESTIMATOR_VERSION: &str = "beta-eig/1";
+pub const ENGINE_ESTIMATOR_VERSION: &str = "beta-eig/2";
 
 /// A benchmark with fewer cases records, but never admits its estimator.
 pub const MIN_SELECTION_BENCHMARK_CASES: u64 = 30;
@@ -178,14 +178,15 @@ pub(super) fn estimator_admitted(vault: &Vault, version: &str) -> Result<bool> {
 }
 
 /// Every reachable node's belief, keyed by attempt bytes, or `None` while
-/// the incumbent root has no search reward to beat.
+/// the incumbent has no search reward to beat.
 pub(super) fn branch_beliefs(
     nodes: &BTreeMap<[u8; 16], ExperimentNode>,
     root: AttemptId,
+    incumbent: AttemptId,
     ladder: &[PriorSeed],
 ) -> Option<BTreeMap<[u8; 16], BranchBelief>> {
     let root_key = *root.as_bytes();
-    let incumbent = nodes.get(&root_key)?.search.as_ref()?.reward();
+    let threshold = nodes.get(incumbent.as_bytes())?.search.as_ref()?.reward();
     // Each outcome counts toward its own node and every ancestor once.
     let mut counts: BTreeMap<[u8; 16], (f64, f64)> = BTreeMap::new();
     for node in nodes.values() {
@@ -194,7 +195,7 @@ pub(super) fn branch_beliefs(
         }
         let beat = match (&node.search, &node.invalid) {
             (_, Some(_)) => false,
-            (Some(search), None) => search.reward() > incumbent,
+            (Some(search), None) => search.reward() > threshold,
             (None, None) => continue,
         };
         for key in lineage(nodes, *node.attempt.as_bytes()) {
