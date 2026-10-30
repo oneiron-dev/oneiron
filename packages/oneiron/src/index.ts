@@ -944,7 +944,7 @@ export class Oneiron {
       disarm: (input: Facade.DisarmTurnProgram): boolean => this.#call(() => this.#client.vaultTurnProgramsDisarm(input) as boolean),
       /** Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes. */
       rebind: (input: Facade.TurnProgramRebindRequest): Facade.TurnProgramRebindReceipt => this.#call(() => this.#client.vaultTurnProgramsRebind(input) as Facade.TurnProgramRebindReceipt),
-      /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
+      /** Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read. */
       admission: (input: Facade.TurnProgramAdmissionRequest): Facade.TurnProgramAdmissionView | null => this.#call(() => this.#client.vaultTurnProgramsAdmission(input) as Facade.TurnProgramAdmissionView | null),
     },
     weave: {

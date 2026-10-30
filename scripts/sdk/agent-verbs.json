@@ -17802,7 +17802,7 @@
     },
     {
       "name": "vault.turn_programs.admission",
-      "description": "Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential.",
+      "description": "Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read.",
       "input": "crate::dreamer_runner::TurnProgramAdmissionRequest",
       "output": "Option<crate::dreamer_runner::TurnProgramAdmissionView>",
       "call": "crate::dreamer_runner::turn_program_admission(memory, &input)?",
