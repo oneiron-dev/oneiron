@@ -16636,12 +16636,13 @@
       "call": "memory.esign_links_issue(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16733,12 +16734,13 @@
       "call": "memory.esign_signing_act(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -16750,12 +16752,13 @@
       "call": "memory.esign_signing_pdf(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -16767,12 +16770,13 @@
       "call": "memory.esign_signing_image(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -16784,12 +16788,12 @@
       "call": "memory.esign_signing_signature(&input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
