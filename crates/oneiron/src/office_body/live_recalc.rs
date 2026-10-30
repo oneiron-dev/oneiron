@@ -157,12 +157,13 @@ impl Vault {
 }
 
 /// Whether `cell` holds a computed result: a formula, or a member of an
-/// array formula's range or a data table, which its formula fills.
+/// array formula's range, a data table or a shared formula, which its
+/// formula fills.
 fn computed(cell: &BodyCell) -> bool {
     cell.formula.is_some()
         || matches!(
             cell.locked,
-            Some(XlsxLock::ArrayFormula | XlsxLock::DataTable)
+            Some(XlsxLock::ArrayFormula | XlsxLock::DataTable | XlsxLock::SharedFormula)
         )
 }
 
