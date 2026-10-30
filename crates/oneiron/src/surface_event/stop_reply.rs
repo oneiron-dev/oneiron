@@ -56,15 +56,6 @@ const SLACK_USER_MENTION_OPEN: &str = "<@";
 /// ignoring ASCII case.
 const EMAIL_SUBJECT_REPLY_PREFIXES: &[&str] = &["Re:", "Fwd:", "Fw:"];
 
-/// The signature delimiter line (`-- `, read trimmed): the reply's own text
-/// ends above it.
-const EMAIL_SIGNATURE_DELIMITER: &str = "--";
-
-/// The colons an attribution line ends with in any language, such as
-/// `2026年10月31日(土) 10:00 名前 <a@b>:`: a line naming an address in angle
-/// brackets and ending with one of these opens the quoted block.
-const EMAIL_ATTRIBUTION_COLONS: &[char] = &[':', '：'];
-
 /// Whether `text` is one of [`STOP_REPLY_KEYWORDS`] and nothing else.
 #[must_use]
 pub fn is_stop_reply(text: &str) -> bool {
@@ -105,16 +96,6 @@ fn email_subject_for_stop(subject: &str) -> String {
         rest = rest[prefix.len()..].trim_start();
     }
     rest.to_owned()
-}
-
-/// Whether `line` (trimmed) attributes the quote below it in any language:
-/// it names an address in angle brackets and ends with an attribution colon.
-fn is_email_attribution_line(line: &str) -> bool {
-    line.ends_with(EMAIL_ATTRIBUTION_COLONS)
-        && line
-            .split_once('<')
-            .and_then(|(_, rest)| rest.split_once('>'))
-            .is_some_and(|(address, _)| address.contains('@'))
 }
 
 /// Whether the message `payload_ref` archives is a STOP, each text compared
