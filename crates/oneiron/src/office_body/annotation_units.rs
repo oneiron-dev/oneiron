@@ -86,7 +86,7 @@ impl Vault {
     }
 
     /// The artifact's newest export: its version and the body frontier it
-    /// projects.
+    /// projects, read where its rebinding left it (`export_frontier`).
     pub(crate) fn office_body_latest_export_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -96,12 +96,13 @@ impl Vault {
         Ok(exports
             .next()
             .transpose()?
-            .map(|(_, record)| (record.version, record.frontier)))
+            .map(|(_, record)| (record.version, export_frontier(record))))
     }
 
     /// The body frontier whose projection `version` holds: the import's for
-    /// the imported version, an export's for the version it landed. `None`
-    /// when the artifact has no live body or the body never held it.
+    /// the imported version, an export's for the version it landed, read
+    /// where its rebinding left it (`export_frontier`). `None` when the
+    /// artifact has no live body or the body never held it.
     pub(crate) fn office_body_frontier_of_version_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -116,7 +117,7 @@ impl Vault {
         }
         Ok(EXPORTS
             .get(&self.store, txn, &version_key(artifact, version))?
-            .map(|record| record.frontier))
+            .map(export_frontier))
     }
 
     /// The head frontier of the artifact's live body; `None` for no body.
@@ -173,4 +174,13 @@ impl Vault {
             }
         }))
     }
+}
+
+/// The frontier a comment reads an export's body at: the one its rebinding
+/// left when it has one (FIX 12325), else the one it projects. A deck there
+/// holds the same slides and shapes, bound to the export: each node's
+/// binding names its ids in that version, whichever version the head is
+/// bound to now.
+fn export_frontier(record: OfficeBodyExportRecord) -> Vec<u8> {
+    record.rebind_frontier.unwrap_or(record.frontier)
 }

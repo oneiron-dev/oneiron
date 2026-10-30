@@ -7604,7 +7604,7 @@ export type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: strin
 /** `oneiron::office_body::records::OfficeRecalcZone` */
 export type OfficeRecalcZone = { utc_offset_minutes: number; iana_timezone?: string | null }
 /** `oneiron::office_body::records::OfficeBodyExportRecord` */
-export type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] }
+export type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; rebind_frontier?: number[] | null; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] }
 /** `oneiron::office_body::verbs::OfficeBodyExportView` */
 export type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null }
 /** `oneiron::office_body::verbs::OfficeBodyPreviewRequest` */

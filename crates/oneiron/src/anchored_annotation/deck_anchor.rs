@@ -101,7 +101,9 @@ pub(super) fn deck_file_locator(
 }
 
 /// The deck read whose bindings name `version`'s ids: `at` itself, or the
-/// head when it is bound to `version`.
+/// head when it is bound to `version`. An export whose record keeps the
+/// frontier its rebinding left is read there, so `at` is bound to it
+/// whichever version the head is bound to now (FIX 12325).
 fn bound_to<'a>(
     at: &'a DeckUnits,
     head: Option<&'a OfficeBodyUnits>,
@@ -122,6 +124,8 @@ fn bound_to<'a>(
 /// version. A node `ids` does not hold is named by `at`'s own binding,
 /// which names an earlier version's ids; an export keeps those while the
 /// node stays on the slide its binding names, so only such a node is named.
+/// That serves an export no rebinding bound the deck to, as a Keep leaves
+/// one when the deck was bound to another version since.
 fn filed_ids<'a>(
     at: &'a DeckUnits,
     ids: Option<&'a DeckUnits>,
