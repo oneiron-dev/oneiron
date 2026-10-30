@@ -2,7 +2,8 @@
 //! family, by its declaration's `(SideDb, prefix)`, for every manifest
 //! database and for every entity kind. Nothing has a class by default and
 //! nothing registers itself: a family declared later has none until it is
-//! named here, and an enabled capture refuses until then ([`check`]).
+//! named here, and until then a capture keeps its rows in the image, named
+//! ([`super::preflight`]).
 //!
 //! A family an owner getter reads is that getter's, and the getter places
 //! each of its rows: in an owner's compartment, as structure, with another
@@ -17,16 +18,13 @@
 //! receipt ([`super::NOT_COMPARTMENTED`]). A not-imaged family's rows are
 //! runtime or derived: tier filtering leaves them out of every image first.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::Bound;
 
-use super::super::{StorageTier, storage_tier};
 use super::{Carrier, Getter};
-use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_REGISTRY;
 use crate::side_table::{self, SideDb, SideTableDecl};
 use crate::store::checkpoint_payload::rows::OtherClient;
-use crate::store::{CustodyKind, DB_MANIFEST, ResponseDb, ResponseFamily};
+use crate::store::{CustodyKind, ResponseDb, ResponseFamily};
 
 /// Where a family's rows go: its one class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,7 +138,7 @@ families! {
     Class::Owner(Getter::Note) => SYNC_NC_E NOTE_PROPOSAL_DOC NOTE_RECEIPT_BY_REQUEST;
     Class::Structure => DELETION_ARCHIVE_MARKER DELETION_ROW_FENCE DELETION_HARD_DELETE_MARKER
         DELETION_IDENTITY_SOFT_DELETE_MARKER SYNC_M_U_SEQ_E SYNC_M_U_SEQ_W
-        DELETION_WITHDRAWN_GENERATION_FENCE;
+        DELETION_WITHDRAWN_GENERATION_FENCE SYNC_PENDING_MIRROR;
     Class::Other(Client::Dispatch(OtherClient::Response)) => HTTP_IDEMPOTENCY_REPLY MODEL_MEDIA_JOB;
     Class::Mixed(Carrier::WindowSnapshot) => WINDOW_SNAPSHOT;
     Class::Mixed(Carrier::PendingEdit) => SYNC_QD_E;
@@ -362,9 +360,9 @@ families! {
         DREAMER_TURN_PROGRAM_ARM DREAMER_TURN_PROGRAM_ATTEMPT DREAMER_TURN_PROGRAM_RUN
         DREAMER_TURN_PROGRAM_WAKE DREAMER_WAKE_RECIPE_INPUT DREAMER_WAKE_STATE
         DREAMER_WAKE_PROJECTION DREAMER_WAKE_RECIPE_POLICY DREAMER_WAKE_OWED_CALL DREAMER_WATERMARK
-        DREAMER_WEAVE_RECIPE_RESULT EDIT_DISTANCE_ACTING_REVISION EDIT_DISTANCE_AMENDMENT_DELTA
-        EDIT_DISTANCE_AMENDMENT_EVIDENCE EDIT_DISTANCE_AMENDMENT_JUDGMENT
-        EDIT_DISTANCE_EDIT_COST_TARGET EDIT_DISTANCE_ESCALATION
+        DREAMER_WEAVE_RECIPE_RESULT EDIT_DISTANCE_ACTING_REVISION EDIT_DISTANCE_AMENDMENT_CAUSE
+        EDIT_DISTANCE_AMENDMENT_DELTA EDIT_DISTANCE_AMENDMENT_EVIDENCE
+        EDIT_DISTANCE_AMENDMENT_JUDGMENT EDIT_DISTANCE_EDIT_COST_TARGET EDIT_DISTANCE_ESCALATION
         EDIT_DISTANCE_ESCALATION_POLICY EDIT_DISTANCE_INTERVIEW_SESSION
         EDIT_DISTANCE_ISSUE_SIGNATURE EDIT_DISTANCE_ISSUE_SIGNATURE_SEND EDIT_DISTANCE_JUDGE_AUDIT
         EDIT_DISTANCE_JUDGE_AUDIT_SEQUENCE EDIT_DISTANCE_MINER_MINT_MARK
@@ -422,8 +420,10 @@ families! {
         HOOKS_REGEN HOOKS_RUN_INDEX HOOKS_SETTLED HOOKS_SETTLED_NEXT HOOKS_VERB_ASK
         HOOKS_VERB_ASK_WITNESS HOOKS_VERB_RUN HOUSEKEEPING_SCHEDULE HOUSEKEEPING_WAKE
         HUMAN_TASK_FOLLOWUP_SWEEP HUMAN_TASK_WAIT_SIGNAL HUMAN_TASK_WAIT_BINDING
-        INGEST_IDENTITY_HINT IMPORT_AUDIENCE_CLUSTER INGEST_FINGERPRINT ATTEMPT_RUN_INDEX
-        TAGGING_MARKER_SEQUENCE TAGGING_TRACE TAGGING_TRACE_AGE STRUCTURAL_KIND_REGISTRY
+        INGEST_IDENTITY_HINT IMPORT_AUDIENCE_CLUSTER INGEST_FINGERPRINT ATTEMPT_ANNOTATION_HOLD
+        ATTEMPT_KIND_INDEX ATTEMPT_PARENT_CHILD_INDEX ATTEMPT_RETRY_CHILD_INDEX ATTEMPT_RUN_INDEX
+        TAGGING_MARKER_SEQUENCE TAGGING_TRACE TAGGING_TRACE_AGE ATTEMPT_TASK_INDEX
+        STRUCTURAL_KIND_REGISTRY
         LEARNING_CELL LEARNING_CELL_SUBJECT LEARNING_CHOICE LEARNING_COORDINATION
         LEARNING_DUPLICATE_LABEL LEARNING_EVIDENCE LEARNING_JUDGE_CONVERSION LEARNING_PRIOR
         LEARNING_SETTING LEARNING_SETTING_FIT LEGAL_HOLD_ERASE_LINK LEGAL_HOLD_EVENT
@@ -574,7 +574,8 @@ families! {
         SKILL_EXPLORATION_TRIAL SKILL_RESIDENT_LOADED_SKILL SKILL_RESIDENT_OWNER
         SKILL_RESIDENT_RECEIPT SKILL_ATTRIBUTION_AUDIT SKILL_ATTRIBUTION_CAUSE
         SKILL_ATTRIBUTION_CONTRIBUTION_CHECK SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT
-        SKILL_ATTRIBUTION_CURSOR SKILL_ATTRIBUTION_DERIVATION_WITNESS
+        SKILL_ATTRIBUTION_CURSOR SKILL_ATTRIBUTION_DECISION_RECEIPTS
+        SKILL_ATTRIBUTION_DERIVATION_WITNESS
         SKILL_ATTRIBUTION_DISPLACED_JUDGE SKILL_ATTRIBUTION_SITE_EXPOSURE
         SKILL_ATTRIBUTION_DISPLACED_REVISION SKILL_ATTRIBUTION_EDIT_PROPOSAL
         SKILL_ATTRIBUTION_EVIDENCE SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE
@@ -661,74 +662,26 @@ pub(super) fn kind_class(kind: &str) -> Option<Class> {
 }
 
 /// A family's identity: its database and prefix.
-fn identity(decl: &SideTableDecl) -> (bool, &'static [u8]) {
+pub(super) fn identity(decl: &SideTableDecl) -> (bool, &'static [u8]) {
     (decl.db == SideDb::SyncState, decl.prefix)
 }
 
-fn db_name(db: SideDb) -> &'static str {
+pub(super) fn db_name(db: SideDb) -> &'static str {
     match db {
         SideDb::VaultMeta => "vault_meta",
         SideDb::SyncState => "sync_state",
     }
 }
 
-fn incomplete(what: &'static str) -> Error {
-    Error::InvariantViolation(what)
+/// Every family the registry names, by class, as written: the preflight
+/// reads it whole ([`super::preflight`]).
+pub(super) fn families() -> &'static [(Class, &'static [&'static SideTableDecl])] {
+    FAMILIES
 }
 
-/// Refuses unless the registry names every declared family once and no
-/// family that is not declared, every manifest database once and every
-/// entity kind once, and unless each not-imaged family is one tier
-/// filtering leaves out whole. Only an enabled capture runs it.
-pub(super) fn check() -> Result<()> {
-    let mut named = BTreeSet::new();
-    for (class, decls) in FAMILIES {
-        for decl in *decls {
-            if !named.insert(identity(decl)) {
-                return Err(incomplete("a checkpoint payload family is named twice"));
-            }
-            if *class == Class::NotImaged
-                && storage_tier(db_name(decl.db), decl.prefix) == StorageTier::Canonical
-            {
-                return Err(incomplete("a not-imaged payload family is canonical"));
-            }
-        }
-    }
-    let declared: BTreeSet<_> = side_table::declared().map(identity).collect();
-    if named != declared {
-        return Err(incomplete(
-            "the checkpoint payload registry does not name every declared family",
-        ));
-    }
-    let databases: BTreeSet<&str> = DATABASES.iter().map(|(name, _)| *name).collect();
-    if databases.len() != DATABASES.len()
-        || databases
-            != DB_MANIFEST
-                .iter()
-                .map(|entry| entry.name)
-                .collect::<BTreeSet<_>>()
-    {
-        return Err(incomplete(
-            "the checkpoint payload registry does not name every database",
-        ));
-    }
-    let kinds: Vec<&str> = KINDS
-        .iter()
-        .flat_map(|(_, kinds)| kinds.iter().copied())
-        .collect();
-    let registered: BTreeSet<&str> = kinds.iter().copied().collect();
-    if registered.len() != kinds.len()
-        || registered
-            != ENTITY_TYPE_REGISTRY
-                .iter()
-                .map(|entry| entry.kind)
-                .collect::<BTreeSet<_>>()
-    {
-        return Err(incomplete(
-            "the checkpoint payload registry does not name every entity kind",
-        ));
-    }
-    Ok(())
+/// Every entity kind the registry names, by class, as written.
+pub(super) fn kinds() -> &'static [(Class, &'static [&'static str])] {
+    KINDS
 }
 
 /// The class of one image row of `database`: `declared`, its family's or

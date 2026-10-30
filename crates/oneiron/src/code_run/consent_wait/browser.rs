@@ -327,10 +327,11 @@ impl Vault {
         })
     }
 
-    /// The wording of a held browser act's question: the act, its row and
-    /// page, the wait, why its grant gave no press, the choices it offers,
-    /// and that nothing is clicked until the owner answers. It sets no
-    /// deadline: silence never approves.
+    /// The wording of a held act's question: the act (a desktop act's is
+    /// named by its own verb, FIX 11499), its row and page, the wait, why
+    /// its grant gave no press, the choices it offers, and that nothing
+    /// is done until the owner answers. It sets no deadline: silence
+    /// never approves.
     fn browser_question_text(&self, wait_id: EntityId) -> Result<String> {
         let txn = self.store.env.read_txn()?;
         let row =
@@ -350,9 +351,16 @@ impl Vault {
         } else {
             "a person's press for each send"
         };
+        let (does, done) = if action.act.ends_with(".type") {
+            ("types into", "typed")
+        } else if action.act.ends_with(".key") || action.act.ends_with(".hotkey") {
+            ("presses", "pressed")
+        } else {
+            ("clicks", "clicked")
+        };
         Ok(format!(
-            "A code run asks before it clicks the {role} \"{name}\" on {page} (code consent wait \
-             {wait}). Its {class} grant needs {need}. Answer one of: {choices}. Nothing is clicked \
+            "A code run asks before it {does} the {role} \"{name}\" on {page} (code consent wait \
+             {wait}). Its {class} grant needs {need}. Answer one of: {choices}. Nothing is {done} \
              until you answer.",
             role = clip(&action.role),
             name = clip(&action.name),

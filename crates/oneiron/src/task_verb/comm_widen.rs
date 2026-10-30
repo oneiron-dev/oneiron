@@ -24,7 +24,8 @@ use super::highway::invalid_state;
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::agent_dispatch::{
     CommReach, CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest,
-    CommWidenState, comm_widen_in, comm_widen_recipient_in_txn, put_comm_widen_in,
+    CommWidenState, comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
+    put_comm_widen_in,
 };
 use crate::agent_inbox_lens::{
     AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
@@ -621,7 +622,10 @@ impl Vault {
     pub(crate) fn comm_widen_inbox_items(&self) -> Result<Vec<AgentInboxLensItem>> {
         let txn = self.store.env.read_txn()?;
         let mut items = Vec::new();
-        for row in crate::attempt_queue::AttemptQueue::new(self).list_in_txn(&txn)? {
+        let children = comm_widen_children_in(self, &txn)?;
+        for row in
+            crate::attempt_queue::AttemptQueue::new(self).working_rows_in_txn(&txn, children)?
+        {
             let Some(record) = comm_widen_in(self, &txn, row.id).ok().flatten() else {
                 continue;
             };

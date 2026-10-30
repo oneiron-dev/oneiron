@@ -112,7 +112,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A holder's delivery and ack of a removal archive are facts about bytes
     // that left the vault: a restore stands them as the live vault holds them.
     (&t::SHARED_ACT_REMOVAL_DELIVERY, LIVE),
-    (&t::SHARED_ACT_REMOVAL_EXPORT_RECORDS, SHARED_VAULT_MEMBERSHIP),
+    (
+        &t::SHARED_ACT_REMOVAL_EXPORT_RECORDS,
+        SHARED_VAULT_MEMBERSHIP,
+    ),
     // An archive delivered to a removed Owner has left the vault: a restore
     // neither revives a purged one nor drops one still within its term.
     (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
@@ -141,6 +144,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK, CONTENT),
     (&t::SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT, CONTENT),
     (&t::SKILL_ATTRIBUTION_CURSOR, CONTENT),
+    (&t::SKILL_ATTRIBUTION_DECISION_RECEIPTS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DERIVATION_WITNESS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_REVISION, CONTENT),

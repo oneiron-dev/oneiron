@@ -47,7 +47,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::ServeConfig;
 use crate::handler::mesh::MeshHost;
-use crate::server::{HousekeepingAdmission, SyncServer};
+use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
 
 /// The admission a managed vault's connection holds for its whole run.
 type Admission = Box<dyn Send>;
@@ -82,7 +82,7 @@ impl DeviceSyncHost {
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Plain)?;
-        Self::open_logged(server, dial, mesh, None).await
+        Self::open_logged(server, dial, mesh, None, admit_every_pass()).await
     }
 
     /// [`Self::start`] on a managed vault: the connection, and every write
@@ -104,7 +104,7 @@ impl DeviceSyncHost {
             );
             return None;
         };
-        Self::open_logged(server, dial, mesh, Some(admission)).await
+        Self::open_logged(server, dial, mesh, Some(admission), Arc::clone(admit)).await
     }
 
     /// What this machine dials, its enrolment looked for where `source`
@@ -120,15 +120,17 @@ impl DeviceSyncHost {
     }
 
     /// The connection to `dial`'s home and its archive receiver, or, with the
-    /// line that says why, the receiver alone or `None`. `admission` ends with the task.
+    /// line that says why, the receiver alone or `None`. `admission` ends with the task;
+    /// `admit` admits each archive import (FIX 11796).
     async fn open_logged(
         server: &Arc<SyncServer>,
         dial: Dial,
         mesh: Option<&MeshHost>,
         admission: Option<Admission>,
+        admit: HousekeepingAdmission,
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396).
-        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault);
+        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, admit);
         match open(server, dial, mesh, admission).await {
             Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {

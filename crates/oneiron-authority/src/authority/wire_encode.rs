@@ -261,6 +261,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::OwnerWorkResult(result) => super::owner_work::owner_work_result_value(result),
         AuthorityOp::OwnerWorkCancel(cancel) => super::owner_work::owner_work_cancel_value(cancel),
+        AuthorityOp::CustodyPermitPiece(piece) => {
+            super::owner_work::custody_permit_piece_value(piece)
+        }
         AuthorityOp::CheckpointPolicySet(set) => {
             super::checkpoint_policy::checkpoint_policy_value(set)
         }

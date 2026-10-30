@@ -84,6 +84,12 @@ impl Vault {
             {
                 return Rows::Discard(Err(E::from(err)));
             }
+            // FIX 7957: each row this write changed leaves its window a
+            // durable marker, so a crash before the live mirror loses no edit.
+            #[cfg(feature = "sync")]
+            if let Err(err) = self.mark_pending_mirrors_in_txn(wtxn, &postcommit.rows) {
+                return Rows::Discard(Err(E::from(err)));
+            }
             let approved =
                 match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
                     Ok(approved) => approved,

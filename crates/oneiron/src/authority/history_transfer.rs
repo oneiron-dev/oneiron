@@ -371,6 +371,8 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
         }
+        #[cfg(feature = "sync")]
+        self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
         txn.commit()?;
         watch.finish()?;
         // A home pick the import landed re-elected this node's MACRO home in
