@@ -919,7 +919,7 @@
      "path": "src/agent_dispatch/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: the one widen signal a running child sends when the comm dial refuses it, and the reach…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -1083,6 +1083,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LeaderAdvice",
       "LeaderResponsibility",
       "LeaderStarter",
       "LeaderStarterSkills",
@@ -1094,7 +1095,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 6,
-      "struct": 4,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -1731,7 +1732,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -2537,8 +2538,8 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 28,
-      "fn": 4
+      "crate-vis": 32,
+      "fn": 5
      }
     },
     {
@@ -2630,6 +2631,16 @@
       "crate-vis": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/index.rs",
+     "purpose": "FIX 11318: the attempt ledger's side indexes, so a reader that wants a kind's rows, a task's rows, a try's…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -59390,7 +59401,7 @@
      "path": "src/run_tree/adapter.rs",
      "purpose": "Vault-backed run-tree read adapter, failure-marker overlay, and label helper",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -73498,6 +73509,7 @@
      "path": "src/task_verb/consult_fanout_resume.rs",
      "purpose": "Authenticated exact-digest resume; ruling, policy and TASKs commit together",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -74138,6 +74150,16 @@
      "notable": [],
      "path": "src/task_verb/presence_diagnostics.rs",
      "purpose": "Typed per-row presence read failures for the bounded TASKS projection",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/presence_jobs.rs",
+     "purpose": "The attempt/run-tree job projection the TASKS presence reads: the whole ledger's for the board, one TASK's…",
      "surface": {
       "crate-vis": 3
      }
@@ -80380,7 +80402,7 @@
      "surface": {
       "crate-vis": 58,
       "enum": 2,
-      "fn": 1,
+      "fn": 2,
       "struct": 4
      }
     },
@@ -80587,7 +80609,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
-      "ProjectAnchor",
+      "ProjectAnchorLink",
       "ProjectAuthority",
       "ProjectParentWitness",
       "ProjectProofVersion",
@@ -80605,7 +80627,7 @@
       "const": 1,
       "crate-vis": 46,
       "enum": 3,
-      "fn": 17,
+      "fn": 19,
       "re-export": 15,
       "struct": 8
      }
@@ -83277,7 +83299,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84579,7 +84601,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84763,7 +84785,7 @@
    },
    "over_bar": 110,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5705,
+   "source_files": 5707,
    "test_files": 902
   },
   "oneiron-android": {
@@ -121014,6 +121036,8 @@
       "ProgramStepState",
       "ProgramStepView",
       "ProgramTryView",
+      "ProjectAnchorLink",
+      "ProjectAuthority",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -121032,16 +121056,19 @@
       "ProjectGoalView",
       "ProjectMintReceipt",
       "ProjectParentWitness",
+      "ProjectProofVersion",
       "ProjectProposalCard",
       "ProjectProposalPicks",
       "ProjectProposalRequest",
       "ProjectRecord",
       "ProjectRefRequest",
+      "ProjectRevisionProof",
       "ProjectRole",
       "ProjectRoom",
       "ProjectRosterWriteOutcome",
       "ProjectRosterWriteRequest",
       "ProjectTradeoffRouteRequest",
+      "ProjectWriteProof",
       "PromotionBasis",
       "PromotionDisposition",
       "PromotionEvidenceReason",
@@ -122558,8 +122585,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1081,
-      "struct": 3296
+      "enum": 1082,
+      "struct": 3300
      }
     },
     {
