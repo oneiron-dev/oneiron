@@ -37,8 +37,10 @@ pub struct RecallResidence {
     /// The home answered in full. False is this device's answer alone, and
     /// marks the pack `retrieval_meta.partial`.
     pub complete: bool,
-    /// The recall's limit was past the residence `search_limit`, so the home
-    /// was asked for that many references and no more.
+    /// The home's answer stopped short of the recall's limit: a page ran
+    /// past its time, or the home's list went on past the pages the limit
+    /// asks (FIX 9256). The references it gave stand, and `complete` is
+    /// false.
     pub capped: bool,
     /// The home's references the local pack does not hold, in the home's
     /// order, each entity once.
@@ -87,7 +89,7 @@ impl RecallResidence {
     /// The home's answer to a text search (FIX 3876, `vault.search.bm25`):
     /// its `hits` in its order, each entity once and none of `held`, the
     /// full ids the device's own page holds; `complete` as the home said;
-    /// `capped` when the search asked past the residence `search_limit`.
+    /// `capped` when its answer stopped short of the search's limit.
     #[must_use]
     pub fn home_text(
         hits: impl IntoIterator<Item = RecallResidenceHit>,
@@ -314,17 +316,19 @@ fn home_answers(request: &crate::task_verb::sdk::RecallRequest, room_turn: bool)
 }
 
 /// Completes a recall answer on a device known to run Opened with its
-/// home's references (FIX 2905). The home is asked for `min(limit,
-/// search_limit)` under `caller`, narrowed by the scope the recall resolved
-/// (the one its stamp keeps), within the residence `rpc_timeout_ms` and
-/// `due`, the recall's own deadline, whichever comes first; a `Home` answer
-/// fills the pack's `residence` with the references the local pack does not
-/// hold, in [`HOME_RECALL_MERGE_ORDER`]. No live connection, a request the
-/// home cannot take, a pack whose recall kept no scope, a caller with
-/// nothing to ask under, a refusal (a scope axis the home cannot evaluate
-/// included) or a timeout keeps the pack local-only and incomplete. The
-/// local items are never touched. A device not known to run Opened leaves
-/// the pack alone.
+/// home's references (FIX 2905). The home is asked for the recall's whole
+/// `limit` under `caller`, narrowed by the scope the recall resolved (the
+/// one its stamp keeps), a page of `search_limit` at a time (FIX 9256, L02
+/// 07:06), each page under that same scope and caller, within the residence
+/// `rpc_timeout_ms` and `due`, the recall's own deadline, whichever comes
+/// first; a `Home` answer fills the pack's `residence` with the references
+/// the local pack does not hold, in [`HOME_RECALL_MERGE_ORDER`]. One that
+/// stopped short keeps the pages it got, `capped` and incomplete. No live
+/// connection, a request the home cannot take, a pack whose recall kept no
+/// scope, a caller with nothing to ask under, a refusal (a scope axis the
+/// home cannot evaluate included) or a timeout before the home's first page
+/// keeps the pack local-only and incomplete. The local items are never
+/// touched. A device not known to run Opened leaves the pack alone.
 #[cfg(feature = "sync")]
 pub async fn complete_with_home(
     vault: &Vault,
@@ -342,7 +346,7 @@ pub async fn complete_with_home(
         .and_then(|residence| residence.selection.clone());
     let answer = match (search, selection) {
         (Some(search), Some(selection)) if ask.answerable => {
-            ask_home(vault, &search, &selection, &pack.items, ask, caller, due).await
+            ask_home(&search, &selection, &pack.items, ask, caller, due).await
         }
         _ => None,
     };
@@ -354,7 +358,6 @@ pub async fn complete_with_home(
 /// the pack stays local-only.
 #[cfg(feature = "sync")]
 async fn ask_home(
-    vault: &Vault,
     search: &crate::sync::HomeSearch,
     selection: &crate::sync::residence::ResolvedRecallSelection,
     local: &[MemoryItem],
@@ -367,17 +370,13 @@ async fn ask_home(
         (false, Some(proof)) => Some(proof),
         (false, None) => return None,
     };
-    // A malformed residence policy refuses the ask, as the home search does.
-    let budgets = vault.residence_operation_budgets().ok().flatten()?;
-    let limit = ask.limit.min(budgets.search_limit);
-    let bound =
-        std::time::Instant::now() + std::time::Duration::from_millis(budgets.rpc_timeout_ms);
-    let bound = due.map_or(bound, |due| due.min(bound));
     let forwarded = forwarded.map(|proof| (proof, caller.locality));
-    let asked = search.search_recall(&ask.query, limit, selection, forwarded);
-    let found = tokio::time::timeout_at(bound.into(), asked)
+    // The search takes the whole limit in pages, each within its own RPC
+    // timeout and `due`; one that stops short keeps what it got. A
+    // malformed residence policy refuses the ask there.
+    let found = search
+        .search_recall(&ask.query, ask.limit, selection, forwarded, due)
         .await
-        .ok()?
         .ok()?;
     // A scoped search takes no local fallback; only the home's answer counts.
     if found.source != crate::sync::SearchSource::Home {
@@ -391,7 +390,8 @@ async fn ask_home(
     Some(RecallResidence {
         source: RecallResidenceSource::Home,
         complete: found.complete,
-        capped: ask.limit > budgets.search_limit,
+        // A home answer is incomplete only when its pages stopped short.
+        capped: !found.complete,
         hits: HOME_RECALL_MERGE_ORDER.home_references(local, hits),
         marked_partial: false,
         selection: None,
