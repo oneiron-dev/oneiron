@@ -142,7 +142,11 @@ fn held_record(item: &PayloadItem) -> Option<[u8; 16]> {
 /// kept manifest (KS7-5), read when a host's prune hands its kept copies
 /// over; with none, no retention retirement is ready, and a missing
 /// inventory only ever delays a key (Engine 10-20 08:4x, ruling 3).
-fn kept_inventory_releases(item: &PayloadItem, through: u64, kept: Option<&KeptGenerations>) -> bool {
+fn kept_inventory_releases(
+    item: &PayloadItem,
+    through: u64,
+    kept: Option<&KeptGenerations>,
+) -> bool {
     kept.is_some_and(|kept| kept.releases(item, through))
 }
 
@@ -199,7 +203,10 @@ impl Store {
     /// # Errors
     ///
     /// As [`Self::finish_checkpoint_payload_retirements`].
-    pub(crate) fn finish_checkpoint_payload_retention(&self, kept: &KeptGenerations) -> Result<bool> {
+    pub(crate) fn finish_checkpoint_payload_retention(
+        &self,
+        kept: &KeptGenerations,
+    ) -> Result<bool> {
         self.finish_checkpoint_payload_retirements_kept(Some(kept))
     }
 

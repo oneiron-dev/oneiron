@@ -187,7 +187,9 @@ impl Vault {
                 .store
                 .validate_checkpoint_entity_kinds_in_txn(&*txn, &image.databases["entities"])?;
             if !opened_entities.is_empty() {
-                vault.store.validate_checkpoint_entity_kinds_in_txn(&*txn, &opened_entities)?;
+                vault
+                    .store
+                    .validate_checkpoint_entity_kinds_in_txn(&*txn, &opened_entities)?;
             }
             if fork {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;

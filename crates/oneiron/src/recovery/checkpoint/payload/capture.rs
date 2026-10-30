@@ -42,9 +42,10 @@ pub(in crate::recovery::checkpoint) fn project_image(
         return Ok(None);
     }
     #[cfg(feature = "sync")]
-    let carriers = SyncCarriers::new(&vault.store).with_copy_aliases(
-        crate::sync::selector::RepoCopyAliases::read_in_txn(vault, txn).unwrap_or_default(),
-    );
+    let carriers = {
+        let aliases = crate::sync::selector::RepoCopyAliases::read_in_txn(vault, txn);
+        SyncCarriers::new(&vault.store).with_copy_aliases(aliases.unwrap_or_default())
+    };
     #[cfg(not(feature = "sync"))]
     let carriers = Deferred;
     Ok(match project(&vault.store, txn, filter, &carriers)? {
@@ -157,8 +158,9 @@ fn carry_structure(
         let Some(held) = databases.get_mut(database) else {
             continue;
         };
-        if let Err(at) = held.binary_search_by(|(key, _)| key.as_slice().cmp(&row.at.key)) {
-            held.insert(at, (row.at.key.clone(), row.value.clone()));
+        let key = &row.at.key;
+        if let Err(at) = held.binary_search_by(|(held_key, _)| held_key.cmp(key)) {
+            held.insert(at, (key.clone(), row.value.clone()));
         }
     }
 }
