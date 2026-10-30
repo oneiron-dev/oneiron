@@ -1,19 +1,22 @@
-//! Standing-grant resolution plus scoped-MCP channel check and grant touch.
+//! Standing-grant resolution plus scoped-MCP channel check and grant use receipt.
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::input::ExternalEffectGateInput;
 use crate::gate::resolution::PolicyManifestResolution;
 use crate::outbound_consent::{ScopedMcpConsentDecision, evaluate_scoped_mcp_call};
 use crate::outbound_grant::{
-    StandingOutboundGrant, decode_standing_outbound_grant_body,
-    standing_outbound_grant_ids_for_principal,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
+    standing_outbound_grants_for_principal_in_txn,
 };
-use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 use crate::store::Store;
 
+/// The standing outbound grant live on this writer that covers `effect`:
+/// its row active under the current policy frontier, its principal the
+/// effect's actor, and its bound containing the effect
+/// ([`StandingOutboundGrant::covers_effect`]). A scoped MCP call is decided
+/// by its payload-aware check, and a booking page's invite by the page
+/// grant its dispatch door named.
 pub(super) fn standing_outbound_grant_for_effect(
     store: &Store,
     txn: &heed::RwTxn<'_>,
@@ -21,17 +24,19 @@ pub(super) fn standing_outbound_grant_for_effect(
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
-) -> Result<Option<(EntityId, StandingOutboundGrant)>> {
+) -> Result<Option<StandingOutboundGrant>> {
     let current_policy_floor = policy.read_frontier_hash()?;
-    let mut candidate_ids = if let Some(required_grant_id) = required_grant_id {
-        vec![required_grant_id]
-    } else {
-        Vec::new()
-    };
+    let mut candidates = Vec::new();
+    if let Some(required_grant_id) = required_grant_id {
+        let Some(required) = standing_outbound_grant_in_txn(store, txn, &required_grant_id)? else {
+            return Ok(None);
+        };
+        candidates.push(required);
+    }
     // A scoped MCP call is decided by its required grant alone. Any other
     // required grant is a booking-page grant the dispatch door bound to this
     // invite: it narrows which page grant may match, never the actor's others.
-    if candidate_ids.is_empty() || effect.scoped_mcp_call.is_none() {
+    if candidates.is_empty() || effect.scoped_mcp_call.is_none() {
         let candidate_principals = if effect.scoped_mcp_call.is_some() {
             verified_standing_outbound_grant_principal(effect)
                 .into_iter()
@@ -40,30 +45,18 @@ pub(super) fn standing_outbound_grant_for_effect(
             standing_outbound_grant_candidate_principals(effect)
         };
         for principal_ref in candidate_principals {
-            for id in standing_outbound_grant_ids_for_principal(store, txn, &principal_ref)? {
-                if !candidate_ids.contains(&id) {
-                    candidate_ids.push(id);
+            for grant in standing_outbound_grants_for_principal_in_txn(store, txn, &principal_ref)?
+            {
+                if !candidates
+                    .iter()
+                    .any(|held: &StandingOutboundGrant| held.grant_ref() == grant.grant_ref())
+                {
+                    candidates.push(grant);
                 }
             }
         }
     }
-    for id in candidate_ids {
-        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
-            if required_grant_id == Some(id) {
-                return Ok(None);
-            }
-            return Err(Error::CorruptedIndex("outbound grant entity row"));
-        };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            return Err(Error::CorruptedIndex("outbound grant entity header"));
-        };
-        if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
-            if required_grant_id == Some(id) {
-                return Ok(None);
-            }
-            return Err(Error::CorruptedIndex("outbound grant entity type"));
-        }
-        let grant = decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    for grant in candidates {
         if !grant.is_active_under_policy(&current_policy_floor) {
             continue;
         }
@@ -88,7 +81,7 @@ pub(super) fn standing_outbound_grant_for_effect(
                     },
                 ) == ScopedMcpConsentDecision::AutoFire
             {
-                return Ok(Some((id, grant)));
+                return Ok(Some(grant));
             }
             continue;
         }
@@ -96,22 +89,22 @@ pub(super) fn standing_outbound_grant_for_effect(
         // calendar admission bound to it and named here, never a verb.
         if matches!(
             grant.scope,
-            crate::outbound_grant::StandingOutboundGrantScope::BookingPageInvites { .. }
+            StandingOutboundGrantScope::BookingPageInvites { .. }
         ) {
-            if required_grant_id == Some(id)
+            if required_grant_id == Some(grant.id)
                 && effect.verb.trim() == crate::calendar::CALENDAR_INVITE_VERB
             {
-                return Ok(Some((id, grant)));
+                return Ok(Some(grant));
             }
             continue;
         }
-        if grant.scope.matches_effect(
+        if grant.covers_effect(
             &effect.verb,
             &effect.channel,
             effect.counterparty.as_deref(),
             effect.brief_ref.as_deref(),
         ) {
-            return Ok(Some((id, grant)));
+            return Ok(Some(grant));
         }
     }
     Ok(None)
@@ -176,14 +169,25 @@ fn standing_outbound_grant_actor_matches(
             .is_some_and(|actor_entity_ref| actor_entity_ref.to_hex() == grant.principal_ref)
 }
 
-pub(super) fn touch_standing_outbound_grant_in_txn(
+/// Writes the quiet use receipt of the standing outbound grant that covered
+/// an admitted effect, beside the Gate's Allow, naming the effect by the
+/// Allow's own diff handle: the grant's row carries no last use, so its Used
+/// receipts are where its uses read.
+pub(super) fn record_standing_outbound_grant_use_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    grant: StandingOutboundGrant,
-    used_at: u64,
+    grant: &StandingOutboundGrant,
+    diff_handle: &[u8],
 ) -> Result<()> {
-    crate::ports::EntityStoreMaintenance::port_outbound_grant_touch(store, wtxn, id, grant, used_at)
+    let digest =
+        <[u8; 32]>::try_from(diff_handle).unwrap_or_else(|_| *blake3::hash(diff_handle).as_bytes());
+    crate::consent::record_standing_grant_use_for_store_in_txn(
+        store,
+        wtxn,
+        &grant.grant_ref(),
+        crate::consent::EffectDigest::from_bytes(digest),
+    )?;
+    Ok(())
 }
 
 /// OF-374: what an `email/send` meets at its sender row's envelope when that
@@ -276,10 +280,11 @@ pub(super) fn channel_identity_envelope_admission_in_txn(
 /// FIX 5238 (L02 seam): the Grant live on THIS writer that covers `effect`,
 /// read as [`super::evaluate_external_effect_policy`] reads its coverage: a
 /// standing outbound grant active under the current policy frontier whose
-/// actor and scope match, a budget-free policy-scoped grant the four-axis
-/// matcher accepts, or an active DEC-0006 standing consent grant whose bound
-/// covers the effect. It records, charges and spends nothing, and an
-/// approve-once press is no Grant. `None`: no live Grant covers it.
+/// actor matches and whose bound contains the effect, a budget-free
+/// policy-scoped grant the four-axis matcher accepts, or an active DEC-0006
+/// standing consent grant whose bound covers the effect. It records,
+/// charges and spends nothing, and an approve-once press is no Grant.
+/// `None`: no live Grant covers it.
 pub(crate) fn live_grant_covering_effect_in_txn(
     store: &Store,
     wtxn: &heed::RwTxn<'_>,
@@ -287,10 +292,10 @@ pub(crate) fn live_grant_covering_effect_in_txn(
     policy: &PolicyManifestResolution,
 ) -> Result<Option<String>> {
     let (hydrated, _, _) = super::hydrate_external_effect_contact(store, wtxn, effect, policy)?;
-    if let Some((id, _)) =
+    if let Some(grant) =
         standing_outbound_grant_for_effect(store, wtxn, &hydrated, policy, None, None)?
     {
-        return Ok(Some(format!("grant:{}", id.to_hex())));
+        return Ok(Some(grant.grant_ref()));
     }
     let provisional = hydrated.gate_input(None, None);
     if let Some(context) = provisional.external_effect.as_ref()
