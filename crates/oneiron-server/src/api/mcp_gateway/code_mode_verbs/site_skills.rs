@@ -86,6 +86,11 @@ impl SiteSkillLoader for RunSiteSkills {
                     SiteSkillErrorCode::Unresolved,
                     format!("the skill hub resolves no seed for candidate {candidate}"),
                 ),
+                oneiron::Error::Artifact(oneiron::error::ArtifactError::InvalidSkillBody(
+                    detail,
+                )) if detail == oneiron::skill_hub::SITE_SEED_DIGEST_MISMATCH => {
+                    SiteSkillError::new(SiteSkillErrorCode::DigestMismatch, detail)
+                }
                 error => read_failed(&error),
             })
     }
