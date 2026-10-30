@@ -7607,7 +7607,7 @@ export type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: 
 /** `oneiron_docedit::live::pptx::OpaqueChange` */
 export type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null }
 /** `oneiron_docedit::live::pptx::chart::SeriesField` */
-export type SeriesField = "name" | "values" | "family" | "x" | "bubble_size" | "bubble_3d" | "categories" | "order" | "existence"
+export type SeriesField = "name" | "values" | "family" | "plot" | "x" | "bubble_size" | "bubble_3d" | "categories" | "order" | "existence"
 /** `oneiron_docedit::live::pptx::chart::categories::CategoryField` */
 export type CategoryField = "levels" | "order" | "existence"
 /** `oneiron_docedit::live::pptx::Conflict` */
