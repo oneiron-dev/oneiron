@@ -125,6 +125,10 @@ side_tables! {
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// FIX 8531: the first frame after a follower session's keyframe that holds one chunk, and
+    /// the chunk's place in it, written with the frame. Key: hash32(session) + id16(turn) +
+    /// id16(source) + hash32(chunk words); value: (frame ordinal, chunk index).
+    DREAMER_FOLLOWER_CHUNK: VaultMeta b"dreamer:follower:chunk:v1:" Named;
     /// FIX 7510: one admitted source observation of a follower session, its exact rendered bytes
     /// and source pins. Key: hash32(session) + u64be(frame ordinal).
     DREAMER_FOLLOWER_FRAME: VaultMeta b"dreamer:follower:frame:v1:" Named Admitted;
@@ -181,12 +185,17 @@ side_tables! {
     /// The original mention and its resolving evidence, written with the link.
     /// Key: id16(turn) + hash32(message, span).
     DREAMER_IDENTITY_RESOLUTION: VaultMeta b"dreamer:identity:v1:resolution:" Named;
+    /// The first try of one Dreamer retry's lineage, pinned when the retry is minted (FIX 9350)
+    /// so a compaction that folds that try never moves the namespace its people mint under. Key:
+    /// id16(retry); value: the origin attempt id.
+    DREAMER_LINEAGE_ORIGIN: VaultMeta b"dreamer:lineage-origin:v1:" Named;
     /// OF-023: one Dreamer maintenance write applied at once: its kind, attempt, the finding's
     /// revision, the before-state its effect changed, its receipt and, once the owner reverts
     /// it, the revert. Key: id16 (finding).
     DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named;
-    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
-    /// lists the same ones. Ids only, never their text. Key: id16.
+    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, or one
+    /// NOTE's within a NOTE review attempt (FIX 7578), so a replay lists the same ones. Ids only,
+    /// never their text. Key: id16(attempt), then id16(note) for a NOTE's listing.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
     /// Atomic merge/narrative outputs for one nightly fan-in receipt. Key: id16.
     DREAMER_NIGHTLY_MERGED: VaultMeta b"dreamer:nightly:merged:v1:" Named;
@@ -198,6 +207,10 @@ side_tables! {
     /// unchanged NOTE is not read again, its verdict and importance, and a sealed pad's missed
     /// keep lines with the re-asks spent on them (FIX 2240). Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
+    /// The NOTE review's topic index (FIX 7457): one row per reviewed NOTE under the topic
+    /// membership its review record keeps, written in that record's own write. Key: topic
+    /// digest(32) + id16(facet) + id16(project) + id16(note).
+    DREAMER_NOTE_REVIEW_TOPIC: VaultMeta b"dreamer:note-review:topic:v1:" Named;
     /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
     DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.

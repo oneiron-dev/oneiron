@@ -34,16 +34,17 @@ impl Neighbourhood {
 
 impl ListingPage<'_> {
     /// The page as transcript lines (FIX 7575): first each relationship a
-    /// candidate may name, the branch's `bound` one first, then each one
-    /// the page's heads hold within; then each entity and claim, a claim
-    /// within a relationship ending in that relationship's label. Labels
-    /// are assigned in this order.
+    /// candidate may name, the branch's own (`branch`: its bound one, or on
+    /// an unbound branch those its TURNs' words are scoped to, FIX 10357)
+    /// first, then each one the page's heads hold within; then each entity
+    /// and claim, a claim within a relationship ending in that
+    /// relationship's label. Labels are assigned in this order.
     pub(in crate::dreamer_consolidation) fn render(
         &self,
         labels: &mut CallLabelMap,
-        bound: Option<EntityId>,
+        branch: impl IntoIterator<Item = EntityId>,
     ) -> String {
-        let mut out = relationship_lines(labels, bound.into_iter().chain(self.relationships()));
+        let mut out = relationship_lines(labels, branch.into_iter().chain(self.relationships()));
         for (entity, claims) in self.entities() {
             let label = labels.assign(LabelKind::Entity, entity.id);
             out.push_str(&entity_line(label, entity.label.as_deref()));

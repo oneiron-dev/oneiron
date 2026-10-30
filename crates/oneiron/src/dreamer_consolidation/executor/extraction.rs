@@ -20,7 +20,7 @@ pub(in crate::dreamer_consolidation) use wire::{
     contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,
     resolve_subject,
 };
-use wire::{entity_id_from_hex, parse_candidate};
+use wire::{authored_fallback, entity_id_from_hex, parse_candidate};
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
@@ -125,10 +125,11 @@ impl ConsolidationExecutor<'_> {
                 "child evidence hash disagrees with the ledger"
             );
         }
+        let authored = authored_fallback(response);
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
-            match parse_candidate(item, ctx, scope) {
+            match parse_candidate(item, ctx, scope, authored) {
                 Ok(mut candidate) => {
                     candidate.sources = sources.to_vec();
                     parsed.push(candidate);

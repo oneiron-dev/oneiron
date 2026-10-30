@@ -817,6 +817,9 @@ impl<'a> DreamerRunnerStore<'a> {
             crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
                 self.vault, txn, source.id, record.id,
             )?;
+            crate::dreamer_consolidation::pin_lineage_origin_in_txn(
+                self.vault, txn, source.id, record.id,
+            )?;
             ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
             self.cleanup_step_receipts_in_txn(txn, source.id)?;
             Ok(record)

@@ -503,7 +503,13 @@ fn neighbourhood_in(
         bound,
         thing: plan.thing,
     };
-    super::neighbourhood::discover_in(vault, txn, read, plan.attempt_id, &passage)
+    super::neighbourhood::discover_in(
+        vault,
+        txn,
+        read,
+        super::neighbourhood::ListingPin::attempt(plan.attempt_id),
+        &passage,
+    )
 }
 
 /// An attempt no pass runs before a later write, which a later wake

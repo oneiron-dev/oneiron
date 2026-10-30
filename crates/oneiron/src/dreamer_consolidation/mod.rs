@@ -100,6 +100,7 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
+pub(crate) use extracted_people::pin_lineage_origin_in_txn;
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;

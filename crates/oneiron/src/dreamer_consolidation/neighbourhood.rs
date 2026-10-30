@@ -38,11 +38,9 @@ use crate::claim::{
 };
 use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// A label is cut here.
-const LABEL_BYTES: usize = 64;
 /// Names of up to four words ("Mary Ann van Dyke").
 const SPAN_WORDS: usize = 4;
 /// Kinds a passage names by an identity hint.
@@ -57,16 +55,68 @@ pub(super) type ListedRows = Vec<(EntityId, Row)>;
 /// The ids one attempt listed: each entity with its listed claims, in order.
 type Pins = Vec<(EntityId, Vec<EntityId>)>;
 
-/// Per attempt, the entity and claim ids its extraction listed. A replay
-/// after a kill lists the same ones, so its request matches the one an
-/// earlier run memoized: the people it named and the claims it wrote since
-/// never enter what it shows its model or the scope it asks under, and it
-/// never pays for the call twice. A listed claim it closed itself drops out
-/// of the listing, so that replay calls once more; its content-addressed
-/// candidate ids then meet its own landed correction, which applies nothing
-/// twice. Ids only; the text is read again at each wake.
-const PINS: SideTable<[u8; 16], Pins, LegacyJson> =
+/// Per attempt, the entity and claim ids its extraction listed; per NOTE a
+/// review attempt reads, that NOTE's (FIX 7578). A replay after a kill lists
+/// the same ones, so its request matches the one an earlier run memoized:
+/// the people it named, the identities that changed and the claims it wrote
+/// since never enter what it shows its model or the scope it asks under,
+/// and it never pays for the call twice. A listed claim it closed itself
+/// drops out of the listing, so that replay calls once more; its
+/// content-addressed candidate ids then meet its own landed correction,
+/// which applies nothing twice. Ids only; the text is read again at each
+/// wake.
+const PINS: SideTable<ListingPin, Pins, LegacyJson> =
     SideTable::new(&side_table::DREAMER_NEIGHBOURHOOD);
+
+/// Whose listing one pin keeps: an extraction attempt's, or one NOTE's
+/// within a NOTE review attempt, which lists each NOTE apart (FIX 7578). A
+/// NOTE's pin keys under its attempt, so the attempt's unpin drops it too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ListingPin {
+    attempt: AttemptId,
+    note: Option<EntityId>,
+}
+
+impl ListingPin {
+    /// An extraction attempt's listing.
+    pub(super) const fn attempt(attempt: AttemptId) -> Self {
+        Self {
+            attempt,
+            note: None,
+        }
+    }
+
+    /// The listing of `note` within the NOTE review `attempt`.
+    pub(super) const fn note(attempt: AttemptId, note: EntityId) -> Self {
+        Self {
+            attempt,
+            note: Some(note),
+        }
+    }
+}
+
+/// The attempt's id, then the NOTE's when it names one: an attempt's own
+/// pin keeps the key it always had.
+impl SideKey for ListingPin {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.attempt.as_bytes());
+        if let Some(note) = self.note {
+            out.extend_from_slice(note.as_bytes());
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (attempt, note) = bytes.split_at_checked(16)?;
+        let note = match note {
+            [] => None,
+            note => Some(EntityId::from_bytes(note.try_into().ok()?).ok()?),
+        };
+        Some(Self {
+            attempt: AttemptId::from_bytes(attempt).ok()?,
+            note,
+        })
+    }
+}
 
 /// The whole listing one branch shows its extraction model, in pages, and
 /// the heads it may hold as priors.
@@ -191,14 +241,14 @@ impl Neighbourhood {
     }
 }
 
-/// Pins what `attempt` lists, unless an earlier run of it already did.
+/// Pins what `key` lists, unless an earlier run of it already did.
 /// Called before its extraction call goes out. A pinned id the rebuild found
 /// gone leaves the pin for good, so no later replay reads it again; a request
 /// without it may miss its memo, at the cost of one call.
-pub(super) fn pin(vault: &Vault, attempt: AttemptId, listed: &Neighbourhood) -> Result<()> {
+pub(super) fn pin(vault: &Vault, key: ListingPin, listed: &Neighbourhood) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
-        match PINS.get(&vault.store, txn, attempt.as_bytes())? {
-            None => PINS.put(&vault.store, txn, attempt.as_bytes(), &listed.pins())?,
+        match PINS.get(&vault.store, txn, &key)? {
+            None => PINS.put(&vault.store, txn, &key, &listed.pins())?,
             Some(pins) if !listed.gone.is_empty() => {
                 let kept: Pins = pins
                     .into_iter()
@@ -211,7 +261,7 @@ pub(super) fn pin(vault: &Vault, attempt: AttemptId, listed: &Neighbourhood) -> 
                         (id, claims)
                     })
                     .collect();
-                PINS.put(&vault.store, txn, attempt.as_bytes(), &kept)?;
+                PINS.put(&vault.store, txn, &key, &kept)?;
             }
             Some(_) => {}
         }
@@ -219,14 +269,27 @@ pub(super) fn pin(vault: &Vault, attempt: AttemptId, listed: &Neighbourhood) -> 
     })
 }
 
-/// Drops what `attempt` listed. Called in the transaction that settles or
-/// abandons it, once it can no longer replay.
+/// Drops what `attempt` listed, each NOTE's listing under it included.
+/// Called in the transaction that settles or abandons it, once it can no
+/// longer replay.
 pub(crate) fn unpin_neighbourhood_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
 ) -> Result<()> {
-    PINS.delete(&vault.store, txn, attempt.as_bytes())?;
+    PINS.delete_from(&vault.store, txn, attempt.as_bytes())?;
+    Ok(())
+}
+
+/// Drops one NOTE's listing pin, in the write that lands its review record:
+/// that attempt never reads the NOTE again (FIX 7578).
+pub(super) fn unpin_note_listing_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    note: EntityId,
+) -> Result<()> {
+    PINS.delete(&vault.store, txn, &ListingPin::note(attempt, note))?;
     Ok(())
 }
 
@@ -241,14 +304,14 @@ pub(super) struct Passage<'p> {
 }
 
 /// One branch's neighbourhood at the wake's snapshot, with the claim rows it
-/// names for the wake to pin as sources. An attempt an earlier run pinned
-/// lists what it listed then, as those rows read now; the heads the passage
-/// names now are held beside it, unlisted.
+/// names for the wake to pin as sources. A listing `key` an earlier run
+/// pinned lists what it listed then, as those rows read now; the heads the
+/// passage names now are held beside it, unlisted.
 pub(super) fn discover_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
-    attempt: AttemptId,
+    key: ListingPin,
     passage: &Passage<'_>,
 ) -> Result<(Neighbourhood, ListedRows)> {
     let mut mentions = BTreeMap::new();
@@ -259,7 +322,7 @@ pub(super) fn discover_in(
         );
     }
     let (fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
-    let Some(pins) = PINS.get(&vault.store, txn, attempt.as_bytes())? else {
+    let Some(pins) = PINS.get(&vault.store, txn, &key)? else {
         let thing = listed_thing(&fresh, passage.thing);
         return Ok((
             Neighbourhood {
@@ -568,19 +631,9 @@ fn label(body: &[u8]) -> Option<String> {
         .as_str()?
         .trim()
         .to_owned();
-    (!name.is_empty()).then(|| cut(&name, LABEL_BYTES))
-}
-
-/// `text` cut to at most `limit` bytes on a character boundary, marked.
-fn cut(text: &str, limit: usize) -> String {
-    if text.len() <= limit {
-        return text.to_owned();
-    }
-    let mut end = limit;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
+    // The name rides whole (Rule 5, FIX 10518): a wide one widens its line,
+    // and a line wider than a page has a page of its own.
+    (!name.is_empty()).then_some(name)
 }
 
 impl Vault {

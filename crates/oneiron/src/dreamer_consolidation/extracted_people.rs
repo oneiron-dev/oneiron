@@ -22,6 +22,7 @@ use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 mod bindings;
+pub(crate) use bindings::pin_lineage_origin_in_txn;
 pub(super) use bindings::{MintNamespace, PersonBindings, bind_people, original_try};
 
 pub(super) fn mint_extracted_people(
