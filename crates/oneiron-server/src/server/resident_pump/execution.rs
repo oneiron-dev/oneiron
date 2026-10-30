@@ -16,6 +16,7 @@ use super::{
     note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
     run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
 };
+use crate::mcp::LiveLeaseRunner;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
@@ -515,6 +516,9 @@ fn enter_run(
         Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
         None => provider.host_meter().map(|guard| (guard, None)),
     };
+    // The entry's one live lease, which its door's speech and its planner
+    // runner's start look on too, and book on once (FIX 11747).
+    let lease = meter.as_ref().map(|meter| meter.lease.clone());
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(mut planner) = planner_binding(vault, provider, config, planner)? {
         planner.pattern_runner = pattern_launch::agent_runner(
@@ -525,7 +529,8 @@ fn enter_run(
             actor,
             model_seat,
             line.clone(),
-        );
+        )
+        .map(|runner| LiveLeaseRunner::lend(runner, vault, lease.as_ref()));
         bound = bound.with_planner(planner);
     }
     if let Some(issuer) = issuer {
@@ -551,6 +556,7 @@ fn enter_run(
         .map_err(text)?
         .enter();
     door.bind_meter(line);
+    door.bind_lease(lease);
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
@@ -558,6 +564,7 @@ fn enter_run(
         vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
     );
     door.bind_meter(None);
+    door.bind_lease(None);
     door.bind_attempt(None);
     entered
 }
