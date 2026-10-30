@@ -800,12 +800,15 @@ def takes_task_work_turn(row):
         raise ValueError(f'{row["name"]}: a task-work producer row is a plain memory row')
     return True
 
+# FIX 12072: every future an arm awaits is boxed, so the dispatcher's own
+# future stays small; unboxed, it is as large as its largest arm's, and it is
+# built inline on the worker stack in every caller's.
 def mcp_input_dispatch(row):
     'One row of the input dispatcher every MCP door shares.'
     name, method = row['name'], row['name'].replace('.', '_')
     decode = f'let input: {rust_type(row["input"])} = serde_json::from_value(input).map_err(|_| invalid())?;\n'
     if row.get('context') == 'board':
-        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
+        return f'{json.dumps(name)} => {{\n{decode}Box::pin(execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input))).await }},\n'
     body = ''
     if name == 'describe':
         # One target per describe (FIX 3256), on the args the pre hooks left,
@@ -814,7 +817,7 @@ def mcp_input_dispatch(row):
         # describe(self) renders the authenticated run brief, the same door REST takes.
         body += ('if input.get("self").and_then(Value::as_bool) == Some(true) {\n'
                  '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 '    let (value, listed) = crate::api::context_board::describe_self_for_auth(server, auth, &input).await.map_err(|_| invalid())?;\n'
+                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_auth(server, auth, &input)).await.map_err(|_| invalid())?;\n'
                  '    // Derived from the rows its card lists, the roster it read among them.\n'
                  '    served.extend(listed);\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'
@@ -859,7 +862,7 @@ def mcp_input_dispatch(row):
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input).await'
+        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input)).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         # A source door's failure keeps its program's feedback beside its
@@ -880,7 +883,7 @@ def mcp_input_dispatch(row):
                      if home_door else f'{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)')
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
-                 f'let (output, listed) = server.{door_call}.await;\n'
+                 f'let (output, listed) = Box::pin(server.{door_call}).await;\n'
                  '// Derived from these rows too, though it names none of them.\n'
                  'served.extend(listed);\n'
                  'let output = output.map_err(mcp_facade_error)?;\n')
@@ -891,7 +894,7 @@ def mcp_input_dispatch(row):
             # scope and frame-epoch checks.
             body += ('if let Some(key) = input.key.clone() {\n'
                      '    let frame_epoch = input.frame_epoch;\n'
-                     '    return execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
+                     '    return Box::pin(execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch }))).await;\n'
                      '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
             body += ('if input.task_ref.is_none() && input.handle.is_none() && input.after.is_none() && !input.self_target && !input.vault {\n'
@@ -906,7 +909,7 @@ def mcp_input_dispatch(row):
             body += f'served.extend({row["mcp_served"]});\n'
         if takes_task_decisions(row):
             # Its hooks stay here; the typed row alone crosses to the worker.
-            body += (f'let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input)).await?;\n'
+            body += (f'let (output, listed) = Box::pin(mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input))).await?;\n'
                      '// Derived from the rows its reads listed, on a refusal too.\n'
                      'served.extend(listed);\n'
                      'let output = output.map_err(mcp_facade_error)?;\n')
@@ -914,7 +917,7 @@ def mcp_input_dispatch(row):
             # Its page as the plain arm reads it, then the home's references.
             body += ('let asked = (input.query.clone(), input.limit);\n'
                      f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
-                     f'let (output, listed) = {CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, &actor.home_caller()).await;\n'
+                     f'let (output, listed) = Box::pin({CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, &actor.home_caller())).await;\n'
                      '// The home\'s references, found under the caller\'s own proof.\n'
                      'served.extend(listed);\n')
         else:
@@ -1108,7 +1111,8 @@ async fn execute_agent_verb_row(
         crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
     }
 
-/// [`execute_agent_verb_row`]'s row, inside the run's write envelope.
+/// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
+/// arm's door future is on the heap, so this one stays small (FIX 12072).
 async fn execute_agent_verb_row_on(
         server: &Arc<SyncServer>,
         tool: &str,

@@ -191,7 +191,8 @@ pub(crate) async fn handle_mcp_request(
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                     ensure_mcp_actor_matches(&args, &actor)?;
                     mcp_admit_scoped_call(server, &args, &actor)?;
-                    execute_mcp_tool(server, args, &actor, headers, connection).await
+                    // The tool fan-out, on the heap (FIX 12072).
+                    Box::pin(execute_mcp_tool(server, args, &actor, headers, connection)).await
                 })
                 .await;
             // ONE-1704 M4: ONE chokepoint. Everything inside that block happened
