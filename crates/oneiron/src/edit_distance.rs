@@ -409,6 +409,19 @@ pub fn peer_actor_stamp_is_honored(
         .any(|binding| binding.claims_second(at) && binding.actor == *actor))
 }
 
+/// [`peer_actor_stamp_is_honored`] under the caller's transaction (FIX 11172).
+pub(crate) fn peer_actor_stamp_is_honored_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer_id: u64,
+    at: u64,
+    actor: &WriteActor,
+) -> Result<bool> {
+    Ok(eligible_peer_bindings_in_txn(vault, txn, peer_id)?
+        .into_iter()
+        .any(|binding| binding.claims_second(at) && binding.actor == *actor))
+}
+
 /// The peer's bindings an attribution may rest on: one awaiting its owner's
 /// answer vouches for no actor yet. Registration's closure scan reads them all.
 fn eligible_peer_bindings_in_txn(

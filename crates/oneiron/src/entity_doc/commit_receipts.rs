@@ -41,6 +41,7 @@ use crate::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
 use crate::provenance::text_commit::{RowProvenance, TextCommitReceipt};
+use crate::write_envelope::WriteActor;
 
 /// What joins a commit's engine stamp to its receipt.
 pub(super) const RECEIPT_PREFIX: &str = "|made_by=";
@@ -175,6 +176,74 @@ fn receipt_of(
     birth: Option<&MadeBy>,
     meta: &ChangeMeta,
 ) -> Result<Option<TextCommitReceipt>> {
+    receipt_of_with(&OwnedReads { vault }, document, birth, meta)
+}
+
+/// The four store reads a receipt's validation needs. The public reader keeps
+/// its existing per-read transactions; the probe reader uses its caller's.
+trait ReceiptReads {
+    fn trigger_recorded(&self, trigger: Option<&MadeByTrigger>) -> Result<bool>;
+    fn prompt_input_present(&self, row: &EntityId) -> Result<bool>;
+    fn resolve_actor(&self, token: &EntityId) -> Result<Option<WriteActor>>;
+    fn peer_honors(&self, peer: u64, at: u64, actor: &WriteActor) -> Result<bool>;
+}
+
+struct OwnedReads<'v> {
+    vault: &'v crate::Vault,
+}
+
+impl ReceiptReads for OwnedReads<'_> {
+    fn trigger_recorded(&self, trigger: Option<&MadeByTrigger>) -> Result<bool> {
+        trigger_recorded(self.vault, trigger)
+    }
+
+    fn prompt_input_present(&self, row: &EntityId) -> Result<bool> {
+        Ok(self.vault.get_entity_type(row)?.is_some())
+    }
+
+    fn resolve_actor(&self, token: &EntityId) -> Result<Option<WriteActor>> {
+        crate::provenance::resolve_actor_stamp(self.vault, token)
+    }
+
+    fn peer_honors(&self, peer: u64, at: u64, actor: &WriteActor) -> Result<bool> {
+        crate::edit_distance::peer_actor_stamp_is_honored(self.vault, peer, at, actor)
+    }
+}
+
+struct TxnReads<'v, 't, 'db> {
+    vault: &'v crate::Vault,
+    txn: &'t heed::RoTxn<'db>,
+}
+
+impl ReceiptReads for TxnReads<'_, '_, '_> {
+    fn trigger_recorded(&self, trigger: Option<&MadeByTrigger>) -> Result<bool> {
+        let Some(trigger) = trigger else {
+            return Ok(true);
+        };
+        crate::provenance::birth::trigger_is_live_in_txn(&self.vault.store, self.txn, trigger)
+    }
+
+    fn prompt_input_present(&self, row: &EntityId) -> Result<bool> {
+        Ok(self.vault.get_entity_type_in_txn(self.txn, row)?.is_some())
+    }
+
+    fn resolve_actor(&self, token: &EntityId) -> Result<Option<WriteActor>> {
+        crate::provenance::resolve_actor_stamp_in_txn(self.vault, self.txn, token)
+    }
+
+    fn peer_honors(&self, peer: u64, at: u64, actor: &WriteActor) -> Result<bool> {
+        crate::edit_distance::peer_actor_stamp_is_honored_in_txn(
+            self.vault, self.txn, peer, at, actor,
+        )
+    }
+}
+
+fn receipt_of_with<R: ReceiptReads>(
+    reads: &R,
+    document: EntityId,
+    birth: Option<&MadeBy>,
+    meta: &ChangeMeta,
+) -> Result<Option<TextCommitReceipt>> {
     let len = i32::try_from(meta.len).ok().filter(|&len| len > 0);
     let Some(end) = len.and_then(|len| meta.id.counter.checked_add(len)) else {
         return Ok(None);
@@ -200,25 +269,77 @@ fn receipt_of(
         || (states && stamp.class != EdgeActorClass::Human)
         || !made_by.process.is_valid()
         || u64::try_from(meta.timestamp).ok() != Some(made_by.at)
-        || !trigger_recorded(vault, made_by.trigger.as_ref())?
+        || !reads.trigger_recorded(made_by.trigger.as_ref())?
     {
         return Ok(None);
     }
     for input in &made_by.inputs {
-        if input.role == MadeByInputRole::Prompt && vault.get_entity_type(&input.row)?.is_none() {
+        if input.role == MadeByInputRole::Prompt && !reads.prompt_input_present(&input.row)? {
             return Ok(None);
         }
     }
     // An unresolved token names no one: no receipt (FIX 10930).
-    let Some(actor) = crate::provenance::resolve_actor_stamp(vault, &stamp.token)?
+    let Some(actor) = reads
+        .resolve_actor(&stamp.token)?
         .filter(|actor| actor.actor_class() == stamp.class)
     else {
         return Ok(None);
     };
-    let vouched =
-        crate::edit_distance::peer_actor_stamp_is_honored(vault, meta.id.peer, made_by.at, &actor)?;
+    let vouched = reads.peer_honors(meta.id.peer, made_by.at, &actor)?;
     made_by.process.actor = actor.entity_ref();
     Ok(vouched.then(|| receipt(made_by)))
+}
+
+fn receipt_of_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+    birth: Option<&MadeBy>,
+    meta: &ChangeMeta,
+) -> Result<Option<TextCommitReceipt>> {
+    receipt_of_with(&TxnReads { vault, txn }, document, birth, meta)
+}
+
+/// The inputs of `row`'s retained, vouched later text commits, all read under
+/// the caller's transaction (FIX 11172). A row with no live document head has
+/// no commit inputs; an unvouched commit contributes none.
+pub(crate) fn commit_input_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut inputs = std::collections::BTreeSet::new();
+    let head = match super::storage::head(&vault.store, txn, row) {
+        Ok(head) => head,
+        Err(Error::EntityNotFound) => return Ok(inputs),
+        Err(error) => return Err(error),
+    };
+    let doc = super::storage::load(&vault.store, txn, &head)?;
+    let document = EntityId::from_hex(&doc.birth().entity)?;
+    let birth = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &document)?
+        .map(|birth| birth.made_by);
+    let mut changes: Vec<ChangeMeta> = Vec::new();
+    doc.doc
+        .travel_change_ancestors(&doc.doc.oplog_frontiers().to_vec(), &mut |meta| {
+            changes.push(meta);
+            std::ops::ControlFlow::Continue(())
+        })
+        .map_err(|_| Error::CorruptedIndex("document receipt history"))?;
+    changes.sort_by_key(|meta| (meta.lamport, meta.id.peer));
+    for meta in &changes {
+        let Some(receipt) = receipt_of_in_txn(vault, txn, document, birth.as_ref(), meta)? else {
+            continue;
+        };
+        inputs.extend(
+            receipt
+                .made_by
+                .inputs
+                .iter()
+                .filter(|input| input.role == MadeByInputRole::Input)
+                .map(|input| input.row),
+        );
+    }
+    Ok(inputs)
 }
 
 /// Whether a receipt's `trigger`, if it names one, is a known kind with its

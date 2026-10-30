@@ -41,6 +41,7 @@ mod sweep;
 #[cfg(feature = "sync")]
 mod sync;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
+pub(crate) use commit_receipts::commit_input_rows_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
     ensure_quote_document_in_txn, quote_birth_admits_in,
