@@ -115,6 +115,10 @@ pub(super) struct OwnerWorkState {
     /// a request in pieces joins its permits from (`permit_pieces`, FIX
     /// 11866).
     permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
+    /// Each (signer, commitment) whose permit set has been joined and
+    /// verified here, so a refold of it hashes no bytes again (FIX 12014).
+    /// The first join still verifies; merged by union.
+    verified_permit_sets: BTreeSet<([u8; 32], CustodyPermitPieces)>,
 }
 
 /// One admitted request as this install reads it. The body is the fold
@@ -379,7 +383,7 @@ fn apply_request(
     // A custody request in pieces is kept with its permits joined from its
     // signer's pieces at its parents; one whose pieces do not join there is
     // valid without effect (FIX 11866).
-    let Some(request) = permit_pieces::joined_request(&state.owner_work, &key, request) else {
+    let Some(request) = permit_pieces::joined_request(&mut state.owner_work, &key, request) else {
         state.owner_work.refused.insert(hash);
         return Ok(());
     };
@@ -489,6 +493,9 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     for (key, piece) in &right.permit_pieces {
         permit_pieces::keep_piece(&mut merged.permit_pieces, *key, piece);
     }
+    merged
+        .verified_permit_sets
+        .extend(right.verified_permit_sets.iter().copied());
     for (request, cancels) in &right.cancels {
         merged
             .cancels
