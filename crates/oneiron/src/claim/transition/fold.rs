@@ -40,6 +40,14 @@ pub(crate) struct ClaimTransitionProjection {
     /// The actor whose signed `SupersedeClose` ended the history.
     pub superseded_by: Option<EntityId>,
     pub frontier: Vec<TransitionEventHash>,
+    /// The approval grants the history holds, by the `Approve` event that
+    /// made each (`None`: the birth's own), with the status each grants.
+    grants: BTreeMap<Option<TransitionEventHash>, ClaimApprovalStatus>,
+    /// The grants a later event on the same branch saw and ended: a
+    /// `ConfirmLapse`, a `Reject`, or an owner's `Approve` over `Auto`.
+    ended_grants: BTreeSet<Option<TransitionEventHash>>,
+    /// Whether a `Reject` holds on some branch.
+    rejected: bool,
 }
 
 impl ClaimTransitionProjection {
@@ -83,6 +91,14 @@ impl ClaimTransitionProjection {
             scope_band_floor: None,
             superseded_by: None,
             frontier: Vec::new(),
+            grants: match body.approval {
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved => {
+                    BTreeMap::from([(None, body.approval)])
+                }
+                ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected => BTreeMap::new(),
+            },
+            ended_grants: BTreeSet::new(),
+            rejected: false,
         })
     }
 
@@ -101,18 +117,33 @@ impl ClaimTransitionProjection {
             && self.superseded_by == author
     }
 
+    /// This state joined with every state in `branches`, its approval read
+    /// from the union of their grants once all are joined, so the order of
+    /// the branches never changes the result or whether it is a fork.
+    fn joined<'a>(
+        mut self,
+        branches: impl IntoIterator<Item = &'a Self>,
+    ) -> Result<Self, TransitionFoldError> {
+        for branch in branches {
+            self.join(branch)?;
+        }
+        self.approval = self.granted_approval()?;
+        Ok(self)
+    }
+
+    /// Joins `other` into this state. The approval grants join as sets (a
+    /// union of the grants, of the grants ended and of `Reject`), so the
+    /// join is commutative, associative and idempotent, and an ancestor
+    /// joins into its descendant unchanged. `approval` is stale until
+    /// [`Self::joined`] reads it from the joined grants.
     fn join(&mut self, other: &Self) -> Result<(), TransitionFoldError> {
         if self.birth != other.birth {
             return Err(TransitionFoldError::IncompatibleFork);
         }
-        self.approval = match (self.approval, other.approval) {
-            (a, b) if a == b => a,
-            (ClaimApprovalStatus::Proposed, b) => b,
-            (a, ClaimApprovalStatus::Proposed) => a,
-            // Reject and approve on separate branches cannot be resolved by
-            // incidental order, even when rejection would hide more content.
-            _ => return Err(TransitionFoldError::IncompatibleFork),
-        };
+        self.grants
+            .extend(other.grants.iter().map(|(grant, status)| (*grant, *status)));
+        self.ended_grants.extend(other.ended_grants.iter().copied());
+        self.rejected |= other.rejected;
         self.lifecycle = match (self.lifecycle, other.lifecycle) {
             (a, b) if a == b => a,
             (ClaimLifecycleStatus::Active, b) => b,
@@ -141,7 +172,43 @@ impl ClaimTransitionProjection {
         Ok(())
     }
 
-    fn apply(&mut self, event: &SignedClaimTransitionEvent) -> Result<(), TransitionFoldError> {
+    /// The approval the joined grants read as. A grant is live until an
+    /// event that saw it ended it. A `Reject` holds over the grants it saw:
+    /// one beside a live grant it never saw is a reject and an approve on
+    /// separate branches, which incidental order cannot resolve, even when
+    /// rejection would hide more content. With no `Reject`, no live grant
+    /// reads `Proposed` (so a `ConfirmLapse` holds over a branch that kept
+    /// the grant it ended), live grants of one status read that status, and
+    /// `Auto` beside `Approved` is again a fork.
+    fn granted_approval(&self) -> Result<ClaimApprovalStatus, TransitionFoldError> {
+        let mut live = self
+            .grants
+            .iter()
+            .filter(|(grant, _)| !self.ended_grants.contains(*grant))
+            .map(|(_, status)| *status);
+        let Some(first) = live.next() else {
+            return Ok(if self.rejected {
+                ClaimApprovalStatus::Rejected
+            } else {
+                ClaimApprovalStatus::Proposed
+            });
+        };
+        if self.rejected || live.any(|status| status != first) {
+            return Err(TransitionFoldError::IncompatibleFork);
+        }
+        Ok(first)
+    }
+
+    /// Ends every grant this branch holds, as the event it applies saw them.
+    fn end_held_grants(&mut self) {
+        self.ended_grants.extend(self.grants.keys().copied());
+    }
+
+    fn apply(
+        &mut self,
+        hash: TransitionEventHash,
+        event: &SignedClaimTransitionEvent,
+    ) -> Result<(), TransitionFoldError> {
         use ClaimApprovalStatus::{Approved, Auto, Proposed, Rejected};
         use ClaimLifecycleStatus::{Active, Retracted, Superseded};
         if self.lifecycle != Active || self.approval == Rejected {
@@ -158,11 +225,17 @@ impl ClaimTransitionProjection {
                 // grant of its proposal; any other actor's is an approval.
                 let own_grant = event.actor_class == crate::edge::EdgeActorClass::System
                     && crate::memory::claim_author(&self.birth) == Some(event.actor);
-                self.approval = if own_grant { Auto } else { Approved };
+                let status = if own_grant { Auto } else { Approved };
+                // An owner's Approve over Auto replaces the grant it saw.
+                self.end_held_grants();
+                self.grants.insert(Some(hash), status);
+                self.approval = status;
             }
             (ClaimTransitionKind::Reject, TransitionDelta::None)
                 if matches!(self.approval, Proposed | Approved | Auto) =>
             {
+                self.end_held_grants();
+                self.rejected = true;
                 self.approval = Rejected;
             }
             (ClaimTransitionKind::ConfirmLapse, TransitionDelta::None)
@@ -170,6 +243,9 @@ impl ClaimTransitionProjection {
             {
                 // The critical confirm's owner did not answer in time: the
                 // claim waits as a proposal, which a later Approve grants.
+                // The lapse ends the grant it saw, so it holds over a
+                // concurrent branch that kept that grant.
+                self.end_held_grants();
                 self.approval = Proposed;
             }
             (ClaimTransitionKind::Retract, TransitionDelta::ValidTo(end))
@@ -322,17 +398,13 @@ pub(crate) fn fold_machine_claim_transitions(
         let event = pending
             .remove(&hash)
             .ok_or(TransitionFoldError::MissingHistory)?;
-        let mut state = base.clone();
-        for parent in &event.predecessors {
-            state.join(&states[parent])?;
-        }
-        state.apply(event)?;
+        let mut state = base
+            .clone()
+            .joined(event.predecessors.iter().map(|parent| &states[parent]))?;
+        state.apply(hash, event)?;
         states.insert(hash, state);
     }
-    let mut result = base;
-    for tip in &tips {
-        result.join(&states[tip])?;
-    }
+    let mut result = base.joined(tips.iter().map(|tip| &states[tip]))?;
     result.frontier = tips.into_iter().collect();
     Ok(result)
 }
