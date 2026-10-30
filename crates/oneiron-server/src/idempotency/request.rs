@@ -166,7 +166,10 @@ async fn idempotent(
         // Its writes counted themselves on the intent: they landed, and the
         // reply was not kept. Never a second run (FIX 10379).
         Ok(IdempotencyLookup::Interrupted { committed_writes }) => {
-            return api_error_response(intent::reply_not_kept(committed_writes), is_core_auth_route);
+            return api_error_response(
+                intent::reply_not_kept(committed_writes),
+                is_core_auth_route,
+            );
         }
         Ok(IdempotencyLookup::Miss) => {}
         Err(_) => {

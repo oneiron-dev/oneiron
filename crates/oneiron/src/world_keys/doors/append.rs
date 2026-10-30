@@ -19,8 +19,9 @@ use super::super::{PolicyRevision, WorldKey, WorldKeyBinding, WrapRecipient, sea
 use super::frontier::{ChainHead, Parents, WrapPlanInput};
 use super::{FrontierWide, RootRecipient, provenance};
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, MAX_PARENTS,
-    invalid_authority, next_sequence, scope_head, sign_side_entry, standing_rows,
+    AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, AuthorityView,
+    FrontierSigner, KeyFrontier, MAX_PARENTS, invalid_authority, next_sequence, scope_head,
+    sign_side_entry, standing_rows,
 };
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
@@ -58,6 +59,18 @@ impl SequenceCounter {
         };
         self.last = Some(next);
         Ok(next)
+    }
+
+    /// Counts on past every row `signing` has signed on `fold`: the
+    /// frontier joins a door staged at the sequences this counter would take
+    /// next (FIX 8497), so its records follow them.
+    fn follow(&mut self, fold: &AuthorityFold, signing: &SigningKey) -> Result<()> {
+        let signer = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+        let joined = next_sequence(fold, &signer)?
+            .checked_sub(1)
+            .ok_or_else(invalid_authority)?;
+        self.last = Some(self.last.map_or(joined, |last| last.max(joined)));
+        Ok(())
     }
 
     /// The machine's previous key record of `world`, which its next key
@@ -176,6 +189,16 @@ impl Vault {
         if recipients.is_empty() {
             return Ok(Ok(Vec::new()));
         }
+        // FIX 8497 (L04 09:40 (a)): a frontier wider than one record names
+        // is joined first, and the records plan, chain and count on the
+        // fold read back; the planners are unchanged.
+        let joined = match mode {
+            Parents::Frontier => {
+                self.join_wrap_frontier_in_txn(txn, fold, signing, (machine, key.id().world), seq)?
+            }
+            Parents::Explicit => None,
+        };
+        let fold = joined.as_deref().unwrap_or(fold);
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let world = key.id().world;
         let policy = PolicyRevision::of(
@@ -240,6 +263,42 @@ impl Vault {
             plan.on_frontier,
         )
         .map(Ok)
+    }
+
+    /// Joins the main-log heads the first record of `world` would name past
+    /// one record's bound ([`KeyFrontier::wide_heads_in_txn`], FIX 8497),
+    /// signed by `machine`'s install key as its records are, at sequences
+    /// past every row it signed, and `seq` then counts on past the joins.
+    /// The heads are read again in `txn`, which an earlier append of this
+    /// door may have joined already. The fold read back, or `txn`'s when it
+    /// needs no join; `None` when `fold`'s frontier fits or no head admits
+    /// the key: today's path, nothing written.
+    fn join_wrap_frontier_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        signing: &SigningKey,
+        (machine, world): (EntityId, EntityId),
+        seq: &mut SequenceCounter,
+    ) -> Result<Option<AuthorityView>> {
+        let chain = seq.chain(fold, signing, world);
+        if KeyFrontier::wide_heads_in_txn(&self.store, txn, fold, world, chain)?.is_none() {
+            return Ok(None);
+        }
+        let current = self.authority_view_readonly_in_txn(txn)?;
+        let chain = seq.chain(&current, signing, world);
+        let Some((heads, room)) =
+            KeyFrontier::wide_heads_in_txn(&self.store, txn, &current, world, chain)?
+        else {
+            return Ok(Some(current));
+        };
+        let joiner = FrontierSigner::Install(machine, signing);
+        let Some(joined) = self.join_authority_heads_in_txn(txn, &current, &heads, joiner, room)?
+        else {
+            return Ok(None);
+        };
+        seq.follow(&joined, signing)?;
+        Ok(Some(joined))
     }
 
     /// This machine's own record of `key` when no record names the world's

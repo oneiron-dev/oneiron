@@ -23,9 +23,7 @@ impl Memory<'_> {
         // embedder a vector of the new text (ARCH-0004), committed
         // with the turn. An exact retry stages nothing and owes
         // nothing.
-        if matches!(admission.turn, AdmittedTurn::Mint { .. })
-            || admission.has_new_messages()
-        {
+        if matches!(admission.turn, AdmittedTurn::Mint { .. }) || admission.has_new_messages() {
             // A chat or voice commit owes a live pass; an import,
             // held tags and the host executor a bulk one (FIX 6755).
             let work = if plan.imported.is_some()
@@ -52,9 +50,8 @@ impl Memory<'_> {
                             && !planned.message.content.is_empty()
                     })
                     .map(|planned| planned.id),
-                (self.actor_class == crate::edge::EdgeActorClass::Human
-                    && plan.imported.is_none())
-                .then_some(self.actor),
+                (self.actor_class == crate::edge::EdgeActorClass::Human && plan.imported.is_none())
+                    .then_some(self.actor),
                 plan.learned_at,
             )?;
         }

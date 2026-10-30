@@ -155,11 +155,7 @@ impl Memory<'_> {
         let disputed = self.resolve_ref(disputed_ref)?;
         let proposal = self.resolve_ref(proposal_ref)?;
         self.with_verified_actor_write_txn(|txn| {
-            verify_live_actor(
-                self.vault,
-                txn,
-                WriteActor::new(self.actor, self.actor_class),
-            )?;
+            verify_live_actor(self.vault, txn, self.write_actor())?;
             if self.actor_class == EdgeActorClass::System {
                 return Err(authority_denied("daemon has no resident dispute standing").into());
             }
@@ -255,7 +251,7 @@ impl Memory<'_> {
                 )?);
             }
             let receipt = decision(
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 KIND,
                 "pending",
                 "gate.memory.conflict_of_interest",
@@ -279,11 +275,7 @@ impl Memory<'_> {
     /// Reads a private packet as one of its parties. Admins use the review door.
     pub fn claim_conflict(&self, id: [u8; 32]) -> MemoryResult<ClaimConflictBundle> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        verify_live_actor(
-            self.vault,
-            &txn,
-            WriteActor::new(self.actor, self.actor_class),
-        )?;
+        verify_live_actor(self.vault, &txn, self.write_actor())?;
         let packet = load(self.vault, &txn, &id)?;
         if self.actor_class == EdgeActorClass::System
             || (self.actor != packet.author && self.actor != packet.subject)

@@ -4,7 +4,9 @@
 use axum::routing::{get, post};
 
 use super::super::{OwnerRoute, OwnerTable};
-use super::{accept, attest, enabled, proxy, qualify, refresh, register, revoke_proxy_write, setup};
+use super::{
+    accept, attest, enabled, proxy, qualify, refresh, register, revoke_proxy_write, setup,
+};
 
 pub(in super::super) fn owner_table() -> OwnerTable {
     vec![

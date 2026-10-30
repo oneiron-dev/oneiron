@@ -172,6 +172,7 @@ impl AttemptQueue<'_> {
             successor.run_id.as_deref(),
             successor.id.as_bytes(),
         )?;
+        crate::attempt_queue::index::put_created_in_txn(self.store, wtxn, &successor)?;
         // Same rule a retry uses, so a landed handoff cannot invent a second
         // scoping scheme: the successor's entry comes from the scope it copied.
         if let Some(dedupe_key) = successor.dedupe_key.as_deref() {

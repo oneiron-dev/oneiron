@@ -129,7 +129,9 @@ mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 mod claim_vad_owed;
-pub(crate) use claim_vad_owed::{owe_claim_vad_in_txn, settle_claim_vad_in_txn};
+pub(crate) use claim_vad_owed::{
+    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+};
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
@@ -295,7 +297,9 @@ pub(crate) use structural_kind_registry::{
 // FIX 10379: the intent a keyed request's route writes under, counted by
 // each write it commits.
 #[doc(hidden)]
-pub use idempotency_intent::{IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent};
+pub use idempotency_intent::{
+    IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent,
+};
 // KS-2B2: the host's row-held responses in `sync_state`, read by the engine.
 #[cfg(feature = "sync")]
 pub(crate) use sync_responses::media_job_put_fenced_in_txn;

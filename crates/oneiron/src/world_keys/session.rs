@@ -78,6 +78,10 @@ pub(crate) struct WorldKeySession {
     /// Held while a sealed window's mirror is read, extended and written back.
     #[cfg(feature = "sync")]
     pub(crate) sealing: Mutex<()>,
+    /// The carrier keys this install was answered live, its asks out and
+    /// the carriers whose holder refused (FIX 7402): in memory only, wiped
+    /// with the handle.
+    pub(crate) custody_leaves: Mutex<crate::secret_custody::CustodyLeafSession>,
 }
 
 impl WorldKeySession {
