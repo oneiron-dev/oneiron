@@ -360,6 +360,11 @@ impl Vault {
         let Some(mint) = fold.slips.mints.get(grant_id) else {
             return Ok(false);
         };
+        // A removed MACHINE admits nothing, however its removal arrived:
+        // the owner's door, another door, or a sync (FIX 3374, L02 05:3x).
+        if fold.machine(machine).is_some_and(enrolment::machine_removed) {
+            return Ok(false);
+        }
         let grant = &mint.action.claims;
         let now = self.instant_in_txn(txn)?.secs();
         Ok(fold.slip_is_live(grant_id)
