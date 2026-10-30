@@ -1,7 +1,7 @@
 //! Remove active NOTE carriers in the same window commit as a tombstone,
 //! and a deleted NOTE's bundle attachments from every other live window.
 use super::*;
-use crate::sync::bridge::BRIDGE_ORIGIN;
+use crate::sync::bridge::{BRIDGE_ORIGIN, Materializer};
 use crate::sync::loro_support::{map_delete, map_insert_bytes};
 
 pub(crate) fn deleted(doc: &LoroDoc, note: &EntityId) -> Result<()> {
@@ -140,6 +140,55 @@ fn note_ids(vault: &Vault, notes: impl IntoIterator<Item = EntityId>) -> Vec<Ent
             kind.is_none_or(|kind| kind == crate::registry::ENTITY_TYPE_NOTE)
         })
         .collect()
+}
+
+/// Scrubs a window that loads the review-bundle attachments of the NOTEs
+/// this vault's markers delete (FIX 12129): a window closed while a NOTE
+/// was deleted missed the delete's scrub of the other live windows. The
+/// deletes are read from the vault's own `df:`/`dt:` markers — no pending
+/// list is stored. Commits under `materializer` as a mirror of the deletes,
+/// which the window's observer skips by origin while persisting and
+/// routing it.
+pub(crate) fn scrub_missed_note_deletes(
+    vault: &Vault,
+    materializer: &Materializer,
+    doc: &LoroDoc,
+) -> Result<()> {
+    if !matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key("note_proposals")) {
+        return Ok(());
+    }
+    let mut members = BTreeSet::new();
+    for (_, raw) in rows(doc, "note_proposals")? {
+        let row = unpack::<BundleCarrier>(&raw)?;
+        members.extend(bundle_notes(&row.bundle));
+    }
+    if members.is_empty() {
+        return Ok(());
+    }
+    let txn = vault.store.env.read_txn()?;
+    let mut deleted = Vec::new();
+    for member in &members {
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, member)?;
+        let kind = raw.as_deref().and_then(|raw| {
+            crate::batch::EntityMetadataHeader::parse(raw).map(|header| header.entity_type)
+        });
+        if kind.is_some_and(|kind| kind != crate::registry::ENTITY_TYPE_NOTE) {
+            continue;
+        }
+        if crate::deletion::row_deletion_marked(&vault.store, &txn, member, raw.as_deref())? {
+            deleted.push(*member);
+        }
+    }
+    // Dropped before the commit below: Observer A opens a writer.
+    drop(txn);
+    if deleted.is_empty() {
+        return Ok(());
+    }
+    let _guard = materializer.lock();
+    if attachments_deleted(doc, &deleted)? {
+        doc.commit_with(loro::CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    Ok(())
 }
 
 fn scrub_other_windows(vault: &Vault, window: &str, notes: &[EntityId], take_lock: bool) {
