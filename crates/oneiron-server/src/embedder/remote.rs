@@ -4,8 +4,10 @@ use super::endpoint::HttpEmbedder;
 use super::local::evidence::RunProfile;
 use crate::config::EmbedderConfig;
 use crate::config::remote_embedder::{EgressPolicy, RemoteEvidenceRule};
-use oneiron::embed::{EgressDecision, EgressPredicate, PendingEmbeddingInput, RemoteRung};
-use oneiron::llm::run_admission::RunReceiptSink;
+use oneiron::embed::{
+    EgressDecision, EgressPredicate, EmbedderLocality, PendingEmbeddingInput, RemoteRung,
+};
+use oneiron::llm::run_admission::{RunReceiptSink, offer_id, offer_place};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -153,5 +155,22 @@ pub(crate) fn build_remote_rung_with_broker(
     )?));
     let mut rung = RemoteRung::new(embedder, egress);
     rung.lease_duration_ms = config.lease_ms;
+    // The rung's full `model@place` route id (FIX 11768 seam for L05),
+    // minted through the one producer from its space id and its
+    // endpoint's origin — the same resolution the ladder's doors judge. A
+    // rung whose id cannot be minted carries none, and no ordered world
+    // admits it.
+    if let (Ok(model), Ok(url)) = (
+        oneiron::ModelId::new(oneiron::embed::Embedder::model_id(&*rung.embedder)),
+        reqwest::Url::parse(&config.endpoint),
+    ) {
+        let locality = match oneiron::embed::Embedder::locality(&*rung.embedder) {
+            EmbedderLocality::OnDevice => oneiron::ModelLocality::OnDevice,
+            EmbedderLocality::OwnerServer => oneiron::ModelLocality::OwnServer,
+            EmbedderLocality::ThirdParty => oneiron::ModelLocality::ThirdParty,
+        };
+        let place = offer_place(locality, &url.origin().ascii_serialization());
+        rung.offer_id = Some(offer_id(&model, &place));
+    }
     Ok(Some(rung))
 }

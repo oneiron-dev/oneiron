@@ -32,6 +32,14 @@ impl Shape {
     }
 }
 
+/// At most what decoding `bytes` allocates ([`Shape::decoded`]), so a
+/// sender that decodes its own encoding can make room for it first; `None`
+/// for bytes the check refuses.
+#[must_use]
+pub fn decoded_len(bytes: &[u8]) -> Option<u64> {
+    check(bytes).ok().map(Shape::decoded)
+}
+
 /// # Errors
 /// What is wrong with the frame, in a few words.
 pub(crate) fn check(bytes: &[u8]) -> Result<Shape, &'static str> {

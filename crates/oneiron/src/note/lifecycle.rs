@@ -182,9 +182,12 @@ impl Vault {
 
     /// Seals `note` by its author or the owner (OF-073; CALLS "OF-073 NOTE
     /// seal trigger"). A replica NOTE's seal needs the authority its edits
-    /// need, so it is refused here.
+    /// need, so it is refused here. Once the seal commits, each replica is
+    /// told, so the seal reaches it in its state envelope even when the
+    /// text did not move (FIX 2401).
     pub fn seal_note(&self, note: EntityId, actor: WriteActor) -> MemoryResult<NoteSeal> {
-        self.memory(actor.entity_ref(), actor.actor_class())
+        let sealed = self
+            .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
                     let (_, core) = super::verbs::note_core(self, txn, note)?;
@@ -206,7 +209,10 @@ impl Vault {
                     }
                     Ok(seal_note_in_txn(self, txn, note, actor.entity_ref())?)
                 })
-            })
+            })?;
+        #[cfg(feature = "sync")]
+        self.notify_note_document(note);
+        Ok(sealed)
     }
 }
 

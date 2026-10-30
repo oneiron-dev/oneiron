@@ -32,6 +32,7 @@
 
 mod marker;
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
@@ -127,6 +128,16 @@ pub struct BackupSnapshotReceipt {
     /// every pad was prepared into custody and the image names it by
     /// reference alone.
     pub pads_carried: usize,
+    /// The families whose rows the image keeps under its vault-wide seal,
+    /// with how many rows each (KS-7, CALLS PAYLOAD_UNCLASSIFIED): not
+    /// compartmented, so an erase can't reach them in this checkpoint. Empty
+    /// for an image taken with no payload section.
+    pub not_compartmented: BTreeMap<String, u64>,
+    /// Each gap in the checkpoint payload registry the capture rode past
+    /// (KS7-6), one line each naming the family by its name, database and
+    /// prefix, or the database or entity kind, and what became of its rows.
+    /// Empty when the registry is whole.
+    pub payload_registry_gaps: Vec<String>,
 }
 
 /// The suffix of the marker beside a label's newest backup:

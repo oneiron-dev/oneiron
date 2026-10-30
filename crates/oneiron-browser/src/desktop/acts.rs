@@ -59,17 +59,6 @@ impl DesktopSession {
         self.observation(base)
     }
 
-    pub(super) fn press(
-        &mut self,
-        class: Option<&str>,
-        row: &Row,
-    ) -> Result<PressMode, BrowserError> {
-        match class {
-            Some(class) => press_for(&mut self.policy, class, row),
-            None => Ok(PressMode::None),
-        }
-    }
-
     /// Stamps `observation` with the receipt of the effect that made it,
     /// which its verb entered at `started`. The receipt's screenshot is
     /// best-effort: an effect that already happened is receipted even when
@@ -199,12 +188,13 @@ impl DesktopSession {
         typing: &Typing<'_>,
         row: &Row,
         text: &str,
+        operands: &Value,
     ) -> Result<(Option<&'static str>, PressMode, Observation), BrowserError> {
         // A line break can press Return, and a Return sends.
         let class = text
             .contains(|c: char| c == '\n' || c == '\r')
             .then_some(EFFECT_SEND);
-        let press = self.press(class, row)?;
+        let press = self.press_or_hold("type", operands, class, Some(row), typing.read)?;
         let (pid, token) = (typing.read.key.pid, typing.token);
         let observation = self.act(typing.read, typing.base, |session| {
             let refused = |error: ToolError| refusal(error, Some(typing.target));

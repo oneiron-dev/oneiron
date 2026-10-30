@@ -23,7 +23,8 @@
 //!   ref, so an id naming no record is refused `INVENTED_REFERENCE` with a
 //!   reference-refusal receipt, none inside an anonymous off-record session
 //!   the actor is verified in; then the owner's
-//!   [`Memory::safe_delete`] runs with its gate and redaction receipt.
+//!   [`Memory::safe_delete`] runs with its gate and redaction receipt. A row
+//!   only an off-record room staged is deleted in that room (FIX 10763).
 //!
 //! A handle bound inside an off-record session writes into its room while
 //! the room is off record, and reads the room over base (FIX 8119, 8603;
@@ -137,13 +138,18 @@ impl Memory<'_> {
     }
 
     /// Deletes `id` as this surface's caller through the `vault.delete` row
-    /// (a `user_delete`), and answers whether a record was there.
+    /// (a `user_delete`), and answers whether a record was there. A row only
+    /// the off-record room this surface's session names staged is deleted
+    /// in that room, which base never held (FIX 10763).
     ///
     /// # Errors
     ///
     /// `INVENTED_REFERENCE` when `id` names no record, the owner gate's
-    /// refusal, and the delete's own.
+    /// refusal, the room's own refusals, and the delete's own.
     pub fn raw_delete_entity(&self, id: &EntityId) -> MemoryResult<bool> {
+        if self.raw_delete_in_session(id)? {
+            return Ok(true);
+        }
         vault_delete(
             self,
             SafeDeleteRequest {

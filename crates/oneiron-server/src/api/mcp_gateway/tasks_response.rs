@@ -161,8 +161,9 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
+                // The native read fan-out, on the heap (FIX 12072).
                 let (output, capabilities, producers) =
-                    super::memory_response::execute(server, &args, actor).await?;
+                    Box::pin(super::memory_response::execute(server, &args, actor)).await?;
                 served.extend(producers);
                 // One native response, with its own bounded query/batch
                 // semantics. Do not invent an MCP cursor over nested DTOs.
@@ -185,8 +186,15 @@ pub(crate) async fn execute_mcp_generated_verb(
                 } else {
                     None
                 };
-                let produced =
-                    execute_mcp_agent_verb(server, &args, actor, &mut served, &mut hooks).await;
+                // The generated verb table's fan-out, on the heap (FIX 12072).
+                let produced = Box::pin(execute_mcp_agent_verb(
+                    server,
+                    &args,
+                    actor,
+                    &mut served,
+                    &mut hooks,
+                ))
+                .await;
                 let produced = match produced {
                     // A verb hook's stop is a result the client reads, not a
                     // refusal (ARCH-0080 §3).

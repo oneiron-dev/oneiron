@@ -255,6 +255,7 @@ pub(super) fn silent_findings(
             signal: AgentHealthSignal::Silent,
             task,
             attempt: Some(record.id),
+            generation: Some(generation),
             evidence: vec![attempt],
             window: (active, now),
             actual: 0,

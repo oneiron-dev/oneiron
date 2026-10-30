@@ -29,6 +29,11 @@ pub use self::browser::{
     GuestRuntimeFact,
 };
 
+/// What every `Ping` says once the vault was deleted (FIX 11710).
+mod deletion;
+
+pub use self::deletion::PingDeletion;
+
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
 /// The vault-side adapter maps with a total function, never a parse.
@@ -549,6 +554,14 @@ pub enum CtlResponse {
             deserialize_with = "super::relay_delete::observed_instance"
         )]
         engine_instance: Option<String>,
+        /// Present once the vault's Owners deleted it ([`PingDeletion`]);
+        /// absent, it stands (build floor: `CONTRACT_VERSION`'s docs).
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "deletion::observed"
+        )]
+        deletion: Option<PingDeletion>,
     },
     Ok {
         ok: bool,

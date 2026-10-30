@@ -21,17 +21,22 @@ use crate::sync::quarantine::{
 use crate::sync::quota;
 use crate::vault::Vault;
 
+mod asset_ref;
 mod withdrawn;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
 /// lease vault its receipts verify against, and that window's tombstones, indexed once per pass.
 pub(in crate::sync) struct IngestCtx<'a> {
     pub(super) vault: &'a Vault,
-    window_key: &'a str,
+    pub(super) window_key: &'a str,
     lease_vault_id: u64,
     tombstones: &'a TombstoneIndex,
-    residence: Option<Residence<'a>>,
+    pub(super) residence: Option<Residence<'a>>,
     pub(super) staged: super::task_pairs::Staging,
+    /// A by-reference body a transfer received, for its carrier (FIX 5489).
+    asset_body: Option<(EntityId, &'a crate::store::StagedAssetBody)>,
+    /// The window whose body references a residence-free caller reads.
+    body_refs: Option<&'a loro::LoroDoc>,
 }
 
 /// How an entry holds a body that does not belong to its window's residence.
@@ -61,6 +66,8 @@ impl<'a> IngestCtx<'a> {
             tombstones,
             residence: None,
             staged: Default::default(),
+            asset_body: None,
+            body_refs: None,
         }
     }
 
@@ -90,6 +97,9 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
+    /// A carrier whose body moves by reference and is not here yet (FIX 5489): nothing is
+    /// written, and nothing its landing discharges is discharged, until the body comes.
+    Pending,
     /// A delete-protected engine row passed its door (and was written when `wrote`). Its `dt:`
     /// poison is neutralized and every tombstone naming it is refused into `x:` in the same
     /// transaction.
@@ -230,6 +240,7 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
         // Rule A: the row's carried birth lands in the savepoint that
         // admitted the row, or not at all.
         if let Some(doc) = ctx.carrier_doc()
+            && !matches!(step, EntityStep::Pending)
             && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
             && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
         {
@@ -403,13 +414,18 @@ fn admit(
         || crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type);
     // H125: artifact version bytes fenced here when their last artifact went come back once an
     // artifact live here holds them again. A tombstone naming them still wins.
+    // A carrier a reference binds is the body it names, not its manifest bytes (FIX 5489).
+    let by_ref = asset_ref::bound(ctx, &id, blob);
     if header.entity_type == ENTITY_TYPE_ASSET && !ctx.tombstones.contains(&id) {
-        crate::blob_artifact::readmit_held_asset_in_txn(
-            &vault.store,
-            wtxn,
-            &id,
-            &blob[ENTITY_METADATA_HEADER_LEN..],
-        )?;
+        match &by_ref {
+            Some(body) => asset_ref::readmit_staged(ctx, wtxn, &id, body)?,
+            None => crate::blob_artifact::readmit_held_asset_in_txn(
+                &vault.store,
+                wtxn,
+                &id,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+            )?,
+        }
     }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
         crate::task_authority::note_suppressed_fact_in_txn(
@@ -455,6 +471,7 @@ fn admit(
         if *local == *blob
             || pack_sync::pack_echo_equal(&local, blob)
             || crate::sync::asset_body::file_echo_equal(&vault.store, wtxn, &id, &local, blob)?
+            || asset_ref::echo(ctx, wtxn, &id, by_ref.as_ref(), &local, blob)?
             // A pad row rests as a reference to custody, its pad beside it (KS-5).
             || crate::world_keys::pad_echo_equal(&vault.store, &local, blob)
         {
@@ -606,8 +623,12 @@ fn admit(
     // LMDB. The public gate would drop them; `put_replicated` admits both engine-authored bands
     // while still validating structure: unknown type bytes, ungrammatical predicates, malformed
     // CLAIM bodies and ONE-1159 provenance records fail typed, and come back as refusals.
-    // A TASK row its component stages lands in the component's batch (FIX 5998).
-    let applied = super::task_pairs::put_or_stage(&ctx.staged, vault, wtxn, id, header, &data);
+    // A TASK row its component stages lands in the component's batch (FIX 5998). A MESSAGE row
+    // an own machine's proven connection sent takes its own-device lane to the put (FIX 9600).
+    if let Some(body) = &by_ref {
+        return asset_ref::land(ctx, wtxn, id, header, body);
+    }
+    let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, blob, &data);
     if let Err(err) = applied {
         if let Some(quota_debit) = quota_debit {
             quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;

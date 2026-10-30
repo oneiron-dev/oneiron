@@ -72,6 +72,22 @@ impl<'v> RoomTurnHandle<'v> {
         crate::task_verb::sdk::invoke(&self.memory, verb, input)
     }
 
+    /// The record-ref check `verb`'s engine fn runs before its call, run
+    /// alone on this turn's own memory (FIX 1210, 10634): a host door that
+    /// refused one of the turn's refs before reaching the fn receipts that
+    /// refusal as the fn would have. A verb the turn does not serve checks
+    /// nothing, as its call would run nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::task_verb::sdk::receipt_declared_refs`].
+    pub fn receipt_declared_refs(&self, verb: &str, input: serde_json::Value) -> MemoryResult<()> {
+        if !Self::serves(verb) {
+            return Ok(());
+        }
+        crate::task_verb::sdk::receipt_declared_refs(&self.memory, verb, input)
+    }
+
     pub fn recall(
         &self,
         query: &str,
