@@ -8,7 +8,7 @@ mod inbox;
 mod reputation;
 mod send;
 
-pub use inbox::{StalwartInboxCursor, StalwartInboxOutcome, StalwartQuarantine};
+pub use inbox::{StalwartInboxCursor, StalwartInboxOutcome, StalwartInboxStop, StalwartQuarantine};
 pub use reputation::{
     NativeMailReputationReport, NativeMailReputationUpdate, NativeMailSignalSource,
     NativeMailWarmupPolicy,
@@ -16,7 +16,7 @@ pub use reputation::{
 pub use send::{NATIVE_MAIL_MAX_MESSAGE_BYTES, NativeMailMessage, StalwartSendSink};
 
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::Arc;
 
 use reqwest::blocking::{Client, Response};
@@ -36,6 +36,8 @@ const CORE: &str = "urn:ietf:params:jmap:core";
 const MAIL: &str = "urn:ietf:params:jmap:mail";
 const SUBMISSION: &str = "urn:ietf:params:jmap:submission";
 const STALWART: &str = "urn:stalwart:jmap";
+/// Bytes of one JMAP JSON response, parsed in memory. Message blobs stream
+/// to disk instead and have no cap here.
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Placement of one already-configured, per-owner MTA instance. Pooled and
@@ -314,7 +316,15 @@ impl StalwartClient {
         method_result(&self.raw_call(method, arguments)?, method).cloned()
     }
 
-    pub(super) fn download_blob(&self, account_id: &str, blob_id: &str) -> Result<Vec<u8>> {
+    /// Streams one blob into `out` as the server sends it. No byte cap
+    /// applies: the copy buffer is all the memory it holds, and the caller's
+    /// writer decides where the bytes land. Returns the bytes written.
+    pub(super) fn download_blob_into(
+        &self,
+        account_id: &str,
+        blob_id: &str,
+        out: &mut impl Write,
+    ) -> Result<u64> {
         let encode = |value: &str| -> String {
             value.bytes().fold(String::new(), |mut encoded, byte| {
                 if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
@@ -337,13 +347,16 @@ impl StalwartClient {
             .join(&path)
             .map_err(|_| invalid("invalid Stalwart download URL"))?;
         require_same_origin(&self.config.session_url, &url)?;
-        let response = self
+        let mut response = self
             .http
             .get(url)
             .header(AUTHORIZATION, self.authorization.clone())
             .send()
             .map_err(|_| invalid("Stalwart message download failed"))?;
-        read_response(response)
+        if !response.status().is_success() {
+            return Err(invalid("Stalwart HTTP request was refused"));
+        }
+        Ok(std::io::copy(&mut response, out)?)
     }
 
     pub(super) fn mailboxes(&self, mailbox: &StalwartMailbox) -> Result<Vec<Value>> {
