@@ -158,6 +158,29 @@ pub(crate) fn channel_identity_fact_head_ids_in_txn(
         .collect())
 }
 
+/// The claim ids of the identity's live correctable heads (the channel, the
+/// address and the binding), by predicate: the facts a claim correction may
+/// have written in a world the row's reader cannot see.
+///
+/// # Errors
+///
+/// As [`channel_identity_facts_in_txn`]'s own head read.
+pub(crate) fn channel_identity_correctable_head_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: &EntityId,
+) -> Result<BTreeMap<&'static str, EntityId>> {
+    let heads = live_heads_in_txn(store, txn, identity_ref)?;
+    Ok(CORRECTABLE_PREDICATES
+        .iter()
+        .filter_map(|predicate| {
+            heads
+                .get(*predicate)
+                .map(|(claim_id, _)| (*predicate, *claim_id))
+        })
+        .collect())
+}
+
 /// Each live head of the identity's family: Active, Auto or Approved, and
 /// not stale. A Proposed replacement is not live yet, so it never doubles a
 /// head.
