@@ -36,7 +36,7 @@ use crate::dreamer_runner::{
 use crate::dreamer_tournament::{
     DreamerTournamentAuthorFork, DreamerTournamentBordaBallot, DreamerTournamentBranch,
     DreamerTournamentCandidate, DreamerTournamentJudgeClaim, DreamerTournamentRound,
-    DreamerTournamentRun, run_dreamer_claim_tournament,
+    DreamerTournamentRun, DreamerTournamentSynthesisArtifact, run_dreamer_claim_tournament,
 };
 use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
