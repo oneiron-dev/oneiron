@@ -311,7 +311,8 @@ impl Once {
 /// work request, result or cancel (each judges only its own work), a custody
 /// permit piece (it keeps only its own place, FIX 11866), a world
 /// key record (it fills only its own key's slots, or is refused as a no-op,
-/// FIX 4881), a frontier join (it moves no state, FIX 7908), a residence
+/// FIX 4881), a frontier join (it moves no state, FIX 7908, but an anchor's
+/// side join's own place among its anchor's rows, FIX 11868), a residence
 /// directive (it adds only its own id and machine, which only a result past
 /// it reads) or a machine's residence result (it moves only its signer's
 /// sequence, FIX 5412). A resumed fold and a fold past an adopted checkpoint
