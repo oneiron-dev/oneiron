@@ -72,7 +72,8 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::ServerError
             | RetryableLlmError::Timeout
             | RetryableLlmError::StreamCut
-            | RetryableLlmError::TransportFault(_) => false,
+            | RetryableLlmError::TransportFault(_)
+            | RetryableLlmError::DeviceAdmissionStopped => false,
         },
         LlmError::Fatal(fatal) => match fatal {
             FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {
