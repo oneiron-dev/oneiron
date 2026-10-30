@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use loro::json::{JsonOpContent, MapOp};
-use loro::{ContainerID, ContainerType, EncodedBlobMode, ImportBlobMetadata, LoroDoc, LoroValue};
+use loro::{ContainerID, ContainerType, ImportBlobMetadata, LoroDoc, LoroValue};
 
 use super::entity::{IngestCtx, Residence};
 use crate::authority::PeerMachine;
@@ -169,7 +169,7 @@ fn inserted_messages(
                 }
             });
         }
-    } else if may_insert_message(key, doc, &meta, update) {
+    } else if may_insert_message(key, doc, &meta) {
         let candidate = doc.fork();
         if candidate
             .import(update)
@@ -197,24 +197,9 @@ fn inserted_messages(
 /// when:
 /// - `key` is a world's window: a MESSAGE row resides only in a base window,
 ///   and a world window's door refuses one (`entity_belongs_to_window`);
-/// - `doc` already holds every change `update` carries, so it lands no row;
-/// - it is a fast update whose bytes never name the `entities` map: each
-///   block of one keeps its key strings, a root container's name among them,
-///   as written (loro 1.16 `block_encode::encode_keys`), so a block that
-///   writes a row there names the map.
-fn may_insert_message(
-    key: &WindowKey,
-    doc: &LoroDoc,
-    meta: &ImportBlobMetadata,
-    update: &[u8],
-) -> bool {
-    const ENTITIES: &[u8] = b"entities";
-    key.world().is_none()
-        && !doc.oplog_vv().includes_vv(&meta.partial_end_vv)
-        && (!matches!(meta.mode, EncodedBlobMode::Updates)
-            || update
-                .windows(ENTITIES.len())
-                .any(|bytes| bytes == ENTITIES))
+/// - `doc` already holds every change `update` carries, so it lands no row.
+fn may_insert_message(key: &WindowKey, doc: &LoroDoc, meta: &ImportBlobMetadata) -> bool {
+    key.world().is_none() && !doc.oplog_vv().includes_vv(&meta.partial_end_vv)
 }
 
 /// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: an
