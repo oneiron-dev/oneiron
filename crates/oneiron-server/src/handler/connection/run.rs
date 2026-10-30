@@ -12,6 +12,7 @@ use super::super::app_tier::{
 };
 use super::super::conn_state::ConnState;
 use super::super::ephemeral::late_join_presence;
+use super::super::leaf_keys::{LEAF_KEY_TICK, LeafKeySocket, offer_home_requests};
 use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
@@ -125,6 +126,9 @@ pub(super) async fn handle_connection(
         machine = ?conn_state.peer_machine(server.vault()),
         "socket machine"
     );
+    // A proven machine's socket carries custody carrier leaf keys while it
+    // lives (FIX 11785).
+    let _leaf_key_socket = LeafKeySocket::register(&server, conn_id, machine, &direct_tx);
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -132,6 +136,8 @@ pub(super) async fn handle_connection(
     );
     let mut app_tick = tokio::time::interval(Duration::from_millis(25));
     let mut asset_body_tick = tokio::time::interval(super::super::asset_bodies::ASSET_BODY_POLL);
+    let mut leaf_key_tick = tokio::time::interval(LEAF_KEY_TICK);
+    leaf_key_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // Verb RPCs answer off this loop, which serves the socket meanwhile; their
     // answers queue on `direct_tx`. A call still running when the loop ends
     // runs to its end below.
@@ -170,6 +176,7 @@ pub(super) async fn handle_connection(
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
             _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
             _ = asset_body_tick.tick(), if direct_rx.is_empty() => ConnEvent::AssetBodies,
+            _ = leaf_key_tick.tick(), if direct_rx.is_empty() => ConnEvent::LeafKeys,
         };
 
         let next_message = match event {
@@ -185,6 +192,10 @@ pub(super) async fn handle_connection(
             }
             ConnEvent::AssetBodies => {
                 super::super::asset_bodies::poll(&server, &mut conn_state, &direct_tx);
+                continue;
+            }
+            ConnEvent::LeafKeys => {
+                offer_home_requests(&server, conn_id, &conn_state);
                 continue;
             }
             ConnEvent::AppDelivery => {
