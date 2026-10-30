@@ -31,6 +31,7 @@ mod state;
 mod storage;
 mod websocket;
 
+pub(crate) use parsed::{Held, footprint_items};
 pub(crate) use state::{Visits, web_origin};
 
 use crate::request::Custody;
