@@ -10,6 +10,7 @@
 //! rule tier on its Rule rung first (a defect, a lapse or a discovery), then
 //! the host's model rungs for what the rules leave open. A doubtful answer
 //! takes a Coach note and holds in the unclear ledger.
+use oneiron::attempt_queue::{AttemptId, ReadSetProducer};
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::receipt::ReceiptRecord;
@@ -62,12 +63,19 @@ const CLASSIFY_SYSTEM: &str = "You are the Coach's attribution classifier. The d
 /// holds.
 pub(super) fn run(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::Result<()> {
     let vault = server.vault();
+    let attempt = admitted.status.attempt.id;
+    if let Err(error) =
+        vault.declare_attempt_read_producers(attempt, &[ReadSetProducer::ATTRIBUTION_TRACE])
+    {
+        tracing::warn!(kind = ?error.kind(), "attribution read producers were not declared");
+    }
     let run_id = format!(
         "coach-skill-discovery:{}",
         EntityId::from_bytes(*admitted.status.attempt.id.as_bytes())?.to_hex()
     );
     let source = TraceClassifier {
         vault,
+        attempt,
         models: HostModels::open(server, run_id, ATTRIBUTION_CALL_PURPOSE_NAME, BUDGET_UNITS)?,
     };
     let principal = vault
@@ -77,6 +85,7 @@ pub(super) fn run(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> one
     let ladder = host.attribution_ladder();
     let notes = MeasuredNotes {
         vault,
+        attempt,
         coach: CoachNotes {
             models: &source.models,
         },
@@ -97,7 +106,19 @@ pub(super) fn run(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> one
 /// The sweep's fact source: one Coach call per attempt that loaded a skill.
 struct TraceClassifier<'a> {
     vault: &'a Vault,
+    attempt: AttemptId,
     models: HostModels<'a>,
+}
+
+/// Records one attribution pass's complete trace rows, or None when any
+/// constituent is unknown. Capture only: an error never stops the pass.
+fn record_attribution_rows(vault: &Vault, attempt: AttemptId, rows: Option<Vec<EntityId>>) {
+    if let Err(error) =
+        vault.record_attempt_sources(attempt, ReadSetProducer::ATTRIBUTION_TRACE, rows)
+    {
+        tracing::warn!(kind = ?error.kind(), "attribution input rows were not recorded");
+        let _ = vault.record_attempt_sources(attempt, ReadSetProducer::ATTRIBUTION_TRACE, None);
+    }
 }
 
 impl ReceiptAttributionSource for TraceClassifier<'_> {
@@ -108,14 +129,17 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         // The trace beside the rows it read: the receipt's recorded set, its
         // run's attempt and replay, and each loaded skill (FIX 6997).
         let Some((trace, rows)) = receipt_attribution_trace_sourced(self.vault, receipt)? else {
+            record_attribution_rows(self.vault, self.attempt, None);
             return Ok(None);
         };
         // A pack that loaded no skill has nothing to judge.
         if trace.skills.is_empty() {
+            record_attribution_rows(self.vault, self.attempt, rows);
             return Ok(Some(Vec::new()));
         }
         // A run that recorded nothing shows no use of any skill.
         if trace.steps.is_empty() && trace.outputs.is_empty() && trace.last_error.is_none() {
+            record_attribution_rows(self.vault, self.attempt, rows);
             return Ok(None);
         }
         // Every loaded skill is judged on its whole text: the longest and the
@@ -154,11 +178,13 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
                 message(LlmMessageRole::System, CLASSIFY_SYSTEM.to_owned()),
                 message(LlmMessageRole::User, data.to_string()),
             ],
-            rows,
+            rows.clone(),
         )?
         else {
+            record_attribution_rows(self.vault, self.attempt, None);
             return Ok(None);
         };
+        record_attribution_rows(self.vault, self.attempt, rows);
         Ok(parse_facts(&text, &trace))
     }
 }
@@ -233,6 +259,7 @@ impl CoachNotes<'_> {
 /// against the engine's text row. The host passes every note on whole.
 struct MeasuredNotes<'a> {
     vault: &'a Vault,
+    attempt: AttemptId,
     coach: CoachNotes<'a>,
 }
 
@@ -242,6 +269,9 @@ impl AttributionNotes for MeasuredNotes<'_> {
         request: &JudgeRequest<'_>,
         answers: &[HunkVerdict],
     ) -> oneiron::Result<Vec<Option<String>>> {
+        // Evidence and floor row ids are not in pack_source_rows yet
+        // (Engine 05:54): the note tier's complete set stays unknown.
+        record_attribution_rows(self.vault, self.attempt, None);
         let notes = self.coach.notes(request, answers)?;
         let longest = notes.iter().flatten().map(String::len).max().unwrap_or(0);
         let _ = self
