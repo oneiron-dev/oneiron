@@ -1,5 +1,6 @@
 //! A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a
-//! landed turn's wakes decided, where one program's run stands, and one
+//! landed turn's wakes decided and the wakes it still owes, held ones with
+//! their hold (`owed`, FIX 12172), where one program's run stands, and one
 //! settled step's exact result; PR3b adds the resume checkpoint its
 //! restarter reads (`checkpoint`).
 //!
@@ -15,6 +16,7 @@
 
 mod answer;
 mod checkpoint;
+mod owed;
 mod views;
 
 use std::collections::BTreeSet;
@@ -39,16 +41,17 @@ use super::types::{ProgramRecipePin, TurnProgramAdmissionRecord, TurnProgramAtte
 use super::{ADMISSION, ATTEMPT};
 
 use self::answer::{ReceiptAnswer, answer_body_base64, receipt_answer_in_txn};
+use self::owed::{owed_wake_item, owed_wakes_in_txn};
 
 pub use self::checkpoint::program_checkpoint;
 pub use self::views::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
-    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
-    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
-    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
-    TurnProgramAdmissionRequest, TurnProgramAdmissionView,
+    OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
+    ProgramCheckpointConsentView, ProgramCheckpointHeadView, ProgramCheckpointRequest,
+    ProgramCheckpointView, ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView,
+    ProgramQueueView, ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest,
+    ProgramRunStateView, ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView,
+    ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
 };
 
 /// Items a page carries when the request names no limit, and the most one
@@ -62,8 +65,9 @@ const ADMISSION_SCAN_ROWS: usize = 256;
 /// Reads the admissions the wakes of one landed turn decided, one page at a
 /// time: each one the caller reads (it is the waking actor, or the verified
 /// owner), with the turn, its conversation and the pinned SKILL withheld
-/// unless they read on the caller's own lane. `None` when the first page
-/// finds none.
+/// unless they read on the caller's own lane. The first page also lists the
+/// wakes the turn still owes those programs, each held one with its hold's
+/// reason and expiry (FIX 12172). `None` when the first page finds neither.
 ///
 /// # Errors
 ///
@@ -94,27 +98,40 @@ pub fn turn_program_admission(
         limit,
     };
     let (records, next, undecodable) = admissions_of_turn_in_txn(vault, &txn, &page, &caller)?;
+    let owed = if cursor.is_none() {
+        owed_wakes_in_txn(vault, &txn, turn, registration, &caller)?
+    } else {
+        Vec::new()
+    };
     drop(txn);
-    if records.is_empty() && next.is_none() && cursor.is_none() {
+    if records.is_empty() && owed.is_empty() && next.is_none() && cursor.is_none() {
         return Ok(None);
     }
     let readable = readable_on_lane(
         memory,
-        records.iter().flat_map(|record| {
-            [
-                Some(record.wake.turn.turn),
-                Some(record.wake.turn.conversation),
-                record.definition.as_ref().map(|pin| pin.skill),
-            ]
-            .into_iter()
-            .flatten()
-        }),
+        records
+            .iter()
+            .flat_map(|record| {
+                [
+                    Some(record.wake.turn.turn),
+                    Some(record.wake.turn.conversation),
+                    record.definition.as_ref().map(|pin| pin.skill),
+                ]
+                .into_iter()
+                .flatten()
+            })
+            .chain((!owed.is_empty()).then_some(turn)),
     )?;
+    let turn_reads = readable.contains(&turn);
     Ok(Some(TurnProgramAdmissionView {
         turn_ref: turn.to_hex(),
         admissions: records
             .into_iter()
             .map(|record| admission_item(record, &readable))
+            .collect(),
+        owed: owed
+            .into_iter()
+            .map(|wake| owed_wake_item(wake, turn_reads))
             .collect(),
         next_cursor: next.map(|key| bytes_to_hex_lower(&key)),
         undecodable_admission_rows_examined: undecodable,
