@@ -20,6 +20,7 @@ use oneiron::skill_hub::{
     SharedSkillDelta, SharedSkillLane, SharedSkillMergeDisposition, SharedSkillMergeEntry,
     SharedSkillMergeReceipt, SharedSkillMergeState,
 };
+use oneiron::skill_optimize::HeldOutReplayNotes;
 use oneiron::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -168,7 +169,8 @@ struct MergeRuling {
 /// `POST /v1/owner/packs/skills/merges/{candidate}/approve`: the owner runs
 /// one offered delta's merge now. A merge that needs the owner's answer
 /// takes it from this act; the useful-upstream question and the held-out
-/// replay still rule. A refused delta is asked again.
+/// replay still rule. A team-shape revision of the vault head replays with
+/// each version's task-type tree in view. A refused delta is asked again.
 async fn approve_merge(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -203,6 +205,11 @@ async fn approve_merge(
             accept_type: false,
         };
         let ask = vault.prepare_shared_skill_merge(candidate, resident, question)?;
+        // A team-shape revision of the vault head replays with each
+        // version's task-type tree in view, as the Dreamer's tree gate
+        // replays it; any other replays on the registered judge alone.
+        let tree_judge = vault.shared_skill_merge_tree_judge(&candidate, judge)?;
+        let judge: &dyn HeldOutReplayNotes = tree_judge.as_deref().unwrap_or(judge);
         let deadline = RetrievalDeadline::hard(Instant::now(), USEFUL_UPSTREAM_BUDGET);
         let useful = server.decision_host().useful_upstream(&deadline)?;
         let at = vault.now_recorded_at();

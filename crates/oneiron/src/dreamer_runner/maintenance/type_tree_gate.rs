@@ -397,6 +397,34 @@ impl HeldOutReplayNotes for TreeReplayScorer<'_> {
     }
 }
 
+/// `scorer` with each version's task-type tree read beside its replay, for
+/// `proposal`, a team-shape revision of `predecessor`, built as [`drive`]
+/// builds it: the incumbent places with the vault tree in force, the
+/// settled teams are every team receipt, and the proposal's picks are
+/// counted on the vault tree's receipts less every team of a leader in
+/// `predecessor`'s gate reserve.
+///
+/// # Errors
+///
+/// Storage errors, a `predecessor` that does not read, and a proposal whose
+/// type tree does not decode.
+pub(crate) fn team_shape_tree_judge<'a>(
+    vault: &Vault,
+    scorer: &'a dyn HeldOutReplayNotes,
+    proposal: &EntityId,
+    predecessor: &EntityId,
+) -> Result<Box<dyn HeldOutReplayNotes + 'a>> {
+    let receipts = crate::team::team_receipts(vault, None)?;
+    let reserved: BTreeSet<String> = crate::skill_optimize::held_out_receipts(vault, predecessor)?
+        .into_iter()
+        .collect();
+    let (_, eligible) = vault.vault_type_evidence(&receipts, &reserved)?;
+    let in_force = load_team_type_tree(vault, None)?;
+    let judge = TreeReplayScorer::new(vault, scorer, proposal, predecessor, in_force, &receipts)?
+        .proposal_counted_on(&eligible);
+    Ok(Box::new(judge))
+}
+
 /// The open optimizer-born vault revision of the team-shape skill, with the
 /// head it revises.
 fn open_revision(vault: &Vault) -> Result<Option<(EntityId, EntityId)>> {
