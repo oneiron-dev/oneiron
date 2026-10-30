@@ -100,7 +100,9 @@ pub(super) fn judged_live(artifact: EntityId, proposal: &EditProposal) -> Vec<(E
                 .sheet_answers
                 .iter()
                 .flat_map(|bundle| bundle.answers.iter())
-                .filter_map(|answer| Some((answer.source.as_ref()?.id, answer.judged_live.clone()?))),
+                .filter_map(|answer| {
+                    Some((answer.source.as_ref()?.id, answer.judged_live.clone()?))
+                }),
         )
         .collect()
 }
