@@ -1,4 +1,5 @@
-//! The Git-LFS census behind a mirror run's readiness (FIX 6052, FIX 6331).
+//! The Git-LFS census behind a mirror run's readiness (FIX 6052, FIX 6331),
+//! and the objects it met sent to the mirror (FIX 919).
 //!
 //! A census reads every Git-LFS pointer the pushed refs' whole history
 //! reaches, each object once. A history that fits one reachable-objects call
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use super::lfs::{LFS_POINTER_SIZE_CUTOFF, LfsOid, LfsPushedPointer};
 use super::mirror::{
     ORIGIN_MIRROR_NAMED_LFS_OBJECTS, OriginMirrorLfsObject, OriginMirrorNotReadyReason,
-    OriginMirrorReadiness,
+    OriginMirrorReadiness, OriginMirrorTarget,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -75,12 +76,15 @@ struct Reuse {
 }
 
 impl Vault {
-    /// The readiness of a mirror that took exactly `refs`. A census that
-    /// cannot finish is never ready, and never fails the push.
+    /// The readiness of the mirror `target` that took exactly `refs`, once
+    /// each Git-LFS object the census met went to it (FIX 919). A census
+    /// that cannot finish is never ready, and neither it nor a transfer
+    /// that fails ever fails the push.
     pub(super) fn mirror_lfs_readiness(
         &self,
         wire: &GitWire<'_>,
         handle: &GitWireRepo,
+        target: &OriginMirrorTarget,
         repo_id: EntityId,
         refs: &[(GitRefName, GitOid)],
     ) -> OriginMirrorReadiness {
@@ -104,6 +108,14 @@ impl Vault {
                 }
                 Err(error) => {
                     tracing::warn!(kind = ?error.kind(), "mirror LFS census was not kept");
+                }
+            }
+            if !census.met.is_empty() {
+                match self.push_mirror_lfs_objects(target, &census.met) {
+                    Ok(missing) => census.met.retain(|(oid, _)| missing.contains(oid)),
+                    Err(error) => {
+                        tracing::warn!(kind = ?error.kind(), "mirror LFS objects were not sent");
+                    }
                 }
             }
         }
@@ -166,6 +178,22 @@ impl Vault {
             tracing::warn!(kind = ?error.kind(), "mirror LFS census was not kept");
         }
     }
+}
+
+/// Every Git-LFS object the whole history `tips` reach in `handle` names,
+/// each once in the order met, and whether every object was read: an
+/// outside import's census, walked from nothing (FIX 7596).
+///
+/// # Errors
+/// An object store failure.
+pub(crate) fn history_lfs_objects(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    tips: &[GitOid],
+) -> Result<(bool, Vec<(LfsOid, u64)>)> {
+    let mut census = LfsCensus::default();
+    let walk = census_walk(wire, handle, tips, None, &mut census)?;
+    Ok((walk.complete, census.met))
 }
 
 /// Walks the census of `tips`. One call when the history fits it, unless a
@@ -312,10 +340,10 @@ impl LfsCensus {
             .collect()
     }
 
-    /// Ready only over a finished census that met no object: nothing proves
-    /// an object at the mirror yet, so each one met leaves it not ready. The
-    /// first [`ORIGIN_MIRROR_NAMED_LFS_OBJECTS`] are named; the rest are
-    /// counted.
+    /// Ready only over a finished census with no object left: each one the
+    /// mirror is not known to hold, met and not sent or not verified there,
+    /// leaves it not ready (FIX 919). The first
+    /// [`ORIGIN_MIRROR_NAMED_LFS_OBJECTS`] are named; the rest are counted.
     pub(super) fn readiness(self, complete: bool) -> OriginMirrorReadiness {
         let reason = if !complete {
             OriginMirrorNotReadyReason::LfsInventoryIncomplete

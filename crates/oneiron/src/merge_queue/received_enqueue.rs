@@ -177,4 +177,49 @@ impl Vault {
             .map(|batch| batch.id)
             .collect())
     }
+
+    /// The batches of the queue of object store `store` that quarantined
+    /// the proposal `proposal`, and the check works that ran for each of
+    /// those and of `batches`, each in key order (FIX 7536): a received
+    /// candidate's view names them. A pure read.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn queue_proposal_quarantine_and_checks(
+        &self,
+        store: &str,
+        proposal: EntityId,
+        batches: &[String],
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        let txn = self.store.env.read_txn()?;
+        let prefix = format!("{store}:");
+        let id = proposal.to_hex();
+        let quarantined: Vec<String> = super::storage::BATCHES
+            .scan_from(&self.store, &txn, prefix.as_bytes())?
+            .into_iter()
+            .map(|(_, batch)| batch)
+            .filter(|batch| {
+                batch.state == BatchState::Quarantined
+                    && batch
+                        .quarantine
+                        .as_ref()
+                        .is_some_and(|held| held.proposal_ids.contains(&id))
+            })
+            .map(|batch| batch.id)
+            .collect();
+        let checks = super::check_store::CHECK_WORK
+            .scan_from(&self.store, &txn, prefix.as_bytes())?
+            .into_iter()
+            .map(|(_, work)| work)
+            .filter(|work| match &work.request {
+                super::QueueCheckRequest::Check { batch, .. }
+                | super::QueueCheckRequest::Diagnose { batch } => {
+                    batches.contains(batch) || quarantined.contains(batch)
+                }
+                super::QueueCheckRequest::Initialize { .. } => false,
+            })
+            .map(|work| work.work_ref().to_owned())
+            .collect();
+        Ok((quarantined, checks))
+    }
 }

@@ -162,21 +162,20 @@ impl Vault {
         if stores.is_empty() {
             return Ok(Vec::new());
         }
+        // Each ingress store's open markers alone (FIX 7535).
         let txn = self.store.env.read_txn()?;
         let mut pending = Vec::new();
-        for row in CODE_OPERATIONS.iter_from(&self.store, &txn, &[])? {
-            let (key, row) = row?;
-            if stores.contains(&row.source.object_store)
-                && row.candidate.as_ref().is_none_or(|candidate| {
-                    candidate.resolved.is_none() || candidate.projected.is_some()
-                })
-            {
-                pending.push(ReceivedCandidateRef {
-                    object_store: row.source.object_store,
-                    provenance: key.provenance,
-                    ref_name: row.source.ref_name,
-                });
-            }
+        for store in &stores {
+            self.open_received_candidates_in_txn(
+                &txn,
+                store,
+                |row| {
+                    row.candidate.as_ref().is_none_or(|candidate| {
+                        candidate.resolved.is_none() || candidate.projected.is_some()
+                    })
+                },
+                &mut pending,
+            )?;
         }
         Ok(pending)
     }

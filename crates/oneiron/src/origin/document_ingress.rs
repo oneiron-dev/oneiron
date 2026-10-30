@@ -107,6 +107,16 @@ impl Vault {
             Some(crate::registry::ENTITY_TYPE_SESSION) => (),
             Some(_) => return Err(Error::CorruptedIndex("push session identity occupied")),
         }
+        // The pusher writes as its own class, a person or an agent; any
+        // other principal writes as the system (FIX 7131).
+        let actor = WriteActor::new(
+            attribution.actor_id,
+            match self.get_entity_type(&attribution.actor_id)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => EdgeActorClass::Human,
+                Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
+                _ => EdgeActorClass::System,
+            },
+        );
         let mut operations = Vec::new();
         let mut ingress = Vec::new();
         {
@@ -128,8 +138,15 @@ impl Vault {
             let scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
             // A file the push renamed keeps its document, as a local rename
             // does, so its symbols and notes keep their ids (FIX 12199).
-            let mut renames =
-                received_renames(self, &scope, &old, &new, update, attribution, session)?;
+            let mut renames = received_renames(
+                self,
+                &scope,
+                &old,
+                &new,
+                update,
+                (attribution.provenance_claim_id, actor),
+                session,
+            )?;
             let renamed: BTreeSet<String> = renames.values().map(|(to, _)| to.clone()).collect();
             for path in paths {
                 let before = bytes(&old, &path);
@@ -181,10 +198,7 @@ impl Vault {
                                 session: document,
                                 edit: CodeFileEdit::between(&path, &base, after),
                                 metadata_edit: None,
-                                actor: WriteActor::new(
-                                    attribution.actor_id,
-                                    EdgeActorClass::System,
-                                ),
+                                actor,
                                 expected_text: base,
                             });
                             true
@@ -244,11 +258,13 @@ impl Vault {
             // Both receipt layers commit together or the entire ref aborts.
             self.apply_code_file_ingress_exact_in_txn(txn, &mut ingress)?;
             // A replay keeps the first receipt time and any attached candidate.
-            CODE_OPERATIONS.put(
-                &self.store,
+            let stored = held.as_ref().unwrap_or(&fresh);
+            CODE_OPERATIONS.put(&self.store, txn, &receipt_key, stored)?;
+            super::document_candidates::pending_index::index_received_row_in_txn(
+                self,
                 txn,
                 &receipt_key,
-                held.as_ref().unwrap_or(&fresh),
+                stored,
             )?;
             Ok(())
         })
@@ -362,14 +378,15 @@ fn file_operation_id(
 /// moves its document there under the removed path's operation. A pair
 /// whose added path already has a live document, or whose document another
 /// ref moved off the pushed base, is left out and lowers as a removal and
-/// an add. A replay lowers each pair as its first landing did.
+/// an add. A replay lowers each pair as its first landing did. `pusher`
+/// is the push's provenance and the actor its edits land as.
 fn received_renames(
     vault: &Vault,
     scope: &str,
     old: &BTreeMap<String, super::tree::OriginTreeFile>,
     new: &BTreeMap<String, super::tree::OriginTreeFile>,
     update: &RefUpdate,
-    attribution: &ReceivePackAttribution,
+    pusher: (EntityId, WriteActor),
     session: EntityId,
 ) -> Result<BTreeMap<String, (String, CodeFileIngress)>> {
     let mut removed: BTreeMap<(u32, &str), VecDeque<&str>> = BTreeMap::new();
@@ -383,8 +400,7 @@ fn received_renames(
                 .push_back(path.as_str());
         }
     }
-    let provenance = attribution.provenance_claim_id;
-    let actor = WriteActor::new(attribution.actor_id, EdgeActorClass::System);
+    let (provenance, actor) = pusher;
     let empty = *blake3::hash(b"").as_bytes();
     let mut renames = BTreeMap::new();
     for (to, file) in new {

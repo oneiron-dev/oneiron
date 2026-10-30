@@ -70,7 +70,9 @@ impl Vault {
     /// The bundle `input` names, prepared before its writer: the exact base
     /// commit's pinned snapshot, every file's expected state checked
     /// against it and its custody, and its journal claims. `Ok(Err(_))`
-    /// names a shape that holds the candidate.
+    /// is the engine reason code of the shape that holds the candidate,
+    /// each cause its own (FIX 7537): `unreviewed_state_change`,
+    /// `base_snapshot_differs`, `custody_withheld` or `message_secret`.
     ///
     /// # Errors
     /// A base that cannot be read, or a claim that does not encode.
@@ -78,32 +80,29 @@ impl Vault {
         &self,
         repo: &GitWireRepo,
         input: ReceivedFilesProposalInput,
-    ) -> Result<std::result::Result<PreparedRepoProposal, String>> {
+    ) -> Result<std::result::Result<PreparedRepoProposal, &'static str>> {
         let base = self.capture_repo_snapshot_at_commit(repo, &input.base_commit)?;
         let snapshot = super::snapshot::decode_snapshot(&base.encoded)?;
         let custody = super::snapshot::SnapshotCustody::of(self, repo.repo_root())?;
         for file in &input.files {
             let Some(state) = &file.metadata_edit else {
-                return Ok(Err(format!("{}: no reviewed state change", file.path)));
+                return Ok(Err("unreviewed_state_change"));
             };
             let entry = snapshot
                 .entries
                 .iter()
                 .find(|entry| entry.path == file.path);
             if !super::reviewed_file::snapshot_state_is(entry, &state.expected) {
-                return Ok(Err(format!(
-                    "{}: the base snapshot does not hold the pushed old entry",
-                    file.path
-                )));
+                return Ok(Err("base_snapshot_differs"));
             }
             if let Some(content) = &file.content
                 && custody.withholds(&file.path, content).is_some()
             {
-                return Ok(Err(format!("{}: snapshot custody withholds it", file.path)));
+                return Ok(Err("custody_withheld"));
             }
         }
         if crate::batch::secret_scan::scan_file_content("", input.message.as_bytes()).is_some() {
-            return Ok(Err("the bundle message holds a secret".to_owned()));
+            return Ok(Err("message_secret"));
         }
         let repo_ref = RepoRef::LocalFolder {
             path: input.folder,

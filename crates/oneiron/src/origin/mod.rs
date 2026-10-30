@@ -37,6 +37,7 @@ mod mirror_run;
 mod mirror_status;
 pub mod mirror_strategy;
 mod mirror_wake;
+pub(crate) use mirror_census::history_lfs_objects;
 pub(crate) use mirror_wake::OriginMirrorWake;
 pub mod publish;
 pub mod registration;

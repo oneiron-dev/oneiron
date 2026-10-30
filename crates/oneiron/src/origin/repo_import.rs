@@ -13,8 +13,13 @@
 //! `repo.import_manifest` claim. The owner, the anchor, the source and the
 //! snapshot's custody are judged again in each final writer. A submodule
 //! link or a withheld file refuses by name: an incomplete tree never calls
-//! itself an import. A crash may leave a pin, a snapshot or an anchor, each
-//! safe; never a manifest that was not proved, and never an approval.
+//! itself an import. An identical repeat answers its stored manifest from
+//! the stored snapshot and the tree's own entries, with no inventory, ingest
+//! or pin (FIX 7392), and the repository writer is held only for the
+//! admission and the final writer, never across the ingest. A refused final
+//! writer releases the pin it took; a crash may leave a pin, a snapshot or
+//! an anchor, each safe; never a manifest that was not proved, and never an
+//! approval.
 use std::collections::BTreeMap;
 
 use crate::code_revision::{
@@ -81,8 +86,16 @@ impl Vault {
             },
             &dir,
         )?;
-        let _guard = lock_repository(repo.common_dir())?;
+        let guard = lock_repository(repo.common_dir())?;
         let (record, tree) = self.require_admitted_import_source(&git, &repo, source)?;
+        if let Some(imported) =
+            self.repeated_served_import(owner, &git, &repo, anchor.repo, source, &record, &tree)?
+        {
+            return Ok(imported);
+        }
+        // The Published publication's own keep-ref holds the chosen history
+        // while the ingest reads it; pushes need not wait for the ingest.
+        drop(guard);
         let inventory =
             CodeTreeInventory::capture_pinned(self, &git, &repo, source.source_commit, &tree)?;
         let blobs = inventory.blobs().clone();
@@ -155,6 +168,7 @@ impl Vault {
         };
         // Physical first: the chosen commit and every ancestor are kept
         // before any claim names them.
+        let _guard = lock_repository(repo.common_dir())?;
         self.pin_origin_object(
             &git,
             &repo,
@@ -164,7 +178,7 @@ impl Vault {
             now,
         )?;
         let body = manifest.claim_body()?;
-        self.with_write_txn_grouped(|txn| {
+        let written = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             self.import_source_still_admitted_in_txn(txn, anchor.repo, source, &record)?
                 .map_err(Error::Refused)?;
@@ -188,12 +202,111 @@ impl Vault {
                     now,
                 ),
             }
-        })?;
+        });
+        if written.is_err() {
+            let stands = {
+                let txn = self.store.env.read_txn()?;
+                self.get_claim_in_txn(&txn, &manifest_ref)?.is_some()
+            };
+            if !stands {
+                self.unpin_origin_object(
+                    &git,
+                    &repo,
+                    OriginKeepRefKind::Snapshot,
+                    &manifest_ref.to_hex(),
+                    source.source_commit,
+                    now,
+                )?;
+            }
+        }
+        written?;
         Ok(ImportedCodeRepo {
             manifest_ref,
             manifest,
             blobs,
         })
+    }
+
+    /// The import an identical earlier call of `source` proved, answered
+    /// again (FIX 7392): its stored manifest, judged as the final writer
+    /// judges it, with blobs from the stored snapshot and the tree's own
+    /// entries. `None` when no such manifest stands or its rebuilt
+    /// inventory is not the manifest's: the full import runs.
+    ///
+    /// # Errors
+    /// An owner refusal, a moved source or snapshot custody, or a store or
+    /// object store failure.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the import's own proved values, each named"
+    )]
+    fn repeated_served_import(
+        &self,
+        owner: &AuthenticatedOwner,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        anchor: EntityId,
+        source: &ServedImportSource<'_>,
+        record: &OriginPublicationRecord,
+        tree: &GitOid,
+    ) -> Result<Option<ImportedCodeRepo>> {
+        let object_store = repo.identity().as_hex();
+        let (manifest_ref, manifest, files) = {
+            let txn = self.store.env.read_txn()?;
+            let found = self.find_claim_for_subject_in_txn(&txn, &anchor, |id, body| {
+                let manifest = CodeImportManifest::from_claim(body).ok()?;
+                let stored = &manifest.anchor;
+                (stored.repo == anchor
+                    && stored.project == source.project
+                    && stored.served_repo == source.repo
+                    && stored.object_store == object_store
+                    && stored.source_ref == source.source_ref.as_str()
+                    && stored.source_commit == source.source_commit.as_str()
+                    && stored.source_tree == tree.as_str()
+                    && stored.admission_receipt == source.admission_receipt
+                    && stored.receive_provenance == record.provenance_claim_id
+                    && manifest_id(&manifest.digest).ok() == Some(*id))
+                .then_some((*id, manifest))
+            })?;
+            let Some((manifest_ref, manifest)) = found else {
+                return Ok(None);
+            };
+            owner.revalidate_in_txn(self, &txn)?;
+            self.import_source_still_admitted_in_txn(&txn, anchor, source, record)?
+                .map_err(Error::Refused)?;
+            import_snapshot_custody_in_txn(self, &txn, &manifest)?.map_err(Error::Refused)?;
+            let Some(snapshot) =
+                self.get_codebase_snapshot_in_txn(&txn, &manifest.anchor.snapshot)?
+            else {
+                return Ok(None);
+            };
+            (manifest_ref, manifest, snapshot.files)
+        };
+        let entries = CodeTreeInventory::entries(git, repo, tree)?;
+        let mut blobs = BTreeMap::new();
+        for file in files {
+            let Some((git_oid, mode)) = entries.get(&file.path) else {
+                return Ok(None);
+            };
+            let blob = CodeTreeBlob {
+                git_oid: git_oid.clone(),
+                content_hash: file.content_hash,
+                size_bytes: file.size_bytes,
+                mode: *mode,
+            };
+            blobs.insert(file.path, blob);
+        }
+        if blobs.len() != entries.len()
+            || bytes_to_hex_lower(&CodeTreeInventory::blob_digest(&blobs))
+                != manifest.inventory_digest
+        {
+            return Ok(None);
+        }
+        Ok(Some(ImportedCodeRepo {
+            manifest_ref,
+            manifest,
+            blobs,
+        }))
     }
 
     /// The admitted source `source` names, judged under the repository
