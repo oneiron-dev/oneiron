@@ -154,7 +154,9 @@ fn timed_out(error: &std::io::Error) -> bool {
 
 /// Opens one reply body, JSON or an event stream. A JSON body is read whole,
 /// whatever its size (FIX 8227): only a body that does not parse is
-/// unreadable, and the complete result goes on as the call's reply.
+/// unreadable, and the complete result goes on as the call's reply. A JSON
+/// body that answers nothing, and every other message of a batch, is wiped
+/// as it drops (FIX 11861), as a stream's are.
 pub(super) fn open_reply(
     response: reqwest::blocking::Response,
     id: u64,
@@ -176,14 +178,26 @@ pub(super) fn open_reply(
             last_event_id: Zeroizing::default(),
         }));
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Zeroizing::new(Vec::new());
     body.read_to_end(&mut bytes).map_err(|_| ())?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
-    let found = match value {
-        Value::Array(batch) => batch.into_iter().find(|message| answers(message, id)),
-        message => answers(&message, id).then_some(message),
-    };
-    Ok(Reply::Json(found.map(|message| (message, bytes))))
+    let mut found = None;
+    match value {
+        Value::Array(batch) => {
+            for message in batch {
+                if found.is_none() && answers(&message, id) {
+                    found = Some(message);
+                } else {
+                    zeroize_json(message);
+                }
+            }
+        }
+        message if answers(&message, id) => found = Some(message),
+        message => zeroize_json(message),
+    }
+    Ok(Reply::Json(
+        found.map(|message| (message, std::mem::take(&mut *bytes))),
+    ))
 }
 
 /// Reads one reply body until the response that answers `id`; server

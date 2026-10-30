@@ -263,14 +263,17 @@ impl LiveSession {
         }
     }
 
-    /// Refuses one server request this client does not serve.
-    pub(super) fn refuse(&self, request: &Value) {
-        let Some(id) = request.get("id") else {
+    /// Refuses one server request this client does not serve. The request is
+    /// wiped as it drops (FIX 11861).
+    pub(super) fn refuse(&self, request: Value) {
+        let id = request.get("id").cloned();
+        zeroize_json(request);
+        let Some(id) = id else {
             return;
         };
         let refusal =
             json!({ "code": -32601, "message": "this client does not serve this request" });
-        let _ = self.respond(id.clone(), "error", refusal);
+        let _ = self.respond(id, "error", refusal);
     }
 
     /// Ends the session: a courtesy, whose outcome changes nothing.
@@ -677,11 +680,17 @@ impl Worker {
                     Ok(message) => message,
                     Err(event) => return Next::Over(event),
                 };
-                if let Some((questions, state)) = retry_questions(&message) {
-                    *request_state = state;
-                    return Next::Asked(questions);
-                }
-                Next::Over(terminal(&message))
+                let next = match retry_questions(&message) {
+                    Some((questions, state)) => {
+                        *request_state = state;
+                        Next::Asked(questions)
+                    }
+                    None => Next::Over(terminal(&message)),
+                };
+                // The round's questions are read out; the reply is wiped
+                // (FIX 11861).
+                zeroize_json(message);
+                next
             }
         }
     }
@@ -758,7 +767,7 @@ pub(super) fn read_retry_reply(
     loop {
         match stream.next(id) {
             Ok(StreamEvent::Answer(message, _)) => return Ok(message),
-            Ok(StreamEvent::Request(request)) => session.refuse(&request),
+            Ok(StreamEvent::Request(request)) => session.refuse(request),
             Ok(StreamEvent::End) | Err(()) => return Err(unreadable),
         }
     }
