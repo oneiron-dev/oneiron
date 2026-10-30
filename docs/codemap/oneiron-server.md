@@ -781,7 +781,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/slips.rs` | src | m | 20 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
-| `src/big_rung.rs` | src | m | 7 crate-vis | — | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
+| `src/big_rung.rs` | src | m | 8 crate-vis | — | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `src/big_rung/joint.rs` | src | s | 5 crate-vis | — | The Big rung's joint reading (FIX 1557) |
 | `src/big_rung/note.rs` | src | s | 1 crate-vis | — | The Big rung's model as the host's notes model (FIX 3040, 654): one tool-less text call on the rung's seat… |
 | `src/big_rung/route.rs` | src | s | 6 crate-vis | — | The route a Big-rung call takes (FIX 9525) |
