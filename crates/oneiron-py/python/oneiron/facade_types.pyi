@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4384 declarations.
-Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1213 facade rows, 4401 declarations.
+Inputs: 1141 of 1213 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1047 of 1213 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -2495,6 +2495,52 @@ RunnerSeatTopUpEffect = Literal["cleared", "already_clear", "observation_changed
 class RunnerSeatTopUpReceipt(TypedDict):
     effect: RunnerSeatTopUpEffect
     quota: RunnerSeatQuota
+class RunnerWorkResumeChoiceSeat(TypedDict):
+    seat: int
+RunnerWorkResumeChoiceNextSeatBody = TypedDict("RunnerWorkResumeChoiceNextSeatBody", {"from": int})
+class RunnerWorkResumeChoiceNextSeat(TypedDict):
+    next_seat: RunnerWorkResumeChoiceNextSeatBody
+RunnerWorkResumeChoice = RunnerWorkResumeChoiceSeat | RunnerWorkResumeChoiceNextSeat
+OnSeatSpent = Literal["stop", "next_seat", "internal_models"]
+class RunnerSeatPolicy(TypedDict):
+    seats: list[RunnerSeat]
+    on_spent: NotRequired[OnSeatSpent]
+class RunnerWorkResumeRequest(TypedDict):
+    binding: str
+    expected_attempt: str
+    choice: NotRequired[RunnerWorkResumeChoice | None]
+    policy: RunnerSeatPolicy
+class SkippedRunnerSeatView(TypedDict):
+    seat: int
+    runner: str
+    reason: str
+class RunnerWorkResumeViewResumedBody(TypedDict):
+    seat: int
+    attempt: str
+    existing: bool
+    skipped: list[SkippedRunnerSeatView]
+class RunnerWorkResumeViewResumed(TypedDict):
+    resumed: RunnerWorkResumeViewResumedBody
+class RunnerWorkResumeViewCurrentBody(TypedDict):
+    seat: int
+    attempt: str
+class RunnerWorkResumeViewCurrent(TypedDict):
+    current: RunnerWorkResumeViewCurrentBody
+class RunnerWorkResumeViewUnchangedBody(TypedDict):
+    seat: int
+    attempt: str
+class RunnerWorkResumeViewUnchanged(TypedDict):
+    unchanged: RunnerWorkResumeViewUnchangedBody
+class RunnerWorkResumeViewNoSeatBody(TypedDict):
+    skipped: list[SkippedRunnerSeatView]
+class RunnerWorkResumeViewNoSeat(TypedDict):
+    no_seat: RunnerWorkResumeViewNoSeatBody
+class RunnerWorkResumeViewExhaustedBody(TypedDict):
+    back_at: NotRequired[int | None]
+    skipped: list[SkippedRunnerSeatView]
+class RunnerWorkResumeViewExhausted(TypedDict):
+    exhausted: RunnerWorkResumeViewExhaustedBody
+RunnerWorkResumeView = Literal["gone"] | RunnerWorkResumeViewResumed | RunnerWorkResumeViewCurrent | RunnerWorkResumeViewUnchanged | RunnerWorkResumeViewNoSeat | RunnerWorkResumeViewExhausted
 FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
 class FanoutResumeRequest(TypedDict):
     launch_ref: EntityId
@@ -5643,6 +5689,7 @@ class JevTradeoffVerdict(TypedDict):
     pin: ProviderPin
 class SkillTradeoffAsk(TypedDict):
     pending: EntityId
+    skill: EntityId
     question: SkillTradeoffQuestion
     jev: NotRequired[JevTradeoffVerdict | None]
     rung: int
@@ -5653,6 +5700,11 @@ class SkillOptimizeTradeoffAskView(TypedDict):
 class SkillOptimizeTradeoffPickRequest(TypedDict):
     proposal: EntityId
     question_digest: str
+    choice: TradeoffChoice
+class SkillOptimizeTradeoffResolveRequest(TypedDict):
+    proposal: EntityId
+    pending: EntityId
+    evidence: str
     choice: TradeoffChoice
 class SkillGovernanceSetRequest(TypedDict):
     entity: EntityId
@@ -8856,6 +8908,7 @@ class OfferAnswerRecord(TypedDict):
     offer_digest: str
     intent: NotRequired[OfferIntent | None]
     at: int
+OfferCheckOutcome = Literal["held", "broken", "currency_mismatch", "promised_score_unknown", "promised_cost_unknown", "unverifiable_no_calls", "unverifiable_no_meter", "unverifiable_not_bound", "unverifiable_no_model_role", "unverifiable_mixed_model", "unverifiable_no_usage", "unverifiable_unpriced_model", "unverifiable_unknown_currency", "unverifiable_unpriced_cache", "unverifiable_mixed_currency", "unverifiable_sum_overflow", "unverifiable_unclassified"]
 class OfferCheck(TypedDict):
     id: EntityId
     offer: EntityId
@@ -8863,6 +8916,7 @@ class OfferCheck(TypedDict):
     observed_monthly_cost: NotRequired[float | None]
     observed_score: NotRequired[float | None]
     held: NotRequired[bool | None]
+    outcome: OfferCheckOutcome
     note: NotRequired[str | None]
     at: int
     source_rows: NotRequired[list[EntityId] | None]
@@ -9675,6 +9729,7 @@ class CourtesyDeleteSendRequest(TypedDict):
     signed: NotRequired[str | None]
 class CourtesyDeleteSent(TypedDict):
     request: str
+    pages: list[str]
     pact: str
     recipient: str
     status: str
@@ -11004,6 +11059,11 @@ class LensProposalReceipt(TypedDict):
     approval: LensApproval
     proposed_by: str
     proposed_at: int
+class PackLensProposeRequest(TypedDict):
+    pack_name: str
+    lens: str
+    trigger: NotRequired[MadeByTrigger | None]
+    scope: NotRequired[LensScope | None]
 class LensActivateRequest(TypedDict):
     lens_ref: str
     compiled_hash: str
@@ -14148,6 +14208,9 @@ class DecisionMedia(TypedDict):
     name: str
     reference: DecisionMediaRef
     served: MediaServed
+class LivePin(TypedDict):
+    frontier: list[int]
+    commits: int
 class SlideJudgment(TypedDict):
     thread_id: EntityId
     target: PptxCommentTarget
@@ -14163,6 +14226,7 @@ class SlideJudgment(TypedDict):
     render_hash: list[int]
     evidence_hash: list[int]
     judged_version: NotRequired[int | None]
+    judged_live: NotRequired[LivePin | None]
     comment: str
     labels: SlideReviewLabels
 class PptxCommentActionAddBody(TypedDict):
@@ -16010,6 +16074,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
+    executor: NotRequired[str | None]
     artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
@@ -16041,6 +16106,12 @@ class AmendmentJudgmentView(TypedDict):
     d_norm: float
     engine_ver: str
     at: int
+    rejected: bool
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    judge: NotRequired[str | None]
+    judge_model: NotRequired[str | None]
+    on_judge_model: bool
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
     artifact_ref: NotRequired[EntityId | None]
@@ -16666,7 +16737,7 @@ class LlmCatalogCost(TypedDict):
     output_per_million: str
     cache_read_per_million: NotRequired[str | None]
     cache_write_per_million: NotRequired[str | None]
-    currency: str | None
+    currency: NotRequired[str | None]
 class LlmCatalogEntry(TypedDict):
     model: ModelId
     display_name: str
@@ -16995,6 +17066,7 @@ class VoiceTargetReceipt(TypedDict):
     vendor_voice_id: str
     cloned_at: int
     revision: str
+    awaiting_verification: bool
 class VoiceTargetEvictRequest(TypedDict):
     voice_id: str
     target: str
@@ -20224,6 +20296,36 @@ class ConsolidationLineageView(TypedDict):
     latest_job_ref: NotRequired[str | None]
     steps: list[ConsolidationStepRef]
     next_step: NotRequired[str | None]
+class DreamerCandidateDecisionsRequest(TypedDict):
+    job_ref: str
+class KeptRole(TypedDict):
+    rank: RoleRank
+    project: NotRequired[str | None]
+class KeptRoute(TypedDict):
+    role: KeptRole
+    ceiling: RoleRank
+    act: AskAct
+class KeptAnswer(TypedDict):
+    answer: DecisionAnswer
+    answered_at: int
+    role: KeptRole
+    kind: HolderKind
+    changed: bool
+    reason: NotRequired[str | None]
+    rule: NotRequired[HostRuleRef | None]
+class KeptAsk(TypedDict):
+    seq: int
+    to: KeptRoute
+    answer: NotRequired[KeptAnswer | None]
+class KeptDecision(TypedDict):
+    decision: TypedDecision
+    ask: NotRequired[KeptAsk | None]
+class DreamerDecidedCandidateView(TypedDict):
+    job_ref: str
+    position: int
+    subject: str
+    corrects: str | None
+    decisions: list[KeptDecision]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]

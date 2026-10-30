@@ -227,6 +227,10 @@ impl HeldOutReplayNotes for CoverageFloorScorer<'_> {
         self.inner.replay_responses(receipts)
     }
 
+    fn rubric(&self) -> Result<Option<crate::skill_optimize::JudgeRubric>> {
+        self.inner.rubric()
+    }
+
     fn record_decision(
         &self,
         question: &DecisionQuestion,

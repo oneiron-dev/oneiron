@@ -572,6 +572,10 @@ fn last_contact(
                 && party_ref == person
                 && claim.is_standing()
                 && claim.is_effective_at(now)
+                && vault.claim_consolidation_eligible(
+                    &row.id,
+                    crate::gate::ConsolidationReader::RepresentationSource,
+                )?
             {
                 found.push((row.id, occurred_at));
             }

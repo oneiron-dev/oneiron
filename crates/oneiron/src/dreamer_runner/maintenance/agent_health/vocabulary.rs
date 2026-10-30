@@ -376,6 +376,11 @@ pub(super) struct Finding {
     pub(super) signal: AgentHealthSignal,
     pub(super) task: Option<EntityId>,
     pub(super) attempt: Option<AttemptId>,
+    /// The lease generation the finding's evidence was read under (FIX 8259):
+    /// a call stream's witnessed generation, or its attempt's
+    /// `attempt_count` at read time. `None` only where no generation witness
+    /// exists at emission (an actor-only call stream).
+    pub(super) generation: Option<u32>,
     pub(super) evidence: Vec<EntityId>,
     pub(super) window: (u64, u64),
     /// The stable number the DIAGNOSTIC carries, and the dial.

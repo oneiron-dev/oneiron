@@ -9,10 +9,13 @@
 //! vault, which tells its person it arrived (FIX 11197,
 //! [`oneiron::Vault::import_removal_archive`]); one that does not import
 //! stays on disk as written, and each start takes in those not yet taken in
-//! before its first session. A live member's device holds the same sessions,
-//! and a removal wakes them. A failed session is tried again after a wait
-//! that doubles from [`REMOVAL_DELIVERY_RETRY_FIRST`] to
-//! [`REMOVAL_DELIVERY_RETRY_MAX`]. Logs name receipts, never a slip or a key.
+//! before its first session. On a managed vault each import runs under an
+//! admission of the reap freeze (FIX 11796): a frozen vault takes none, and
+//! the archive waits on disk for the next start. A live member's device
+//! holds the same sessions, and a removal wakes them. A failed session is
+//! tried again after a wait that doubles from
+//! [`REMOVAL_DELIVERY_RETRY_FIRST`] to [`REMOVAL_DELIVERY_RETRY_MAX`]. Logs
+//! name receipts, never a slip or a key.
 #![cfg_attr(not(feature = "mesh"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
@@ -29,6 +32,7 @@ use super::DeviceSyncHost;
 use super::dial::Dial;
 use crate::commands::credential_file::PairedCredentialFile;
 use crate::handler::mesh::MeshHost;
+use crate::server::HousekeepingAdmission;
 
 /// The first wait after a failed session (a call).
 const REMOVAL_DELIVERY_RETRY_FIRST: Duration = Duration::from_secs(5);
@@ -53,12 +57,14 @@ impl Receiver {
     /// (`wss`, or `ws` to a loopback host, as the device's own link requires
     /// off the mesh), else over the mesh to the home machine where the link
     /// has a mesh host (FIX 11196). `None` where neither is in reach. What
-    /// it receives goes into `vault`, this device's own.
+    /// it receives goes into `vault`, this device's own, each import under an
+    /// admission `admit` grants.
     #[cfg(feature = "mesh")]
     pub(super) fn start(
         dial: &Dial,
         mesh: Option<&MeshHost>,
         vault: &Arc<oneiron::Vault>,
+        admit: HousekeepingAdmission,
     ) -> Option<Self> {
         use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
 
@@ -70,7 +76,14 @@ impl Receiver {
         let (stop, stopped) = oneshot::channel();
         if super::direct(&dial.url).is_ok() {
             let base = http_base(&dial.url)?;
-            let task = tokio::spawn(receive(base, vault, credential_file, archives, stopped));
+            let task = tokio::spawn(receive(
+                base,
+                vault,
+                admit,
+                credential_file,
+                archives,
+                stopped,
+            ));
             return Some(Self { stop, task });
         }
         let mesh = mesh?;
@@ -81,6 +94,7 @@ impl Receiver {
             dialer,
             host,
             vault,
+            admit,
             credential_file,
             archives,
             stopped,
@@ -95,6 +109,7 @@ impl Receiver {
         _dial: &Dial,
         _mesh: Option<&MeshHost>,
         _vault: &Arc<oneiron::Vault>,
+        _admit: HousekeepingAdmission,
     ) -> Option<Self> {
         None
     }
@@ -163,6 +178,7 @@ fn mesh_host(url: &str) -> String {
 async fn receive(
     base: reqwest::Url,
     vault: Arc<oneiron::Vault>,
+    admit: HousekeepingAdmission,
     credential_file: PathBuf,
     archives: PathBuf,
     mut stop: oneshot::Receiver<()>,
@@ -170,7 +186,7 @@ async fn receive(
     tokio::select! {
         biased;
         _ = &mut stop => return,
-        () = import_kept(&vault, &credential_file, &archives) => {}
+        () = import_kept(&vault, &admit, &credential_file, &archives) => {}
     }
     // FIX 6969: a redirect is answered, never followed with the slip
     // headers; without a client the receiver cannot run.
@@ -189,7 +205,9 @@ async fn receive(
         let session = tokio::select! {
             biased;
             _ = &mut stop => return,
-            session = session(&client, &base, &vault, &credential_file, &archives) => session,
+            session = session(&client, &base, &vault, &admit, &credential_file, &archives) => {
+                session
+            }
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
@@ -214,6 +232,7 @@ async fn receive_mesh(
     dialer: Arc<dyn oneiron::sync::SyncDialer>,
     host: String,
     vault: Arc<oneiron::Vault>,
+    admit: HousekeepingAdmission,
     credential_file: PathBuf,
     archives: PathBuf,
     mut stop: oneshot::Receiver<()>,
@@ -221,7 +240,7 @@ async fn receive_mesh(
     tokio::select! {
         biased;
         _ = &mut stop => return,
-        () = import_kept(&vault, &credential_file, &archives) => {}
+        () = import_kept(&vault, &admit, &credential_file, &archives) => {}
     }
     let mut wait = REMOVAL_DELIVERY_RETRY_FIRST;
     loop {
@@ -232,6 +251,7 @@ async fn receive_mesh(
                 dialer.as_ref(),
                 &host,
                 &vault,
+                &admit,
                 &credential_file,
                 &archives,
             ) => session,
@@ -274,6 +294,7 @@ async fn session(
     client: &reqwest::Client,
     base: &reqwest::Url,
     vault: &Arc<oneiron::Vault>,
+    admit: &HousekeepingAdmission,
     credential_file: &Path,
     archives: &Path,
 ) -> anyhow::Result<()> {
@@ -292,10 +313,10 @@ async fn session(
     let mut acked = false;
     for delivery in answer.deliveries {
         let archives = archives.to_owned();
-        let vault = Arc::clone(vault);
+        let (vault, admit) = (Arc::clone(vault), Arc::clone(admit));
         let delivery = tokio::task::spawn_blocking(move || {
             store(&archives, person, &delivery)?;
-            import(&vault, person, &delivery.copy);
+            import(&vault, &admit, person, &delivery.copy);
             Ok::<_, anyhow::Error>(delivery)
         })
         .await??;
@@ -325,6 +346,7 @@ async fn session_mesh(
     dialer: &dyn oneiron::sync::SyncDialer,
     host: &str,
     vault: &Arc<oneiron::Vault>,
+    admit: &HousekeepingAdmission,
     credential_file: &Path,
     archives: &Path,
 ) -> anyhow::Result<()> {
@@ -341,10 +363,10 @@ async fn session_mesh(
     let mut acked = false;
     for delivery in answer.deliveries {
         let archives = archives.to_owned();
-        let vault = Arc::clone(vault);
+        let (vault, admit) = (Arc::clone(vault), Arc::clone(admit));
         let delivery = tokio::task::spawn_blocking(move || {
             store(&archives, person, &delivery)?;
-            import(&vault, person, &delivery.copy);
+            import(&vault, &admit, person, &delivery.copy);
             Ok::<_, anyhow::Error>(delivery)
         })
         .await??;
@@ -493,10 +515,25 @@ fn store(archives: &Path, person: oneiron::EntityId, delivery: &Delivery) -> any
 }
 
 /// Takes `copy`, an archive written beside the credential for `person`,
-/// into `vault` (FIX 11197), and logs what came of it by its receipt. One
-/// that does not import stays on disk as written, and the next start tries
-/// it again.
-fn import(vault: &oneiron::Vault, person: oneiron::EntityId, copy: &RemovalExportCopy) {
+/// into `vault` (FIX 11197), under an admission `admit` grants (FIX 11796),
+/// and logs what came of it by its receipt. One that does not import, or
+/// that a vault frozen for reap does not admit, stays on disk as written,
+/// and the next start tries it again.
+fn import(
+    vault: &oneiron::Vault,
+    admit: &HousekeepingAdmission,
+    person: oneiron::EntityId,
+    copy: &RemovalExportCopy,
+) {
+    let Some(_admission) = admit() else {
+        tracing::info!(
+            receipt = %copy.receipt_id,
+            version = copy.delivered_at,
+            "removal archive kept on disk for the next start: the vault is paused for reap \
+             preparation"
+        );
+        return;
+    };
     match vault.import_removal_archive(person, copy) {
         Ok(Some(records)) => tracing::info!(
             receipt = %copy.receipt_id,
@@ -522,11 +559,18 @@ fn import(vault: &oneiron::Vault, person: oneiron::EntityId, copy: &RemovalExpor
 /// taken in yet: one an earlier import refused or never reached. Each is
 /// logged as [`import`] logs it; a sweep that cannot run is logged once and
 /// leaves every file as it is.
-async fn import_kept(vault: &Arc<oneiron::Vault>, credential_file: &Path, archives: &Path) {
-    let vault = Arc::clone(vault);
+async fn import_kept(
+    vault: &Arc<oneiron::Vault>,
+    admit: &HousekeepingAdmission,
+    credential_file: &Path,
+    archives: &Path,
+) {
+    let (vault, admit) = (Arc::clone(vault), Arc::clone(admit));
     let (credential_file, archives) = (credential_file.to_owned(), archives.to_owned());
-    let swept =
-        tokio::task::spawn_blocking(move || import_dir(&vault, &credential_file, &archives)).await;
+    let swept = tokio::task::spawn_blocking(move || {
+        import_dir(&vault, &admit, &credential_file, &archives)
+    })
+    .await;
     match swept {
         Ok(Ok(())) => {}
         Ok(Err(error)) => tracing::warn!(
@@ -542,6 +586,7 @@ async fn import_kept(vault: &Arc<oneiron::Vault>, credential_file: &Path, archiv
 /// no sweep.
 fn import_dir(
     vault: &oneiron::Vault,
+    admit: &HousekeepingAdmission,
     credential_file: &Path,
     archives: &Path,
 ) -> anyhow::Result<()> {
@@ -563,7 +608,7 @@ fn import_dir(
             continue;
         }
         match read_kept(&path) {
-            Ok(copy) => import(vault, person, &copy),
+            Ok(copy) => import(vault, admit, person, &copy),
             Err(error) => tracing::warn!(
                 receipt = %receipt.to_hex(),
                 version,
