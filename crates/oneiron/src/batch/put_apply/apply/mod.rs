@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use super::put_staging::{PutCarrierContext, stage_project_put, validate_put_carriers};
 use heed::RwTxn;
 
-use super::request::{PutContext, PutRequest, PutRow, Replication};
+use super::request::{PutContext, PutRequest, PutRow, Replication, VerifiedOwnDeviceLane};
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, ENTITY_METADATA_HEADER_LEN, apply_short_id_plan,
     authority_observation_secs_for_write, check_authority_log_store_key,
@@ -45,17 +45,20 @@ pub(in crate::batch) fn apply_put(
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'_>,
 ) -> Result<AppliedPut> {
-    apply_put_beside(store, wtxn, request, None)
+    apply_put_beside(store, wtxn, request, None, None)
 }
 
 /// [`apply_put`] for a put whose batch carries other authority rows
 /// (`authority_beside`, FIX 11764): a replicated AUTHORITY_LOG row is judged
-/// beside them, as the ingest door judged it.
+/// beside them, as the ingest door judged it. A replicated MESSAGE row meets
+/// the witness check with `own_device`, the lane the ingest door gave it
+/// when one of the owner's own machines sent it (FIX 9600).
 pub(in crate::batch) fn apply_put_beside<'a>(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
     authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    own_device: Option<&'a VerifiedOwnDeviceLane>,
 ) -> Result<AppliedPut> {
     let data = request.row.data;
     let admission::Admission {
@@ -66,7 +69,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         incoming_claim_body,
         project_revisions,
         mut portable_agent_source,
-    } = admission::admit_put(store, wtxn, request, authority_beside)?;
+    } = admission::admit_put(store, wtxn, request, authority_beside, own_device)?;
     let data = owners.normalized_policy.as_deref().unwrap_or(data);
     let data = owners.project.as_deref().unwrap_or(data);
     let dispatch::DispatchCarry {

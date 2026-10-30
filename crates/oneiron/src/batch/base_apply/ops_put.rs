@@ -29,6 +29,7 @@ pub(super) fn apply_put_arm(
     origin: BaseWriteOrigin<'_>,
     text_index_trusted: bool,
     authority_beside: Option<crate::authority::RowsBeside<'_>>,
+    own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
     entity_type = validate_put_type(
@@ -163,6 +164,7 @@ pub(super) fn apply_put_arm(
             },
         },
         authority_beside,
+        own_device,
     )?;
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if rewritten {
