@@ -165,13 +165,19 @@ async fn request_signature(
 }
 
 /// Ordered TSA failover (§5 rule 8, §7.4 step 3). Returns the first token
-/// that passes every §7.4-step-5 check. A response memory refused is the
-/// seal's own resource error, never a reason to try the next authority.
+/// that passes every §7.4-step-5 check. A response memory refused, or the
+/// memory its token's parse and copies need (FIX 12260), is the seal's own
+/// resource error, never a reason to try the next authority.
 async fn fetch_timestamp_token(
     ctx: &SealContext<'_>,
     imprint: &Sha256Digest,
 ) -> Result<Option<tsp::ValidatedToken>, SealError> {
     let anchors = trust_anchors(ctx.config)?;
+    let memory = ctx
+        .limits
+        .memory
+        .ledger()
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?;
     for endpoint in &ctx.config.timestamp_authorities {
         let mut nonce = [0u8; 16];
         rsa::rand_core::OsRng.fill_bytes(&mut nonce);
@@ -194,16 +200,21 @@ async fn fetch_timestamp_token(
             // Denied, unreachable, timed out or invalid: the next authority.
             Err(_) => continue,
         };
-        let validated = tsp::validate_response(
+        match tsp::validate_response(
             &resp.body,
             imprint,
             &nonce,
             endpoint.expected_policy_oid.as_deref(),
             &anchors,
             ctx.clock_ms,
-        );
-        if let Ok(token) = validated {
-            return Ok(Some(token));
+            &memory,
+        ) {
+            Ok(token) => return Ok(Some(token)),
+            Err(tsp::TokenError::Memory(refusal)) => {
+                return Err(refusal.seal_error(SealStage::Timestamp));
+            }
+            // A token that does not validate: the next authority.
+            Err(tsp::TokenError::Invalid) => {}
         }
     }
     Ok(None)

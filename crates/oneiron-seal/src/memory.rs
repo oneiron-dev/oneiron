@@ -15,6 +15,13 @@
 //! for. Its reservations stay with it, and everything it reserved goes back
 //! to the service when the operation ends.
 //!
+//! A copy the seal keeps past a pass (a revision state's clones, a
+//! certificate's DER and decode, a parsed CMS, a raw index) takes a
+//! [`LedgerHold`] on the same ledger before it is made, or as soon as it is
+//! built where the code that builds it takes no handle (FIX 12260). The
+//! hold drops with its copy, and its bytes return to what the ledger has
+//! left, as a finished pass's do.
+//!
 //! A refusal is typed: the machine's memory floor or a deadline, or a
 //! cancelled call or a service that cannot answer. It is never a count or a
 //! size of the seal's own, and never reads as a malformed PDF.
@@ -174,6 +181,16 @@ impl SealMemoryProvider {
         Some(LedgerPass { ledger, opened_at })
     }
 
+    /// Holds `bytes` for one copy the seal keeps on the operation's ledger,
+    /// until the hold drops with the copy (FIX 12260).
+    ///
+    /// # Errors
+    /// [`SealMemoryRefusal::Unavailable`] outside an operation; else the
+    /// ledger's refusal.
+    pub(crate) fn hold(&self, bytes: usize) -> Result<LedgerHold, SealMemoryRefusal> {
+        self.ledger()?.hold(bytes)
+    }
+
     /// Reserves `bytes` from the configured service for an owner that may
     /// outlive any one operation (a fetched body, a cache entry): the
     /// reservation is the owner's, not an operation ledger's, and goes back
@@ -241,7 +258,7 @@ impl SealResourceLimits {
         let ledger = MemoryLedger {
             service: Arc::clone(service),
             observed: self.observed.clone(),
-            state: Mutex::default(),
+            state: Arc::default(),
         };
         Ok(Self {
             memory: SealMemoryProvider {
@@ -262,7 +279,9 @@ pub(crate) struct MemoryLedger {
     service: Arc<dyn SealMemory>,
     /// Where each finished decode's length goes.
     observed: SealObservations,
-    state: Mutex<LedgerState>,
+    /// Shared with the holds of the copies the seal keeps (FIX 12260),
+    /// which keep it, and its reservations, while they live.
+    state: Arc<Mutex<LedgerState>>,
 }
 
 #[derive(Default)]
@@ -270,7 +289,8 @@ struct LedgerState {
     /// Reserved, and not yet admitted to an allocation.
     spare: u64,
     /// Admitted to the decodes' allocations and not given back. The seal's
-    /// own copies are not counted: they outlive the passes they are made in.
+    /// own copies and holds are not counted: they outlive the passes they
+    /// are made in.
     live: u64,
     /// What the service holds for each reservation.
     held: Vec<Box<dyn Send>>,
@@ -323,6 +343,19 @@ impl MemoryLedger {
         self.take(u64::try_from(bytes).unwrap_or(u64::MAX), false)
     }
 
+    /// Holds `bytes` for one copy the seal keeps, about to be made or just
+    /// built (FIX 12260): from what the ledger has left, or reserved first,
+    /// and back in what it has left when the hold drops with its copy. Never
+    /// a decode's, so no pass gives it back early.
+    pub(crate) fn hold(&self, bytes: usize) -> Result<LedgerHold, SealMemoryRefusal> {
+        let bytes = wide(bytes);
+        self.take(bytes, false)?;
+        Ok(LedgerHold {
+            state: Arc::clone(&self.state),
+            bytes,
+        })
+    }
+
     /// Whether memory refused the decode that failed with `err`, and how:
     /// the refusal this ledger kept (the service's own words, which lopdf's
     /// error cannot carry), else lopdf's. A refusal is never read as a
@@ -369,6 +402,53 @@ impl Drop for LedgerPass {
         let mut state = lock(&self.ledger.state);
         let spent = state.live.saturating_sub(self.opened_at);
         MemoryLedger::give_back(&mut state, spent);
+    }
+}
+
+/// What one copy the seal keeps holds on its operation's ledger (FIX
+/// 12260): taken before the copy is made, or as soon as it is built, and
+/// back in what the ledger has left when it drops with the copy, for the
+/// operation's later admissions.
+pub(crate) struct LedgerHold {
+    /// The ledger's state, kept with its reservations while the copy lives.
+    state: Arc<Mutex<LedgerState>>,
+    bytes: u64,
+}
+
+impl Drop for LedgerHold {
+    fn drop(&mut self) {
+        let mut state = lock(&self.state);
+        state.spare = state.spare.saturating_add(self.bytes);
+    }
+}
+
+impl fmt::Debug for LedgerHold {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LedgerHold")
+            .field("bytes", &self.bytes)
+            .finish()
+    }
+}
+
+/// A copy the seal keeps with the hold that admits it (FIX 12260): the
+/// copy drops first, then the hold. It reads as the copy.
+pub(crate) struct Held<T> {
+    value: T,
+    _hold: LedgerHold,
+}
+
+impl<T> Held<T> {
+    /// `value`, admitted by `hold`.
+    pub(crate) fn new(value: T, hold: LedgerHold) -> Self {
+        Self { value, _hold: hold }
+    }
+}
+
+impl<T> Deref for Held<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
     }
 }
 

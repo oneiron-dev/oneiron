@@ -3,6 +3,7 @@
 use super::super::cms;
 use super::verify_chain_gates::{issuer_permits_crl_sign, key_usage_permits};
 use super::verify_dss_core::EmbeddedCert;
+use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 /// Seconds-since-epoch for an X.509 time choice.
 fn time_secs(t: x509_cert::time::Time) -> u64 {
@@ -295,29 +296,32 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
 /// asserting `good`. A `revoked` status invalidates the evidence; `unknown`
 /// fails closed (the blueprint leaves it unpinned, §7.5/§7.7). On success
 /// returns the DERs of the target certificates the SingleResponses bind
-/// to, so the coverage rule can match them against the covered chain.
-pub(super) fn ocsp_entry_valid(
+/// to, read in place, so the coverage rule can match them against the
+/// covered chain. The response's own certificates are held on `memory`
+/// as responder candidates (FIX 12260); memory refused is `Err`.
+pub(super) fn ocsp_entry_valid<'a>(
     data: &[u8],
-    embedded: &[EmbeddedCert],
-    anchors: &[EmbeddedCert],
+    embedded: &'a [EmbeddedCert],
+    anchors: &'a [EmbeddedCert],
     at_unix: u64,
-) -> Option<Vec<Vec<u8>>> {
+    memory: &MemoryLedger,
+) -> Result<Option<Vec<&'a [u8]>>, SealMemoryRefusal> {
     use const_oid::AssociatedOid;
-    use der::{Decode, Encode};
+    use der::Decode;
     let Ok(resp) = x509_ocsp::OcspResponse::from_der(data) else {
-        return None;
+        return Ok(None);
     };
     if resp.response_status != x509_ocsp::OcspResponseStatus::Successful {
-        return None;
+        return Ok(None);
     }
     let Some(bytes) = &resp.response_bytes else {
-        return None;
+        return Ok(None);
     };
     if bytes.response_type != x509_ocsp::BasicOcspResponse::OID {
-        return None;
+        return Ok(None);
     }
     let Ok(basic) = x509_ocsp::BasicOcspResponse::from_der(bytes.response.as_bytes()) else {
-        return None;
+        return Ok(None);
     };
     // producedAt sanity bound: RFC 6960 assigns producedAt no freshness
     // semantics, but a response claiming to be produced BEYOND the
@@ -330,24 +334,41 @@ pub(super) fn ocsp_entry_valid(
         .to_unix_duration()
         .as_secs();
     if produced_at > at_unix.saturating_add(OCSP_PRODUCED_AT_MAX_SKEW_SECS) {
-        return None;
+        return Ok(None);
     }
     if basic.tbs_response_data.responses.is_empty() {
-        return None;
+        return Ok(None);
     }
     // Candidate responder certs: response-embedded, then DSS, then anchors.
     let mut candidates: Vec<EmbeddedCert> = Vec::new();
     if let Some(certs) = &basic.certs {
         for c in certs {
-            let Ok(der_bytes) = c.to_der() else {
-                return None;
+            let Some(candidate) = EmbeddedCert::admitted_copy(c, memory)? else {
+                return Ok(None);
             };
-            candidates.push(EmbeddedCert {
-                der: der_bytes,
-                cert: c.clone(),
-            });
+            candidates.push(candidate);
         }
     }
+    Ok(ocsp_basic_valid(
+        &basic,
+        &candidates,
+        embedded,
+        anchors,
+        at_unix,
+    ))
+}
+
+/// The rest of [`ocsp_entry_valid`]: the responder among `candidates`, the
+/// DSS certificates and the anchors, each SingleResponse's binding,
+/// freshness and status, and the response signature.
+fn ocsp_basic_valid<'a>(
+    basic: &x509_ocsp::BasicOcspResponse,
+    candidates: &[EmbeddedCert],
+    embedded: &'a [EmbeddedCert],
+    anchors: &'a [EmbeddedCert],
+    at_unix: u64,
+) -> Option<Vec<&'a [u8]>> {
+    use der::Encode;
     let responder = candidates
         .iter()
         .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
@@ -357,7 +378,7 @@ pub(super) fn ocsp_entry_valid(
                 .chain(anchors.iter())
                 .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
         })?;
-    let mut targets: Vec<Vec<u8>> = Vec::with_capacity(basic.tbs_response_data.responses.len());
+    let mut targets: Vec<&[u8]> = Vec::with_capacity(basic.tbs_response_data.responses.len());
     for single in &basic.tbs_response_data.responses {
         let (target, issuer) = ocsp_cert_binding(&single.cert_id, embedded, anchors)?;
         if !ocsp_responder_authorized(responder, issuer, at_unix) {
@@ -376,7 +397,7 @@ pub(super) fn ocsp_entry_valid(
         if !matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
             return None;
         }
-        targets.push(target.der.clone());
+        targets.push(target.der.as_slice());
     }
     let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
         return None;

@@ -3,7 +3,8 @@
 use lopdf::{Document, Object};
 
 use crate::api::{Counter, VerifyCheckKind, VerifyFindingCode, note_current};
-use crate::memory::{MemoryLedger, SealMemoryRefusal};
+use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
+use crate::native::held_bytes;
 
 use super::super::pdf;
 use super::verify_revocation::{crl_entry_valid, issued_by, ocsp_entry_valid};
@@ -113,12 +114,12 @@ fn dss_material_valid(
     let certs = dss_array(doc, dss, b"Certs", memory, decoded)?;
     let crls = dss_array(doc, dss, b"CRLs", memory, decoded)?;
     let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded)?;
-    Ok(material_valid(
-        certs, crls, ocsps, anchors, covered, at_unix,
-    ))
+    material_valid(certs, crls, ocsps, anchors, covered, at_unix, memory)
 }
 
-/// The decoded arrays, judged.
+/// The decoded arrays, judged. Each `/Certs` certificate and each OCSP
+/// responder certificate is held on `memory` (FIX 12260); memory refused is
+/// `Err`, never invalid material.
 fn material_valid(
     certs: DssArray,
     crls: DssArray,
@@ -126,28 +127,29 @@ fn material_valid(
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-) -> bool {
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
         && matches!(crls, DssArray::Absent)
         && matches!(ocsps, DssArray::Absent)
     {
-        return false;
+        return Ok(false);
     }
     // /Certs first: CRL and OCSP issuer lookups draw from it. A
     // present-but-empty array breaks profile completeness.
     let embedded: Vec<EmbeddedCert> = match certs {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return false,
+        DssArray::Malformed => return Ok(false),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return false;
+                return Ok(false);
             }
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(c) = EmbeddedCert::from_der(e) else {
-                    return false;
+                let Some(c) = EmbeddedCert::admitted(e, memory)? else {
+                    return Ok(false);
                 };
                 v.push(c);
             }
@@ -164,22 +166,22 @@ fn material_valid(
             .any(|e| e.der == c.der)
     });
     if !bound {
-        return false;
+        return Ok(false);
     }
     // Every CRL entry must be valid; collect the key-bound issuer certs the
     // valid CRLs authenticated under so the coverage rule below can match
     // them against each covered certificate's ACTUAL issuer (name+key).
     let crl_issuers: Vec<&EmbeddedCert> = match crls {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return false,
+        DssArray::Malformed => return Ok(false),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return false;
+                return Ok(false);
             }
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
                 let Some(issuer) = crl_entry_valid(e, &embedded, anchors, covered, at_unix) else {
-                    return false;
+                    return Ok(false);
                 };
                 v.push(issuer);
             }
@@ -187,18 +189,20 @@ fn material_valid(
         }
     };
     // Every OCSP entry must be valid; collect the DERs of the target
-    // certificates the valid responses bind to with a `good` status.
-    let mut ocsp_targets: Vec<Vec<u8>> = Vec::new();
+    // certificates the valid responses bind to with a `good` status, read
+    // in place.
+    let mut ocsp_targets: Vec<&[u8]> = Vec::new();
     match ocsps {
         DssArray::Absent => {}
-        DssArray::Malformed => return false,
+        DssArray::Malformed => return Ok(false),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return false;
+                return Ok(false);
             }
             for e in &entries {
-                let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix) else {
-                    return false;
+                let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)?
+                else {
+                    return Ok(false);
                 };
                 ocsp_targets.extend(targets);
             }
@@ -217,28 +221,110 @@ fn material_valid(
         if anchors.iter().any(|a| a.der == c.der) {
             return true;
         }
-        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der)
+        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der.as_slice())
     });
     if !covered_ok {
-        return false;
+        return Ok(false);
     }
-    true
+    Ok(true)
 }
 
 /// A parsed certificate with its source DER (signature verification takes
-/// the DER form).
+/// the DER form). Its DER copy, its decode and its slot are held on the
+/// operation's ledger until it drops (FIX 12260).
 pub(crate) struct EmbeddedCert {
     pub(super) der: Vec<u8>,
     pub(super) cert: x509_cert::Certificate,
+    /// None only for a test fixture's certificate.
+    _held: Option<LedgerHold>,
 }
 
 impl EmbeddedCert {
+    /// A test fixture's certificate, held on no ledger.
+    #[cfg(test)]
     pub(crate) fn from_der(der_bytes: &[u8]) -> Option<Self> {
         use der::Decode;
         Some(Self {
             der: der_bytes.to_vec(),
             cert: x509_cert::Certificate::from_der(der_bytes).ok()?,
+            _held: None,
         })
+    }
+
+    /// `der_bytes` decoded, and copied, both held on `memory`: the decode
+    /// as soon as it is built (the decoder takes no handle), the copy
+    /// before it is made. `Ok(None)` when it is no certificate.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(crate) fn admitted(
+        der_bytes: &[u8],
+        memory: &MemoryLedger,
+    ) -> Result<Option<Self>, SealMemoryRefusal> {
+        use der::Decode;
+        let Ok(cert) = x509_cert::Certificate::from_der(der_bytes) else {
+            return Ok(None);
+        };
+        let held = memory.hold(Self::held_bytes(&cert, der_bytes.len()))?;
+        Ok(Some(Self {
+            der: der_bytes.to_vec(),
+            cert,
+            _held: Some(held),
+        }))
+    }
+
+    /// A copy of `cert`, decoded already, with its DER encoding, both held
+    /// on `memory` before they are made. `Ok(None)` when it does not encode.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(super) fn admitted_copy(
+        cert: &x509_cert::Certificate,
+        memory: &MemoryLedger,
+    ) -> Result<Option<Self>, SealMemoryRefusal> {
+        use der::Encode;
+        let Some(der_len) = cert
+            .encoded_len()
+            .ok()
+            .and_then(|len| usize::try_from(len).ok())
+        else {
+            return Ok(None);
+        };
+        let held = memory.hold(Self::held_bytes(cert, der_len))?;
+        let Ok(der) = cert.to_der() else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            der,
+            cert: cert.clone(),
+            _held: Some(held),
+        }))
+    }
+
+    /// Appends to `into` each of `ders` that decodes as a certificate, each
+    /// held on `memory` (see [`Self::admitted`]); the others are skipped.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(crate) fn extend_admitted<'d>(
+        into: &mut Vec<Self>,
+        ders: impl IntoIterator<Item = &'d [u8]>,
+        memory: &MemoryLedger,
+    ) -> Result<(), SealMemoryRefusal> {
+        for der in ders {
+            if let Some(cert) = Self::admitted(der, memory)? {
+                into.push(cert);
+            }
+        }
+        Ok(())
+    }
+
+    /// What one embedded certificate holds: its slot in the list that keeps
+    /// it, its DER copy of `der_len` bytes, and its decode's allocations.
+    fn held_bytes(cert: &x509_cert::Certificate, der_len: usize) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(der_len)
+            .saturating_add(held_bytes::certificate(cert, der_len))
     }
 }
 
