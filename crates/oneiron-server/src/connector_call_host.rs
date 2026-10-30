@@ -72,6 +72,7 @@ use crate::connector_elicitation::{
 };
 use crate::server::SyncServer;
 
+mod json_wire;
 mod live_exchange;
 mod presenting;
 mod remote_task;
@@ -79,7 +80,8 @@ mod reply_read;
 mod resume;
 mod sent;
 mod stream_pump;
-use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
+use json_wire::{KeptWire, post_json};
+use live_exchange::{Continuation, LiveSession, hand_over};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
@@ -716,7 +718,15 @@ impl<'a> Exchange<'a> {
                     let question = declared.and_then(|_| stream_question(&request));
                     let (Some(declared), Some(question)) = (declared, question) else {
                         match live.as_ref() {
-                            Some(live) => live.refuse(request),
+                            Some(live) => match self.elicitation.as_ref() {
+                                Some(declared) => live.refuse_unless_held(
+                                    request,
+                                    declared.vault,
+                                    &declared.binding.key_ref,
+                                    &declared.binding.tool,
+                                ),
+                                None => live.refuse(request),
+                            },
                             None => zeroize_json(request),
                         }
                         continue;

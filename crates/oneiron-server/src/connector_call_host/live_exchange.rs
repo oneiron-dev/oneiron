@@ -27,7 +27,7 @@
 use oneiron::connector_key::CONNECTOR_ISSUER_HOLD_REASON;
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
-    OutboundBindingAuthority, OutboundBindingValidation, zeroize_json, zeroizing_json_body,
+    OutboundBindingAuthority, OutboundBindingValidation, zeroize_json,
 };
 use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
@@ -115,35 +115,6 @@ pub(super) fn hand_over(
         resume,
         ..Sent::acked(None, body)
     }
-}
-
-/// A POST of `body` to `endpoint`; `timeout` bounds the whole request, and
-/// `None` leaves each read to the client's own bound. The body's text goes
-/// in zeroizing storage the request takes without a copy, wiped once the
-/// request lets it go (FIX 8309, L10 09:30).
-pub(super) fn post_json(
-    client: &reqwest::blocking::Client,
-    endpoint: &str,
-    body: &Value,
-    auth: Option<&HeaderValue>,
-    session: Option<&HeaderValue>,
-    timeout: Option<Duration>,
-) -> reqwest::blocking::RequestBuilder {
-    let mut request = client
-        .post(endpoint)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, ACCEPT_BOTH)
-        .body(axum::body::Bytes::from_owner(zeroizing_json_body(body)));
-    if let Some(timeout) = timeout {
-        request = request.timeout(timeout);
-    }
-    if let Some(auth) = auth {
-        request = request.header(AUTHORIZATION, auth.clone());
-    }
-    if let Some(session) = session {
-        request = request.header(SESSION_HEADER, session.clone());
-    }
-    request
 }
 
 /// The MCP session one send opened, owned: what a live question's worker
@@ -284,6 +255,32 @@ impl LiveSession {
     }
 
     /// Refuses one server request this client does not serve once the
+    /// call's issuer binding is read again (FIX 12166): while a hold stands
+    /// or the binding cannot be read the kept header does not go out and
+    /// the request goes unanswered. The request is wiped as it drops
+    /// either way (FIX 11861).
+    pub(super) fn refuse_unless_held(
+        &self,
+        request: Value,
+        vault: &Vault,
+        key_ref: &EntityId,
+        tool: &str,
+    ) {
+        if self.auth.is_none() {
+            self.refuse(request);
+            return;
+        }
+        match vault.connector_issuer_hold(key_ref, tool) {
+            Ok(None) => self.refuse(request),
+            Ok(Some(_)) => zeroize_json(request),
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                zeroize_json(request);
+            }
+        }
+    }
+
+    /// Refuses one server request this client does not serve once the
     /// call's issuer binding is read again (FIX 9303): while a hold stands
     /// the kept header does not go out and the request goes unanswered; the
     /// worker's next answer, cancel or end settles the hold. The request is
@@ -339,35 +336,6 @@ impl LiveSession {
     pub(super) fn forget_credential(&mut self) {
         self.auth = None;
         self.session = None;
-    }
-}
-
-/// A foreign value the exchange hands back exactly as the connector sent it:
-/// a stream request's id, a retried call's request state. A connector may
-/// put the presented value in it, so while it waits for the next answer it
-/// is kept serialized in zeroizing storage, scrubbed once replaced or
-/// dropped, and never cleared or rewritten (FIX 8054).
-pub(super) struct KeptWire(Zeroizing<String>);
-
-impl KeptWire {
-    pub(super) fn keep(value: &Value) -> Self {
-        Self(Zeroizing::new(value.to_string()))
-    }
-
-    /// The kept value, for one message: its own serialization parses back
-    /// to the same value, key order included.
-    pub(super) fn value(&self) -> Value {
-        serde_json::from_str(&self.0).unwrap_or(Value::Null)
-    }
-
-    /// The kept serialization, for a round's resume state (FIX 9157).
-    pub(super) fn text(&self) -> &str {
-        self.0.as_str()
-    }
-
-    /// A value a round's resume state kept, as its serialization.
-    pub(super) const fn of_text(text: Zeroizing<String>) -> Self {
-        Self(text)
     }
 }
 
