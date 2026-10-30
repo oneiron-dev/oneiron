@@ -5204,6 +5204,9 @@ class Oneiron:
         def lineage(self, spec):
             """The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_lineage(json.dumps(spec))))
+        def candidate_decisions(self, spec):
+            """The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_candidate_decisions(json.dumps(spec))))
         def promote(self, spec):
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_promote(json.dumps(spec))))

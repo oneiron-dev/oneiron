@@ -1099,6 +1099,7 @@ vaultRunsProgramHoldRelease(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
 vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
+vaultConsolidationCandidateDecisions(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationPin(input: unknown): unknown
 vaultConsolidationFrontier(input: unknown): unknown

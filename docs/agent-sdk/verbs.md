@@ -1071,6 +1071,7 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.home.get`
 - `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
+- `vault.consolidation.candidate_decisions`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`
 - `vault.consolidation.frontier`

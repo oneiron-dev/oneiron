@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1261 code-mode rows (1221 host rows, 40 run rows), 4430 declarations.
-// Replies: 1073 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4437 declarations.
+// Replies: 1074 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1932,7 +1932,7 @@ declare namespace Sdk {
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
   type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };
-  type CourtesyDeleteSent = { request: string; pact: string; recipient: string; status: string; created: string; updated: string };
+  type CourtesyDeleteSent = { request: string; pages: string[]; pact: string; recipient: string; status: string; created: string; updated: string };
   type CourtesyDeleteAskedWorld = { world: string; stale?: string | null; stale_epoch?: number | null };
   type CooperativeDeletionDispositionKind = "delete" | "redact" | "restrict_pending_review" | "retain_under_basis" | "legal_hold" | "decline";
   type CourtesyDeleteHold = { hold: string; status: string; records: string[]; lifted?: string | null };
@@ -3354,7 +3354,7 @@ declare namespace Sdk {
   type VoiceVendorEviction = { target: string; vendor_voice_id: string; vendor: VoiceVendorDeleteStatus };
   type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; event_id: string; sequence: number; replayed: boolean; evicted: VoiceVendorEviction[] };
   type VoiceTargetProvisionRequest = { voice_id: string; target: string; include_generated?: boolean; language?: string | null };
-  type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string };
+  type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string; awaiting_verification: boolean };
   type VoiceTargetEvictRequest = { voice_id: string; target: string };
   type VoiceTargetEvictReceipt = { voice_id: string; target: string; evicted: boolean; vendor: VoiceVendorDeleteStatus };
   type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
@@ -3988,6 +3988,13 @@ declare namespace Sdk {
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
   type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
   type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; latest_job_ref?: string | null; steps: ConsolidationStepRef[]; next_step?: string | null };
+  type DreamerCandidateDecisionsRequest = { job_ref: string };
+  type KeptRole = { rank: RoleRank; project?: string | null };
+  type KeptRoute = { role: KeptRole; ceiling: RoleRank; act: AskAct };
+  type KeptAnswer = { answer: DecisionAnswer; answered_at: number; role: KeptRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null };
+  type KeptAsk = { seq: number; to: KeptRoute; answer?: KeptAnswer | null };
+  type KeptDecision = { decision: TypedDecision; ask?: KeptAsk | null };
+  type DreamerDecidedCandidateView = { job_ref: string; position: number; subject: string; corrects: string | null; decisions: KeptDecision[] };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
@@ -5794,6 +5801,8 @@ declare const vault: Sdk.VaultHost & {
   consolidation: {
     /** Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority. */
     accounting(input: Sdk.ConsolidationAccountingRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
+    /** The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value. */
+    candidate_decisions(input: Sdk.DreamerCandidateDecisionsRequest): Promise<Sdk.DreamerDecidedCandidateView[] | StoredResult>;
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
