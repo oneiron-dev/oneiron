@@ -314,6 +314,7 @@ pub fn review_slides(
                 presence,
                 location,
                 band_mode: band_policy.mode,
+                ceiling: call.dial.ceiling,
                 renderer: unit.renderer.clone(),
                 frontier,
                 media: call.entries,

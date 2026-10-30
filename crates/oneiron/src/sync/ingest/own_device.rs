@@ -53,10 +53,6 @@ impl VerifiedOwnDeviceLane {
     /// The own machine whose proven connection sent `data` as the body of
     /// row `id`, or `None` when this lane vouches for another row or other
     /// bytes.
-    #[allow(
-        dead_code,
-        reason = "FIX 9600: the batch put reads the lane at the witness gate"
-    )]
     pub(crate) fn machine_for(&self, id: &EntityId, data: &[u8]) -> Option<EntityId> {
         (self.row == *id && self.body == digest(data)).then_some(self.machine)
     }

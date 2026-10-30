@@ -199,6 +199,9 @@ impl Vault {
             window_label,
             &tombstone,
         )?);
+        // A FEDERATION_GRANT row erased here is marked withdrawn; this door's
+        // own `dt:` marker and tombstone carry its erasure (FIX 11779).
+        crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, &mut wtxn, *id)?;
         let (existed, citing) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
