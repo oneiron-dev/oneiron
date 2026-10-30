@@ -56,6 +56,7 @@ pub mod stewardship;
 #[cfg(test)]
 mod tests;
 mod type_tree_gate;
+pub(crate) use type_tree_gate::team_shape_tree_judge;
 pub(crate) mod type_tree_prior;
 pub mod type_tree_upkeep;
 use super::{
