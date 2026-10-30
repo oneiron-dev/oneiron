@@ -47,8 +47,13 @@
 //! - A witness past one row rides as signed numbered parts of its own, and
 //!   each input row with a signed reference to them (FIX 8088, `witness`).
 //!   Every input and witness row commits on its own.
+//! - The sealed copy an export secret request's holder commits rides as a
+//!   row of its own, keyed `export_output:` and the request's entry hash,
+//!   and each install that folds the result naming it keeps it (FIX 11843,
+//!   `export_output`).
 
 pub(super) mod checkpoint;
+mod export_output;
 mod witness;
 
 use std::collections::BTreeMap;
@@ -212,6 +217,9 @@ pub(crate) fn admit_custody_carrier(
     if let Some(row_key) = map_key.strip_prefix(witness::WITNESS_ROW_PREFIX) {
         return witness::admit_witness_part(key, row_key, bytes);
     }
+    if let Some(row_key) = map_key.strip_prefix(export_output::EXPORT_OUTPUT_ROW_PREFIX) {
+        return export_output::admit_export_output(key, row_key, bytes);
+    }
     let transition = CustodyTransition::decode(bytes)?;
     if transition.row_key() != map_key {
         return Err(refused("filed under another id or piece"));
@@ -270,6 +278,7 @@ pub(crate) fn mirror_custody_transitions(
         (vault.authority_view_readonly_in_txn(&rtxn)?, erased)
     };
     let mut wrote = mirror_custody_inputs(vault, doc, key, &fold)?;
+    wrote |= export_output::mirror_export_outputs(vault, doc, key, &fold, &erased)?;
     // Every piece this vault holds rides its window under its own key
     // (CALLS `Phase2 custody pieces request bound`).
     let mut due = Vec::new();
@@ -477,6 +486,10 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
         .into_iter()
         .partition(|(map_key, _)| map_key.starts_with(witness::WITNESS_ROW_PREFIX));
     witness::keep_relayed_witnesses(vault, window, witnesses);
+    let (outputs, rows): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|(map_key, _)| map_key.starts_with(export_output::EXPORT_OUTPUT_ROW_PREFIX));
+    export_output::keep_relayed_export_outputs(vault, window, outputs);
     if rows.is_empty() {
         return;
     }
