@@ -11545,7 +11545,7 @@
      "path": "src/campaign/enrollment/outbound_leg.rs",
      "purpose": "Outward leg bridging persisted refs to the outbound chokepoint and the ledger",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2
      }
@@ -30866,7 +30866,7 @@
      "path": "src/edit_distance/routing/keys.rs",
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 28
      }
     },
     {
@@ -39006,7 +39006,7 @@
      "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports, the on-device Claude Code and…",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 5,
       "re-export": 3,
@@ -39036,6 +39036,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/speakers.rs",
+     "purpose": "An imported conversation's recorded speakers, conversation-scoped (FIX 11353)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -51663,7 +51673,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 3
      }
     },
@@ -51871,7 +51881,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1,
       "re-export": 13
      }
@@ -83234,7 +83244,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -84041,7 +84051,7 @@
    },
    "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5636,
+   "source_files": 5637,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87032,7 +87042,7 @@
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -87062,7 +87072,7 @@
      "path": "src/cdp/parsed.rs",
      "purpose": "A reply read past the pipe's framing threshold, once parsed (FIX 7988): its raw bytes were charged to the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -87301,13 +87311,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/driver/frames.rs",
      "purpose": "The front tab's in-page frames, read into its outline (FIX 205, FIX 8336)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -87337,7 +87347,7 @@
      "path": "src/driver/pages.rs",
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
