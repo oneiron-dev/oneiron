@@ -31,6 +31,25 @@ struct SkippedSendReceipt {
     skipped_at: u64,
 }
 
+/// `kind`'s stable snake_case wire name (FIX 9177): the typed code a stored
+/// skip row keeps in place of the error's text.
+fn error_kind_code(kind: crate::error::ErrorKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{kind:?}"))
+}
+
+/// A torn TASK's skip marker leaves with it (deletion's ERASERS registry).
+pub(crate) fn erase_skipped_send_receipt_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    task_ref: &EntityId,
+) -> crate::error::Result<()> {
+    SKIPPED_RECEIPTS.delete(store, txn, task_ref)?;
+    Ok(())
+}
+
 /// One delivered message send a durable connector receipt states.
 struct DeliveredSend {
     task_ref: EntityId,
@@ -224,12 +243,19 @@ fn skip_receipt(
     receipt_id: &str,
     error: CommError,
 ) -> CommResult<()> {
-    let reason = match error {
+    let error = match error {
         CommError::Engine(error) if storage_failure(&error) => {
             return Err(CommError::Engine(error));
         }
+        error => error,
+    };
+    // The row keeps a typed code, never text an engine error may quote from
+    // the receipt; the warning carries the full error.
+    let reason = match &error {
+        CommError::Engine(error) => error_kind_code(error.kind()),
         error => error.to_string(),
     };
+    let detail = error.to_string();
     let marked = {
         let rtxn = vault.store.env.read_txn()?;
         SKIPPED_RECEIPTS.contains(&vault.store, &rtxn, &task_ref)?
@@ -253,6 +279,7 @@ fn skip_receipt(
             task_ref = %task_ref.to_hex(),
             receipt_id,
             reason,
+            detail,
             "communication projector skipped a delivered send receipt; it is tried again on each pass, and this warning is not repeated"
         );
     }
