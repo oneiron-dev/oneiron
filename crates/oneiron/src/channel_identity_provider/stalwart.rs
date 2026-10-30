@@ -24,7 +24,7 @@ use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::{Value, json};
 
 use super::EmailProviderInbound;
-use super::native_mail::{NativeMailHost, NativeMailRunMode};
+use super::native_mail::{NativeMailHost, NativeMailRunMode, mailbox_local_part};
 use super::shared_validate::{normalize_domain, validate_provision_intent};
 use crate::channel_identity::ChannelIdentityFulfillment;
 use crate::channel_identity_lifecycle::ProvisionIntent;
@@ -187,16 +187,10 @@ impl StalwartClient {
         self
     }
 
+    /// The derived `mail-<id>` mailbox of an identity on this instance's
+    /// domain. A named mailbox (`eiri@`) is the identity's own address.
     pub fn address_for_identity(&self, identity_ref: EntityId) -> String {
-        format!(
-            "{}@{}",
-            Self::account_name(identity_ref),
-            self.config.domain
-        )
-    }
-
-    fn account_name(identity_ref: EntityId) -> String {
-        format!("mail-{}", identity_ref.to_hex())
+        format!("mail-{}@{}", identity_ref.to_hex(), self.config.domain)
     }
 
     /// A read-only readiness check; it sends no message and changes no DNS.
@@ -226,9 +220,11 @@ impl StalwartClient {
         Ok(())
     }
 
-    pub(super) fn mailbox(&self, identity_ref: EntityId) -> Result<StalwartMailbox> {
-        let address = self.address_for_identity(identity_ref);
-        let name = Self::account_name(identity_ref);
+    /// The account behind `identity_ref`'s mailbox at `address`, derived or
+    /// named. Stalwart names the account by the address's local part.
+    pub(super) fn mailbox(&self, identity_ref: EntityId, address: &str) -> Result<StalwartMailbox> {
+        let name = mailbox_local_part(&self.config.domain, identity_ref, address)?;
+        let address = format!("{name}@{}", self.config.domain);
         let query = self.call("x:Account/query", json!({
             "accountId": "0", "filter": {"name": &name, "domainId": &self.config.domain_id}, "limit": 2
         }))?;
@@ -268,10 +264,10 @@ impl StalwartClient {
         })
     }
 
-    fn provision_mailbox(&self, identity_ref: EntityId) -> Result<StalwartMailbox> {
+    fn provision_mailbox(&self, identity_ref: EntityId, address: &str) -> Result<StalwartMailbox> {
         self.check_domain()?;
         // Stalwart stores the local part in name and the domain separately.
-        let name = Self::account_name(identity_ref);
+        let name = mailbox_local_part(&self.config.domain, identity_ref, address)?;
         let query = self.call("x:Account/query", json!({
             "accountId": "0", "filter": {"name": &name, "domainId": &self.config.domain_id}, "limit": 2
         }))?;
@@ -294,7 +290,7 @@ impl StalwartClient {
                 return Err(invalid("Stalwart refused native mailbox provisioning"));
             }
         }
-        self.mailbox(identity_ref)
+        self.mailbox(identity_ref, address)
     }
 
     pub(super) fn raw_call(&self, method: &str, arguments: Value) -> Result<Value> {
@@ -377,13 +373,11 @@ impl NativeMailHost for StalwartClient {
                 "native mail run mode differs from the Stalwart instance",
             ));
         }
-        validate_provision_intent(
-            intent,
-            "email",
-            &self.address_for_identity(intent.identity_id),
-            ChannelIdentityFulfillment::Api,
-        )?;
-        let mailbox = self.provision_mailbox(intent.identity_id)?;
+        // The identity's own address, derived or named, is the mailbox.
+        let address = intent.identity.address_or_handle();
+        mailbox_local_part(&self.config.domain, intent.identity_id, address)?;
+        validate_provision_intent(intent, "email", address, ChannelIdentityFulfillment::Api)?;
+        let mailbox = self.provision_mailbox(intent.identity_id, address)?;
         Ok(format!(
             "stalwart:{}:{}",
             self.config.instance_ref, mailbox.account_id

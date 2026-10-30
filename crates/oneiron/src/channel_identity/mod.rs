@@ -34,6 +34,7 @@
 
 mod actors;
 mod address;
+mod alias;
 mod assignment;
 mod auth_mode;
 mod binding;
@@ -52,6 +53,7 @@ pub use actors::{ChannelActorRegistration, RegisteredChannelActor};
 pub use address::{
     AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr, normalize_email_domain,
 };
+pub use alias::PREDICATE_CHANNEL_IDENTITY_ALIAS;
 pub use custody::{
     Custody, DelegatedGrant, DelegatedGrantScope, InboundDisposition, delegated_custody_effector,
     delegated_custody_granted_scope, delegated_custody_scopes, delegated_custody_scopes_for_grant,
