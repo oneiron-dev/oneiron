@@ -73,12 +73,37 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
-        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         if let Some(class) = bound_catastrophe_class(&bound) {
             return Err(Error::Gate(GateError::ConsentCatastropheNotRememberable(
                 crate::gate::consent_floor_refusal(class),
             )));
         }
+        self.write_standing_grant_in_txn(wtxn, owner, bound)
+    }
+
+    /// [`Self::create_standing_grant_in_txn`] for a standing outbound grant,
+    /// whose class is an outbound verb class the owner's dial names: a class
+    /// spelled like a catastrophe floor member names an outbound verb, not
+    /// the floor op, and mints as it always has. The floor itself still asks
+    /// every catastrophe op before any grant is read (`evaluate_consent`).
+    pub(crate) fn create_outbound_standing_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        bound: GrantBound,
+    ) -> Result<ConsentReceipt> {
+        self.write_standing_grant_in_txn(wtxn, owner, bound)
+    }
+
+    /// Writes one standing grant row and its Approved receipt in the
+    /// caller's transaction, once its door has admitted the bound.
+    fn write_standing_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        bound: GrantBound,
+    ) -> Result<ConsentReceipt> {
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let grant = StandingConsentGrant::from_bound(bound)?;
         let row = ConsentGrantRow {
             grant: grant.clone(),
@@ -229,4 +254,58 @@ impl Vault {
         self.append_consent_gate_decision_in_txn(wtxn, &row.owner_stamp, &receipt, None)?;
         Ok(receipt)
     }
+}
+
+/// Every standing grant row with its reference, revoked rows included, read
+/// on the caller's transaction: a door that reads its own kind of Grant off
+/// the registry (an outbound grant's dial) filters these.
+pub(crate) fn standing_grant_rows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(String, ConsentGrantRow)>> {
+    GRANTS.scan(store, txn)
+}
+
+/// [`Vault::record_standing_grant_use_in_txn`] for a door that holds the
+/// store and not the vault: the Gate's external-effect record writes the
+/// quiet reuse of the standing grant that covered an admitted effect beside
+/// its Allow, under the stamp of the owner who minted that grant.
+pub(crate) fn record_standing_grant_use_for_store_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    grant_ref: &str,
+    effect_digest: EffectDigest,
+) -> Result<ConsentReceipt> {
+    let Some(row) = GRANTS.get(store, &*wtxn, &grant_ref.to_owned())? else {
+        return Err(Error::Gate(GateError::ConsentGrantNotFound));
+    };
+    if !row.is_active() {
+        return Err(Error::Gate(GateError::ConsentGrantRevoked));
+    }
+    let receipt = ConsentReceipt::Used {
+        decision_id: GateDecisionId::from_bytes(store.clock.ulid()?),
+        grant_ref: grant_ref.to_owned(),
+        effect_digest,
+    };
+    let record = GateDecisionRecord {
+        version: GATE_DECISION_LEDGER_VERSION,
+        decision_id: receipt.decision_id(),
+        created_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
+        outcome: receipt.gate_outcome().to_owned(),
+        reason_codes: vec![receipt.reason_code().to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: CONSENT_ACTOR_CLASS.to_owned(),
+        actor_ref: Some(row.owner_stamp.actor.to_hex()),
+        content_kind: CONSENT_CONTENT_KIND.to_owned(),
+        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+        claim_id: None,
+        grant_ref: receipt.grant_ref(),
+        diff_handle: receipt.diff_handle(),
+        read_frontier_hash: [0_u8; 32],
+        context: Default::default(),
+        redacted_at: None,
+    };
+    store.append_gate_decision_in_txn(wtxn, &record)?;
+    Ok(receipt)
 }
