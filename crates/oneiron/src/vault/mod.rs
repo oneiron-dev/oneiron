@@ -61,6 +61,7 @@ pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
 pub(crate) use self::identity::VaultId;
+pub use self::identity::{OpenOptions, VaultStorageId};
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 pub use self::raw_writes::RawEntityPut;
 pub use self::reader_table::ReaderTableShortfall;

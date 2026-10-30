@@ -228,6 +228,10 @@ pub enum StoreError {
     /// activates it as a side vault with custody of its own.
     #[error("this vault is archived: a restore replaced it; activate it as a side vault to write")]
     ArchivedVault,
+    /// An open that adopts a storage id (FIX 3375) found the store holding
+    /// another one, or a page seal bound to another; nothing was rewritten.
+    #[error("this vault store holds another storage id than the one the open adopts")]
+    StorageIdMismatch,
 }
 
 /// What was wrong with one side-table row.
@@ -285,6 +289,7 @@ impl StoreError {
             Self::SideTableRow { .. } => ErrorKind::SideTableRow,
             Self::SideTableKeyUndeclared { .. } => ErrorKind::SideTableKeyUndeclared,
             Self::ArchivedVault => ErrorKind::ArchivedVault,
+            Self::StorageIdMismatch => ErrorKind::StorageIdMismatch,
         }
     }
 }

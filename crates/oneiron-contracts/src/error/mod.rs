@@ -410,6 +410,7 @@ pub enum ErrorKind {
     EmbeddingTransformChanged,
     ArchivedVault,
     HostActionRequiresSupportGrant,
+    StorageIdMismatch,
 }
 
 /// What a host credential gets for an owner act where no host acts as a

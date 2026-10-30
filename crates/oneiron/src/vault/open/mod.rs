@@ -16,6 +16,7 @@ use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 use crate::temporal::TimeRange;
 use std::path::Path;
 
+mod adopt;
 mod config_validation;
 mod lease_door;
 use self::config_validation::validate_open_config;
@@ -102,11 +103,7 @@ impl Vault {
     /// A lease another host holds for one owner act is waited out for a
     /// bounded time (FIX 5885, `VaultWriterLease::acquire_after_owner_act`).
     pub fn open_owned(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
-        validate_open_config(&config)?;
-        std::fs::create_dir_all(path.as_ref())?;
-        let canonical = path.as_ref().canonicalize()?;
-        let lease = VaultWriterLease::acquire_after_owner_act(&canonical)?;
-        Self::open_leased(&canonical, config, lease)
+        Self::open_owned_with(path, config, super::OpenOptions::default())
     }
 
     /// [`Self::open_owned`] on `directory`, a vault root the caller already
@@ -125,17 +122,22 @@ impl Vault {
         validate_open_config(&config)?;
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire_held_after_owner_act(directory, &canonical)?;
-        Self::open_leased(&canonical, config, lease)
+        Self::open_leased(&canonical, config, lease, super::OpenOptions::default())
     }
 
-    fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
+    fn open_leased(
+        canonical: &Path,
+        config: VaultConfig,
+        lease: VaultWriterLease,
+        options: super::OpenOptions,
+    ) -> Result<Self> {
         let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
         // Only the lease holder writes bodies, so what a writer left half
         // done is debris now: unfinished temp files and the bodies of
         // off-record sessions, none of which outlived its process.
         #[cfg(unix)]
         store.sweep_body_debris()?;
-        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
+        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required, options)?;
         vault.writer_lease = Some(lease);
         Ok(vault)
     }
@@ -182,6 +184,7 @@ impl Vault {
             analyzer,
             true,
             DefaultPolicySeedMode::Required,
+            super::OpenOptions::default(),
         )
     }
 
@@ -461,7 +464,7 @@ impl Vault {
             #[cfg(feature = "test-support")]
             DefaultPolicySeedMode::TestUnseeded => Store::open_unseeded_for_test(path, &config)?,
         };
-        Self::finish_open(store, config, seed_mode)
+        Self::finish_open(store, config, seed_mode, super::OpenOptions::default())
     }
 
     /// Everything after the storage gates: analyzer discovery, the text-index
@@ -470,6 +473,7 @@ impl Vault {
         store: Store,
         config: VaultConfig,
         seed_mode: DefaultPolicySeedMode,
+        options: super::OpenOptions,
     ) -> Result<Self> {
         let analyzer = discover_analyzer(&config)?;
         let text_index_trusted = if config.skip_text_index_manifest_check {
@@ -494,7 +498,14 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        Self::assemble_open(store, config, analyzer, text_index_trusted, seed_mode)
+        Self::assemble_open(
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+            seed_mode,
+            options,
+        )
     }
 
     /// Everything both open doors share once the text-index state is settled:
@@ -508,7 +519,17 @@ impl Vault {
         analyzer: MultilingualAnalyzer,
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
+        options: super::OpenOptions,
     ) -> Result<Self> {
+        // The store's id first, before this open seeds a row (FIX 3375).
+        let vault_id = super::VaultId::resolve_at_open(
+            &store,
+            config
+                .page_seal
+                .as_ref()
+                .map(crate::world_keys::VaultPageSeal::vault_id),
+            options.adopted_storage_id(),
+        )?;
         crate::batch::sweep_scope_stamps(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
@@ -533,13 +554,7 @@ impl Vault {
         let privacy = config.privacy.clone();
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
-            vault_id: super::VaultId::resolve_at_open(
-                &store,
-                config
-                    .page_seal
-                    .as_ref()
-                    .map(crate::world_keys::VaultPageSeal::vault_id),
-            )?,
+            vault_id,
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
             )?,
