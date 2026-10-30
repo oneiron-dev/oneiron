@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::post;
 use serde::Deserialize;
@@ -60,15 +61,21 @@ struct ImportBody {
 /// "sealed"}`: opens the sealed copy for the owner whose export asked for
 /// it, here, and imports its secret. A copy sealed to another machine, or
 /// not the one its holder's signed result names, opens nowhere but there.
+/// Its import mark records where his request reached this install, as this
+/// request proves it (`machine_routes::act_surface_admitted`): audit only.
 async fn import(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<ImportBody>,
 ) -> OwnerReply<SupplementImported> {
     let owner = owner(&auth, &server)?;
+    let surface =
+        super::super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let imported = blocking(move || {
-        export_supplement::import(server.vault(), &owner, &body.request, &body.sealed)
+        export_supplement::import(server.vault(), &owner, surface, &body.request, &body.sealed)
     })
     .await?;
     Ok(Json(imported))

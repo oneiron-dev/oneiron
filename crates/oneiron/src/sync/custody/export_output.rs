@@ -12,10 +12,11 @@
 //! - Reverse rematerialization relays each copy this vault keeps that stands
 //!   on its fold (`KeptExportOutput::stands`), and drops a row once its
 //!   request is refused here, its result names another copy, or its secret
-//!   an admitted revoke ended or an erase here fenced. A row whose request
-//!   or result this vault has not folded stays, as an input row's does; any
-//!   other stays until its base window retires, as no fold says the owner
-//!   imported it.
+//!   an admitted revoke ended or an erase here fenced, or once the fold
+//!   holds the owner's mark that he imported it (FIX 12062): no install
+//!   relays a marked copy again. A row whose request or result this vault
+//!   has not folded stays, as an input row's does; any other stays until
+//!   its base window retires.
 //! - Every install keeps a relayed copy that stands on its fold, once,
 //!   rechecked in the writer that keeps it. Only the recipient machine opens
 //!   it; no install that keeps or relays it can.
@@ -109,8 +110,9 @@ fn names_copy(output: Option<&SealedWorkOutput>, sealed: &[u8]) -> bool {
 
 /// Relays each copy this vault keeps into window `key`, the base window of
 /// its sealing month, while it stands on `fold` with `erased` as this
-/// vault's erase fences, and drops from the window every row due to leave
-/// it. Returns whether it wrote any.
+/// vault's erase fences and `fold` holds no import mark of its request, and
+/// drops from the window every row due to leave it, a marked one among
+/// them. Returns whether it wrote any.
 pub(super) fn mirror_export_outputs(
     vault: &Vault,
     doc: &LoroDoc,
@@ -126,7 +128,10 @@ pub(super) fn mirror_export_outputs(
     let fenced = |secret: &EntityId| erased.contains(secret);
     let mut wrote = false;
     for output in kept {
-        if WindowKey::from_timestamp(output.sealed_at) != *key || !output.stands(fold, fenced) {
+        if WindowKey::from_timestamp(output.sealed_at) != *key
+            || !output.stands(fold, fenced)
+            || fold.export_supplement_imported(&output.request)
+        {
             continue;
         }
         let bytes = output.encode();
@@ -157,8 +162,9 @@ pub(super) fn mirror_export_outputs(
             let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
                 return;
             };
-            if KeptExportOutput::decode(&bytes).is_some_and(|output| output.row_done(fold, fenced))
-            {
+            if KeptExportOutput::decode(&bytes).is_some_and(|output| {
+                output.row_done(fold, fenced) || fold.export_supplement_imported(&output.request)
+            }) {
                 done.push(map_key.to_owned());
             }
         });
@@ -172,8 +178,9 @@ pub(super) fn mirror_export_outputs(
 
 /// Keeps each relayed copy, filed under its own request, that stands on
 /// this vault's fold and that it keeps no copy for yet, checked again in the
-/// writer that keeps it. Any other row stays in the window, unread. A row
-/// that fails is logged and left.
+/// writer that keeps it. A copy the fold holds an import mark of is not
+/// kept: its relay is over (FIX 12062). Any other row stays in the window,
+/// unread. A row that fails is logged and left.
 pub(super) fn keep_relayed_export_outputs(
     vault: &Vault,
     window: &str,
@@ -192,6 +199,7 @@ pub(super) fn keep_relayed_export_outputs(
                     continue;
                 };
                 if *map_key == output_row(&output.request)
+                    && !fold.export_supplement_imported(&output.request)
                     && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
                 {
                     due.push(output);

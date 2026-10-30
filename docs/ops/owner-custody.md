@@ -138,24 +138,27 @@ value never opens is still re-entered or reissued. The restore report's pending 
 
 ## Import an export's secret supplement
 
-When your export cannot open a custody secret on the install that made it, it asks the install
-that holds the secret to seal the value to the recipient machine you named. The archive names
-that secret as owed (`owed_secrets` in the import report). Read the supplement from a running
-server that keeps the sealed copy (the holder does), then run the import on the recipient
-machine, with its server stopped:
+When your export cannot open a custody secret on the install that made it, it asks the install that
+holds the secret to seal the value to the recipient machine you named. The archive import report
+names each such secret: by name in `missing_secrets` when the archive carries its handle, or by id
+in `owed_secrets` when the exporting install held no row of it. Read the supplement from a running
+server that keeps the sealed copy (the holder does), then run the import on the recipient machine,
+with its server stopped:
 
 ```sh
 oneiron api raw GET /v1/core/export-secret-supplements/<request> > supplement.json
 oneiron secrets import-supplement < supplement.json      # on the recipient, server stopped
 ```
 
-The command takes the read's `request` and `sealed` fields. It opens the sealed copy on this
-install and restores the secret under its own id. It prints `{"request", "outcome"}`, where
-`outcome` is `restored`, `unchanged` (the same record is already here) or `skipped` (a revoke
-ended it, or the record here cannot be compared). A read with no `sealed` field is refused: the
-holder has not sealed the copy yet, or the install you read it from keeps none. A copy sealed to
-another machine opens only there. A running server takes the same import at
-`POST /v1/owner/secrets/export-supplements/import` with `{"request", "sealed"}`.
+The command takes the read's `request` and `sealed` fields. It opens the sealed copy on this install
+and restores the secret under its own id. It prints `{"request", "outcome"}`, where `outcome` is
+`restored`, `unchanged` (the same record is already here) or `skipped` (a revoke ended it, or the
+record here cannot be compared). A `restored` or `unchanged` import also marks the request imported,
+and your installs stop relaying its sealed copy; each install that keeps the copy still serves the
+read. A read with no `sealed` field is refused: the holder has not sealed the copy yet, or the
+install you read it from keeps none. A copy sealed to another machine opens only there. A running
+server takes the same import at `POST /v1/owner/secrets/export-supplements/import` with `{"request",
+"sealed"}`.
 
 ## Guest revoke with a courtesy ask on a stopped vault
 

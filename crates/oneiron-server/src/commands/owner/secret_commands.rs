@@ -272,6 +272,7 @@ fn import_supplement(
     Ok(export_supplement::import(
         &vault,
         &owner,
+        oneiron::authority::ActSurface::ThisInstall,
         &read.request,
         &sealed,
     )?)
