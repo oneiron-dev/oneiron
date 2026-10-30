@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1209 facade rows, 4373 generated types.
+// UniFFI census: 1209 facade rows, 4374 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1161.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -15624,6 +15624,22 @@ pub enum InboxGroupKind {
     Shape,
 }
 
+/// `oneiron::inbox::unified::InboxGroupResolveTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "text")]
+pub enum InboxGroupResolveTarget {
+    #[serde(rename = "fallback")]
+    Fallback,
+    #[serde(rename = "ban")]
+    Ban(String),
+    #[serde(rename = "style_rule")]
+    StyleRule(String),
+    #[serde(rename = "charter_line")]
+    CharterLine(String),
+    #[serde(rename = "brief_update")]
+    BriefUpdate(String),
+}
+
 /// `oneiron::inbox::unified::InboxGroupResolveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -15640,6 +15656,8 @@ pub struct InboxGroupResolveRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub verb_class: Option<String>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<InboxGroupResolveTarget>,
 }
 
 /// `oneiron::inbox::model::InboxBundleResolution`.
