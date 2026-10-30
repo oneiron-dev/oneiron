@@ -243,7 +243,7 @@ use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
     is_tradeoff, score_goal_axes, validate_goal_vector,
 };
-use judge_binding::JudgeBinding;
+use judge_binding::{JudgeBinding, judge_rubric_digest_in_txn};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{anchor_score, measure, validate_measurements, world_labels_digest};
 
