@@ -238,7 +238,16 @@ pub(crate) fn symbols_ready(
     let Some(lease) = load(store, txn, task)? else {
         return Ok(true);
     };
+    if run_declaration_over(&lease, now) {
+        return Ok(true);
+    }
     Ok(blockers(store, txn, task, &lease.symbols, now)?.is_empty())
+}
+
+/// Whether `lease` is a leased run's declaration that expired: that run's
+/// alone, which the TASK's next try never takes over (FIX 7068).
+fn run_declaration_over(lease: &SymbolLease, now: u64) -> bool {
+    lease.run.is_some() && lease.expires_at <= now
 }
 
 pub(crate) fn acquire_symbols(
@@ -248,6 +257,12 @@ pub(crate) fn acquire_symbols(
     now: u64,
 ) -> Result<()> {
     if let Some(mut lease) = load(store, txn, task)? {
+        // The next try declares its own: an expired run's declaration goes,
+        // never reacquired under a fence no run of this try names.
+        if run_declaration_over(&lease, now) {
+            LEASES.delete(store, txn, &task)?;
+            return Ok(());
+        }
         if !blockers(store, txn, task, &lease.symbols, now)?.is_empty() {
             return Err(Error::ConcurrentWrite("overlapping symbol lease"));
         }
