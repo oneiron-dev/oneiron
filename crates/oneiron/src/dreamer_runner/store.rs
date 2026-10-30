@@ -627,7 +627,7 @@ impl<'a> DreamerRunnerStore<'a> {
                         .clone()
                         .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
                     attempt_count: source.attempt_count,
-                    reason: "consolidation selection deferred".into(),
+                    reason: super::SELECTION_DEFERRED_REASON.into(),
                     due_at: retry_at,
                 },
             )?;
