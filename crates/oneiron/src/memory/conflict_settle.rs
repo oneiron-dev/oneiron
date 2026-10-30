@@ -144,7 +144,9 @@ impl Memory<'_> {
     /// receipt then names that approval. A retry whose write is discarded
     /// answers with the first refusal, the retained alternative intact; one
     /// that committed answers with what it committed, even when the writer's
-    /// post-commit work then fails.
+    /// post-commit work then fails. A VAD consolidation that fails after the
+    /// commit never refuses the settlement: its receipt carries a
+    /// pending-VAD warning (FIX 7600).
     pub fn settle_conflict(
         &self,
         reviewer: Option<&AuthenticatedOwner>,
@@ -164,7 +166,7 @@ impl Memory<'_> {
                 now,
             )
         });
-        let outcome = match first {
+        let mut outcome = match first {
             Ok(outcome) => outcome,
             Err(refusal) => {
                 consolidate = None;
@@ -222,9 +224,13 @@ impl Memory<'_> {
             }
         };
         // Consent is committed before the consolidator opens its own writer;
-        // a VAD failure is returned with the settlement durable.
-        if let Some(approved) = consolidate {
-            self.vault.consolidate_claim_vad_now(&approved, now)?;
+        // a VAD failure warns and the settlement answers success (FIX 7600,
+        // Engine 09:24).
+        if let Some(approved) = consolidate
+            && let Some(warning) = self.vault.consolidate_settled_claim_vad(&approved, now)
+            && let ConflictSettleOutcome::Settled(receipt) = &mut outcome
+        {
+            receipt.warnings.push(warning);
         }
         Ok(outcome)
     }
@@ -401,6 +407,7 @@ impl Memory<'_> {
             superseded: settled.superseded,
             receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
             approval_ref,
+            warnings: Vec::new(),
         }))
     }
 

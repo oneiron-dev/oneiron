@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1207 facade rows, 4356 generated types.
+// UniFFI census: 1207 facade rows, 4358 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1159.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -34011,6 +34011,24 @@ pub struct ClaimSettlementRevert {
     pub claim_ref: String,
 }
 
+/// `oneiron::memory::claims::settle::SettleWarningCode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SettleWarningCode {
+    #[serde(rename = "vad_pending")]
+    VadPending,
+}
+
+/// `oneiron::memory::claims::settle::SettleWarning`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SettleWarning {
+    #[serde(rename = "code")]
+    pub code: SettleWarningCode,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "detail")]
+    pub detail: String,
+}
+
 /// `oneiron::memory::claims::settle::ClaimSettlement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ClaimSettlement {
@@ -34042,6 +34060,8 @@ pub struct ClaimSettlement {
     pub claim: WireClaimView,
     #[serde(rename = "settled_at")]
     pub settled_at: u64,
+    #[serde(rename = "warnings", default, skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<SettleWarning>>,
 }
 
 /// `oneiron::actor_claims::candidate::CraftCandidatesRequest`.
