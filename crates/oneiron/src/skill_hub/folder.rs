@@ -516,8 +516,33 @@ pub(crate) fn package_from_source(
         return Err(invalid("source tree differs from native skill hash"));
     }
     crate::skill::encode_skill_record(record)?;
-    package.record = record.clone();
+    // A site skill's origins, routes and seeds that do not read are named on
+    // its provenance in either format, as `package_from_files` names them.
+    package.record = with_site_notes(record.clone(), &package.files);
+    crate::skill::encode_skill_record(&package.record)?;
     Ok(package)
+}
+
+/// `record` with the site notes `files` give on its provenance under
+/// [`super::site_folder::SITE_NOTES_KEY`], in place of any it held there.
+/// A tree with no notes, or a provenance that is neither a map nor empty,
+/// leaves the record as it was.
+fn with_site_notes(mut record: SkillRecord, files: &[HubFile]) -> SkillRecord {
+    let notes = super::site_folder::import_notes(files);
+    if notes.is_empty() {
+        return record;
+    }
+    if record.provenance.is_nil() {
+        record.provenance = rmpv::Value::Map(Vec::new());
+    }
+    if let rmpv::Value::Map(entries) = &mut record.provenance {
+        entries.retain(|(key, _)| key.as_str() != Some(super::site_folder::SITE_NOTES_KEY));
+        entries.push((
+            rmpv::Value::from(super::site_folder::SITE_NOTES_KEY),
+            rmpv::Value::Array(notes.into_iter().map(rmpv::Value::from).collect()),
+        ));
+    }
+    record
 }
 
 fn validate_source_files(files: &[HubFile]) -> Result<()> {
