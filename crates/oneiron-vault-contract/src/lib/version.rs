@@ -174,6 +174,18 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// revision to 3 at the floor. No `Ping` field is added and this version
 /// stays 3.
 ///
+/// VM kept-aside copy removal (FIX 11985): the guest's notice names what it
+/// tells the host
+/// ([`VmOutboxNoticeAction`](crate::vm_outbox::VmOutboxNoticeAction)), and
+/// the host answers a removal of its kept-aside copy
+/// ([`VmOutboxFrame::AsideRemoved`](crate::vm_outbox::VmOutboxFrame::AsideRemoved)).
+/// It carries a build floor, at the engine revision it merged in: carrier
+/// revision 4, and each end refuses the other's revision 3 at the hello,
+/// with no reader of it kept. The host library, the guest image and its
+/// companion are all at or after the floor, and LC's image acceptance moves
+/// its outbox revision to 4 at the floor. No `Ping` field is added and this
+/// version stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s
