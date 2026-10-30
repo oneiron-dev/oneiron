@@ -42,8 +42,8 @@ use crate::authority::{
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
-    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, held_authority_entries,
-    held_authority_history, import_authority_page,
+    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_ENTRY_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
+    held_authority_entries, held_authority_history, import_authority_page,
 };
 use crate::sync::transport::TransportError;
 
@@ -52,8 +52,9 @@ use crate::sync::transport::TransportError;
 const MAX_PAGES: usize = 1024;
 
 /// The most signed bytes one append page carries: inside the request frame
-/// once base64 and the RPC envelope are added.
-const APPEND_PAGE_BYTES: usize = 4 << 20;
+/// once base64 and the RPC envelope are added, as one entry part is. An
+/// entry past it goes alone, in parts (FIX 8246).
+const APPEND_PAGE_BYTES: usize = AUTHORITY_ENTRY_PART_MAX;
 
 #[derive(Deserialize)]
 struct AuthorityTailReply {
