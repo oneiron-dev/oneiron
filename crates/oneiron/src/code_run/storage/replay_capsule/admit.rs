@@ -204,6 +204,7 @@ fn write_capsule_in_txn(
         },
         request_hash: *blake3::hash(&draft.request).as_bytes(),
         messages_digest: draft.messages_digest,
+        source_rows: capture.source_rows.clone(),
         exposures: stored_slots(&draft.exposures, capture.request, &request),
         seed: request_seed(capture),
         binding: None,
@@ -242,6 +243,7 @@ fn write_withheld_in_txn(
         },
         request_hash: *blake3::hash(&draft.request).as_bytes(),
         messages_digest: draft.messages_digest,
+        source_rows: capture.source_rows.clone(),
         exposures: draft
             .exposures
             .iter()
