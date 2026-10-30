@@ -467,14 +467,14 @@ fn code_symbol_definition(
     })
 }
 
-/// Applies an EXPLICIT, already-reviewed rename/copy anchor mapping
+/// Applies an EXPLICIT, already-reviewed anchor mapping between two symbols
 /// (ARCH-0050 R6 L2 / ONE-1608).
 ///
-/// Called only AFTER rename/copy detection has produced a reviewed mapping.
-/// It infers nothing from paths or fingerprints, and nothing upstream of it
-/// does either: `code_symbol_entity_id`, manifest decoding, fingerprint
-/// generation, chunking, and symbol-graph ingestion carry no path-based
-/// auto-transfer. Attachment identity moves ONLY through this door.
+/// A file rename needs none: it is an op on the file's document, the symbol
+/// keeps its document-based id, and its notes stay on it (FIX 7810). This
+/// door moves notes between two distinct symbols, as a copy or a move across
+/// documents, after a reviewed mapping. It infers nothing from paths or
+/// fingerprints.
 pub fn apply_code_symbol_anchor_transfer(
     store: &Store,
     txn: &mut RwTxn<'_>,

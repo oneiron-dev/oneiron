@@ -4,7 +4,8 @@
 //! renewal keeps the id; a declaration that is missing, released, replaced
 //! or expired answers `repo_stale_lease`. An overlap with another TASK's
 //! live declaration leaves the run's declaration waiting, never refused.
-//! Each door is judged again in the writer that changes the declaration.
+//! Each door is judged again in the writer that changes the declaration,
+//! at the vault clock read inside that writer (FIX 8801).
 //! The owner's `vault.code.symbols.*` doors are unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -95,8 +96,8 @@ impl Memory<'_> {
         let paths = self.repo_symbol_paths(own.stamp.repo, &input.symbols)?;
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, &paths);
         let keys: BTreeSet<String> = input.symbols.iter().map(EntityId::to_hex).collect();
-        let now = self.vault.now_recorded_at();
         let declared = self.vault.with_write_txn_grouped(|txn| {
+            let now = self.vault.now_recorded_at();
             if let Err(refused) = self.vault.readmit_repo_work_in_txn(
                 txn,
                 binding,
@@ -139,8 +140,8 @@ impl Memory<'_> {
         let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let fence = symbol_fence(binding, &own.stamp, input.declaration);
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
-        let now = self.vault.now_recorded_at();
         let renewed = self.vault.with_write_txn_grouped(|txn| {
+            let now = self.vault.now_recorded_at();
             if let Err(refused) = self.vault.readmit_repo_work_in_txn(
                 txn,
                 binding,
@@ -171,8 +172,8 @@ impl Memory<'_> {
         let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let fence = symbol_fence(binding, &own.stamp, input.declaration);
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
-        let now = self.vault.now_recorded_at();
         let released = self.vault.with_write_txn_grouped(|txn| {
+            let now = self.vault.now_recorded_at();
             if let Err(refused) = self.vault.readmit_repo_work_in_txn(
                 txn,
                 binding,

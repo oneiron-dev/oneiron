@@ -15,10 +15,12 @@ use crate::blob_artifact::hash_hex;
 use crate::code_symbol::{
     CodeAttributedChange, CodeContentVersion, CodeUnitBlame, render_code_semantic_diff,
 };
+use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryResult};
 use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::secret_custody::SecretSight;
 
 /// One tested state of a file: as the code revision `revision_ref` tested
 /// it, or, with no revision, the document's live head.
@@ -150,12 +152,41 @@ impl Memory<'_> {
                     .into_values()
                     .find(|frontier| frontier.repo == request.repo && frontier.path == request.path)
             }
-            None => vault.code_document_frontier(&request.repo, &request.path)?,
+            None => {
+                let Some(frontier) = vault.code_document_frontier(&request.repo, &request.path)?
+                else {
+                    return Ok(None);
+                };
+                // The live head is judged here, under the bound caller's
+                // own authority, not only at the outer doors (FIX 9687).
+                if !self.reads_live_code_head(&frontier)? {
+                    return Ok(None);
+                }
+                Some(frontier)
+            }
         };
         Ok(frontier.map(|frontier| {
             let view = state_view(&frontier, request.revision_ref.clone());
             (frontier, view)
         }))
+    }
+
+    /// Whether the bound caller reads the live head `frontier`: the vault
+    /// owner's own key does; any other caller only when it reads the head
+    /// text's repo ASSET, as `vault.code.repo_diff` admits a snapshot's
+    /// file, and that ASSET is then listed as a producer. A withheld head
+    /// answers as an absent one.
+    fn reads_live_code_head(&self, frontier: &CodeDocumentFrontier) -> MemoryResult<bool> {
+        if self.secret_sight()? == SecretSight::Owner {
+            return Ok(true);
+        }
+        let text = self.vault().code_document_at(frontier)?;
+        let asset = snapshot_asset_entity_id(blake3::hash(text.as_bytes()).as_bytes())?;
+        if self.get_entity_tolerant(&asset.to_hex())?.value.is_none() {
+            return Ok(false);
+        }
+        self.produced_from([asset]);
+        Ok(true)
     }
 
     /// `vault.code.diff`: the semantic changes between two tested states of
