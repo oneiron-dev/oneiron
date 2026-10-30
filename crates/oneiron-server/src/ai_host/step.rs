@@ -25,6 +25,7 @@ use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProd
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
+use oneiron::llm::{WorkClass, WorkContext};
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
@@ -627,6 +628,10 @@ impl StepRunner {
         let run = self
             .models
             .funded_run(run_id, guard, payer)
+            .with_work_context(WorkContext {
+                class: WorkClass::Foreground,
+                ..Default::default()
+            })
             .sourced(sources.clone());
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails

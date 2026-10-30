@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
@@ -25,7 +26,7 @@ use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::llm::{HostInferenceBinding, HostInferenceContext, WorkClass, WorkContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -582,10 +583,16 @@ impl ObservedFactory {
         let mut roles = RoleBackends::default();
         let mut runs = BTreeMap::new();
         for (role, route) in &routes {
-            let run = self.runtime.undeclared_run(
-                format!("{DREAMER_PASS_RUN}/{}", role_key(*role)),
-                line.clone(),
-            );
+            let run = self
+                .runtime
+                .undeclared_run(
+                    format!("{DREAMER_PASS_RUN}/{}", role_key(*role)),
+                    line.clone(),
+                )
+                .with_work_context(WorkContext {
+                    class: WorkClass::Background,
+                    ..Default::default()
+                });
             runs.insert(*role, (Arc::clone(&route.ladder), run.clone()));
             // Each call the engine knows the rows of sends under them, on
             // this same run (FIX 6998).
@@ -1181,13 +1188,20 @@ impl ResidentLend<'_> {
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
             let keyless = ladder.all_keyless_own_server();
-            let backend = SourcedRunBackend::new(
-                ladder,
-                self.runtime.undeclared_run(
+            let deadline =
+                Instant::now().checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
+            let run = self
+                .runtime
+                .undeclared_run(
                     format!("{DREAMER_PASS_RUN}/resident/{}", resident.to_hex()),
                     line,
-                ),
-            );
+                )
+                .with_work_context(WorkContext {
+                    class: WorkClass::Background,
+                    deadline,
+                    ..Default::default()
+                });
+            let backend = SourcedRunBackend::new(ladder, run);
             let egress = self
                 .egress
                 .then(|| extraction_egress(BTreeSet::from([model.clone()])));
