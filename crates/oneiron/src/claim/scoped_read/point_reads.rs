@@ -192,6 +192,9 @@ pub struct ReadRow {
 }
 
 impl ReadRow {
+    /// The row `revision` serves. A file-plane ASSET's live row comes with
+    /// its body in place of its manifest, as `entity_raw_with_mode_held_in`
+    /// materialized it, so every point read hands out the body (FIX 12149).
     fn from_revision(id: EntityId, revision: AdmittedRevision) -> Result<Self> {
         let header = EntityMetadataHeader::parse(&revision.raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
@@ -324,6 +327,9 @@ impl<'v> ScopedRead<'v> {
         mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
+        // A file-plane ASSET's body file is read in the snapshot this read
+        // opens, so the bodies are pinned before it opens (FIX 12149).
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
