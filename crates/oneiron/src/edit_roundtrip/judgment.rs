@@ -423,7 +423,14 @@ impl EditSession for NativeCellSession {
             self.limits,
             &crate::office_body::document_resources(),
         )
-        .map_err(|_| failed())?;
+        .map_err(|error| {
+            // A resource refusal is the engine's error (FIX 10587), never a failed write.
+            if let Some(refusal) = error.resource() {
+                crate::office_body::document_refused(refusal)
+            } else {
+                failed()
+            }
+        })?;
         let changes = plan
             .ops
             .iter()
@@ -469,7 +476,14 @@ impl EditSession for NativeCellSession {
             self.limits,
             &crate::office_body::document_resources(),
         )
-        .map_err(|_| failed())?
+        .map_err(|error| {
+            // A resource refusal is the engine's error (FIX 10587), never a failed write.
+            if let Some(refusal) = error.resource() {
+                crate::office_body::document_refused(refusal)
+            } else {
+                failed()
+            }
+        })?
         .bytes;
         Ok(AppliedEdit {
             bytes,

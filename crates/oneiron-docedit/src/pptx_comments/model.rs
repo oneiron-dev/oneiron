@@ -1,7 +1,7 @@
 //! PowerPoint comment requests, inspection facts, codec limits and typed refusals.
 
 use crate::resource::{ResourceRefusal, Resources};
-use crate::retained_opc::{Limits, XmlLimits};
+use crate::retained_opc::Limits;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -58,8 +58,9 @@ pub enum PptxError {
     /// deadline ran out (FIX 8596): never invalid XML.
     #[error(transparent)]
     Resource(#[from] ResourceRefusal),
-    /// The package passed a ceiling its caller set, or classic ZIP's widths
-    /// (FIX 5354): never an invalid package.
+    /// The package or one of its XML parts passed a ceiling its caller set,
+    /// or classic ZIP's widths (FIX 5354, 10654): never an invalid package
+    /// or invalid XML.
     #[error("package ceiling: {0}")]
     Capacity(crate::resource::CapacityHit),
 }
@@ -73,11 +74,20 @@ impl PptxError {
             _ => None,
         }
     }
+
+    /// The ceiling, when the package or one of its XML parts passed one.
+    #[must_use]
+    pub const fn capacity(&self) -> Option<crate::resource::CapacityHit> {
+        match self {
+            Self::Capacity(hit) => Some(*hit),
+            _ => None,
+        }
+    }
 }
 
 /// One comment read's or edit's codec limits with the operation's resource
-/// port, which the package and every part parse reserve through. Attribute,
-/// namespace, depth and node counts are observations (FIX 8596, 9822).
+/// port, which the package and every part parse reserve through
+/// (FIX 8596, 10590).
 #[derive(Clone, Copy)]
 pub(super) struct Codec<'a> {
     pub limits: &'a PptxCommentLimits,
@@ -93,34 +103,25 @@ impl std::ops::Deref for Codec<'_> {
 
 pub(super) type PatchResult<T> = std::result::Result<T, PptxError>;
 
-/// The caller's codec ceilings for one comment read or edit: the package's,
-/// checked before decompression and again after it, then each XML part's.
+/// The caller's codec byte ceilings for one comment read or edit: the
+/// package's, checked before decompression and again after it, then each
+/// XML part's (FIX 10590).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PptxCommentLimits {
     pub max_archive_bytes: usize,
-    pub max_entries: usize,
     pub max_part_bytes: usize,
     pub max_expanded_bytes: usize,
     pub max_xml_bytes: usize,
-    pub max_xml_attributes: usize,
-    pub max_xml_namespaces: usize,
-    pub max_xml_depth: usize,
-    pub max_xml_nodes: usize,
 }
 
 impl PptxCommentLimits {
     #[must_use]
     pub const fn valid(&self) -> bool {
         self.max_archive_bytes > 0
-            && self.max_entries > 0
             && self.max_part_bytes > 0
             && self.max_expanded_bytes > 0
             && self.max_xml_bytes > 0
-            && self.max_xml_attributes > 0
-            && self.max_xml_namespaces > 0
-            && self.max_xml_depth > 0
-            && self.max_xml_nodes > 0
     }
 
     /// The retained-OPC ceilings the package opens under.
@@ -128,13 +129,8 @@ impl PptxCommentLimits {
     pub const fn package(&self) -> Limits {
         Limits {
             archive_bytes: self.max_archive_bytes,
-            entries: self.max_entries,
             part_bytes: self.max_part_bytes,
             expanded_bytes: self.max_expanded_bytes,
-            xml: XmlLimits {
-                max_depth: self.max_xml_depth,
-                max_nodes: self.max_xml_nodes,
-            },
         }
     }
 }
