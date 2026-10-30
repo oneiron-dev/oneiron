@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1204 facade rows, 4348 declarations.
-Inputs: 1132 of 1204 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1043 of 1204 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 120; unread shapes: 0.
+Census: 1206 facade rows, 4354 declarations.
+Inputs: 1134 of 1206 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1206 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -709,7 +709,7 @@ class DiagnosticsListRequest(TypedDict):
     evidence_ref: NotRequired[str | None]
     limit: int
 class ReadScope(TypedDict):
-    entity_types: NotRequired[list[int] | None]
+    entity_types: NotRequired[list[str] | None]
     max_sensitivity_band: int
     include_stale: bool
     min_confidence: float
@@ -2502,7 +2502,22 @@ class FanoutResumeRequest(TypedDict):
     remembered_cap: NotRequired[int | None]
 class DetailsOnDevice(TypedDict):
     details_on_device: bool
-ActAnswer = DetailsOnDevice | T
+class NarrowedQuestion(TypedDict):
+    key: str
+    message: NotRequired[str | None]
+    requested_schema: NotRequired[Any | None]
+    on_device: NotRequired[bool]
+class NarrowedQuestions(TypedDict):
+    outcome: str
+    questions_narrowed: bool
+    handle: str
+    call_ref: str
+    source: str
+    foreign: bool
+    questions: list[NarrowedQuestion]
+    live_until_ms: int
+    reasons: NotRequired[list[str]]
+ActAnswer = DetailsOnDevice | NarrowedQuestions | T
 FanoutCheckChoice = Literal["ack", "ack_and_remember"]
 class FanoutAckRequest(TypedDict):
     launch_ref: EntityId
@@ -3571,6 +3586,23 @@ class ExportTransfer(TypedDict):
     bytes: int
     digest: str
 ExportAnswer = MemoryExport | ExportTransfer
+class ExportTransferReadRequest(TypedDict):
+    transfer_ref: str
+    offset: NotRequired[int]
+    length: NotRequired[int | None]
+class ExportTransferPiece(TypedDict):
+    transfer_ref: str
+    offset: int
+    bytes_base64: str
+    length: int
+    total_bytes: int
+    digest: str
+    end: bool
+class ExportTransferReleaseRequest(TypedDict):
+    transfer_ref: str
+class ExportTransferReleased(TypedDict):
+    transfer_ref: str
+    released: bool
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):

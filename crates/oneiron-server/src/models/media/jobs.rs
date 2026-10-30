@@ -128,6 +128,12 @@ impl JobStore {
         Self { vault }
     }
 
+    /// The vault the rows are kept in, which a job's spend scope is read
+    /// from and booked on (FIX 11496).
+    pub(super) fn vault(&self) -> &Vault {
+        &self.vault
+    }
+
     /// Keeps `row` as job `ticket`, its end's clip bytes beside it: the row
     /// and its clips in one write, so a refused write keeps none of them.
     /// `false` when an erase took the job first: nothing is written, so no

@@ -417,7 +417,7 @@ impl MediaRuntime {
         if row.provider_job.is_none() {
             return Ok(self.unsent(id, row));
         }
-        let job = Held::Running(Arc::new(tokio::sync::Mutex::new(self.take_up(&row)?)));
+        let job = Held::Running(Arc::new(tokio::sync::Mutex::new(self.take_up(id, &row)?)));
         jobs.insert(id.to_owned(), job.clone());
         Ok(job)
     }
@@ -474,7 +474,7 @@ impl MediaRuntime {
     /// bills the payer its submit bound, whoever polls it, on the line its
     /// submit spent on: a program's run's, else the media meter (FIX 780,
     /// 6083). A job whose rung left the config cannot be taken up.
-    fn take_up(&self, row: &JobRow) -> LlmResult<HeldJob> {
+    fn take_up(&self, ticket: &str, row: &JobRow) -> LlmResult<HeldJob> {
         let rung = self
             .job_rungs
             .get(&row.model)
@@ -487,7 +487,7 @@ impl MediaRuntime {
         let mut bound = row.request.clone();
         bound.model = rung.model.clone();
         bound.envelope.locality = rung.offer.binding.locality;
-        let run = self.job_run(row)?;
+        let run = self.job_run(ticket, row)?;
         let selector = Some(row.request.model.as_str());
         let permit = run.admit_media(selector, &bound, &rung.offer.binding)?;
         let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);

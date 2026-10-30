@@ -115,7 +115,13 @@ impl MediaRuntime {
             Held::Unsent(_) | Held::Unkept(_) | Held::Ended(_) => return self.drop_kept_job(id),
         };
         let mut held = job.lock().await;
+        let charges = held.charges();
         held.cancel().await?;
+        // A confirmed stop settled its permit: what that charged reaches
+        // the scope that funds it before its row goes (FIX 11496).
+        if charges {
+            self.book_job_scope(id);
+        }
         self.drop_kept_job(id)
     }
 

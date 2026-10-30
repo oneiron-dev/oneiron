@@ -563,6 +563,9 @@ impl Vault {
         let held =
             self.revoke_held_capability_slips_in_txn(&mut txn, issuer, holder_ref, Some(keep))?;
         txn.commit()?;
+        if !held.is_empty() {
+            self.store.notify_credential_revocations();
+        }
         Ok(held)
     }
     /// [`Self::revoke_held_capability_slips`] inside a caller's writer, so a
@@ -611,6 +614,7 @@ impl Vault {
         }
         self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id })?;
         txn.commit()?;
+        self.store.notify_credential_revocations();
         Ok(true)
     }
     /// Verifies the binding and burns single-use authority before returning it.
