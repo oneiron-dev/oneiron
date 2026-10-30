@@ -7,7 +7,6 @@
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
 use crate::llm::decision::{
     AnswerActor, AskAct, AskAnswer, AskRole, AskTo, DecisionAnswer, DecisionAsk, HolderKind,
     HostRuleRef, RoleRank,
@@ -26,6 +25,7 @@ pub struct KeptRole {
         skip_serializing_if = "Option::is_none",
         with = "crate::entity_id::serde_hex::optional"
     )]
+    #[schemars(with = "Option<String>")]
     pub project: Option<EntityId>,
 }
 
@@ -125,7 +125,7 @@ impl KeptAsk {
     /// # Errors
     ///
     /// Storage errors, or an ask row that cannot be read.
-    pub fn answerer(&self, vault: &Vault) -> Result<Option<AnswerActor>> {
+    pub fn answerer(&self, vault: &Vault) -> crate::error::Result<Option<AnswerActor>> {
         let Some(kept) = &self.answer else {
             return Ok(None);
         };

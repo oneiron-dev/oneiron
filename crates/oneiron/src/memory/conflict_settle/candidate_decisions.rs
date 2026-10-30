@@ -34,9 +34,11 @@ pub struct DreamerDecidedCandidateView {
     /// Its position in the attempt's extraction.
     pub position: u64,
     #[serde(with = "crate::entity_id::serde_hex")]
+    #[schemars(with = "String")]
     pub subject: EntityId,
     /// The listed claim its decisions bound it to; none when they bound none.
     #[serde(with = "crate::entity_id::serde_hex::optional")]
+    #[schemars(with = "Option<String>")]
     pub corrects: Option<EntityId>,
     /// Its kept decisions, each with its receipt and, when it went up the
     /// role chain, that ask.

@@ -261,6 +261,7 @@ pub struct AmendmentJudgmentView {
 
 impl From<AmendmentJudgment> for AmendmentJudgmentView {
     fn from(judgment: AmendmentJudgment) -> Self {
+        let on_judge_model = judgment.on_judge_model();
         Self {
             receipt_id: judgment.receipt_id,
             split: judgment
@@ -282,7 +283,7 @@ impl From<AmendmentJudgment> for AmendmentJudgmentView {
             type_ref: judgment.type_ref,
             judge: judgment.judge,
             judge_model: judgment.judge_model,
-            on_judge_model: judgment.on_judge_model(),
+            on_judge_model,
         }
     }
 }
