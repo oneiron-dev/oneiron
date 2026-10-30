@@ -221,6 +221,18 @@ impl SyncConnection {
         admit_round(self.batch_admission.as_deref()).await
     }
 
+    /// Starts the left env's owed body collection (`shared_leave`) as the
+    /// connection runs, not at its construction: by then
+    /// [`Self::with_batch_admission`] has set the host, so the collection
+    /// holds its admission for one round, as the workers beside the loop do.
+    pub(super) fn collect_left_env_bodies(&self) {
+        let host = self.batch_admission.clone();
+        crate::sync::shared_leave::collect_left_env_bodies_admitted(
+            self.manager.vault(),
+            async move { admit_round(host.as_deref()).await },
+        );
+    }
+
     /// Queues what the loop buffered as it exits, under the host's admission
     /// when it admits. A paused host's exit queues it all the same: no stop
     /// waits for a thaw, and no buffered update is dropped.
