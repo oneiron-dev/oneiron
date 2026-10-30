@@ -27,10 +27,10 @@ BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'brows
 for row in HOST_ROWS:
     host = row['host']
     if (row.get('context') not in ('run', 'browser', 'board') or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'openapi'}
+            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi'}
             or ('output' in host and row.get('context') != 'board')
-            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'openapi') if key in host)):
-        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists and OpenAPI flags')
+            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi') if key in host)):
+        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists, pre-check and OpenAPI flags')
 def host_synthetic(row):
     return {'name': row['name'], 'input': row['host']['input'],
      'output': row['host'].get('output', row['output']),
@@ -42,6 +42,7 @@ def host_synthetic(row):
      # object says so (FIX 4709), its door then answering `Listed` or
      # `MaybeListed` as an explicit host row does.
      'host_door_lists': row.get('context') == 'browser' or row['host'].get('host_door_lists', False),
+     'host_door_precheck': row['host'].get('host_door_precheck', True),
      'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
@@ -135,6 +136,12 @@ for row in ROWS:
     # an empty list standing in for it, and the call's answer goes unlisted.
     if row.get('host_door_lists') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door lists its rows')
+    # `host_door_precheck: false` marks a host door whose door checks no
+    # caller before the row's hooks run (FIX 1763). Every other host door is
+    # a `HostDoorRow` that `host_doors::door_admits` matches with no
+    # catch-all, so a new host door names its check or fails to compile.
+    if row.get('host_door_precheck', True) is not True and (row['host_door_precheck'] is not False or not row.get('host_door')):
+        raise ValueError(f'{row["name"]}: host_door_precheck is only a host door\'s, and only false')
     # `host_door_lens_owner` hands a live lens door the owner its card is held
     # for (OF-181, FIX 2612), never a field of its input: the facade call's
     # host-bound creating run and subscription (`FacadeCall::lens_owner`), or
@@ -1709,6 +1716,29 @@ match verb {{
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
 
+HOST_DOOR_ROWS_DOC = '''//! The host-door rows whose door checks its caller before the row's verb
+//! hooks run (FIX 1763), one variant each, named as `AgentVerb` names it.
+//! `host_doors::door_admits` matches every one with no catch-all arm, so a
+//! new host door fails to compile until it names its check there. A row
+//! whose table entry says `"host_door_precheck": false` checks nothing
+//! before its hooks; those rows:
+'''
+
+def host_door_rows(facade_rows):
+    'The `HostDoorRow` enum `door_admits` matches, and the host doors it leaves out.'
+    variant = lambda r: ''.join(part.title() for part in r['name'].replace('.', '_').split('_'))
+    doors = [r for r in facade_rows if r.get('host_door')]
+    checked = [r for r in doors if r.get('host_door_precheck', True)]
+    out = HEADER + HOST_DOOR_ROWS_DOC + ''.join(f'//! - `{r["name"]}`\n' for r in doors if r not in checked)
+    out += '/// A host-door row whose door checks its caller first.\n'
+    out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorRow {\n'
+    out += ''.join(f'    {variant(r)},\n' for r in checked) + '}\n'
+    out += 'impl HostDoorRow {\n    /// The row `verb` names, when it is one.\n'
+    out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
+    out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
+    out += '            _ => return None,\n        })\n    }\n}\n'
+    return out
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS
     core = HEADER
@@ -1956,6 +1986,7 @@ def outputs():
         'crates/oneiron/src/verbs/generated/verb_catalog.rs':catalog,
         'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs':server,
         'crates/oneiron-server/src/api/facade/generated/dispatch.rs':dispatch,
+        'crates/oneiron-server/src/api/facade/generated/host_door_rows.rs':host_door_rows(facade_rows),
         'crates/oneiron-remote/src/generated/agent_verbs.rs':remote,
         'crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs':napi,
         # FIX 8907: the MCP dispatch is a whole-file child of tasks_response.

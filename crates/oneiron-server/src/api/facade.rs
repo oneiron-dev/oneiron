@@ -107,6 +107,8 @@ mod guest_doors;
 mod hook_regen_doors;
 mod hook_session;
 mod hooks;
+#[path = "facade/generated/host_door_rows.rs"]
+mod host_door_rows;
 pub(super) mod host_doors;
 mod host_trigger_doors;
 mod hub_doors;

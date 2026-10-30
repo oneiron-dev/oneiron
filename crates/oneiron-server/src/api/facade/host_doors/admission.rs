@@ -1,9 +1,12 @@
 //! The owner preflight every host door's verb meets before its door runs.
 //! `door_admits` is its call surface.
 //! Each door's own facade module defines the proof it admits on; this match only routes to it.
+//! The generated `HostDoorRow` names every host door that checks first, so the match has no
+//! catch-all arm and a new host door fails to compile until it names its check (FIX 1763).
 
 use oneiron::memory::MemoryResult;
 
+use super::super::host_door_rows::HostDoorRow as Row;
 use super::support::{
     MEDIA_OWNERS, VIDEO_JOB_OWNERS, artifact_asker, asking, diary_reader, owner_grade, owner_proof,
     slide_reviewer,
@@ -15,18 +18,24 @@ use crate::server::SyncServer;
 /// owner's proof, a person's proof, a bound principal or an owner-grade
 /// credential. The facade runs it before the row's pre chain, so a hook
 /// never fires on a call the door refuses; the door runs it again for the
-/// proof it acts under. A row whose door has no such check passes.
+/// proof it acts under. A host door whose table row says
+/// `"host_door_precheck": false` has no such check and passes, as does any
+/// row that is no host door.
 pub(in crate::api::facade) fn door_admits(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<()> {
-    match verb {
-        "vault.booking.constraint_turn"
-        | "vault.booking.availability"
-        | "vault.booking.book"
-        | "vault.booking.reschedule"
-        | "vault.booking.cancel" => {
+    // Every other host door names its check below (FIX 1763).
+    let Some(row) = Row::from_verb(verb) else {
+        return Ok(());
+    };
+    match row {
+        Row::VaultBookingConstraintTurn
+        | Row::VaultBookingAvailability
+        | Row::VaultBookingBook
+        | Row::VaultBookingReschedule
+        | Row::VaultBookingCancel => {
             crate::api::facade::owner_binding::host_preflight(server, auth)?;
             crate::api::host_action::require_host_owner_act(server, auth)
                 .map(drop)
@@ -34,727 +43,750 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
-        "vault.models.manifest.read"
-        | "vault.models.manifest.replace"
-        | "vault.models.oneironer.bind"
-        | "vault.models.routes.read"
-        | "vault.models.routes.replace"
-        | "vault.models.roles.read"
-        | "vault.models.roles.invoke"
-        | "ai.steps.submit"
-        | "ai.steps.receipt"
-        | "ai.streams.open"
-        | "ai.streams.subscribe"
-        | "ai.streams.events"
-        | "ai.streams.detach"
-        | "ai.streams.abort"
-        | "ai.streams.terminal"
-        | "vault.models.catalog.refresh"
-        | "vault.models.catalog.get"
-        | "vault.models.catalog.diff"
-        | "vault.models.trials.nominate"
-        | "vault.models.trials.get"
-        | "vault.models.trials.approve"
-        | "vault.models.trials.run"
-        | "vault.models.trials.complete"
-        | "vault.models.bindings.propose"
-        | "vault.models.bindings.get"
-        | "vault.models.bindings.read"
-        | "vault.models.bindings.accept"
-        | "vault.models.bindings.deny"
-        | "vault.runs.step"
-        | "vault.runs.checkpoint"
-        | "vault.runs.review"
-        | "vault.runs.settle"
-        | "vault.runs.settlement"
-        | "vault.revert_run"
-        | "ai.reply"
-        | "calendar.ics.configure"
-        | "calendar.ics.poll"
-        | "calendar.ics.status"
-        | "calendar.connector.configure"
-        | "calendar.connector.get"
-        | "calendar.connector.kill"
-        | "calendar.connector.pull"
-        | "calendar.connector.write"
-        | "calendar.imip.configure"
-        | "calendar.imip.get"
-        | "vault.calendar.ics.import"
-        | "vault.calendar.instances.move"
-        | "vault.calendar.outcome_policy.get"
-        | "vault.calendar.outcome_policy.set"
-        | "vault.calendar.check_in.due"
-        | "vault.calendar.check_in.answer"
-        | "vault.campaign.compliance.install"
-        | "vault.campaign.compliance.approve"
-        | "vault.campaign.compliance.reject"
-        | "vault.campaign.compliance.verify"
-        | "vault.companions.access_requests.answer"
-        | "vault.disclosure.ceiling.get"
-        | "vault.disclosure.ceiling.set"
-        | "vault.disclosure.ceiling.clear"
-        | "vault.disclosure.reveals"
-        | "vault.disclosure.reveals.answer"
-        | "vault.commitments.create"
-        | "vault.commitments.get"
-        | "vault.commitments.instances"
-        | "vault.commitments.proposals"
-        | "vault.commitments.fulfill"
-        | "vault.commitments.release"
-        | "vault.commitments.supersede"
-        | "vault.personas.preview"
-        | "vault.personas.export"
-        | "vault.personas.edit"
-        | "vault.identity.merge"
-        | "vault.identity.split"
-        | "vault.identity.facet"
-        | "vault.identity.assert_distinct"
-        | "vault.identity.propose"
-        | "vault.identity.undo"
-        | "vault.identity.resolve"
-        | "vault.identity.events.get"
-        | "vault.identity.proposals.resolve"
-        | "vault.identity.proposals.for_pair"
-        | "vault.packs.preview"
-        | "vault.packs.connector.prepare"
-        | "vault.packs.connector.get"
-        | "vault.packs.connector.qualify"
-        | "vault.packs.connector.accept"
-        | "vault.packs.connector.update"
-        | "vault.packs.connector.grants.get"
-        | "vault.packs.connector.grants.put"
-        | "vault.packs.remove"
-        | "vault.skill_hubs.put"
-        | "vault.skill_hubs.get"
-        | "vault.skill_hubs.default.get"
-        | "vault.skill_hubs.publishers.admit"
-        | "vault.skill_hubs.publishers.revoke"
-        | "vault.skill_hubs.refs.get"
-        | "vault.skill_hubs.refs.set"
-        | "vault.packs.install"
-        | "vault.packs.sync"
-        | "vault.packs.get"
-        | "vault.skills.bootstrap"
-        | "vault.skills.restoreDefaults"
-        | "vault.skills.import"
-        | "vault.skills.sync"
-        | "vault.skills.receipts"
-        | "vault.skills.convert"
-        | "vault.skills.get"
-        | "vault.skills.list"
-        | "vault.skills.archive"
-        | "vault.skills.restore"
-        | "vault.skills.rules.set"
-        | "vault.skills.code_auto_install.set"
-        | "vault.skills.permissions.approve"
-        | "vault.skills.optimize.start"
-        | "vault.skills.optimize.result"
-        | "vault.projects.goal.intake.complete"
-        | "vault.projects.goal.get"
-        | "vault.skills.optimize.propose"
-        | "vault.skills.optimize.measure"
-        | "vault.skills.optimize.score"
-        | "vault.skills.optimize.admit"
-        | "vault.skills.optimize.goal.get"
-        | "vault.skills.optimize.goal.bind"
-        | "vault.skills.optimize.preferences.get"
-        | "vault.skills.optimize.preferences.set"
-        | "vault.skills.governance.get"
-        | "vault.skills.governance.set"
-        | "vault.skills.pack_receipt"
-        | "vault.skills.outcomes.project"
-        | "vault.skills.outcomes.get"
-        | "vault.skills.attribution.settle"
-        | "vault.skills.attribution.read"
-        | "vault.skills.attribution.evidence.record"
-        | "vault.skills.attribution.project"
-        | "vault.skills.attribution.judgments"
-        | "vault.skills.attribution.proposals"
-        | "vault.skills.attribution.positive.retire"
-        | "vault.packs.hooks.bind"
-        | "vault.packs.hooks.list"
-        | "vault.packs.hooks.grant.set"
-        | "vault.packs.hooks.grant.get"
-        | "vault.packs.hooks.qualify"
-        | "vault.connectors.proxy.admit"
-        | "vault.connectors.proxy.revoke_write"
-        | "vault.connectors.subscriptions.put"
-        | "vault.connectors.subscriptions.list"
-        | "vault.connectors.subscriptions.revoke"
-        | "vault.authority.audit"
-        | "vault.authority.history.export"
-        | "vault.authority.history.import"
-        | "vault.authority.clock.repair"
-        | "vault.mesh.path_receipts"
-        | "vault.mesh.identity"
-        | "vault.mesh.bind_machine"
-        | "vault.mesh.set_alpn_grant"
-        | "vault.mesh.revoke_machine"
-        | "vault.mesh.dial"
-        | "host.compact"
-        | "host.wake"
-        | "host.budget.hit"
-        | "vault.hooks.replay"
-        | "vault.hooks.regen.due"
-        | "vault.hooks.regen.get"
-        | "vault.hooks.regen.adopt"
-        | "vault.lenses.activate"
-        | "vault.lenses.deactivate"
-        | "vault.authority.handoff_alarms"
-        | "vault.authority.handoff_alarms.acknowledge"
-        | "vault.records.erase_sweep"
-        | "vault.cleanup.run"
-        | "vault.cleanup.review"
-        | "vault.cleanup.decide"
-        | "vault.entities.mention"
-        | "vault.people.create"
-        | "vault.entities.look_before_mint"
-        | "vault.identity.mention"
-        | "self.identity.answer"
-        | "vault.legal_holds.place"
-        | "vault.legal_holds.widen"
-        | "vault.legal_holds.list"
-        | "vault.legal_holds.log"
-        | "vault.legal_holds.lift_and_erase"
-        | "vault.agents.grants.mint"
-        | "vault.agents.grants.revoke"
-        | "vault.repo.git_push.mint"
-        | "vault.repo.git_push.revoke"
-        | "vault.repo.anchor.bind"
-        | "vault.agents.base"
-        | "vault.residence.mode"
-        | "vault.residence.open"
-        | "vault.residence.index"
-        | "vault.residence.prune"
-        | "vault.residence.directives"
-        | "vault.courtesy_delete.send"
-        | "vault.courtesy_delete.sent"
-        | "vault.courtesy_delete.incoming"
-        | "vault.courtesy_delete.answer"
-        | "vault.decisions.bands.read"
-        | "vault.decisions.bands.learn"
-        | "vault.decisions.bands.enforce"
-        | "vault.retrieval.aging.get"
-        | "vault.retrieval.aging.configure"
-        | "vault.retrieval.weights.get"
-        | "vault.retrieval.weights.configure"
-        | "vault.retrieval.hyde.configure"
-        | "vault.retrieval.hyde.get"
-        | "vault.affect.claims.consolidate"
-        | "vault.wire_health.thresholds.get"
-        | "vault.wire_health.thresholds.set"
-        | "vault.affect.coping.record"
-        | "vault.affect.coping.update"
-        | "vault.affect.coping.aggregate"
-        | "vault.affect.wellness.policy.get"
-        | "vault.affect.wellness.policy.configure"
-        | "vault.affect.wellness.derive"
-        | "vault.affect.wellness.get"
-        | "vault.slim.policy"
-        | "vault.slim.state"
-        | "vault.slim.resume_step"
-        | "vault.slim.drop_heavy"
-        | "vault.slim.resume"
-        | "vault.retrieval.recall"
-        | "vault.vectors.put"
-        | "vault.retrieval.runs"
-        | "vault.retrieval.run"
-        | "vault.retrieval.turn"
-        | "vault.retrieval.outcomes.put"
-        | "vault.retrieval.outcomes.end"
-        | "vault.retrieval.trace"
-        | "vault.retrieval.export"
-        | "vault.retrieval.replay"
-        | "vault.retrieval.policy.get"
-        | "vault.retrieval.policy.pin"
-        | "vault.retrieval.policy.train"
-        | "vault.retrieval.policy.evaluate"
-        | "vault.retrieval.policy.admit"
-        | "vault.retrieval.policy.update"
-        | "vault.learning.read"
-        | "vault.learning.projection"
-        | "vault.seal.confess"
-        | "vault.seal.audit"
-        | "vault.seal.receipt"
-        | "vault.seal.pending"
-        | "vault.seal.run"
-        | "vault.seal.complete"
-        | "vault.settings.learning"
-        | "vault.settings.learning.put"
-        | "vault.settings.learning.clear"
-        | "vault.widen_proposals"
-        | "vault.widen_proposals.approve"
-        | "vault.widen_proposals.decline"
-        | "vault.craft_candidates"
-        | "vault.craft_candidates.answer"
-        | "vault.memory.signal_extraction"
-        | "vault.memory.signal_extraction.result"
-        | "feedback.preview"
-        | "feedback.send"
-        | "vault.reports.disclosure"
-        | "vault.reports.route"
-        | "vault.reports.outbound"
-        | "vault.writes.critical_confirm.pending"
-        | "vault.writes.critical_confirm.clear"
-        | "vault.writes.critical_confirm.decline"
-        | "vault.writes.critical_confirm.receipt"
-        | "vault.claims.review"
-        | "vault.claims.settle"
-        | "vault.packs.sections.grant"
-        | "vault.packs.sections.revoke"
-        | "vault.packs.sections.suggestions.get"
-        | "vault.packs.sections.suggestions.set"
-        | "vault.claims.vet"
-        | "vault.claims.vetting"
-        | "vault.consolidation.promote"
-        | "vault.consolidation.evidence"
-        | "vault.consolidation.pin"
-        | "vault.consolidation.frontier"
-        | "vault.consolidation.accounting"
-        | "vault.sieve.evidence"
-        | "vault.sieve.evidence.replay"
-        | "vault.sieve.cadence"
-        | "vault.sieve.settlements"
-        | "vault.sieve.settlements.get"
-        | "vault.sieve.queue"
-        | "vault.sieve.retained"
-        | "vault.sieve.receipts"
-        | "vault.sieve.policy"
-        | "vault.sieve.policy.set"
-        | "vault.sieve.recipe_policy"
-        | "vault.sieve.recipe_policy.set"
-        | "vault.sieve.lease"
-        | "vault.sieve.lease.refill"
-        | "vault.free_time.policy.get"
-        | "vault.free_time.policy.set"
-        | "vault.free_time.cycles"
-        | "vault.free_time.cycle"
-        | "vault.settings.wake_policy.set"
-        | "vault.agents.create"
-        | "vault.agents.update"
-        | "vault.agents.get"
-        | "vault.agents.dreaming.get"
-        | "vault.agents.dreaming.set"
-        | "vault.standing_blocks.configure"
-        | "vault.standing_blocks.reconfigure"
-        | "vault.standing_blocks.get"
-        | "vault.standing_blocks.list"
-        | "vault.workflows.save"
-        | "vault.workflows.update"
-        | "vault.workflows.get"
-        | "vault.workflows.dispatch"
-        | "vault.workflows.status"
-        | "vault.task_types.pin"
-        | "vault.task_types.get"
-        | "vault.agents.spawn.get"
-        | "vault.agents.spawn"
-        | "vault.tasks.cancel.force"
-        | "vault.runs.branches.get"
-        | "vault.consults.get"
-        | "vault.consolidation.home.get"
-        | "vault.consolidation.home.pick"
-        | "vault.consolidation.lineage"
-        | "vault.consolidation.candidate_decisions"
-        | "vault.workspace.roster"
-        | "vault.booking.page_token"
-        | "vault.channel_identities.provision"
-        | "vault.channel_identities.bind"
-        | "vault.channel_identities.fulfill"
-        | "vault.channel_identities.rotate"
-        | "vault.channel_identities.release"
-        | "vault.channel_identities.route_inbound"
-        | "vault.delivery_window.policy.put"
-        | "vault.delivery_window.policy.retract"
-        | "vault.policy.owner.get"
-        | "vault.policy.owner.configure"
-        | "vault.policy.owner.row.change"
-        | "vault.consent.approve_once"
-        | "vault.connectors.calls.approve_once"
-        | "vault.connectors.slates.redraft"
-        | "vault.connectors.slates.scope_outcome"
-        | "vault.connectors.slates.revision_offers"
-        | "vault.connectors.slates.defer_revision"
-        | "vault.connectors.slates.accept_revision"
-        | "vault.connectors.slates.reask_issuer"
-        | "vault.consent.deny"
-        | "vault.consent.failure_signals_held"
-        | "vault.consent.create_standing_grant"
-        | "vault.consent.registry"
-        | "vault.consent.revoke"
-        | "vault.consent.bypass_grant_warning"
-        | "vault.consent.create_bypass_grant"
-        | "vault.consent.active_bypass_grants"
-        | "vault.consent.bypassed_effect_receipts"
-        | "vault.consent.graduation.policy"
-        | "vault.consent.graduation.policy.set"
-        | "vault.consent.graduation.policy.clear"
-        | "vault.consent.graduation.stats"
-        | "vault.consent.graduation.outcome"
-        | "vault.consent.graduation.offers"
-        | "vault.consent.graduation.answer"
-        | "vault.consent.graduation.trust_table"
-        | "vault.consent.graduation.settings.unpin"
-        | "vault.consent.graduation.demote"
-        | "vault.gate.policy.get"
-        | "vault.gate.checker.get"
-        | "vault.gate.checker.set"
-        | "vault.embedding_spaces.list"
-        | "vault.embedding_spaces.declare"
-        | "vault.embedding_spaces.bind"
-        | "vault.embedding_spaces.one_space"
-        | "vault.embedding_spaces.retire"
-        | "vault.embedding_spaces.move"
-        | "vault.embedding_spaces.move_check"
-        | "vault.embedding_spaces.move_approve"
-        | "vault.embedding_spaces.move_undo"
-        | "vault.embedding_spaces.move_abandon"
-        | "vault.embedding_spaces.probes.list"
-        | "vault.embedding_spaces.probes.put"
-        | "vault.embedding_spaces.probes.delete"
-        | "vault.fanout.resume"
-        | "vault.fanout.ack"
-        | "vault.federation.coreference.link"
-        | "vault.federation.coreference.confirm"
-        | "vault.federation.coreference.share_consent"
-        | "vault.federation.coreference.unlink"
-        | "vault.federation.burst.ingress"
-        | "vault.federation.burst.disposition"
-        | "vault.federation.burst.replay"
-        | "vault.federation.burst.baseline"
-        | "vault.federation.burst.policy"
-        | "vault.federation.burst.policy.set"
-        | "vault.federation.burst.review"
-        | "vault.federation.burst.review.release"
-        | "vault.federation.burst.review.reject"
-        | "vault.federation.connect.identity"
-        | "vault.federation.connect.grants.mint"
-        | "vault.federation.connect.offer"
-        | "vault.federation.connect.accept"
-        | "vault.federation.connect.narrow"
-        | "vault.federation.connect.rescope.offer"
-        | "vault.federation.connect.rescope.accept"
-        | "vault.federation.connect.disconnect"
-        | "vault.federation.connect.export"
-        | "vault.federation.connect.rejoin"
-        | "vault.guests.share"
-        | "vault.guests.reshare"
-        | "vault.guests.revoke"
-        | "vault.guests.mint_slip"
-        | "vault.support_grants.mint"
-        | "vault.support_grants.list"
-        | "vault.support_grants.revoke"
-        | "vault.files.sources.attach"
-        | "vault.files.sources.rescan"
-        | "vault.files.sources.detach"
-        | "vault.files.sources.list"
-        | "vault.files.sources.files"
-        | "vault.projects.confirm"
-        | "vault.weave.owner.link.wrong"
-        | "vault.weave.owner.item.wrong"
-        | "vault.weave.enqueue"
-        | "vault.weave.schedules.list"
-        | "vault.weave.schedules.put"
-        | "vault.weave.schedules.clear"
-        | "vault.weave.setting_changes.list"
-        | "vault.weave.setting_changes.answer"
-        | "vault.weave.setting_changes.undo"
-        | "vault.weave.digest_feedback.put"
-        | "vault.weave.owner.digest.render"
-        | "vault.inbox.concerns.review"
-        | "vault.inbox.lens"
-        | "vault.inbox.groups"
-        | "vault.budgets.lease.open"
-        | "vault.budgets.lease"
-        | "vault.budgets.lease.top_up"
-        | "vault.budgets.hold"
-        | "vault.budgets.hold.resume"
-        | "vault.budgets.local"
-        | "vault.budgets.reservations"
-        | "vault.budgets.settlements"
-        | "vault.budgets.rsi.configure"
-        | "vault.budgets.rsi"
-        | "vault.budgets.rsi.top_up"
-        | "vault.budgets.rsi.hold"
-        | "vault.budgets.rsi.hold.resume"
-        | "vault.runners.seats.quotas"
-        | "vault.runners.seats.top_up"
-        | "vault.runners.seats.resume"
-        | "vault.research.evaluate_split"
-        | "vault.research.create_child"
-        | "vault.evals.inventory"
-        | "vault.evals.cohorts.setup"
-        | "vault.evals.author_now"
-        | "vault.evals.authoring.result"
-        | "vault.evals.families"
-        | "vault.evals.families.assign"
-        | "vault.evals.cases"
-        | "vault.evals.cases.record"
-        | "vault.evals.cohorts"
-        | "vault.evals.cohorts.open"
-        | "vault.evals.exposure"
-        | "vault.evals.sufficiency"
-        | "vault.evals.labels.blocked"
-        | "vault.evals.labels.pick"
-        | "vault.coach.training_offers"
-        | "vault.coach.training_offers.get"
-        | "vault.coach.training_offers.trigger"
-        | "vault.coach.training_offers.result"
-        | "vault.coach.training_offers.answer"
-        | "vault.coach.training_offers.undo"
-        | "vault.coach.training_offers.candidates"
-        | "vault.coach.training_offers.candidates.prepare"
-        | "vault.coach.training_offers.pilots.prepare"
-        | "vault.coach.training_offers.pilots.complete"
-        | "vault.coach.training_offers.pilots.get"
-        | "vault.coach.training_offers.sources"
-        | "vault.code.symbols.declare"
-        | "vault.code.symbols.renew"
-        | "vault.code.symbols.release"
-        | "vault.code.proposal_submit"
-        | "vault.code.conflict_record"
-        | "vault.code.conflict_view"
-        | "vault.code.proposal_resolve"
-        | "vault.code.proposal_review"
-        | "vault.code.proposal_settle"
-        | "vault.code.proposal_settlement"
-        | "vault.code.oplog"
-        | "vault.results.status"
-        | "vault.results.recover"
-        | "vault.results.read"
-        | "vault.results.slice"
-        | "vault.code.model_heal_count"
-        | "vault.code.type_diagnostics"
-        | "vault.code.waits.resolve"
-        | "vault.code.waits.receipt"
-        | "vault.code.export"
-        | "vault.code.import"
-        | "vault.code.repos.get"
-        | "vault.code.forks.get"
-        | "vault.code.ingress.get"
-        | "vault.code.origin.register"
-        | "vault.code.origin.mirror.get"
-        | "vault.code.origin.mirror.plan"
-        | "vault.code.origin.mirror.set"
-        | "vault.code.origin.mirror.strategy"
-        | "vault.code.origin.mirror.clear"
-        | "vault.code.origin.mirror.push"
-        | "vault.code.origin.authority.get"
-        | "vault.code.origin.authority.set"
-        | "vault.code.origin.publications"
-        | "vault.code.checkout.bind"
-        | "vault.artifacts.keep_outline"
-        | "vault.artifacts.decline_outline"
-        | "vault.artifacts.publish_approval"
-        | "vault.artifacts.pointer"
-        | "vault.artifacts.unpublish"
-        | "vault.artifacts.link_token"
-        | "vault.artifacts.live_preview.register"
-        | "vault.artifacts.live_preview.close"
-        | "vault.artifacts.live_preview.invite"
-        | "vault.artifacts.live_preview.revoke_invite"
-        | "vault.artifacts.live_preview.share"
-        | "vault.artifacts.live_preview.revoke_share"
-        | "vault.code.views.materialize"
-        | "vault.code.views.get"
-        | "vault.code.views.read"
-        | "vault.code.views.action"
-        | "vault.code.views.build"
-        | "vault.code.cache.get"
-        | "vault.code.cache.reuse"
-        | "vault.code.snapshots.ingest"
-        | "vault.code.snapshots.get"
-        | "vault.code.snapshots.read"
-        | "vault.code.symbols.definitions"
-        | "vault.code.merge_queue.enqueue"
-        | "vault.code.merge_queue.stage"
-        | "vault.code.merge_queue.observe"
-        | "vault.code.merge_queue.requeue_survivors"
-        | "vault.code.merge_queue.land_reviewed"
-        | "vault.code.merge_queue.settle_slow"
-        | "vault.code.merge_queue.recover"
-        | "vault.code.merge_queue.init"
-        | "vault.code.merge_queue.check"
-        | "vault.code.merge_queue.diagnose"
-        | "vault.code.merge_queue.check_status"
-        | "vault.code.checks.get"
-        | "vault.code.merge_queue.export_green"
-        | "vault.trusted_contacts.tier.set"
-        | "vault.org_admin.configure"
-        | "vault.shared.policy.get"
-        | "vault.shared.policy.change"
-        | "vault.shared.policy.changes"
-        | "vault.roots.requests.create"
-        | "vault.roots.requests.list"
-        | "vault.owner_work.get"
-        | "vault.tasks.comm_widen.revoke"
-        | "vault.notes.history_purge"
-        | "vault.notes.history_purge_execute"
-        | "vault.notes.history_purge_receipts"
-        | "vault.runs.program_hold.release"
-        | "ai.voice.asr.open"
-        | "ai.voice.asr.hypothesis"
-        | "ai.voice.asr.finalize"
-        | "ai.voice.asr.close"
-        | "ai.voice.start"
-        | "ai.voice.audio"
-        | "ai.voice.events"
-        | "ai.voice.ack"
-        | "ai.voice.usage"
-        | "ai.voice.tool"
-        | "ai.voice.end"
-        | "ai.voice.close"
-        | "vault.secrets.register"
-        | "vault.secrets.rotate"
-        | "vault.secrets.rewrap"
-        | "vault.secrets.revoke"
-        | "vault.secrets.custody.get"
-        | "vault.secrets.custody.submit"
-        | "vault.custody.members.drain.begin"
-        | "vault.custody.members.drain.commit"
-        | "vault.custody.members.drain.folder"
-        | "vault.custody.members.reenrol" => owner_proof(auth, server, verb).map(drop),
-        "vault.shared.propose_delete"
-        | "vault.shared.propose_transfer"
-        | "vault.shared.propose_remove_owner"
-        | "vault.shared.execute"
-        | "vault.shared.receipt"
-        | "vault.shared.outcomes"
-        | "vault.members.delegate"
-        | "vault.members.add"
-        | "vault.members.change"
-        | "vault.members.remove"
-        | "vault.members.leave"
-        | "vault.members.invitations"
-        | "vault.members.accept"
-        | "vault.members.decline"
-        | "vault.members.withdraw_invitation"
-        | "vault.members.invitation_slip"
-        | "vault.shared.object"
-        | "vault.shared.withdraw_objection"
-        | "vault.shared.started"
-        | "vault.shared.matured"
-        | "vault.shared.erase_ask"
-        | "vault.shared.erase_asks"
-        | "vault.shared.close_erase_ask"
-        | "vault.records.erase_preview"
-        | "vault.records.erase_confirm"
-        | "vault.workspace.establish"
-        | "vault.workspace.members.onboard"
-        | "vault.trusted_contacts.list"
-        | "vault.trusted_contacts.consent"
-        | "vault.trusted_contacts.revoke"
-        | "vault.shared.policy.propose"
-        | "vault.shared.policy.answer" => {
+        Row::VaultModelsManifestRead
+        | Row::VaultModelsManifestReplace
+        | Row::VaultModelsOneironerBind
+        | Row::VaultModelsRoutesRead
+        | Row::VaultModelsRoutesReplace
+        | Row::VaultModelsRolesRead
+        | Row::VaultModelsRolesInvoke
+        | Row::AiStepsSubmit
+        | Row::AiStepsReceipt
+        | Row::AiStreamsOpen
+        | Row::AiStreamsSubscribe
+        | Row::AiStreamsEvents
+        | Row::AiStreamsDetach
+        | Row::AiStreamsAbort
+        | Row::AiStreamsTerminal
+        | Row::VaultModelsCatalogRefresh
+        | Row::VaultModelsCatalogGet
+        | Row::VaultModelsCatalogDiff
+        | Row::VaultModelsTrialsNominate
+        | Row::VaultModelsTrialsGet
+        | Row::VaultModelsTrialsApprove
+        | Row::VaultModelsTrialsRun
+        | Row::VaultModelsTrialsComplete
+        | Row::VaultModelsBindingsPropose
+        | Row::VaultModelsBindingsGet
+        | Row::VaultModelsBindingsRead
+        | Row::VaultModelsBindingsAccept
+        | Row::VaultModelsBindingsDeny
+        | Row::VaultRunsStep
+        | Row::VaultRunsCheckpoint
+        | Row::VaultRunsReview
+        | Row::VaultRunsSettle
+        | Row::VaultRunsSettlement
+        | Row::VaultRevertRun
+        | Row::AiReply
+        | Row::CalendarIcsConfigure
+        | Row::CalendarIcsPoll
+        | Row::CalendarIcsStatus
+        | Row::CalendarConnectorConfigure
+        | Row::CalendarConnectorGet
+        | Row::CalendarConnectorKill
+        | Row::CalendarConnectorPull
+        | Row::CalendarConnectorWrite
+        | Row::CalendarImipConfigure
+        | Row::CalendarImipGet
+        | Row::VaultCalendarIcsImport
+        | Row::VaultCalendarInstancesMove
+        | Row::VaultCalendarOutcomePolicyGet
+        | Row::VaultCalendarOutcomePolicySet
+        | Row::VaultCalendarCheckInDue
+        | Row::VaultCalendarCheckInAnswer
+        | Row::VaultCampaignComplianceInstall
+        | Row::VaultCampaignComplianceApprove
+        | Row::VaultCampaignComplianceReject
+        | Row::VaultCampaignComplianceVerify
+        | Row::VaultCompanionsAccessRequestsAnswer
+        | Row::VaultDisclosureCeilingGet
+        | Row::VaultDisclosureCeilingSet
+        | Row::VaultDisclosureCeilingClear
+        | Row::VaultDisclosureReveals
+        | Row::VaultDisclosureRevealsAnswer
+        | Row::VaultCommitmentsCreate
+        | Row::VaultCommitmentsGet
+        | Row::VaultCommitmentsInstances
+        | Row::VaultCommitmentsProposals
+        | Row::VaultCommitmentsFulfill
+        | Row::VaultCommitmentsRelease
+        | Row::VaultCommitmentsSupersede
+        | Row::VaultPersonasPreview
+        | Row::VaultPersonasExport
+        | Row::VaultPersonasEdit
+        | Row::VaultIdentityMerge
+        | Row::VaultIdentitySplit
+        | Row::VaultIdentityFacet
+        | Row::VaultIdentityAssertDistinct
+        | Row::VaultIdentityPropose
+        | Row::VaultIdentityUndo
+        | Row::VaultIdentityResolve
+        | Row::VaultIdentityEventsGet
+        | Row::VaultIdentityProposalsResolve
+        | Row::VaultIdentityProposalsForPair
+        | Row::VaultPacksPreview
+        | Row::VaultPacksConnectorPrepare
+        | Row::VaultPacksConnectorGet
+        | Row::VaultPacksConnectorQualify
+        | Row::VaultPacksConnectorAccept
+        | Row::VaultPacksConnectorUpdate
+        | Row::VaultPacksConnectorGrantsGet
+        | Row::VaultPacksConnectorGrantsPut
+        | Row::VaultPacksRemove
+        | Row::VaultSkillHubsPut
+        | Row::VaultSkillHubsGet
+        | Row::VaultSkillHubsDefaultGet
+        | Row::VaultSkillHubsPublishersAdmit
+        | Row::VaultSkillHubsPublishersRevoke
+        | Row::VaultSkillHubsRefsGet
+        | Row::VaultSkillHubsRefsSet
+        | Row::VaultPacksInstall
+        | Row::VaultPacksSync
+        | Row::VaultPacksGet
+        | Row::VaultSkillsBootstrap
+        | Row::VaultSkillsRestoredefaults
+        | Row::VaultSkillsImport
+        | Row::VaultSkillsSync
+        | Row::VaultSkillsReceipts
+        | Row::VaultSkillsConvert
+        | Row::VaultSkillsGet
+        | Row::VaultSkillsList
+        | Row::VaultSkillsArchive
+        | Row::VaultSkillsRestore
+        | Row::VaultSkillsRulesSet
+        | Row::VaultSkillsCodeAutoInstallSet
+        | Row::VaultSkillsPermissionsApprove
+        | Row::VaultSkillsOptimizeStart
+        | Row::VaultSkillsOptimizeResult
+        | Row::VaultProjectsGoalIntakeComplete
+        | Row::VaultProjectsGoalGet
+        | Row::VaultSkillsOptimizePropose
+        | Row::VaultSkillsOptimizeMeasure
+        | Row::VaultSkillsOptimizeScore
+        | Row::VaultSkillsOptimizeAdmit
+        | Row::VaultSkillsOptimizeGoalGet
+        | Row::VaultSkillsOptimizeGoalBind
+        | Row::VaultSkillsOptimizePreferencesGet
+        | Row::VaultSkillsOptimizePreferencesSet
+        | Row::VaultSkillsGovernanceGet
+        | Row::VaultSkillsGovernanceSet
+        | Row::VaultSkillsPackReceipt
+        | Row::VaultSkillsOutcomesProject
+        | Row::VaultSkillsOutcomesGet
+        | Row::VaultSkillsAttributionSettle
+        | Row::VaultSkillsAttributionRead
+        | Row::VaultSkillsAttributionEvidenceRecord
+        | Row::VaultSkillsAttributionProject
+        | Row::VaultSkillsAttributionJudgments
+        | Row::VaultSkillsAttributionProposals
+        | Row::VaultSkillsAttributionPositiveRetire
+        | Row::VaultPacksHooksBind
+        | Row::VaultPacksHooksList
+        | Row::VaultPacksHooksGrantSet
+        | Row::VaultPacksHooksGrantGet
+        | Row::VaultPacksHooksQualify
+        | Row::VaultConnectorsProxyAdmit
+        | Row::VaultConnectorsProxyRevokeWrite
+        | Row::VaultConnectorsSubscriptionsPut
+        | Row::VaultConnectorsSubscriptionsList
+        | Row::VaultConnectorsSubscriptionsRevoke
+        | Row::VaultAuthorityAudit
+        | Row::VaultAuthorityHistoryExport
+        | Row::VaultAuthorityHistoryImport
+        | Row::VaultAuthorityClockRepair
+        | Row::VaultMeshPathReceipts
+        | Row::VaultMeshIdentity
+        | Row::VaultMeshBindMachine
+        | Row::VaultMeshSetAlpnGrant
+        | Row::VaultMeshRevokeMachine
+        | Row::VaultMeshDial
+        | Row::HostCompact
+        | Row::HostWake
+        | Row::HostBudgetHit
+        | Row::VaultHooksReplay
+        | Row::VaultHooksRegenDue
+        | Row::VaultHooksRegenGet
+        | Row::VaultHooksRegenAdopt
+        | Row::VaultLensesActivate
+        | Row::VaultLensesDeactivate
+        | Row::VaultAuthorityHandoffAlarms
+        | Row::VaultAuthorityHandoffAlarmsAcknowledge
+        | Row::VaultRecordsEraseSweep
+        | Row::VaultCleanupRun
+        | Row::VaultCleanupReview
+        | Row::VaultCleanupDecide
+        | Row::VaultEntitiesMention
+        | Row::VaultPeopleCreate
+        | Row::VaultEntitiesLookBeforeMint
+        | Row::VaultIdentityMention
+        | Row::SelfIdentityAnswer
+        | Row::VaultLegalHoldsPlace
+        | Row::VaultLegalHoldsWiden
+        | Row::VaultLegalHoldsList
+        | Row::VaultLegalHoldsLog
+        | Row::VaultLegalHoldsLiftAndErase
+        | Row::VaultAgentsGrantsMint
+        | Row::VaultAgentsGrantsRevoke
+        | Row::VaultRepoGitPushMint
+        | Row::VaultRepoGitPushRevoke
+        | Row::VaultRepoAnchorBind
+        | Row::VaultAgentsBase
+        | Row::VaultResidenceMode
+        | Row::VaultResidenceOpen
+        | Row::VaultResidenceIndex
+        | Row::VaultResidencePrune
+        | Row::VaultResidenceDirectives
+        | Row::VaultCourtesyDeleteSend
+        | Row::VaultCourtesyDeleteSent
+        | Row::VaultCourtesyDeleteIncoming
+        | Row::VaultCourtesyDeleteAnswer
+        | Row::VaultDecisionsBandsRead
+        | Row::VaultDecisionsBandsLearn
+        | Row::VaultDecisionsBandsEnforce
+        | Row::VaultRetrievalAgingGet
+        | Row::VaultRetrievalAgingConfigure
+        | Row::VaultRetrievalWeightsGet
+        | Row::VaultRetrievalWeightsConfigure
+        | Row::VaultRetrievalHydeConfigure
+        | Row::VaultRetrievalHydeGet
+        | Row::VaultAffectClaimsConsolidate
+        | Row::VaultWireHealthThresholdsGet
+        | Row::VaultWireHealthThresholdsSet
+        | Row::VaultAffectCopingRecord
+        | Row::VaultAffectCopingUpdate
+        | Row::VaultAffectCopingAggregate
+        | Row::VaultAffectWellnessPolicyGet
+        | Row::VaultAffectWellnessPolicyConfigure
+        | Row::VaultAffectWellnessDerive
+        | Row::VaultAffectWellnessGet
+        | Row::VaultSlimPolicy
+        | Row::VaultSlimState
+        | Row::VaultSlimResumeStep
+        | Row::VaultSlimDropHeavy
+        | Row::VaultSlimResume
+        | Row::VaultRetrievalRecall
+        | Row::VaultVectorsPut
+        | Row::VaultRetrievalRuns
+        | Row::VaultRetrievalRun
+        | Row::VaultRetrievalTurn
+        | Row::VaultRetrievalOutcomesPut
+        | Row::VaultRetrievalOutcomesEnd
+        | Row::VaultRetrievalTrace
+        | Row::VaultRetrievalExport
+        | Row::VaultRetrievalReplay
+        | Row::VaultRetrievalPolicyGet
+        | Row::VaultRetrievalPolicyPin
+        | Row::VaultRetrievalPolicyTrain
+        | Row::VaultRetrievalPolicyEvaluate
+        | Row::VaultRetrievalPolicyAdmit
+        | Row::VaultRetrievalPolicyUpdate
+        | Row::VaultLearningRead
+        | Row::VaultLearningProjection
+        | Row::VaultSealConfess
+        | Row::VaultSealAudit
+        | Row::VaultSealReceipt
+        | Row::VaultSealPending
+        | Row::VaultSealRun
+        | Row::VaultSealComplete
+        | Row::VaultSettingsLearning
+        | Row::VaultSettingsLearningPut
+        | Row::VaultSettingsLearningClear
+        | Row::VaultWidenProposals
+        | Row::VaultWidenProposalsApprove
+        | Row::VaultWidenProposalsDecline
+        | Row::VaultCraftCandidates
+        | Row::VaultCraftCandidatesAnswer
+        | Row::VaultMemorySignalExtraction
+        | Row::VaultMemorySignalExtractionResult
+        | Row::FeedbackPreview
+        | Row::FeedbackSend
+        | Row::VaultReportsDisclosure
+        | Row::VaultReportsRoute
+        | Row::VaultReportsOutbound
+        | Row::VaultWritesCriticalConfirmPending
+        | Row::VaultWritesCriticalConfirmClear
+        | Row::VaultWritesCriticalConfirmDecline
+        | Row::VaultWritesCriticalConfirmReceipt
+        | Row::VaultClaimsReview
+        | Row::VaultClaimsSettle
+        | Row::VaultPacksSectionsGrant
+        | Row::VaultPacksSectionsRevoke
+        | Row::VaultPacksSectionsSuggestionsGet
+        | Row::VaultPacksSectionsSuggestionsSet
+        | Row::VaultClaimsVet
+        | Row::VaultClaimsVetting
+        | Row::VaultConsolidationPromote
+        | Row::VaultConsolidationEvidence
+        | Row::VaultConsolidationPin
+        | Row::VaultConsolidationFrontier
+        | Row::VaultConsolidationAccounting
+        | Row::VaultSieveEvidence
+        | Row::VaultSieveEvidenceReplay
+        | Row::VaultSieveCadence
+        | Row::VaultSieveSettlements
+        | Row::VaultSieveSettlementsGet
+        | Row::VaultSieveQueue
+        | Row::VaultSieveRetained
+        | Row::VaultSieveReceipts
+        | Row::VaultSievePolicy
+        | Row::VaultSievePolicySet
+        | Row::VaultSieveRecipePolicy
+        | Row::VaultSieveRecipePolicySet
+        | Row::VaultSieveLease
+        | Row::VaultSieveLeaseRefill
+        | Row::VaultFreeTimePolicyGet
+        | Row::VaultFreeTimePolicySet
+        | Row::VaultFreeTimeCycles
+        | Row::VaultFreeTimeCycle
+        | Row::VaultSettingsWakePolicySet
+        | Row::VaultAgentsCreate
+        | Row::VaultAgentsUpdate
+        | Row::VaultAgentsGet
+        | Row::VaultAgentsDreamingGet
+        | Row::VaultAgentsDreamingSet
+        | Row::VaultStandingBlocksConfigure
+        | Row::VaultStandingBlocksReconfigure
+        | Row::VaultStandingBlocksGet
+        | Row::VaultStandingBlocksList
+        | Row::VaultWorkflowsSave
+        | Row::VaultWorkflowsUpdate
+        | Row::VaultWorkflowsGet
+        | Row::VaultWorkflowsDispatch
+        | Row::VaultWorkflowsStatus
+        | Row::VaultTaskTypesPin
+        | Row::VaultTaskTypesGet
+        | Row::VaultAgentsSpawnGet
+        | Row::VaultAgentsSpawn
+        | Row::VaultTasksCancelForce
+        | Row::VaultRunsBranchesGet
+        | Row::VaultConsultsGet
+        | Row::VaultConsolidationHomeGet
+        | Row::VaultConsolidationHomePick
+        | Row::VaultConsolidationLineage
+        | Row::VaultConsolidationCandidateDecisions
+        | Row::VaultWorkspaceRoster
+        | Row::VaultBookingPageToken
+        | Row::VaultChannelIdentitiesProvision
+        | Row::VaultChannelIdentitiesBind
+        | Row::VaultChannelIdentitiesFulfill
+        | Row::VaultChannelIdentitiesRotate
+        | Row::VaultChannelIdentitiesRelease
+        | Row::VaultChannelIdentitiesRouteInbound
+        | Row::VaultDeliveryWindowPolicyPut
+        | Row::VaultDeliveryWindowPolicyRetract
+        | Row::VaultPolicyOwnerGet
+        | Row::VaultPolicyOwnerConfigure
+        | Row::VaultPolicyOwnerRowChange
+        | Row::VaultConsentApproveOnce
+        | Row::VaultConnectorsCallsApproveOnce
+        | Row::VaultConnectorsSlatesRedraft
+        | Row::VaultConnectorsSlatesScopeOutcome
+        | Row::VaultConnectorsSlatesRevisionOffers
+        | Row::VaultConnectorsSlatesDeferRevision
+        | Row::VaultConnectorsSlatesAcceptRevision
+        | Row::VaultConnectorsSlatesReaskIssuer
+        | Row::VaultConsentDeny
+        | Row::VaultConsentFailureSignalsHeld
+        | Row::VaultConsentCreateStandingGrant
+        | Row::VaultConsentRegistry
+        | Row::VaultConsentRevoke
+        | Row::VaultConsentBypassGrantWarning
+        | Row::VaultConsentCreateBypassGrant
+        | Row::VaultConsentActiveBypassGrants
+        | Row::VaultConsentBypassedEffectReceipts
+        | Row::VaultConsentGraduationPolicy
+        | Row::VaultConsentGraduationPolicySet
+        | Row::VaultConsentGraduationPolicyClear
+        | Row::VaultConsentGraduationStats
+        | Row::VaultConsentGraduationOutcome
+        | Row::VaultConsentGraduationOffers
+        | Row::VaultConsentGraduationAnswer
+        | Row::VaultConsentGraduationTrustTable
+        | Row::VaultConsentGraduationSettingsUnpin
+        | Row::VaultConsentGraduationDemote
+        | Row::VaultGatePolicyGet
+        | Row::VaultGateCheckerGet
+        | Row::VaultGateCheckerSet
+        | Row::VaultEmbeddingSpacesList
+        | Row::VaultEmbeddingSpacesDeclare
+        | Row::VaultEmbeddingSpacesBind
+        | Row::VaultEmbeddingSpacesOneSpace
+        | Row::VaultEmbeddingSpacesRetire
+        | Row::VaultEmbeddingSpacesMove
+        | Row::VaultEmbeddingSpacesMoveCheck
+        | Row::VaultEmbeddingSpacesMoveApprove
+        | Row::VaultEmbeddingSpacesMoveUndo
+        | Row::VaultEmbeddingSpacesMoveAbandon
+        | Row::VaultEmbeddingSpacesProbesList
+        | Row::VaultEmbeddingSpacesProbesPut
+        | Row::VaultEmbeddingSpacesProbesDelete
+        | Row::VaultFanoutResume
+        | Row::VaultFanoutAck
+        | Row::VaultFederationCoreferenceLink
+        | Row::VaultFederationCoreferenceConfirm
+        | Row::VaultFederationCoreferenceShareConsent
+        | Row::VaultFederationCoreferenceUnlink
+        | Row::VaultFederationBurstIngress
+        | Row::VaultFederationBurstDisposition
+        | Row::VaultFederationBurstReplay
+        | Row::VaultFederationBurstBaseline
+        | Row::VaultFederationBurstPolicy
+        | Row::VaultFederationBurstPolicySet
+        | Row::VaultFederationBurstReview
+        | Row::VaultFederationBurstReviewRelease
+        | Row::VaultFederationBurstReviewReject
+        | Row::VaultFederationConnectIdentity
+        | Row::VaultFederationConnectGrantsMint
+        | Row::VaultFederationConnectOffer
+        | Row::VaultFederationConnectAccept
+        | Row::VaultFederationConnectNarrow
+        | Row::VaultFederationConnectRescopeOffer
+        | Row::VaultFederationConnectRescopeAccept
+        | Row::VaultFederationConnectDisconnect
+        | Row::VaultFederationConnectExport
+        | Row::VaultFederationConnectRejoin
+        | Row::VaultGuestsShare
+        | Row::VaultGuestsReshare
+        | Row::VaultGuestsRevoke
+        | Row::VaultGuestsMintSlip
+        | Row::VaultSupportGrantsMint
+        | Row::VaultSupportGrantsList
+        | Row::VaultSupportGrantsRevoke
+        | Row::VaultFilesSourcesAttach
+        | Row::VaultFilesSourcesRescan
+        | Row::VaultFilesSourcesDetach
+        | Row::VaultFilesSourcesList
+        | Row::VaultFilesSourcesFiles
+        | Row::VaultProjectsConfirm
+        | Row::VaultWeaveOwnerLinkWrong
+        | Row::VaultWeaveOwnerItemWrong
+        | Row::VaultWeaveEnqueue
+        | Row::VaultWeaveSchedulesList
+        | Row::VaultWeaveSchedulesPut
+        | Row::VaultWeaveSchedulesClear
+        | Row::VaultWeaveSettingChangesList
+        | Row::VaultWeaveSettingChangesAnswer
+        | Row::VaultWeaveSettingChangesUndo
+        | Row::VaultWeaveDigestFeedbackPut
+        | Row::VaultWeaveOwnerDigestRender
+        | Row::VaultInboxConcernsReview
+        | Row::VaultInboxLens
+        | Row::VaultInboxGroups
+        | Row::VaultBudgetsLeaseOpen
+        | Row::VaultBudgetsLease
+        | Row::VaultBudgetsLeaseTopUp
+        | Row::VaultBudgetsHold
+        | Row::VaultBudgetsHoldResume
+        | Row::VaultBudgetsLocal
+        | Row::VaultBudgetsReservations
+        | Row::VaultBudgetsSettlements
+        | Row::VaultBudgetsRsiConfigure
+        | Row::VaultBudgetsRsi
+        | Row::VaultBudgetsRsiTopUp
+        | Row::VaultBudgetsRsiHold
+        | Row::VaultBudgetsRsiHoldResume
+        | Row::VaultRunnersSeatsQuotas
+        | Row::VaultRunnersSeatsTopUp
+        | Row::VaultRunnersSeatsResume
+        | Row::VaultResearchEvaluateSplit
+        | Row::VaultResearchCreateChild
+        | Row::VaultEvalsInventory
+        | Row::VaultEvalsCohortsSetup
+        | Row::VaultEvalsAuthorNow
+        | Row::VaultEvalsAuthoringResult
+        | Row::VaultEvalsFamilies
+        | Row::VaultEvalsFamiliesAssign
+        | Row::VaultEvalsCases
+        | Row::VaultEvalsCasesRecord
+        | Row::VaultEvalsCohorts
+        | Row::VaultEvalsCohortsOpen
+        | Row::VaultEvalsExposure
+        | Row::VaultEvalsSufficiency
+        | Row::VaultEvalsLabelsBlocked
+        | Row::VaultEvalsLabelsPick
+        | Row::VaultCoachTrainingOffers
+        | Row::VaultCoachTrainingOffersGet
+        | Row::VaultCoachTrainingOffersTrigger
+        | Row::VaultCoachTrainingOffersResult
+        | Row::VaultCoachTrainingOffersAnswer
+        | Row::VaultCoachTrainingOffersUndo
+        | Row::VaultCoachTrainingOffersCandidates
+        | Row::VaultCoachTrainingOffersCandidatesPrepare
+        | Row::VaultCoachTrainingOffersPilotsPrepare
+        | Row::VaultCoachTrainingOffersPilotsComplete
+        | Row::VaultCoachTrainingOffersPilotsGet
+        | Row::VaultCoachTrainingOffersSources
+        | Row::VaultCodeSymbolsDeclare
+        | Row::VaultCodeSymbolsRenew
+        | Row::VaultCodeSymbolsRelease
+        | Row::VaultCodeProposalSubmit
+        | Row::VaultCodeConflictRecord
+        | Row::VaultCodeConflictView
+        | Row::VaultCodeProposalResolve
+        | Row::VaultCodeProposalReview
+        | Row::VaultCodeProposalSettle
+        | Row::VaultCodeProposalSettlement
+        | Row::VaultCodeOplog
+        | Row::VaultResultsStatus
+        | Row::VaultResultsRecover
+        | Row::VaultResultsRead
+        | Row::VaultResultsSlice
+        | Row::VaultCodeModelHealCount
+        | Row::VaultCodeTypeDiagnostics
+        | Row::VaultCodeWaitsResolve
+        | Row::VaultCodeWaitsReceipt
+        | Row::VaultCodeExport
+        | Row::VaultCodeImport
+        | Row::VaultCodeReposGet
+        | Row::VaultCodeForksGet
+        | Row::VaultCodeIngressGet
+        | Row::VaultCodeOriginRegister
+        | Row::VaultCodeOriginMirrorGet
+        | Row::VaultCodeOriginMirrorPlan
+        | Row::VaultCodeOriginMirrorSet
+        | Row::VaultCodeOriginMirrorStrategy
+        | Row::VaultCodeOriginMirrorClear
+        | Row::VaultCodeOriginMirrorPush
+        | Row::VaultCodeOriginAuthorityGet
+        | Row::VaultCodeOriginAuthoritySet
+        | Row::VaultCodeOriginPublications
+        | Row::VaultCodeCheckoutBind
+        | Row::VaultArtifactsKeepOutline
+        | Row::VaultArtifactsDeclineOutline
+        | Row::VaultArtifactsPublishApproval
+        | Row::VaultArtifactsPointer
+        | Row::VaultArtifactsUnpublish
+        | Row::VaultArtifactsLinkToken
+        | Row::VaultArtifactsLivePreviewRegister
+        | Row::VaultArtifactsLivePreviewClose
+        | Row::VaultArtifactsLivePreviewInvite
+        | Row::VaultArtifactsLivePreviewRevokeInvite
+        | Row::VaultArtifactsLivePreviewShare
+        | Row::VaultArtifactsLivePreviewRevokeShare
+        | Row::VaultCodeViewsMaterialize
+        | Row::VaultCodeViewsGet
+        | Row::VaultCodeViewsRead
+        | Row::VaultCodeViewsAction
+        | Row::VaultCodeViewsBuild
+        | Row::VaultCodeCacheGet
+        | Row::VaultCodeCacheReuse
+        | Row::VaultCodeSnapshotsIngest
+        | Row::VaultCodeSnapshotsGet
+        | Row::VaultCodeSnapshotsRead
+        | Row::VaultCodeSymbolsDefinitions
+        | Row::VaultCodeMergeQueueEnqueue
+        | Row::VaultCodeMergeQueueStage
+        | Row::VaultCodeMergeQueueObserve
+        | Row::VaultCodeMergeQueueRequeueSurvivors
+        | Row::VaultCodeMergeQueueLandReviewed
+        | Row::VaultCodeMergeQueueSettleSlow
+        | Row::VaultCodeMergeQueueRecover
+        | Row::VaultCodeMergeQueueInit
+        | Row::VaultCodeMergeQueueCheck
+        | Row::VaultCodeMergeQueueDiagnose
+        | Row::VaultCodeMergeQueueCheckStatus
+        | Row::VaultCodeChecksGet
+        | Row::VaultCodeMergeQueueExportGreen
+        | Row::VaultTrustedContactsTierSet
+        | Row::VaultOrgAdminConfigure
+        | Row::VaultSharedPolicyGet
+        | Row::VaultSharedPolicyChange
+        | Row::VaultSharedPolicyChanges
+        | Row::VaultRootsRequestsCreate
+        | Row::VaultRootsRequestsList
+        | Row::VaultOwnerWorkGet
+        | Row::VaultTasksCommWidenRevoke
+        | Row::VaultNotesHistoryPurge
+        | Row::VaultNotesHistoryPurgeExecute
+        | Row::VaultNotesHistoryPurgeReceipts
+        | Row::VaultRunsProgramHoldRelease
+        | Row::AiVoiceAsrOpen
+        | Row::AiVoiceAsrHypothesis
+        | Row::AiVoiceAsrFinalize
+        | Row::AiVoiceAsrClose
+        | Row::AiVoiceStart
+        | Row::AiVoiceAudio
+        | Row::AiVoiceEvents
+        | Row::AiVoiceAck
+        | Row::AiVoiceUsage
+        | Row::AiVoiceTool
+        | Row::AiVoiceEnd
+        | Row::AiVoiceClose
+        | Row::VaultSecretsRegister
+        | Row::VaultSecretsRotate
+        | Row::VaultSecretsRewrap
+        | Row::VaultSecretsRevoke
+        | Row::VaultSecretsCustodyGet
+        | Row::VaultSecretsCustodySubmit
+        | Row::VaultCustodyMembersDrainBegin
+        | Row::VaultCustodyMembersDrainCommit
+        | Row::VaultCustodyMembersDrainFolder
+        | Row::VaultCustodyMembersReenrol => owner_proof(auth, server, verb).map(drop),
+        Row::VaultSharedProposeDelete
+        | Row::VaultSharedProposeTransfer
+        | Row::VaultSharedProposeRemoveOwner
+        | Row::VaultSharedExecute
+        | Row::VaultSharedReceipt
+        | Row::VaultSharedOutcomes
+        | Row::VaultMembersDelegate
+        | Row::VaultMembersAdd
+        | Row::VaultMembersChange
+        | Row::VaultMembersRemove
+        | Row::VaultMembersLeave
+        | Row::VaultMembersInvitations
+        | Row::VaultMembersAccept
+        | Row::VaultMembersDecline
+        | Row::VaultMembersWithdrawInvitation
+        | Row::VaultMembersInvitationSlip
+        | Row::VaultSharedObject
+        | Row::VaultSharedWithdrawObjection
+        | Row::VaultSharedStarted
+        | Row::VaultSharedMatured
+        | Row::VaultSharedEraseAsk
+        | Row::VaultSharedEraseAsks
+        | Row::VaultSharedCloseEraseAsk
+        | Row::VaultRecordsErasePreview
+        | Row::VaultRecordsEraseConfirm
+        | Row::VaultWorkspaceEstablish
+        | Row::VaultWorkspaceMembersOnboard
+        | Row::VaultTrustedContactsList
+        | Row::VaultTrustedContactsConsent
+        | Row::VaultTrustedContactsRevoke
+        | Row::VaultSharedPolicyPropose
+        | Row::VaultSharedPolicyAnswer => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
         // The voice bank's rows (FIX 4393): a live person on their own proof,
         // owner or not, or a designed voice's creator on its own credential;
         // the bank binds each act to the voice's subject or creator.
-        "vault.voices.packs.put"
-        | "vault.voices.render_consent"
-        | "vault.voices.targets.provision"
-        | "vault.voices.targets.evict"
-        | "vault.voices.inspect"
-        | "vault.voices.lineage" => {
+        Row::VaultVoicesPacksPut
+        | Row::VaultVoicesRenderConsent
+        | Row::VaultVoicesTargetsProvision
+        | Row::VaultVoicesTargetsEvict
+        | Row::VaultVoicesInspect
+        | Row::VaultVoicesLineage => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
         }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
-        "vault.code.origin.publish.request"
-        | "vault.code.origin.publish.review"
-        | "vault.code.origin.publish.get"
-        | "vault.code.origin.publish.approve"
-        | "vault.code.origin.publish.execute"
-        | "vault.code.origin.publish.cancel" => {
+        Row::VaultCodeOriginPublishRequest
+        | Row::VaultCodeOriginPublishReview
+        | Row::VaultCodeOriginPublishGet
+        | Row::VaultCodeOriginPublishApprove
+        | Row::VaultCodeOriginPublishExecute
+        | Row::VaultCodeOriginPublishCancel => {
             crate::api::facade::origin_publish_doors::publish_admits(server, auth, verb)
         }
         // The outside import rows (FIX 6871): a bound principal; the engine
         // door admits the owner or the push's own standing.
-        "vault.code.imports.create" | "vault.code.imports.get" => {
+        Row::VaultCodeImportsCreate | Row::VaultCodeImportsGet => {
             crate::api::facade::code_import_doors::imports_admit(server, auth, verb)
         }
         // The exact export preview rows (FIX 6869, G4 PR3): a live Owner, or a
         // bound principal whose one Grant the engine door admits.
-        "vault.code.export.preview" | "vault.code.export.preview.read" => {
+        Row::VaultCodeExportPreview | Row::VaultCodeExportPreviewRead => {
             crate::api::facade::origin_doors::preview_admits(server, auth, verb)
         }
         // The vault's review policy rows (FIX 8268): a live Owner, or a bound
         // principal whose one Grant the engine door admits.
-        "vault.code.merge_queue.review_policy.get" | "vault.code.merge_queue.review_policy.set" => {
+        Row::VaultCodeMergeQueueReviewPolicyGet | Row::VaultCodeMergeQueueReviewPolicySet => {
             crate::api::facade::merge_queue_checker_doors::review_policy_admits(server, auth, verb)
         }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
-        "vault.workflows.dispatch_bound" => {
+        Row::VaultWorkflowsDispatchBound => {
             crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
         }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
         // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.
-        "vault.off_record.start"
-        | "vault.off_record.status"
-        | "vault.off_record.witness"
-        | "vault.off_record.discard"
-        | "vault.off_record.recall"
-        | "vault.off_record.notes.create"
-        | "vault.off_record.claims.upsert"
-        | "self.off_record.execute"
-        | "self.off_record.results.list"
-        | "self.off_record.results.read"
-        | "self.off_record.waits.get"
-        | "self.off_record.waits.answer" => {
+        Row::VaultOffRecordStart
+        | Row::VaultOffRecordStatus
+        | Row::VaultOffRecordWitness
+        | Row::VaultOffRecordDiscard
+        | Row::VaultOffRecordRecall
+        | Row::VaultOffRecordNotesCreate
+        | Row::VaultOffRecordClaimsUpsert
+        | Row::SelfOffRecordExecute
+        | Row::SelfOffRecordResultsList
+        | Row::SelfOffRecordResultsRead
+        | Row::SelfOffRecordWaitsGet
+        | Row::SelfOffRecordWaitsAnswer => {
             crate::api::facade::off_record_doors::off_record_admits(server, auth, verb)
         }
-        "vault.off_record.rooms.start"
-        | "vault.off_record.rooms.status"
-        | "vault.off_record.rooms.witness"
-        | "vault.off_record.rooms.save"
-        | "vault.off_record.rooms.save_from_here"
-        | "vault.off_record.rooms.suggest_save"
-        | "vault.off_record.rooms.confirm_save"
-        | "vault.off_record.rooms.decline_save"
-        | "vault.off_record.rooms.export" => {
+        Row::VaultOffRecordRoomsStart
+        | Row::VaultOffRecordRoomsStatus
+        | Row::VaultOffRecordRoomsWitness
+        | Row::VaultOffRecordRoomsSave
+        | Row::VaultOffRecordRoomsSaveFromHere
+        | Row::VaultOffRecordRoomsSuggestSave
+        | Row::VaultOffRecordRoomsConfirmSave
+        | Row::VaultOffRecordRoomsDeclineSave
+        | Row::VaultOffRecordRoomsExport => {
             crate::api::facade::off_record_room_doors::off_record_room_admits(auth, verb)
         }
-        "vault.guests.export_envelope" => {
+        Row::VaultGuestsExportEnvelope => {
             crate::api::facade::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
-        "execute_code" => crate::api::facade::foreign_code_doors::foreign_code_admits(server, auth),
-        "self.saved_query.evaluate" => crate::api::facade::saved_query_doors::admits(server, auth),
+        Row::ExecuteCode => {
+            crate::api::facade::foreign_code_doors::foreign_code_admits(server, auth)
+        }
+        Row::SelfSavedQueryEvaluate => crate::api::facade::saved_query_doors::admits(server, auth),
         // The access request answer (FIX 1379): the owner, or the person or
         // agent a request asks, on their own proof.
-        "self.grants.answer" => crate::api::facade::grants_doors::answer_admits(server, auth, verb),
-        "self.credential.attenuate" => crate::api::facade::credential_doors::holder(auth).map(drop),
-        "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
-        "vault.artifacts.ask" | "vault.artifacts.admit" => artifact_asker(server, auth).map(drop),
-        "self.memory.diary.query" => diary_reader(server, auth).map(drop),
-        "vault.decisions.asks.answer"
-        | "vault.decisions.asks.climb"
-        | "self.decisions.asks"
-        | "vault.fanout.resume_as" => {
+        Row::SelfGrantsAnswer => {
+            crate::api::facade::grants_doors::answer_admits(server, auth, verb)
+        }
+        Row::SelfCredentialAttenuate => {
+            crate::api::facade::credential_doors::holder(auth).map(drop)
+        }
+        Row::VaultArtifactsReviewSlides => slide_reviewer(server, auth).map(drop),
+        Row::VaultArtifactsAsk | Row::VaultArtifactsAdmit => artifact_asker(server, auth).map(drop),
+        Row::SelfMemoryDiaryQuery => diary_reader(server, auth).map(drop),
+        Row::VaultDecisionsAsksAnswer
+        | Row::VaultDecisionsAsksClimb
+        | Row::SelfDecisionsAsks
+        | Row::VaultFanoutResumeAs => {
             crate::api::facade::decision_ask_doors::holder(auth, verb).map(drop)
         }
-        "vault.retrieval.hyde.pending"
-        | "vault.retrieval.hyde.complete"
-        | "vault.retrieval.hyde.receipt" => {
+        Row::VaultRetrievalHydePending
+        | Row::VaultRetrievalHydeComplete
+        | Row::VaultRetrievalHydeReceipt => {
             crate::api::facade::hyde_doors::hyde_caller(server, auth).map(drop)
         }
-        "fetch" | "crawl" => crate::api::facade::facade_actor(server, auth)
+        Row::Fetch | Row::Crawl => crate::api::facade::facade_actor(server, auth)
             .map(drop)
             .map_err(crate::api::facade::FacadeApiError::into_memory_error),
-        "ai.verdict" => asking(auth, server).map(drop),
+        Row::AiVerdict => asking(auth, server).map(drop),
         // The pack setup doors (OF-378) and the pack put: the owner's proof,
         // or an agent acting for the owner (an agent puts `local` alone).
-        "vault.packs.put"
-        | "vault.packs.setup.prepare"
-        | "vault.packs.setup.get"
-        | "vault.packs.setup.answer"
-        | "vault.packs.setup.verify" => super::packs::setup_admits(server, auth, verb),
-        "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
+        Row::VaultPacksPut
+        | Row::VaultPacksSetupPrepare
+        | Row::VaultPacksSetupGet
+        | Row::VaultPacksSetupAnswer
+        | Row::VaultPacksSetupVerify => super::packs::setup_admits(server, auth, verb),
+        Row::AiImage | Row::AiSpeech | Row::AiTranscribe | Row::AiEmbed | Row::AiVideo => {
             owner_grade(auth, MEDIA_OWNERS)
         }
-        "ai.video.poll" | "ai.video.cancel" => owner_grade(auth, VIDEO_JOB_OWNERS),
-        _ => crate::api::facade::owner_binding::caller_bound_admits(server, auth, verb)
-            .unwrap_or(Ok(())),
+        Row::AiVideoPoll | Row::AiVideoCancel => owner_grade(auth, VIDEO_JOB_OWNERS),
+        // The rows that left the owner-only list for a caller's own act
+        // (`owner_binding::caller_bound_admits`).
+        Row::VaultTrustedContactsName
+        | Row::VaultTrustedContactsDialSet
+        | Row::VaultTrustedContactsConcernAsks
+        | Row::VaultTrustedContactsConcernAuthorize
+        | Row::VaultTrustedContactsConcernPropose
+        | Row::VaultSkillsOptimizeTradeoffAsks
+        | Row::VaultSkillsOptimizeTradeoffAsksPick
+        | Row::VaultSkillsFork
+        | Row::VaultGatePolicyPut
+        | Row::VaultArtifactsPublish
+        | Row::VaultArtifactsRepoint
+        | Row::VaultUsageEventsUndecodable
+        | Row::VaultUsageEventsRemoveUndecodable
+        | Row::VaultUsageRepairReceipts => {
+            crate::api::facade::owner_binding::caller_bound_admits(server, auth, verb)
+                .unwrap_or(Ok(()))
+        }
     }
 }
