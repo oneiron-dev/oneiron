@@ -330,7 +330,7 @@ impl HostSelfDispatcher<'_> {
             .zip(clock.as_ref())
             .map(|(host, clock)| host.planner(clock));
         let answer = match call {
-            SelfLeaderCall::Advice { top } => self.leader_advice(
+            SelfLeaderCall::Advice { top } => serde_json::json!(self.leader_advice(
                 &planner.leader,
                 planner.skills.clone(),
                 planner.seats.clone(),
@@ -340,7 +340,7 @@ impl HostSelfDispatcher<'_> {
                     usize::try_from(top).unwrap_or(usize::MAX)
                 }),
                 at,
-            )?,
+            )?),
             SelfLeaderCall::Pattern { skill } => {
                 pattern_json(&self.reload_leader_pattern(skill, &planner.executor, at)?)
             }
@@ -433,7 +433,7 @@ impl HostSelfDispatcher<'_> {
         executor: &str,
         planner: &mut dyn LeaderTeamPlanner,
         at: u64,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<crate::agent_dispatch::LeaderAdvice> {
         let (vault, leased) = self.leader_attempt()?;
         AgentDispatcher::new(vault).leader_top_shapes(
             &leased,
@@ -485,7 +485,7 @@ impl HostSelfDispatcher<'_> {
         decisions: Option<&PlannerDecisions<'_>>,
         top: usize,
         at: u64,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<crate::agent_dispatch::LeaderAdvice> {
         let (vault, leased) = self.leader_attempt()?;
         let dispatcher = AgentDispatcher::new(vault);
         let planner = VaultLeaderTeamPlanner::new(
@@ -587,12 +587,12 @@ impl HostSelfDispatcher<'_> {
         let version = ProjectProofVersion::V3;
         let challenge = body
             .authority_at(version)
-            .write_challenge(child, version, signed_at, None)?;
+            .write_challenge(child, version, signed_at, &[])?;
         Ok(ProjectWriteProof {
             slip_wire: slip.to_token()?,
             holder_signature: issuer.binding_proof(&slip, &challenge)?,
             signed_at,
-            anchor: None,
+            anchor: Vec::new(),
             version,
         })
     }

@@ -9,8 +9,6 @@
 //! pattern skill revision, payoff and cost. It neither dispatches nor
 //! creates or completes a task; the CEO picks a pattern after reading it.
 
-use serde_json::Value as JsonValue;
-
 use crate::attempt_queue::AttemptRecord;
 use crate::error::Result;
 use crate::llm::ModelId;
@@ -18,7 +16,7 @@ use crate::skill::LoadedSkillPack;
 use crate::task_verb::Care;
 
 use super::AgentDispatcher;
-use super::leader_starter::{LeaderTaskContext, LeaderTeamPlanner};
+use super::leader_starter::{LeaderAdvice, LeaderTaskContext, LeaderTeamPlanner};
 use super::planner::PlannerDecisions;
 use super::planner_live::{LivePlanRequest, PlanSeats, PlannerSeat, PlannerSkills};
 use super::team_shape::CoordinationPattern;
@@ -76,7 +74,7 @@ impl LeaderTeamPlanner for VaultLeaderTeamPlanner<'_, '_> {
         &mut self,
         task: &LeaderTaskContext,
         team_shape: &LoadedSkillPack,
-    ) -> Result<JsonValue> {
+    ) -> Result<LeaderAdvice> {
         let need = leader_spawn_need(task)?;
         let request = LivePlanRequest {
             need,
@@ -96,18 +94,17 @@ impl LeaderTeamPlanner for VaultLeaderTeamPlanner<'_, '_> {
             self.at,
         )?;
         shapes.truncate(self.top.max(1));
-        let advice = serde_json::json!({
-            "task_ref": task.task_ref.to_hex(),
-            "project_ref": task.responsibility.project_ref.to_hex(),
-            "asked": receipt.asked,
-            "plan": receipt.plan,
-            "why": receipt.why,
-            "shapes": shapes,
-            "team_shape": receipt.team_shape,
-            "rung_skill": receipt.rung_skill,
-            "rung_providers": receipt.rung_providers,
-        });
-        Ok(advice)
+        Ok(LeaderAdvice {
+            task_ref: task.task_ref.to_hex(),
+            project_ref: task.responsibility.project_ref.to_hex(),
+            asked: receipt.asked,
+            plan: receipt.plan,
+            why: receipt.why,
+            shapes,
+            team_shape: receipt.team_shape,
+            rung_skill: receipt.rung_skill,
+            rung_providers: receipt.rung_providers,
+        })
     }
 }
 
