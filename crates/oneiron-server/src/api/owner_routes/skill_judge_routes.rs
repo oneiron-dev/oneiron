@@ -31,7 +31,7 @@ use oneiron::skill_optimize::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -50,6 +50,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/decisions",
                 summary: "The newest journal rows.",
                 row: None,
+                shape: None,
             },
             get(decisions),
         ),
@@ -59,6 +60,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/person-time",
                 summary: "One act's minutes on a run.",
                 row: None,
+                shape: Some(RestShape::json(
+                    record_person_time_body_schema,
+                    person_time_total_schema,
+                )),
             },
             post(person_time),
         ),
@@ -68,6 +73,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/measure",
                 summary: "Measures an open proposal on its goal's plan with the registered judge and live arms, and keeps the report for the gate.",
                 row: None,
+                shape: Some(RestShape::json(
+                    measure_body_schema,
+                    goal_axis_report_schema,
+                )),
             },
             post(measure),
         ),
@@ -77,6 +86,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/goal-project",
                 summary: "The project a skill's goal is joined to.",
                 row: None,
+                shape: None,
             },
             get(goal_project),
         ),
@@ -86,6 +96,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/goal-project",
                 summary: "Joins a skill's goal to a project's goal record, or unbinds it.",
                 row: None,
+                shape: Some(RestShape::json(
+                    bind_goal_project_body_schema,
+                    goal_revision_schema,
+                )),
             },
             post(bind_goal_project),
         ),
@@ -95,6 +109,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/preferences",
                 summary: "The tradeoff rules of a skill's goal, the ones its responsible person's picks taught included.",
                 row: None,
+                shape: None,
             },
             get(preferences),
         ),
@@ -104,6 +119,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/tradeoff-asks",
                 summary: "The tradeoff asks that have climbed to a role the owner holds.",
                 row: None,
+                shape: None,
             },
             get(tradeoff_asks),
         ),
@@ -113,6 +129,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/tradeoff-asks/pick",
                 summary: "The owner's A/B pick.",
                 row: None,
+                shape: Some(RestShape::json(
+                    tradeoff_pick_body_schema,
+                    tradeoff_settled_schema,
+                )),
             },
             post(pick),
         ),
@@ -122,6 +142,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/goal-revisions",
                 summary: "The preferences the loop proposes for the project's goal in force, oldest first, for its goal interview to show.",
                 row: None,
+                shape: None,
             },
             get(goal_revisions),
         ),
@@ -131,6 +152,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/swaps",
                 summary: "The incumbent judge, the swap policy and every swap receipt, each disagreement's ruling included.",
                 row: None,
+                shape: None,
             },
             get(swaps),
         ),
@@ -140,6 +162,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/swaps/pick",
                 summary: "The owner's hand-test pick on one disagreement.",
                 row: None,
+                shape: Some(RestShape::json(
+                    swap_pick_body_schema,
+                    judge_swap_pick_schema,
+                )),
             },
             post(swap_pick),
         ),
@@ -149,6 +175,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/pairs",
                 summary: "Every pick the owner made between a blind preference pair's two responses.",
                 row: None,
+                shape: None,
             },
             get(pair_picks),
         ),
@@ -158,6 +185,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/pairs/pick",
                 summary: "The owner's pick between a blind preference pair's two responses.",
                 row: None,
+                shape: Some(RestShape::json(
+                    pair_pick_body_schema,
+                    response_pair_pick_schema,
+                )),
             },
             post(pair_pick),
         ),
@@ -167,6 +198,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/swap-policy",
                 summary: "The tie-breakers, the pinned divergence rate and the hands-on setting in force.",
                 row: None,
+                shape: None,
             },
             get(swap_policy),
         ),
@@ -176,6 +208,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/skills/judge/swap-policy",
                 summary: "Replaces the swap policy; a field left out takes its default.",
                 row: None,
+                shape: Some(RestShape::json(
+                    judge_swap_policy_schema,
+                    judge_swap_policy_schema,
+                )),
             },
             post(set_swap_policy),
         ),

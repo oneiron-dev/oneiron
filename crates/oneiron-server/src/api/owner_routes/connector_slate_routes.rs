@@ -28,6 +28,7 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/connectors/slate/redraft",
             summary: "Ask the host's configured drafter to re-draft one connector grant slate from the owner's instruction (FIX 987, ARCH-0072): it proposes changed rows with their rationale at the reviewed revision, which `/connectors/slate/accept` takes; nothing is stamped, activated or granted. A host with no drafter answers `unavailable` and the slate is unchanged.",
             row: Some("vault.connectors.slates.redraft"),
+            shape: None,
         },
         post(redraft),
     )]

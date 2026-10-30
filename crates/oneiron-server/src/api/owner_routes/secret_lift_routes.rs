@@ -16,7 +16,7 @@ use oneiron::policy_model::{
     secret_lift_as_owner_toward,
 };
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
@@ -30,6 +30,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/lift",
                 summary: "The run in progress, the last run's receipt and the open proposals, counted by cause.",
                 row: None,
+                shape: None,
             },
             get(status),
         ),
@@ -39,6 +40,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/lift/close",
                 summary: "Closes one open proposal, by its id, and returns it as it now stands.",
                 row: None,
+                shape: Some(RestShape::json(
+                    secret_lift_close_body_schema,
+                    secret_lift_proposal_schema,
+                )),
             },
             post(close),
         ),

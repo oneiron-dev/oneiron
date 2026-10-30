@@ -35,7 +35,8 @@ use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use super::super::machine_routes::parse_revision;
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::root_work_answer_schema;
 use super::{
     Kit, OwnerDevice, RootWorkAnswer, issue_homes, kit_target, passphrase_of, request_code,
     vault_id,
@@ -54,6 +55,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/anchor",
                 summary: "The named target's own call: the bound root's kit marks the enrolment's machine mine here, with the 26-symbol code a new machine shows; fingerprint or confirm_root vouches for a kit this install cannot verify.",
                 row: None,
+                shape: Some(RestShape::json(anchor_body_schema, root_work_answer_schema)),
             },
             post(anchor),
         ),
@@ -63,6 +65,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/restore",
                 summary: "The named target's own call: the kit restores the world keys wrapped to its root on this install; fingerprint or confirm_root vouches for a kit this install cannot verify.",
                 row: None,
+                shape: Some(RestShape::json(
+                    restore_body_schema,
+                    root_work_answer_schema,
+                )),
             },
             post(restore),
         ),
@@ -72,6 +78,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/issue",
                 summary: "The named target's own call: issues a world kit over three homes, its pieces in this answer alone; nothing is published until confirm.",
                 row: None,
+                shape: Some(RestShape::json(issue_body_schema, root_work_answer_schema)),
             },
             post(issue),
         ),
@@ -81,6 +88,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/confirm",
                 summary: "The named target's own call: two pieces of the pending kit (or one and the passphrase) confirm it, and its root goes live here, carrying the machines named.",
                 row: None,
+                shape: Some(RestShape::json(
+                    confirm_body_schema,
+                    root_work_answer_schema,
+                )),
             },
             post(confirm),
         ),

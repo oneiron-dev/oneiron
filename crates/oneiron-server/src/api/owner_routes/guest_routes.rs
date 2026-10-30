@@ -31,6 +31,7 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/guests/revoke",
             summary: "Withdraw one guest's grant (`grant_ref`): an unknown or non-guest grant is not found, and a disconnect the fold refuses fails the whole revoke. With the optional `peer` (the former peer's host origin, `https://host[:port]`), queue one courtesy-delete ask per ended pact once the revoke is durable; each courtesy target reports `deletion_request_status` (`queued` or `not_requested`) with its `request` id or its `error`, and the disclosure says `queued` when any ask queued. Copied bytes are never recallable.",
             row: Some("vault.guests.revoke"),
+            shape: None,
         },
         post(revoke),
     )]
