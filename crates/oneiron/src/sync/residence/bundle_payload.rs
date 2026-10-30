@@ -188,7 +188,11 @@ impl WindowManager {
                 snapshots.push((window.clone(), self.sealed_mirror_snapshot(world, window)?));
             }
             let parts = bodies::carried(vault, &snapshots)?;
-            fresh.push((world, encode_world_section(world, &snapshots, &parts)?));
+            // Sealed from the snapshots as they stand, never joined, and
+            // dropped before the next world's are cut (FIX 11947).
+            fresh.push(vault.seal_bundle_section(world, |put| {
+                encode_world_section(put, world, &snapshots, &parts)
+            })?);
         }
         // A section whose world this machine knows goes when that world has a
         // fresh one or the carry filter drops it.
@@ -197,7 +201,7 @@ impl WindowManager {
         if let Some((opened, pads)) = &latest {
             for (key, section) in opened.sections_known(&keys, pads) {
                 if let Some(key) = key
-                    && (fresh.iter().any(|(sealed, _)| *sealed == key.world)
+                    && (fresh.iter().any(|sealed| sealed.world() == key.world)
                         || carry_drops(vault, key.world, &eligible, &known)?)
                 {
                     continue;
@@ -205,10 +209,6 @@ impl WindowManager {
                 carried.push((key, section));
             }
         }
-        let worlds: Vec<(EntityId, &[u8])> = fresh
-            .iter()
-            .map(|(world, payload)| (*world, payload.as_slice()))
-            .collect();
         let mut carry = BundleCarry {
             latest: latest.as_ref().map(|(_, pads)| pads),
             request,
@@ -239,7 +239,7 @@ impl WindowManager {
             }
             carry.carried_authority.push(capsule);
         }
-        vault.seal_vault_bundle_carrying(slot, holder, &base, &worlds, &carried, &carry)
+        vault.seal_vault_bundle_carrying(slot, holder, base, fresh, &carried, &carry)
     }
 
     /// Takes `bundle` and its pad object in, read from `holder`: opens every
@@ -659,8 +659,12 @@ fn encode_base(
         put_u32(&mut out, entry.len())?;
         out.extend_from_slice(entry);
     }
-    encode_windows(&mut out, windows)?;
-    bodies::encode(&mut out, carried)?;
+    let mut put = |bytes: &[u8]| -> Result<()> {
+        out.extend_from_slice(bytes);
+        Ok(())
+    };
+    encode_windows(&mut put, windows)?;
+    bodies::encode(&mut put, carried)?;
     Ok(out)
 }
 
@@ -687,19 +691,19 @@ fn decode_base(bytes: &[u8]) -> Result<BundleBase> {
 }
 
 /// label ‖ version (2) ‖ world (16) ‖ windows ([`encode_windows`]) ‖ their
-/// by-reference bodies ([`bodies::encode`]).
+/// by-reference bodies ([`bodies::encode`]), into a stream: the same bytes
+/// on every call, never joined (FIX 11947).
 fn encode_world_section(
+    put: &mut dyn FnMut(&[u8]) -> Result<()>,
     world: EntityId,
     windows: &[(WindowKey, Vec<u8>)],
     carried: &[bodies::CarriedBody],
-) -> Result<Zeroizing<Vec<u8>>> {
-    let mut out = Zeroizing::new(Vec::new());
-    out.extend_from_slice(WORLD_LABEL);
-    out.push(SEALED_BUNDLE_WORLD_VERSION);
-    out.extend_from_slice(world.as_bytes());
-    encode_windows(&mut out, windows)?;
-    bodies::encode(&mut out, carried)?;
-    Ok(out)
+) -> Result<()> {
+    put(WORLD_LABEL)?;
+    put(&[SEALED_BUNDLE_WORLD_VERSION])?;
+    put(world.as_bytes())?;
+    encode_windows(put, windows)?;
+    bodies::encode(put, carried)
 }
 
 /// The windows of `world`'s section, each one of the world's, and the
@@ -720,14 +724,19 @@ fn decode_world_section(bytes: &[u8], world: EntityId) -> Result<WorldSection> {
 
 /// count (4) ‖ each window: its key `u16`-length-prefixed, then its snapshot
 /// `u64`-length-prefixed.
-fn encode_windows(out: &mut Vec<u8>, windows: &[(WindowKey, Vec<u8>)]) -> Result<()> {
-    put_u32(out, windows.len())?;
+fn encode_windows(
+    put: &mut dyn FnMut(&[u8]) -> Result<()>,
+    windows: &[(WindowKey, Vec<u8>)],
+) -> Result<()> {
+    put(&u32::try_from(windows.len())
+        .map_err(|_| malformed())?
+        .to_be_bytes())?;
     for (key, snapshot) in windows {
         let name = u16::try_from(key.as_str().len()).map_err(|_| malformed())?;
-        out.extend_from_slice(&name.to_be_bytes());
-        out.extend_from_slice(key.as_str().as_bytes());
-        out.extend_from_slice(&(snapshot.len() as u64).to_be_bytes());
-        out.extend_from_slice(snapshot);
+        put(&name.to_be_bytes())?;
+        put(key.as_str().as_bytes())?;
+        put(&(snapshot.len() as u64).to_be_bytes())?;
+        put(snapshot)?;
     }
     Ok(())
 }
