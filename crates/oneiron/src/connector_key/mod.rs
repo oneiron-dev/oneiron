@@ -48,8 +48,7 @@ pub use self::credential_binding::{
     ConnectorIssuerObservation, ConnectorIssuerTransition, ConnectorIssuerTransitionState,
 };
 pub use self::lifecycle::{
-    ActorConnectorRegistration, CONNECTOR_CONSENT_ORIGIN_ACTION_ID,
-    CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute, ConnectorConsentRowView,
+    ActorConnectorRegistration, ConnectorCallRoute, ConnectorConsentRowView,
     ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription, ConnectorManifestQualifier,
     ConnectorQualificationError, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
     OwnerAttestedManifestQualifier, PROXY_CONNECTOR, ProbeManifestQualifier,

@@ -66,8 +66,8 @@ pub(crate) fn evaluate_external_effect_policy(
         required_grant_id,
         prepared,
     )?;
-    if let Some((grant_id, grant)) = matched_grant.as_ref() {
-        hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
+    if let Some(grant) = matched_grant.as_ref() {
+        hydrated_effect.standing_grant_ref = Some(grant.grant_ref());
         scoped_mcp_grant_authorized = grant.scope.scoped_mcp_grant().is_some();
     }
     // The effect door NEVER gates ceiling resolution on the caller-asserted
@@ -85,7 +85,7 @@ pub(crate) fn evaluate_external_effect_policy(
     // consent is evaluated by the one ladder rather than re-implemented per
     // call site. The coverage set folds three already-verified authorization
     // facts read on THIS write txn — the vault's ACTIVE consent grants, the
-    // scope-matched `StandingOutboundGrant` (through the pinned adapter), and
+    // `StandingOutboundGrant` whose bound contains the effect (echoed), and
     // any budget-free POLICY-scoped grant the compiler's four-axis matcher
     // accepts (echoed as a covering grant; see below) — so an effect already
     // authorized on remembered state is Auto on the consent axis exactly once,
@@ -186,15 +186,15 @@ pub(crate) fn evaluate_external_effect_policy(
         if scoped_covers && let Ok(grant) = crate::consent::ActionGrant::new(requirement.clone()) {
             consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
         }
-        // A scope-matched `StandingOutboundGrant` resolved on this txn — the
-        // matcher already enforced actor identity, channel/contact/verb-class
-        // scope, and ACTIVE status — is folded as remembered coverage by
-        // ECHOING the requirement as its covering grant. Dial vocabularies
-        // differ per scope kind (channel/contact/brief/scoped-MCP), so the
-        // adapter's normalized bound cannot be trusted to subset-match the
-        // requirement's verb-shaped selectors; the door's own four-axis match
-        // is the authority the echo records. Revocation is honored by the
-        // matcher upstream: a revoked row never reaches this arm.
+        // A `StandingOutboundGrant` resolved on this txn — its row active
+        // under the current policy frontier, its principal the actor, and its
+        // bound containing the effect as its dial names it — is folded as
+        // remembered coverage by ECHOING the requirement as its covering
+        // grant. Its bound is spelled in its dial's vocabulary
+        // (channel/contact/brief/verb-class/scoped-MCP), never the
+        // requirement's verb-shaped selectors, so the grant covers only
+        // through this match. Revocation is honored by the match upstream: a
+        // revoked row never reaches this arm.
         if matched_grant.is_some()
             && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
         {
@@ -215,9 +215,9 @@ pub(crate) fn evaluate_external_effect_policy(
     // a catastrophe still asks inside the consent verdict (DEC-0006).
     let slate_scoped = matched_grant
         .as_ref()
-        .filter(|(_, grant)| grant.scope.scoped_mcp_grant().is_some())
+        .filter(|grant| grant.scope.scoped_mcp_grant().is_some())
         .zip(hydrated_effect.scoped_mcp_call.as_ref())
-        .map(|((grant_id, _), call)| (call.server.as_str(), grant_id, call.tool.as_str()));
+        .map(|(grant, call)| (call.server.as_str(), &grant.id, call.tool.as_str()));
     if connector_key::effect_slate_always_allows(
         store,
         &*wtxn,
@@ -362,16 +362,16 @@ pub(crate) fn evaluate_external_effect_policy(
     // safe canonical server — never from the effect's channel text — and it is
     // what the charter stage, the chokepoint, and the durable row all carry
     // (ONE-1885).
-    let scoped_mcp_capability = matched_grant.as_ref().and_then(|(grant_id, grant)| {
+    let scoped_mcp_capability = matched_grant.as_ref().and_then(|grant| {
         grant.scope.scoped_mcp_grant().and_then(|_| {
             hydrated_effect.scoped_mcp_call.as_ref().and_then(|call| {
-                connector_key::ScopedCapabilityProvenance::mint(&call.server, grant_id)
+                connector_key::ScopedCapabilityProvenance::mint(&call.server, &grant.id)
             })
         })
     });
     let uses_scoped_mcp_governing_connector = matched_grant
         .as_ref()
-        .is_some_and(|(_, grant)| grant.scope.scoped_mcp_grant().is_some())
+        .is_some_and(|grant| grant.scope.scoped_mcp_grant().is_some())
         && hydrated_effect.scoped_mcp_call.is_some();
     let governing_connector = scoped_mcp_capability.as_ref().map_or_else(
         || normalized_channel.clone(),

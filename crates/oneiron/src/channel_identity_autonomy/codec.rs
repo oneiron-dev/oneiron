@@ -6,8 +6,8 @@ use rmpv::Value;
 
 use crate::channel_identity_selection::RelationshipContext;
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, AudienceBound, DisclosureClass, DisclosureEnvelope,
-    GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
+    ConsentGrantRow, DisclosureClass, DisclosureEnvelope, GrantBound, StandingConsentGrant,
 };
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CHANNEL_IDENTITY_AUTONOMY;
@@ -16,8 +16,8 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::types::{
     CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION, ChannelIdentityActionEnvelope,
-    ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRung, MailboxReadEnvelope,
-    PREDICATE_AUTONOMY_MODE,
+    ChannelIdentityActionGrant, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRung,
+    MailboxReadEnvelope, PREDICATE_AUTONOMY_MODE,
 };
 use crate::error::GateError;
 
@@ -282,11 +282,14 @@ pub(super) fn read_bound(
         ])?,
     )
 }
+/// The action bound an owner grants over one envelope, under the policy
+/// frontier it is minted at: past that frontier the grant no longer counts.
 pub(super) fn action_bound(
     actor: EntityId,
     reference: EntityId,
     e: &ChannelIdentityActionEnvelope,
     verb: &str,
+    policy_frontier: &[u8; 32],
 ) -> Result<GrantBound> {
     GrantBound::action(
         ActorBound::new(actor.to_hex())?,
@@ -296,9 +299,67 @@ pub(super) fn action_bound(
             format!("envelope:{}", reference.to_hex()),
             format!("context:{}", e.relationship_context.as_str()),
             format!("window_secs:{}", e.window_secs),
+            format!(
+                "{ACTION_POLICY_FRONTIER}:{}",
+                crate::entity_id::bytes_to_hex_lower(policy_frontier)
+            ),
         ])?
         .with_target(e.identity_ref.to_hex())?
         .with_budget(u64::from(e.max_actions))
         .with_receipt_required(true),
     )
+}
+
+/// The selector an action bound names its policy frontier under.
+const ACTION_POLICY_FRONTIER: &str = "policy_frontier";
+
+/// The action grant one standing consent Grant row is, when its bound is an
+/// envelope's action bound whose grant reference is `reference`. The bound
+/// is checked whole against its envelope where the grant is used.
+pub(super) fn action_grant_from_row(
+    reference: EntityId,
+    row: &ConsentGrantRow,
+) -> Result<Option<ChannelIdentityActionGrant>> {
+    let StandingConsentGrant::Action(grant) = &row.grant else {
+        return Ok(None);
+    };
+    let bound = grant.bound();
+    if row.bypass.is_some()
+        || address("action_grant", &Value::from(bound.digest().to_hex()))? != reference
+    {
+        return Ok(None);
+    }
+    let (Some(actor), BoundClass::Action(class), BoundEnvelope::Action(envelope)) =
+        (bound.actor(), bound.class(), bound.envelope())
+    else {
+        return Ok(None);
+    };
+    let field = |name: &str| {
+        envelope.selectors().iter().find_map(|selector| {
+            selector
+                .split_once(':')
+                .filter(|(key, _)| *key == name)
+                .map(|(_, value)| value)
+        })
+    };
+    let entity = |name: &str| field(name).and_then(|value| EntityId::from_hex(value).ok());
+    let (Some(identity_ref), Some(envelope_ref), Some(policy_frontier), Ok(actor_ref)) = (
+        entity("identity"),
+        entity("envelope"),
+        field(ACTION_POLICY_FRONTIER).and_then(crate::deletion::parse_hex::<32>),
+        EntityId::from_hex(actor.actor_ref()),
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(ChannelIdentityActionGrant {
+        reference,
+        grant_ref: bound.digest().to_hex(),
+        actor_ref,
+        identity_ref,
+        envelope_ref,
+        verb_class: class.as_str().to_owned(),
+        status: row.status,
+        created_at: row.created_at,
+        policy_frontier,
+    }))
 }
