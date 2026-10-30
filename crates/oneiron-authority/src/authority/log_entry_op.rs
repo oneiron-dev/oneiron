@@ -142,6 +142,10 @@ pub enum AuthorityOp {
     /// the carrier of his act, with the request in its causal past (FIX
     /// 4739). A main-log entry, value-free: ids only, never a result.
     OwnerWorkCancel(OwnerWorkCancel),
+    /// One numbered piece of a custody request's permit set past one row,
+    /// signed by the key that signs the request, ahead of it in its causal
+    /// past (FIX 11866). A main-log entry, value-free: ids and digests only.
+    CustodyPermitPiece(CustodyPermitPiece),
     /// One owner choice of the vault's checkpoint root policy, signed by
     /// the install key of a live machine of the vault, in any role (mesh
     /// PR2c, K06). A main-log entry, so every machine the owner admits
@@ -245,6 +249,7 @@ impl AuthorityLogEntry {
             AuthorityOp::OwnerWorkRequest(request) => request.validate_entry(self)?,
             AuthorityOp::OwnerWorkResult(result) => result.validate_entry(self)?,
             AuthorityOp::OwnerWorkCancel(cancel) => cancel.validate_entry(self)?,
+            AuthorityOp::CustodyPermitPiece(piece) => piece.validate_entry(self)?,
             AuthorityOp::CheckpointPolicySet(set) => set.validate_entry(self)?,
             AuthorityOp::HomeNodePick(pick) => pick.validate_entry(self)?,
             AuthorityOp::ConversationTrainingSet(set) => set.validate_entry(self)?,
@@ -476,6 +481,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerWorkRequest(request) => request.validate(),
         AuthorityOp::OwnerWorkResult(result) => result.validate(),
         AuthorityOp::OwnerWorkCancel(cancel) => cancel.validate(),
+        AuthorityOp::CustodyPermitPiece(piece) => piece.validate(),
         AuthorityOp::CheckpointPolicySet(set) => set.validate(),
         AuthorityOp::HomeNodePick(pick) => pick.validate(),
         AuthorityOp::ConversationTrainingSet(set) => set.validate(),
