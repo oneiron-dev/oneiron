@@ -103,8 +103,6 @@ pub(super) fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> 
                     && !row.media.iter().any(|entry| {
                         entry.served == MediaServed::Full && entry.reference.evidence() == version
                     })
-                    // A row from before media entries pinned its image by its hash.
-                    && (!row.media.is_empty() || version.body_hash != row.render_hash)
             })
             || row
                 .media

@@ -10,7 +10,8 @@
 //!
 //! Listing (FIX 8063): a narrowed reader sees a waiting proposal only when
 //! its lane admits the proposal's sources: the artifact, the version it was
-//! made against, and each source its made_by names.
+//! made against, each source its made_by names, and each row its producer
+//! read besides (FIX 9312).
 
 use super::{PENDING, PendingProposalView, PendingRow};
 use crate::Vault;
@@ -104,10 +105,11 @@ impl Vault {
     /// listed only when the lane admits, in one snapshot under one live
     /// policy, the artifact, the version it was made against (that version's
     /// CLAIM and content ASSET; a lane that opted into its artifact's records
-    /// cover covers those), and each source its made_by names: every input
-    /// row and an entity trigger. A Run trigger is a replay record, no row a
-    /// reader reads. A withheld proposal leaves no trace: no ref, count, hash,
-    /// actor or time of it. An artifact the lane withholds lists nothing.
+    /// cover covers those), each source its made_by names: every input row
+    /// and an entity trigger, and each row its producer read besides
+    /// (FIX 9312). A Run trigger is a replay record, no row a reader reads.
+    /// A withheld proposal leaves no trace: no ref, count, hash, actor or
+    /// time of it. An artifact the lane withholds lists nothing.
     pub fn pending_proposals_scoped(
         &self,
         lane: &ScopedRead<'_>,
@@ -144,8 +146,9 @@ impl Vault {
     }
 
     /// The rows a waiting proposal was made from, read in `rtxn`: its base
-    /// version's rows, then its made_by's inputs and entity trigger. `None`
-    /// when its base version is gone, so nothing can admit it.
+    /// version's rows, its made_by's inputs and entity trigger, then the rows
+    /// its producer read besides (FIX 9312). `None` when its base version is
+    /// gone, so nothing can admit it.
     fn pending_sources_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -168,6 +171,7 @@ impl Vault {
                 sources.push(trigger.row());
             }
         }
+        sources.extend(row.read_rows.iter().copied());
         Ok(Some(sources))
     }
 }

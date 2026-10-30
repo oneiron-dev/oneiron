@@ -29,7 +29,9 @@ use serde::{Deserialize, Serialize};
 use super::codec::{RECORD, settlement_key_parts};
 use super::pending::{PENDING, PendingProposalView};
 use super::receipts::{already_settled, manifest_ref, settlement_receipt_record};
-use super::records::{SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettlementRecord};
+use super::records::{
+    SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettledReview, SettlementRecord,
+};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
@@ -38,7 +40,7 @@ use crate::edit_roundtrip::paragraph_review::carry_paragraph_judgments;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
     SlideNow, SlideRenderer, SlideReviewError, SlideReviewImage, SlideReviewLabels,
-    SlideReviewRequest, SlideReviewUnit, carry_slide_judgments, deck_slides_now,
+    SlideReviewRequest, SlideReviewUnit, carry_slide_judgments, deck_slides_now, review_copy_bytes,
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, CellRef, CellValue, EditOp, EditProposal, FolderAsk, FolderItem, OfficeFormat,
@@ -47,8 +49,7 @@ use crate::edit_roundtrip::{
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
-    TypedDecision,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, TypedDecision,
 };
 use crate::office_body::LivePin;
 use crate::provenance::made_by::MadeBy;
@@ -771,12 +772,14 @@ impl Vault {
             Ok((head, record))
         })?;
         let receipt = settlement_receipt_record(*artifact, &record)?;
+        let receipt = self.with_withdrawn_units(*artifact, &record, receipt)?;
         Ok(SettleSelectOutcome {
             stranded_proposal: None,
-            receipt: self.with_withdrawn_units(*artifact, &record, receipt)?,
+            receipt,
             version: head,
             reanchor: ReanchorSummary::default(),
             reconciliation: None,
+            review: SettledReview::of(record),
         })
     }
 
@@ -1006,9 +1009,13 @@ impl Vault {
         reask_ref: &str,
         read: Option<&[(EntityId, u64)]>,
     ) -> Result<Option<PendingProposalView>> {
-        let (asked, proposal, unit_receipts) = match reasked {
-            Reasked::Nothing => (false, None, Vec::new()),
-            Reasked::Asked { proposal, units } => (true, proposal, units),
+        let (asked, proposal, unit_receipts, read_rows) = match reasked {
+            Reasked::Nothing => (false, None, Vec::new(), Vec::new()),
+            Reasked::Asked {
+                proposal,
+                units,
+                read_rows,
+            } => (true, proposal, units, read_rows),
         };
         // The carried envelope is admitted through the principal's own read as
         // the fresh proposal waits (FIX 1229), its grant clock settled before
@@ -1027,14 +1034,14 @@ impl Vault {
         let units: Vec<&WithdrawnUnit> = wake.answers.iter().map(|answer| &answer.unit).collect();
         self.with_write_txn(|wtxn| {
             let proposed = match &proposal {
-                Some(proposal) => Some(self.retain_edit_proposal_in_txn(
+                Some(proposal) => Some(self.retain_edit_proposal_with_reads_in_txn(
                     wtxn,
                     &wake.artifact,
                     proposal,
                     wake.made_by.as_ref(),
                     lane.as_ref(),
-                    actor,
-                    now,
+                    (actor, now),
+                    &read_rows,
                 )?),
                 None => None,
             };
@@ -1131,7 +1138,7 @@ impl Vault {
             deadline: Instant::now() + WAKE_DEADLINE,
             run_ref: &reask_ref,
         };
-        let (proposal, units) = match &wake.shape {
+        let (proposal, units, read_rows) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
                 answer_col,
@@ -1172,7 +1179,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units)
+                (run.proposal, units, run.read_rows)
             }
             ReaskShape::FolderItems {
                 sheet,
@@ -1221,7 +1228,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units)
+                (run.proposal, units, run.read_rows)
             }
             ReaskShape::Paragraphs { author, labels } => {
                 let blocks: Vec<String> = wake
@@ -1245,7 +1252,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units)
+                (run.proposal, units, run.read_rows)
             }
             ReaskShape::Slides { author, labels } => {
                 let bytes = self
@@ -1286,6 +1293,10 @@ impl Vault {
                         "the slide renderer returned the wrong number of images".to_owned(),
                     ));
                 }
+                // The review's own copy of the images is admitted first, and
+                // given back once it is done (FIX 8244).
+                let copies = review_copy_bytes(&images);
+                renderer.admit(copies)?;
                 let units: Vec<SlideReviewUnit> = targets
                     .into_iter()
                     .zip(images)
@@ -1303,8 +1314,9 @@ impl Vault {
                     author,
                     dial,
                     resident_dial: None,
-                    // The vault re-imposes its stored policy's limits.
-                    limits: SlideReviewLimits::default(),
+                    // The vault's stored policy row runs: a wake narrows none
+                    // of it (FIX 9336).
+                    limits: crate::blob_artifact::SlideReviewLimitsInput::default().limits(),
                     policy,
                     reversibility: Reversibility::ReversibleRead,
                     labels,
@@ -1316,18 +1328,30 @@ impl Vault {
                     // The comment writer stamps epoch milliseconds.
                     at: now.saturating_mul(1000),
                 };
-                let run = self
-                    .review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
-                    .map_err(|error| match error {
-                        SlideReviewError::Vault(error) => error,
-                        other => Error::InvalidConfig(other.to_string()),
-                    })?;
+                let run = self.review_blob_artifact_slides_at(
+                    &wake.artifact,
+                    head.version,
+                    &bytes,
+                    &request,
+                );
+                renderer.materialized(copies, 0);
+                let run = run.map_err(|error| match error {
+                    SlideReviewError::Vault(error) => error,
+                    other => Error::InvalidConfig(other.to_string()),
+                })?;
                 // Standing artifact questions never ask slides, so a slide re-ask
                 // logs nowhere; it carries no unit receipts.
-                (run.proposal, Vec::new())
+                (run.proposal, Vec::new(), run.read_rows)
             }
         };
-        Ok((Reasked::Asked { proposal, units }, reask_ref))
+        Ok((
+            Reasked::Asked {
+                proposal,
+                units,
+                read_rows,
+            },
+            reask_ref,
+        ))
     }
 
     /// The refs the wakes of `proposal_ref`'s withdrawn answers asked again under, for a
@@ -1392,10 +1416,12 @@ enum Reasked {
     /// Nothing was asked: a replay of a wake already asked, or no unit left.
     Nothing,
     /// The ask ran: its answers' proposal, none when no unit was answered,
-    /// and the units it left without an answer, as the first ask keeps them.
+    /// the units it left without an answer, as the first ask keeps them,
+    /// and the rows its reads picked, which the proposal keeps (FIX 9312).
     Asked {
         proposal: Option<EditProposal>,
         units: Vec<crate::llm::decision::questions::ArtifactUnitReceipt>,
+        read_rows: Vec<EntityId>,
     },
 }
 
