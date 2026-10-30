@@ -56,6 +56,48 @@ pub(super) fn held_out_receipts_in_txn(
     )
 }
 
+/// [`held_out_receipts`] beside the outcome-ledger rows it read (FIX 7288):
+/// one attempt row id per receipt, in receipt order. `None` is unknown: a
+/// receipt that names no row. Capture only: the receipts are exactly
+/// [`held_out_receipts_in_txn`]'s.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an unreadable outcome key.
+pub fn held_out_receipts_sourced(
+    vault: &Vault,
+    skill: &EntityId,
+) -> Result<(Vec<String>, Option<Vec<EntityId>>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    held_out_receipts_sourced_in_txn(vault, &rtxn, skill)
+}
+
+pub(super) fn held_out_receipts_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(Vec<String>, Option<Vec<EntityId>>)> {
+    let receipts = crate::skill_reliability::attributed_outcome_receipts(vault, rtxn, skill)?;
+    let rows = match crate::skill_reliability::attributed_outcome_row_ids(vault, rtxn, skill)? {
+        None => None,
+        Some(ids) => Some(
+            receipts
+                .iter()
+                .zip(ids)
+                .filter(|(receipt, _)| receipt_is_held_out(skill, receipt))
+                .map(|(_, row)| row)
+                .collect::<Vec<_>>(),
+        ),
+    };
+    Ok((
+        receipts
+            .into_iter()
+            .filter(|receipt| receipt_is_held_out(skill, receipt))
+            .collect(),
+        rows,
+    ))
+}
+
 /// Held-out outcomes WITH their world labels, in the same ledger order as
 /// [`held_out_receipts_in_txn`]. This does one linear pass over the outcome
 /// ledger; it does not search the growing held-out list for every row while
