@@ -64,10 +64,11 @@ pub(super) async fn layout(
     super::ingress::editor_spooled(
         &server,
         EngineLimit::EsignBodyBytes,
+        slot.owner,
         &parts.headers,
         body,
         move |file, _| {
-            let _slot = slot;
+            let _slot = slot.permit;
             match serde_json::from_reader::<_, LayoutRequest>(BufReader::new(file)) {
                 Ok(request) => laid_out(request),
                 Err(_) => super::ingress::malformed(),
@@ -195,10 +196,11 @@ pub(super) async fn upload_geometry(
     super::ingress::editor_spooled(
         &server,
         EngineLimit::EsignGeometryBodyBytes,
+        slot.owner,
         &parts.headers,
         body,
         move |file, bytes| {
-            let _slot = slot;
+            let _slot = slot.permit;
             let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
             let lease = match memory.lease(bytes, deadline) {
                 Ok(lease) => lease,
