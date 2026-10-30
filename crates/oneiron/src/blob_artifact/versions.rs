@@ -389,8 +389,9 @@ impl Vault {
     /// the plane off, or no mint, it is read once into its row, as a slice
     /// is put.
     ///
-    /// The staged body comes back beside the version: hold it until `wtxn`
-    /// has committed or aborted, so its pin keeps a published file from the
+    /// The staged body comes back beside the version: hold it, or the
+    /// [`StagedAssetBody::into_hold`] that drops its bytes, until `wtxn` has
+    /// committed or aborted, so its pin keeps a published file from the
     /// collector until the row naming it is durable (FIX 5399b).
     ///
     /// # Errors

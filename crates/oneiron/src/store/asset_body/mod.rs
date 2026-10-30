@@ -40,7 +40,7 @@ mod spool;
 mod stage;
 
 pub(crate) use spool::AssetBodySpool;
-pub(crate) use stage::StagedAssetBody;
+pub(crate) use stage::{StagedAssetBody, StagedHold};
 
 use std::io::{self, Read, Write};
 

@@ -194,7 +194,7 @@ pub(crate) use asset_body::{
     unused_imports,
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
-pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody, StagedHold};
 pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
