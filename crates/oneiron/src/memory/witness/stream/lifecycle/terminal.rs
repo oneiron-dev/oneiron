@@ -156,10 +156,14 @@ fn terminal_write(
         None
     };
     let unread = std::cell::Cell::new(None);
+    // The created records the judged set does not prove, receipted once
+    // the terminal lands (FIX 11034).
+    let unproven = std::cell::Cell::new(Vec::new());
     let written: MessageStreamResult<()> = if seed.continuation {
         vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
             admit_terminal(gate, txn)?;
             reply_assertions::judge_in_txn(lane.as_ref(), txn, assertions, &unread)?;
+            unproven.set(reply_assertions::unproven_in_txn(&memory, txn, assertions));
             // Judged: this generation keeps its seed's and its terminal's
             // set on its own receipt; the birth envelope stays (FIX 10258).
             receipt.reply_assertions =
@@ -300,5 +304,6 @@ fn terminal_write(
         return Err(error);
     }
     crate::gate::record_references::receipt_landed_prose(&memory, &unlinked_prose);
+    reply_assertions::receipt_unproven(&memory, &unproven);
     Ok(receipt)
 }
