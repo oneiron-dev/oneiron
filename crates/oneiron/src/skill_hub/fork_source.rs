@@ -1,5 +1,6 @@
 //! A fork copies real files and edits source identity before hashing the new tree.
 use super::{HubPackage, SkillPackageFormat, folder, package_codec::invalid};
+use crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE;
 use crate::{Vault, entity_id::EntityId, error::Result, skill::SkillRecord};
 use std::collections::BTreeMap;
 
@@ -81,6 +82,8 @@ impl Vault {
     /// Carry the exact skill tree into an improver revision. The edit changes
     /// only the descriptive recipe text; companion scripts/capabilities stay
     /// byte-exact, so a callable never silently loses its executable file.
+    /// A rule skill's `policy.json` is re-derived from the improved text: a
+    /// dial the text names with a number takes it (FIX 10878).
     pub(crate) fn optimized_skill_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -135,8 +138,69 @@ impl Vault {
             .find(|file| file.path == "SKILL.md")
             .ok_or_else(|| invalid("optimized source has no SKILL.md"))?
             .content = changed.into_bytes();
+        // The dials the rule's reader seeds from move with the rule text.
+        if let Some(policy) = package
+            .files
+            .iter_mut()
+            .find(|file| file.path == REVIEWER_POLICY_FILE)
+            && let Some(derived) = rederived_rule_policy(&policy.content, &proposed.desc)
+        {
+            policy.content = derived;
+        }
         proposed.content_hash = Some(package.content_hash()?);
         package.record = proposed.clone();
         folder::package_from_source(proposed, package.files, SkillPackageFormat::Native).map(Some)
     }
+}
+
+/// A rule skill's `policy.json` re-derived from its improved rule `text`
+/// (FIX 10878): each key of the file the text names with a number right
+/// after it (`key: 4`, `key = 0.5`, `` `key` at 4 ``) takes that number,
+/// and every other key keeps its value. `None` when the file is not one
+/// JSON object or the text moves no key, so an unmoved file stays
+/// byte-exact.
+fn rederived_rule_policy(policy: &[u8], text: &str) -> Option<Vec<u8>> {
+    let Ok(serde_json::Value::Object(mut entries)) =
+        serde_json::from_slice::<serde_json::Value>(policy)
+    else {
+        return None;
+    };
+    let mut moved = false;
+    for (key, value) in &mut entries {
+        let Some(number) = named_number(text, key) else {
+            continue;
+        };
+        if value.as_f64() != number.as_f64() {
+            *value = serde_json::Value::Number(number);
+            moved = true;
+        }
+    }
+    if !moved {
+        return None;
+    }
+    let mut bytes = serde_json::to_vec_pretty(&serde_json::Value::Object(entries)).ok()?;
+    bytes.push(b'\n');
+    Some(bytes)
+}
+
+/// The number `text` names right after a mention of `key`: the first
+/// mention that names one.
+fn named_number(text: &str, key: &str) -> Option<serde_json::Number> {
+    text.match_indices(key).find_map(|(at, _)| {
+        let rest = text[at + key.len()..]
+            .trim_start_matches(|c: char| matches!(c, '`' | '"' | '\''))
+            .trim_start();
+        let rest = ["=", ":", "at ", "to ", "is ", "of "]
+            .into_iter()
+            .find_map(|joint| rest.strip_prefix(joint))
+            .unwrap_or(rest)
+            .trim_start();
+        let end = rest
+            .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+            .unwrap_or(rest.len());
+        match serde_json::from_str::<serde_json::Value>(rest[..end].trim_end_matches('.')) {
+            Ok(serde_json::Value::Number(number)) => Some(number),
+            _ => None,
+        }
+    })
 }

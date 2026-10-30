@@ -238,6 +238,12 @@ fn rule_on_proposal(
                 }
                 Ok(Prepared::Score(Box::new(ScoreInputs {
                     outcomes,
+                    proposal_instructions: super::rule_policy::gate_instructions_in_txn(
+                        vault, &*wtxn, proposal, &staged,
+                    ),
+                    target_instructions: super::rule_policy::gate_instructions_in_txn(
+                        vault, &*wtxn, &target, &current,
+                    ),
                     proposal: staged,
                     target,
                     target_record: current,
@@ -260,14 +266,14 @@ fn rule_on_proposal(
         skill: inputs.target,
         skill_id: &inputs.target_record.skill_id,
         version: &inputs.target_record.version,
-        instructions: &inputs.target_record.desc,
+        instructions: &inputs.target_instructions,
         held_out_receipts: &inputs.held_out,
     };
     let proposed_case = HeldOutReplayCase {
         skill: inputs.target,
         skill_id: &inputs.target_record.skill_id,
         version: &inputs.proposal.version,
-        instructions: &inputs.proposal.desc,
+        instructions: &inputs.proposal_instructions,
         held_out_receipts: &inputs.held_out,
     };
     // A project goal's measured axes come from its bound live report, read
@@ -429,6 +435,9 @@ enum Prepared {
 /// transaction and carried unchanged to the committing one.
 struct ScoreInputs {
     proposal: SkillRecord,
+    /// Each arm's instructions as the judge compares them (FIX 10878).
+    proposal_instructions: String,
+    target_instructions: String,
     target: EntityId,
     target_record: SkillRecord,
     held_out: Vec<String>,
