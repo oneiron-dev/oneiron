@@ -33,10 +33,9 @@ use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
     GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
     HonestyReplay, JudgeRubric, SkillOptimizeDecisions, SkillReplayResponses, judge_incumbent,
-    judge_rubric, register_held_out_replay_scorer, skill_edit_goal,
+    register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -83,14 +82,30 @@ fn judge_name(pin: &ProviderPin) -> String {
     format!("{}@{}", pin.model, pin.version)
 }
 
+/// The digest of the judge rubric `state` read: the first
+/// `judge_rubric_pin` in it, the outermost first; `None` when it holds none.
+fn rubric_digest_read(state: &Value) -> Option<String> {
+    match state {
+        Value::Object(fields) => fields
+            .get("judge_rubric_pin")
+            .and_then(|pin| pin.get("digest"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| fields.values().find_map(rubric_digest_read)),
+        Value::Array(items) => items.iter().find_map(rubric_digest_read),
+        _ => None,
+    }
+}
+
 /// One typed question the judge asked, as its journal keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalRow {
     pub at: u64,
     pub revision: String,
-    /// The pin of the judge rubric in force when the question was journaled,
-    /// beside `revision` (the algorithm and wording): the rubric text's
-    /// BLAKE3, lower hex; `None` while no rubric is in force (FIX 3585).
+    /// The pin of the judge rubric the question's state read, beside
+    /// `revision` (the algorithm and wording): the rubric text's BLAKE3,
+    /// lower hex, from the state's `judge_rubric_pin`; `None` when the
+    /// question read no rubric (FIX 3585).
     pub judge_rubric_digest: Option<String>,
     pub question: DecisionQuestion,
     pub decision: TypedDecision,
@@ -342,8 +357,7 @@ impl ServeReplayJudge {
         let row = JournalRow {
             at: now(),
             revision: self.revision.clone(),
-            judge_rubric_digest: judge_rubric(&self.vault)?
-                .map(|rubric| bytes_to_hex_lower(&rubric.digest)),
+            judge_rubric_digest: rubric_digest_read(state),
             question: question.clone(),
             decision: decision.clone(),
             decision_sources,
