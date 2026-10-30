@@ -406,7 +406,9 @@ fn authored_ref(value: &serde_json::Value) -> Option<AuthoredRef> {
 fn bind_authored(cited: AuthoredRef, sources: &dyn CallSources) -> Result<BoundRef> {
     let labels = sources.labels();
     match cited {
-        AuthoredRef::Claim { source, claim } => {
+        // The claim is its own source, as on the label path; a cited
+        // source beside it is redundant (FIX 7577).
+        AuthoredRef::Claim { source: _, claim } => {
             if labels.label(LabelKind::Claim, claim).is_none() {
                 return Ok(BoundRef {
                     source: None,
@@ -415,7 +417,7 @@ fn bind_authored(cited: AuthoredRef, sources: &dyn CallSources) -> Result<BoundR
             }
             Ok(BoundRef {
                 source: Some(claim),
-                locator: Ok(EvidenceLocator::claim(source, claim)?),
+                locator: Ok(EvidenceLocator::claim(claim, claim)?),
             })
         }
         AuthoredRef::Range { source, start, end } => {
