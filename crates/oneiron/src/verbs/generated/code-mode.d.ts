@@ -3659,7 +3659,7 @@ declare namespace Sdk {
   type ClaimDemoteActionInput = { kind: "decay"; new_claim_of_weight: number } | { kind: "weaken"; new_confidence: number } | { kind: "stale" };
   type ClaimDemoteRequest = { claim_ref: string; action: ClaimDemoteActionInput };
   type ClaimDemoteView = { claim_ref: string; short_ref?: string | null; rung: string; stale: boolean; receipt_ref: string };
-  type ReadFilterInput = { entity_types?: number[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
+  type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
   type ClaimFilteredListRequest = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null };
   type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
