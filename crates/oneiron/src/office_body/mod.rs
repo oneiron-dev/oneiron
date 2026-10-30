@@ -38,6 +38,7 @@ mod docx;
 mod doors;
 mod fork;
 mod holder_ask;
+mod live_recalc;
 mod live_units;
 mod masked_view;
 mod pptx;
@@ -58,9 +59,9 @@ pub use consent::{
     ProposalSettleRequest, ProposalSettlement, ReviewedFork, SettleVerdict,
 };
 pub(crate) use consent::{DiscardAdmission, MergeAdmission};
-pub(crate) use holder_ask::resolve_holder_ask_in_txn;
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
+pub(crate) use holder_ask::resolve_holder_ask_in_txn;
 pub use live_units::LivePin;
 pub(crate) use live_units::{LiveChange, LiveSheet};
 pub use oneiron_docedit::live::LandingReceipt;

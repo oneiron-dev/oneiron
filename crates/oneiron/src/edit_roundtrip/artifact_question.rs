@@ -309,6 +309,10 @@ pub struct UnitAbstention {
     /// The unit, as the caller named it.
     pub unit: Value,
     pub decision: Option<TypedDecision>,
+    /// The live body the ask read the unit on, when it read one: its decision
+    /// names the head version as evidence (FIX 12018).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// A unit the ask will not read as given.
@@ -318,6 +322,9 @@ pub struct UnitAbstention {
 pub struct UnitRefusal {
     pub unit: Value,
     pub reason: String,
+    /// The live body the ask read the unit on, when it read one (FIX 12018).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// What one artifact ask did: the proposal held for Keep (none when no unit
