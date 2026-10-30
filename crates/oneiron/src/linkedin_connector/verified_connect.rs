@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::error::{Error, Result};
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
+use crate::outbound_intent_ledger::RemoteTaskHandle;
 
 use super::normalize_keys::normalize_non_blank;
 use super::verified_send::{receipt_error_code, sleep_before_next_linkedin_observation};
@@ -222,10 +223,22 @@ impl<T: LinkedInMcpConnectTransport> OutboundExecutionSink for LinkedInMcpVerifi
         let pre = match self.read_state(&plan.recipient_key, &mut seat_policy) {
             Ok(state) => state,
             Err(ProfileReadError::Policy(decision)) => {
+                let held = matches!(decision.action, LinkedInSeatPolicyAction::Hold);
+                let reason = decision.reason_code.clone().unwrap_or_default();
+                let until = decision.not_before;
                 fields.extend(decision.receipt_fields);
                 fields.insert(CONNECT_VERIFICATION.to_owned(), "precheck_held".to_owned());
-                return OutboundExecutionOutcome::failed("verify_after_connect_precheck_held")
-                    .with_receipt_fields(fields);
+                let outcome =
+                    OutboundExecutionOutcome::failed("verify_after_connect_precheck_held")
+                        .with_receipt_fields(fields);
+                // FIX 8791: nothing went, so a seat hold keeps the send
+                // queued until the seat's window reopens; a suppression
+                // still refuses it.
+                return if held {
+                    outcome.with_hold(reason, until)
+                } else {
+                    outcome
+                };
             }
             Err(ProfileReadError::Transport(err)) => {
                 fields.insert(
@@ -323,6 +336,7 @@ impl<T: LinkedInMcpConnectTransport> OutboundExecutionSink for LinkedInMcpVerifi
                     last_error = Some(err);
                 }
                 Err(ProfileReadError::Policy(decision)) => {
+                    let held = matches!(decision.action, LinkedInSeatPolicyAction::Hold);
                     if let Some(reason) = decision.reason_code.as_deref() {
                         fields.insert(
                             "linkedin_profile_read_policy_reason".to_owned(),
@@ -338,6 +352,17 @@ impl<T: LinkedInMcpConnectTransport> OutboundExecutionSink for LinkedInMcpVerifi
                         CONNECT_VERIFICATION.to_owned(),
                         "profile_read_held".to_owned(),
                     );
+                    // FIX 8791: the request may have gone, so it is never
+                    // sent again; its check waits for the seat's window to
+                    // reopen (`linkedin_hold_not_before`) as a remote task
+                    // this sink's later profile read settles.
+                    if held {
+                        return OutboundExecutionOutcome::deferred(RemoteTaskHandle {
+                            id: connection_ref(&plan),
+                            poll_after_secs: None,
+                        })
+                        .with_receipt_fields(fields);
+                    }
                     return OutboundExecutionOutcome::failed(
                         "verify_after_connect_profile_read_held",
                     )
@@ -399,6 +424,11 @@ impl<T: LinkedInMcpConnectTransport> LinkedInMcpVerifiedConnectSink<T> {
     }
 }
 
+/// The connection a connect request asks for, as its receipt names it.
+fn connection_ref(plan: &LinkedInVerifiedConnectPlan) -> String {
+    format!("{}@connection", plan.recipient_key)
+}
+
 fn verified_connection(
     plan: &LinkedInVerifiedConnectPlan,
     state: LinkedInConnectionState,
@@ -408,7 +438,7 @@ fn verified_connection(
         "connection_state_after".to_owned(),
         state.as_str().to_owned(),
     );
-    let provider_ref = format!("{}@connection", plan.recipient_key);
+    let provider_ref = connection_ref(plan);
     fields.insert("linkedin_connection_ref".to_owned(), provider_ref.clone());
     OutboundExecutionOutcome::delivered_to_channel(provider_ref).with_receipt_fields(fields)
 }

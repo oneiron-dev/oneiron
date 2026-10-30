@@ -62,8 +62,8 @@ pub use self::dispatch_pipeline::{
 pub use self::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,
-    OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionRequest,
-    OutboundExecutionSink,
+    OutboundExecutionHold, OutboundExecutionOutcome, OutboundExecutionOutcomeKind,
+    OutboundExecutionRequest, OutboundExecutionSink,
 };
 pub use self::executor::ConnectorTaskExecutorError;
 pub use self::intent::{
