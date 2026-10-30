@@ -7,9 +7,11 @@
 //! readable by its owner alone, and acknowledged; one already written is
 //! acknowledged again. Each written archive is then taken into the device's
 //! vault, which tells its person it arrived (FIX 11197,
-//! [`oneiron::Vault::import_removal_archive`]); one that does not import
-//! stays on disk as written, and each start takes in those not yet taken in
-//! before its first session. On a managed vault each import runs under an
+//! [`oneiron::Vault::import_removal_archive`]), and its file is deleted once
+//! the import has committed, never before (FIX 11797); one that does not
+//! import stays on disk as written, and each start takes in those not yet
+//! taken in before its first session, and deletes the file of each one taken
+//! in before. On a managed vault each import runs under an
 //! admission of the reap freeze (FIX 11796): a frozen vault takes none, and
 //! the archive waits on disk for the next start. A live member's device
 //! holds the same sessions, and a removal wakes them. A failed session is
@@ -309,8 +311,8 @@ async fn session(
         let archives = archives.to_owned();
         let (vault, admit) = (Arc::clone(vault), Arc::clone(admit));
         let delivery = tokio::task::spawn_blocking(move || {
-            store(&archives, person, &delivery)?;
-            import(&vault, &admit, person, &delivery.copy);
+            let path = store(&archives, person, &delivery)?;
+            import(&vault, &admit, person, &delivery.copy, &path);
             Ok::<_, anyhow::Error>(delivery)
         })
         .await??;
@@ -359,8 +361,8 @@ async fn session_mesh(
         let archives = archives.to_owned();
         let (vault, admit) = (Arc::clone(vault), Arc::clone(admit));
         let delivery = tokio::task::spawn_blocking(move || {
-            store(&archives, person, &delivery)?;
-            import(&vault, &admit, person, &delivery.copy);
+            let path = store(&archives, person, &delivery)?;
+            import(&vault, &admit, person, &delivery.copy, &path);
             Ok::<_, anyhow::Error>(delivery)
         })
         .await??;
@@ -477,8 +479,13 @@ async fn post_mesh(
 /// Writes `delivery` under `archives` as `<receipt>.<version>.json`, once it
 /// checks: this person's, under a well-formed receipt id, its bytes the
 /// digest says. The file is written whole before it takes its name, and only
-/// its owner may read it; one already written stays as it is.
-fn store(archives: &Path, person: oneiron::EntityId, delivery: &Delivery) -> anyhow::Result<()> {
+/// its owner may read it; one already written stays as it is. Answers the
+/// file's path.
+fn store(
+    archives: &Path,
+    person: oneiron::EntityId,
+    delivery: &Delivery,
+) -> anyhow::Result<PathBuf> {
     let copy = &delivery.copy;
     anyhow::ensure!(
         oneiron::EntityId::from_hex(&copy.member).is_ok_and(|member| member == person),
@@ -493,7 +500,7 @@ fn store(archives: &Path, person: oneiron::EntityId, delivery: &Delivery) -> any
     owner_only(archives, 0o700)?;
     let path = archives.join(format!("{}.{}.json", receipt.to_hex(), delivery.version));
     if path.exists() {
-        return Ok(());
+        return Ok(path);
     }
     let part = path.with_extension("json.part");
     {
@@ -505,19 +512,22 @@ fn store(archives: &Path, person: oneiron::EntityId, delivery: &Delivery) -> any
         file.sync_all()?;
     }
     std::fs::rename(&part, &path)?;
-    Ok(())
+    Ok(path)
 }
 
-/// Takes `copy`, an archive written beside the credential for `person`,
-/// into `vault` (FIX 11197), under an admission `admit` grants (FIX 11796),
-/// and logs what came of it by its receipt. One that does not import, or
-/// that a vault frozen for reap does not admit, stays on disk as written,
-/// and the next start tries it again.
+/// Takes `copy`, the archive written at `path` beside the credential for
+/// `person`, into `vault` (FIX 11197), under an admission `admit` grants
+/// (FIX 11796), and logs what came of it by its receipt. One that does not
+/// import, or that a vault frozen for reap does not admit, stays on disk as
+/// written, and the next start tries it again. Once its import has
+/// committed, by this call or an earlier one, its file goes
+/// ([`remove_imported`]).
 fn import(
     vault: &oneiron::Vault,
     admit: &HousekeepingAdmission,
     person: oneiron::EntityId,
     copy: &RemovalExportCopy,
+    path: &Path,
 ) {
     let Some(_admission) = admit() else {
         tracing::info!(
@@ -540,11 +550,33 @@ fn import(
             version = copy.delivered_at,
             "removal archive imported before"
         ),
+        Err(error) => {
+            tracing::warn!(
+                receipt = %copy.receipt_id,
+                version = copy.delivered_at,
+                %error,
+                "removal archive kept on disk, not imported"
+            );
+            return;
+        }
+    }
+    remove_imported(path, &copy.receipt_id, copy.delivered_at);
+}
+
+/// Deletes `path`, the file of the archive `receipt` at delivery `version`
+/// whose import has committed (FIX 11797): the vault keeps the copy now, and
+/// its readers answer it there until its term. A delete that fails is
+/// logged by the archive's key alone and leaves the import as it stands;
+/// the next start's sweep deletes it ([`import_dir`]).
+fn remove_imported(path: &Path, receipt: &str, version: u64) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => tracing::warn!(
-            receipt = %copy.receipt_id,
-            version = copy.delivered_at,
-            %error,
-            "removal archive kept on disk, not imported"
+            receipt = %receipt,
+            version,
+            kind = ?error.kind(),
+            "imported removal archive file not deleted"
         ),
     }
 }
@@ -576,8 +608,10 @@ async fn import_kept(
 }
 
 /// [`import_kept`]'s sweep: each archive under `archives` not yet taken in
-/// is read and imported for the paired credential's holder. No directory,
-/// no sweep.
+/// is read and imported for the paired credential's holder, and the file of
+/// each one taken in before goes, its import committed (FIX 11797): one
+/// whose delete failed, or whose row has since lapsed at its term. No
+/// directory, no sweep.
 fn import_dir(
     vault: &oneiron::Vault,
     admit: &HousekeepingAdmission,
@@ -599,10 +633,11 @@ fn import_dir(
             continue;
         };
         if vault.removal_archive_imported(person, receipt, version)? {
+            remove_imported(&path, &receipt.to_hex(), version);
             continue;
         }
         match read_kept(&path) {
-            Ok(copy) => import(vault, admit, person, &copy),
+            Ok(copy) => import(vault, admit, person, &copy, &path),
             Err(error) => tracing::warn!(
                 receipt = %receipt.to_hex(),
                 version,
