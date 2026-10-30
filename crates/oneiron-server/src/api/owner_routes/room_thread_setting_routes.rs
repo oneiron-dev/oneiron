@@ -7,20 +7,38 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/settings/room-threads", get(read).post(put))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/settings/room-threads",
+                summary: "The owner's two room-thread switches, as they read now.",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/room-threads",
+                summary: "Sets either switch, or both, and answers the two as they now read.",
+                row: None,
+            },
+            post(put),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/settings/room-threads`'s body (FIX 11611):

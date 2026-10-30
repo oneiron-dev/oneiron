@@ -69,6 +69,10 @@ pub enum ContributionReplayUnavailable {
     /// callable or result-only use, and an ancestor the run read through a
     /// verb, is not replayed.
     NoExposure,
+    /// The target reached the run only as site knowledge on a browser
+    /// observation (FIX 11436): it is recorded, but it has no byte span in
+    /// the run's task to leave out.
+    SiteObservation,
     /// The step carries the target at more than one revision.
     AmbiguousExposure,
     /// The target's record is at another revision than the one the step saw.
@@ -93,6 +97,7 @@ impl ContributionReplayUnavailable {
             Self::CapsuleNotFinalized => "capsule_not_finalized",
             Self::Unreadable => "unreadable",
             Self::NoExposure => "no_exposure",
+            Self::SiteObservation => "site_observation",
             Self::AmbiguousExposure => "ambiguous_exposure",
             Self::SkillRevisionMoved => "skill_revision_moved",
             Self::ForksDiverged => "forks_diverged",
@@ -354,7 +359,15 @@ impl Runner<'_> {
         };
         let slots: Vec<&ExposureSlot> = target_slots(&capsule, target);
         let Some(first) = slots.first() else {
-            return Ok(Err(Unavailable::NoExposure));
+            // A target the run was shown only on a browser observation has no
+            // span to leave out (FIX 11436).
+            let site =
+                crate::skill_attribution::site_exposed(self.vault, capsule.run, target.removed())?;
+            return Ok(Err(if site {
+                Unavailable::SiteObservation
+            } else {
+                Unavailable::NoExposure
+            }));
         };
         if slots.iter().any(|slot| slot.revision != first.revision) {
             return Ok(Err(Unavailable::AmbiguousExposure));
