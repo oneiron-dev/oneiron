@@ -204,7 +204,9 @@ enum IdempotencyLookup {
     /// The first request's intent stands with no outcome (FIX 9527): the
     /// writes committed while it ran, each counted in its own transaction
     /// (FIX 10379).
-    Interrupted { committed_writes: u32 },
+    Interrupted {
+        committed_writes: u32,
+    },
 }
 
 #[derive(Clone)]

@@ -94,10 +94,14 @@ pub(in crate::batch) fn apply_put(
     let data = owners.escalated_skill_body.as_deref().unwrap_or(data);
     let data = owners.task_body_without_streaks.as_deref().unwrap_or(data);
     let data = owners.pad_stored_body.as_deref().unwrap_or(data);
-    let data = owners.reconciled_critical_claim_body.as_deref().unwrap_or(data);
+    let data = owners
+        .reconciled_critical_claim_body
+        .as_deref()
+        .unwrap_or(data);
     let old_record::OldRecord {
         body_changed,
         consolidation_dirty,
+        stored_before,
         previous_skill_record,
         optimizer_birth_marker,
     } = old_record::apply_old_record(
@@ -131,6 +135,7 @@ pub(in crate::batch) fn apply_put(
         &revision,
         body_changed,
         consolidation_dirty,
+        stored_before,
         &previous_skill_record,
         short_id_plan,
         authority_first_seen_key,

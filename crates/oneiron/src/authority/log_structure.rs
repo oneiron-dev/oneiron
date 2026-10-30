@@ -371,11 +371,11 @@ impl AuthorityStructure {
     /// key of the machine it names (a request's carrier, a result's
     /// executor), as its primary signer. A root record vouches
     /// for itself when its own anchor signed it alone, and an anchor signs
-    /// machine marks alone; as the fold's anchor rules have it, an anchor
-    /// vouches for nothing else. A genesis vouches for itself only in a log
-    /// that holds none, or as the one it holds: any other, even from the
-    /// root key with a new nonce, would fork the root. The caller verifies
-    /// the signatures.
+    /// machine marks and its own frontier joins alone; as the fold's anchor
+    /// rules have it, an anchor vouches for nothing else. A genesis vouches
+    /// for itself only in a log that holds none, or as the one it holds: any
+    /// other, even from the root key with a new nonce, would fork the root.
+    /// The caller verifies the signatures.
     pub(super) fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
         let install_key =
             |machine: crate::EntityId| self.vouching_key(&(machine, entry.signer_key().clone()));
@@ -400,10 +400,14 @@ impl AuthorityStructure {
             // A frontier join: its carrier's install key, as for the act it
             // leads to, a stranger's once its carrier is removed
             // ([`Self::is_stranger`]); the host issuer's falls to the
-            // admitters below.
+            // admitters below; an owner anchor's, as its own rows, a stored
+            // root's anchor alone (FIX 8498).
             AuthorityOp::FrontierJoin(FrontierJoin {
-                carrier: Some(carrier),
+                family: FrontierJoinFamily::Install(carrier),
             }) => install_key(*carrier),
+            AuthorityOp::FrontierJoin(FrontierJoin {
+                family: FrontierJoinFamily::Anchor,
+            }) => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
             // The owner's kit push (FIX 6053): a stored root's anchor signs
             // it alone, as an anchored machine revision; no machine carries it.
             AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
@@ -412,6 +416,13 @@ impl AuthorityStructure {
             AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
+            // A custody request's permit piece (FIX 11866): its carrier's
+            // install key, as for the request it leads to; with no carrier, a
+            // stored root's anchor alone, as for the kit push it leads to.
+            AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
+                Some(carrier) => install_key(carrier),
+                None => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
+            },
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
             // An owner answer: its carrier's install key, alone (mesh PR1b).
             AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
@@ -429,10 +440,10 @@ impl AuthorityStructure {
     /// Whether `entry`, which a key may vouch for, vouches only as a
     /// stranger's: a root record of an anchor this install does not take as
     /// its own, unless its id is the pin's or an awaited root's; such an
-    /// anchor's mark, unless a pin door awaits its root; or a world row, a
-    /// residence result or an owner work row of an install key only such
-    /// marks name. Every such
-    /// row counts toward one shared bound (r23).
+    /// anchor's mark or frontier join, unless a pin door awaits its root; or
+    /// a world row, a residence result or an owner work row of an install key
+    /// only such marks name. Every such row counts toward one shared bound
+    /// (r23).
     pub(super) fn is_stranger(&self, entry: &AuthorityLogEntry) -> bool {
         let signer = entry.signer_key();
         if signed_by(entry, &self.admitters) {
@@ -465,8 +476,15 @@ impl AuthorityStructure {
             AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
             AuthorityOp::ExportAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
-                carrier: Some(carrier),
+                family: FrontierJoinFamily::Install(carrier),
             }) => machine_key(*carrier) || self.removed.contains(carrier),
+            AuthorityOp::FrontierJoin(FrontierJoin {
+                family: FrontierJoinFamily::Anchor,
+            }) => {
+                !self.is_own_anchor(signer)
+                    && !matches!(signer, AuthorityKey::Ed25519(anchor)
+                        if self.awaited_anchors.contains(anchor))
+            }
             AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
                 !self.is_own_anchor(signer)
                     && !matches!(signer, AuthorityKey::Ed25519(anchor)
@@ -475,6 +493,14 @@ impl AuthorityStructure {
             AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),
+            AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
+                Some(carrier) => machine_key(carrier),
+                None => {
+                    !self.is_own_anchor(signer)
+                        && !matches!(signer, AuthorityKey::Ed25519(anchor)
+                            if self.awaited_anchors.contains(anchor))
+                }
+            },
             _ => false,
         }
     }
