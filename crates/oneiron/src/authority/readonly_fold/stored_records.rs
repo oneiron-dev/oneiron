@@ -45,8 +45,22 @@ pub(crate) fn folded_vault_id_of_records(
     let Some(pin_row) = adopted_pin else {
         return Ok(fold_authority_log(&entries).vault_id);
     };
-    let adopted =
-        crate::authority::checkpoint_adopt::verified_adoption_of_rows(pin_row, adopted_image)?;
+    let adopted = match crate::authority::checkpoint_adopt::verified_adoption_of_rows(
+        pin_row,
+        adopted_image,
+    ) {
+        Ok(adopted) => adopted,
+        // A pin that does not verify, or names no image here, folds as the
+        // paired read did before it took the pin: from the records alone.
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a disk source's adopted checkpoint pin did not verify; its vault id folds \
+                 from its records alone"
+            );
+            return Ok(fold_authority_log(&entries).vault_id);
+        }
+    };
     let image = adopted.image();
     let mut above = Vec::new();
     for entry in entries {
