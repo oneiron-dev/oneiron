@@ -14,7 +14,10 @@
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-use super::{ArtifactExportRef, Vault, validate_artifact_id};
+use super::{
+    ARTIFACT_POINTERS, ArtifactExportRef, ArtifactPointerChannel, ArtifactPointerRow,
+    ArtifactPointerRowKey, Vault, validate_artifact_id,
+};
 use crate::blob_artifact::{
     BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES, BlobArtifactVersion,
 };
@@ -81,6 +84,80 @@ pub(super) fn remove_serving_blobs_in_txn(
 ) -> Result<()> {
     SERVING_BLOBS.delete_from(store, wtxn, id.as_bytes())?;
     Ok(())
+}
+
+/// Retires, with the producer's exact-version release of version `version`
+/// of `id` (FIX 8504), what this vault serves of that version: each channel
+/// pointer that names it goes, owed to the sync server as unpublished so the
+/// replica's pointer and descriptor go too, and so does this vault's own
+/// descriptor of it. Every other version and pointer stays. Never a
+/// refusal.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn retire_released_version_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    version: u64,
+) -> Result<()> {
+    let artifact = id.to_hex();
+    for channel in [
+        ArtifactPointerChannel::Published,
+        ArtifactPointerChannel::Preview,
+    ] {
+        let key = ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.clone(),
+        };
+        let row = ARTIFACT_POINTERS.get(store, wtxn, &key)?;
+        if names_version(row.as_ref(), id, version) {
+            ARTIFACT_POINTERS.delete(store, wtxn, &key)?;
+            super::mark_publication_in_txn(store, wtxn, channel, &artifact)?;
+        }
+    }
+    SERVING_BLOBS.delete(store, wtxn, &(*id, version))?;
+    Ok(())
+}
+
+/// A replica's descriptor of version `version` of `id` goes once no channel
+/// pointer here names that version (FIX 8504): an unpublish takes what it
+/// served, unless the other channel still serves it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn retire_unpointed_version_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    version: u64,
+) -> Result<()> {
+    let artifact = id.to_hex();
+    for channel in [
+        ArtifactPointerChannel::Published,
+        ArtifactPointerChannel::Preview,
+    ] {
+        let key = ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.clone(),
+        };
+        let row = ARTIFACT_POINTERS.get(store, wtxn, &key)?;
+        if names_version(row.as_ref(), id, version) {
+            return Ok(());
+        }
+    }
+    SERVING_BLOBS.delete(store, wtxn, &(*id, version))?;
+    Ok(())
+}
+
+/// Whether `row` points at exactly version `version` of `id`.
+fn names_version(row: Option<&ArtifactPointerRow>, id: &EntityId, version: u64) -> bool {
+    row.is_some_and(|row| {
+        matches!(row.export, ArtifactExportRef::BlobVersion { artifact_id, version: pinned }
+            if artifact_id == *id && pinned == version)
+    })
 }
 
 impl Vault {
