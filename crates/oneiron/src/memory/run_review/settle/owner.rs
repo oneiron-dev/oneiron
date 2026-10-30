@@ -248,6 +248,7 @@ impl Memory<'_> {
                     changes: stored,
                 },
             )?;
+            crate::store::owe_claim_vad_in_txn(&self.vault().store, txn, &vad, now)?;
             Ok((settlement, metrics, vad))
         })?;
         // A curator rung this approval landed applies now, not at the next
