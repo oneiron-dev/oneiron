@@ -21,12 +21,6 @@ pub(crate) const REACTION_STANDALONE_WEIGHT: f32 = 0.1;
 const REACTION_SALIENCE: f32 = 0.1;
 /// Tolerated clock skew for a reaction's occurrence time (seconds).
 const OCCURRENCE_SKEW: u64 = 300;
-/// Reaction claims one person may hold on one record, removed ones included:
-/// room for any honest toggling, and a bound on what one member can attach.
-#[cfg(not(test))]
-pub(super) const MAX_REACTIONS_PER_PERSON: usize = 256;
-#[cfg(test)]
-pub(super) const MAX_REACTIONS_PER_PERSON: usize = 8;
 
 pub(super) fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
@@ -239,22 +233,19 @@ impl Vault {
             };
             let now = require_current_occurrence(self, value.occurred_at)?;
             let fold = admission_in(self, txn)?;
-            let mine: Vec<StoredReaction> = reactions_on_in(self, txn, &fold, input.message)?
-                .into_iter()
-                .filter(|row| row.value.by == input.by)
-                .collect();
-            if let Some(live) = mine
+            // Every put is admitted: removed claims stay as the chain's
+            // history and never count against a new one.
+            if let Some(live) = reactions_on_in(self, txn, &fold, input.message)?
                 .iter()
                 .rev()
-                .find(|row| row.live() && row.value.glyph == value.glyph)
+                .find(|row| {
+                    row.value.by == input.by && row.live() && row.value.glyph == value.glyph
+                })
             {
                 return Ok(ReactionChange {
                     id: live.id,
                     state: ReactionState::Replayed,
                 });
-            }
-            if mine.len() >= MAX_REACTIONS_PER_PERSON {
-                return Err(invalid("too many reactions by one person on one record"));
             }
             let envelope = first_party_envelope(input.actor)?;
             let id = write_reaction_in_txn(self, txn, input.message, &value, envelope, now)?;
