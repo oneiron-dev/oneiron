@@ -30,12 +30,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::{get, post};
 use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixSettled, MAX_CODE_FIX_WORK};
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView;
@@ -65,38 +63,8 @@ use crate::server::SyncServer;
 pub(crate) mod schema;
 mod training_runs;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/proactivity/digest", get(read_digest))
-        .route("/proactivity/digest/assemble", post(assemble_digest))
-        .route(
-            "/proactivity/action-mode",
-            get(action_mode).post(set_action_mode),
-        )
-        .route("/stewardship", get(stewardship).post(set_stewardship))
-        .route("/representation", get(review_representation))
-        .route("/representation/approve", post(approve_representation))
-        .route("/representation/decline", post(decline_representation))
-        .route("/coach/training-offers", get(training_offers))
-        .route("/coach/training-offers/answer", post(answer_training_offer))
-        .route(
-            "/coach/training-offers/undo",
-            post(undo_training_offer_switch),
-        )
-        .merge(training_runs::routes())
-        .route("/coach/code-fixes", get(code_fixes))
-        .route(
-            "/coach/judge-asks/minutes",
-            get(judge_ask_minutes).post(fund_judge_asks),
-        )
-        .route("/coach/judge-asks/pick", post(pick_judge_ask))
-        .route("/coach/judge-asks/regrade", post(regrade_judge_label))
-        .route("/identity/asks", get(identity_asks))
-        .route("/identity/asks/answer", post(answer_identity_ask))
-        .route("/self-heal/findings", get(self_heal_findings))
-        .route("/self-heal/findings/label", post(label_self_heal_finding))
-        .route("/self-heal/minted", get(self_heal_minted))
-}
+mod table;
+pub(super) use self::table::owner_table;
 
 fn now_secs() -> u64 {
     now_unix_ms() / 1_000

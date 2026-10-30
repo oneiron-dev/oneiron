@@ -35,6 +35,7 @@ use crate::gate::confirm::{
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
 use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
+use crate::gate::delegation_chain::evaluate_with_delegation_chain;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::llm::{AutoCheckCandidate, AutoCheckOutcome};
@@ -390,14 +391,12 @@ fn check_claim_policy_for_write_with_record_inner(
         // A pre-commit failure REPLACES the policy verdict: the recording,
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
-        input.foreign_agent_ceiling = envelope
-            .map(|envelope| closing_actor.unwrap_or_else(|| envelope.actor()))
-            .map(|actor| crate::gate::foreign_agent::resolve(store, &*wtxn, actor))
-            .transpose()?
-            .flatten();
+        let writing = envelope.map(|envelope| closing_actor.unwrap_or_else(|| envelope.actor()));
+        input.foreign_agent_ceiling =
+            super::super::foreign_agent::resolve_writing(store, &*wtxn, writing)?;
         let mut decision = match hard_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
-            None => policy.evaluate_gate_with_lineage(&input, lineage),
+            None => evaluate_with_delegation_chain(store, &*wtxn, policy, &input, lineage, writing),
         };
         // GATE-13: persona-core and mirroring-prone predicates are isolated
         // for the DREAMER path only, and only AFTER the validity pass above.
@@ -617,6 +616,7 @@ fn check_claim_policy_for_write_with_record_inner(
                     Some(row) => format!("policy_precedence_row_{row}"),
                     None => "policy_precedence_shipped_default".to_owned(),
                 }))
+                .chain(decision.delegation_narrowing_receipt())
                 .chain(checker_receipt_reasons)
                 .collect(),
             system_notices: Vec::new(),

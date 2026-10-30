@@ -20,7 +20,6 @@ mod sealed_spool;
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
@@ -29,12 +28,14 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::authority::{CustodyChange, CustodyRecipientPermit};
-use oneiron::secret_custody::{SealedCustodyChange, SecretCustodyStatus, SecretCustodyView};
+use oneiron::secret_custody::{
+    SealedCustodyChange, SealedInput, SecretCustodyStatus, SecretCustodyView,
+};
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::owner_work_routes::OwnerWorkReceiptView;
-use super::{OwnerReply, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{has_json_content_type, query_params};
 use crate::auth::CoreAuth;
@@ -47,14 +48,65 @@ use crate::server::SyncServer;
 /// envelopes (FIX 5521) is read whatever its length, as the engine carries
 /// an input past one row's bound in numbered parts and refuses none for its
 /// length (FIX 5445).
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/secrets/register", post(register_secret))
-        .route("/secrets/rotate", post(rotate_secret))
-        .route("/secrets/revoke", post(revoke_secret))
-        .route("/secrets/rewrap", post(rewrap_secret))
-        .route("/secrets/custody", get(custody_view).post(sealed_change))
-        .merge(pending::routes())
+pub(super) fn owner_table() -> OwnerTable {
+    let mut table = vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/register",
+                summary: "The body is read by RegisterSecret::read, as rotation's is: the owner door runs first, so a refused caller's body is never read.",
+                row: None,
+            },
+            post(register_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/rotate",
+                summary: "The body is read by RotateSecret::read, not Json: the extractor's body copy and parser scratch would outlive the request unwiped.",
+                row: None,
+            },
+            post(rotate_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/revoke",
+                summary: "The record goes terminal and every lease over it is revoked (OF-422); a portable one's revoke is carried to the owner's other machines.",
+                row: None,
+            },
+            post(revoke_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/rewrap",
+                summary: "Seals a portable secret again, same generation, to the installs the owner names, by its holder.",
+                row: None,
+            },
+            post(rewrap_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/custody",
+                summary: "A secret's custody record id, generation, custody revision and live requests, and every linked install a surface may offer as holder or recipient, value-free (WILL L04 row 04).",
+                row: None,
+            },
+            get(custody_view),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/custody",
+                summary: "A register or rotate whose protected input the surface sealed to the holder itself: this install takes only the ciphertext.",
+                row: None,
+            },
+            post(sealed_change),
+        ),
+    ];
+    table.extend(pending::owner_table());
+    table
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/rewrap`'s body (FIX 11611): [`RewrapBody`].
@@ -277,7 +329,10 @@ struct PermitBody {
 /// bytes in order, then the closing mark. Each numbered envelope seals the
 /// input label and the next run of the body under the one-envelope key id,
 /// then its index and the count, each a big-endian `u32`
-/// (`secret_custody::control::input::envelopes`).
+/// (`secret_custody::control::input::envelopes`). No member carries a
+/// carrier key (FIX 7402): while the carrier wire is on, this install seals
+/// an input that fits one row under one it mints, and the relayed input
+/// names its reference.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SealedHead {
@@ -348,8 +403,8 @@ pub(crate) fn sealed_change_body_schema() -> serde_json::Value {
 /// `disk_capacity` is the only refusal its size meets (FIX 5674), and its
 /// input decoded into a file of its own (FIX 7917); the floor keeps the room
 /// the engine stores the input in until the change returns. The custody
-/// door takes the input as one slice, so it is read from that file once,
-/// here (FIX 11140: L04's reader path through persistence and execution).
+/// door reads the input from that file where it lies, never as one buffer
+/// (FIX 11140).
 async fn sealed_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -385,11 +440,11 @@ async fn sealed_change(
                 })
             })
             .collect::<OwnerResult<Vec<_>>>()?;
-        let input = sealed
+        let (file, len) = sealed
             .input
+            .as_ref()
             .ok_or_else(|| OwnerError::Invalid("input_base64 must be standard base64".into()))?
-            .read_all()
-            .map_err(|error| OwnerError::Host(error.into()))?;
+            .file();
         let vault = server.vault();
         let custody = vault.seal_custody_change_as_owner(
             &owner,
@@ -402,7 +457,7 @@ async fn sealed_change(
                 seen: parse_revision("seen", &request.seen)?,
                 holder: entity_id("holder", &request.holder)?,
                 recipients: &recipients,
-                input: &input,
+                input: SealedInput::File { file, len },
             },
             vault.now_recorded_at(),
         )?;

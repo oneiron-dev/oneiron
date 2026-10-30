@@ -108,6 +108,7 @@ impl CompactionDriver {
             sources,
             prior,
             note,
+            false,
             WindowLog::Host {
                 prior,
                 calls,
@@ -165,6 +166,7 @@ impl CompactionDriver {
                 let mut seen = std::collections::BTreeSet::new();
                 sources.into_iter().filter(|id| seen.insert(*id)).collect()
             },
+            window_read_from_sources: false,
             note,
             log: WindowLog::Host {
                 prior: None,

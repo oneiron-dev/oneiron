@@ -108,6 +108,13 @@ impl BrowserSession {
         };
         if page_key(self.driver.url()).ok() == opened.key {
             observation.site_skills = opened.matches;
+            if let Some(loader) = &self.sites.loader {
+                loader.note_delivered(
+                    observation.seq,
+                    &observation.scope,
+                    &observation.site_skills,
+                );
+            }
             observation.site_skill_notes = opened.notes;
         }
     }

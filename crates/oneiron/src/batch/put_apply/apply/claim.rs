@@ -1,3 +1,5 @@
+//! Replicated-claim reconciliation for the put chokepoint: critical-confirm handling on overwrite.
+
 use super::*;
 
 /// A sync replay deliberately bypasses the local claim gate. If it changes a

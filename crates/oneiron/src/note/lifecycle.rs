@@ -220,8 +220,7 @@ impl Memory<'_> {
     /// `vault.notes.seal`: seals one NOTE as this actor.
     pub fn seal_note(&self, input: &NoteRefRequest) -> MemoryResult<NoteSeal> {
         let note = crate::memory::resolve_entity_ref(self.vault(), &input.note_ref)?;
-        self.vault()
-            .seal_note(note, WriteActor::new(self.actor(), self.actor_class()))
+        self.vault().seal_note(note, self.write_actor())
     }
 
     /// `vault.notes.lifecycle`: where one NOTE stands, and its seal.

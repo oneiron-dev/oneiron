@@ -5,13 +5,17 @@
 //! A JSONL row belongs to the archived record its identity fields name
 //! ([`ROW_IDENTITY_FIELDS`], as the export writer writes them): it stays
 //! exactly when that record is kept, as a fresh export of the kept records
-//! writes it, whatever else its body mentions. A row whose identity fields
-//! name no archived record keeps the names rule: it stays only when every
-//! archived record it names anywhere is kept, and one that names none stays
-//! only when a kept row refers to one of its files (a result body a kept run
-//! names). A row with no identity field that names nothing and refers to no
-//! file (a built-in adapter's pack row) stays, as every export writes it
-//! (FIX-LIST 11110). A side row goes with the record and carriers its table
+//! writes it, whatever else its body mentions. A row with no identity field
+//! that refers to a file (a result body a run names) is that referring row's
+//! own: it stays exactly when a kept row refers to one of its files, whatever
+//! its own text mentions (FIX-LIST 10773). Any other row whose identity
+//! fields name no archived record keeps the names rule: it stays only when
+//! every archived record it names anywhere is kept, and one that names none
+//! stays only when a kept row refers to one of its files. A row with no
+//! identity field that names nothing and refers to no file (a built-in
+//! adapter's pack row) stays, as every export writes it (FIX-LIST 11110).
+//! No rule keeps a row of a record left out, nor a file only such a row
+//! refers to. A side row goes with the record and carriers its table
 //! reads from it, a record's rows of one group together or not at all, and a
 //! kept record's group that does not stay whole is named in the manifest as
 //! a fresh export of the kept records names it ([`project_side_rows`]).
@@ -185,7 +189,10 @@ pub(crate) fn project_stored_archive(
                 .filter_map(|text| EntityId::from_hex(text).ok())
                 .filter(|id| archived.contains(id))
                 .collect();
-            if names.is_empty() {
+            // A row a file reference owns goes with the row referring to it,
+            // never with what its own text mentions (FIX-LIST 10773).
+            let owned_by_reference = identity.is_empty() && !files.is_empty();
+            if names.is_empty() && !owned_by_reference {
                 names_in(&row, archived, &mut names);
             }
             let fate = if names.is_empty() {

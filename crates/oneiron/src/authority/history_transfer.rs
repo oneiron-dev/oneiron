@@ -4,6 +4,7 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::{EntityId, TimeRange, Vault};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::adopted_evidence::AdoptedEvidence;
@@ -427,8 +428,20 @@ impl Vault {
         ids.into_iter().next().ok_or_else(invalid_authority)
     }
 
-    /// Constructs and appends one root migration under the current root's signature.
-    /// The signer callback receives only the domain-separated transcript.
+    /// Constructs and appends one root migration under the current root's
+    /// signature, in one write transaction. The signer callback receives only
+    /// domain-separated transcripts, each signed with `signer_key`, and runs
+    /// while that transaction is open, so it must not write to this vault.
+    ///
+    /// A main-log frontier wider than one entry names is joined first (FIX
+    /// 11867): an Ed25519 root signs each join through the callback, in the
+    /// host family, whose rule (a live Ed25519 owner roster key) is the
+    /// standing the move itself stands on, and the move names the join tips.
+    /// The joins cover every head in this call, in groups of
+    /// [`AUTHORITY_FRONTIER_JOIN_ARITY`] until at most [`MAX_PARENTS`] tips
+    /// are left, so no head count refuses and every head stays in the move's
+    /// causal past, inside its fence. A P-256 root signs no join; its move
+    /// names the heads alone.
     pub fn re_root_authority<S>(
         &self,
         new_device: DeviceAuthority,
@@ -436,28 +449,42 @@ impl Vault {
         signer: S,
     ) -> Result<AuthorityLogEntry>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
-        let txn = self.store.env.read_txn()?;
-        let mut entry = self.unsigned_re_root_in_txn(&txn, new_device, signer_key)?;
-        drop(txn);
-        entry.signer.signature = signer(&authority_transcript(&entry)?)?;
-        self.apply_signed_re_root(&entry)?;
+        let signer = RefCell::new(signer);
+        let sign = |transcript: &[u8]| (*signer.borrow_mut())(transcript);
+        let joiner = match &signer_key {
+            AuthorityKey::Ed25519(key) => Some(FrontierSigner::Callback(*key, &sign)),
+            AuthorityKey::P256(_) => None,
+        };
+        let mut txn = self.store.env.write_txn()?;
+        let entry =
+            self.re_root_authority_in_txn(&mut txn, new_device, (signer_key, joiner), &sign)?;
+        txn.commit()?;
         Ok(entry)
     }
 
     /// The same move inside the caller's write transaction. `signer` runs
-    /// while that transaction is open, so it must not open another.
+    /// while that transaction is open, so it must not open another. A
+    /// frontier wider than one entry names is joined first by `joiner`, the
+    /// key the move retires: the host signer, as its host-issued ops are
+    /// (FIX 8498, Engine 09:31 (3)), or an Ed25519 root through the move's
+    /// callback (FIX 11867); the move then names the join tips. With no
+    /// `joiner` the move names the heads alone.
     pub(super) fn re_root_authority_in_txn<S>(
         &self,
         txn: &mut heed::RwTxn<'_>,
         new_device: DeviceAuthority,
-        signer_key: AuthorityKey,
+        (signer_key, joiner): (AuthorityKey, Option<FrontierSigner<'_>>),
         signer: S,
     ) -> Result<AuthorityLogEntry>
     where
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
+        if let Some(joiner) = joiner {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            self.prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?;
+        }
         let mut entry = self.unsigned_re_root_in_txn(txn, new_device, signer_key)?;
         entry.signer.signature = signer(&authority_transcript(&entry)?)?;
         self.apply_signed_re_root_in_txn(txn, &entry)?;
@@ -511,6 +538,9 @@ impl Vault {
 
     /// Account-authenticated managed-vault recovery. The existing host root signs
     /// migration; account authentication never fabricates a second genesis or a widen.
+    /// The move is [`Self::re_root_authority`]'s: `signer` signs the joins of a
+    /// frontier wider than one entry names as well as the move (FIX 11867), so
+    /// no head count refuses it.
     pub fn recover_cloud_account<S>(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -519,7 +549,7 @@ impl Vault {
         signer: S,
     ) -> Result<AuthorityLogEntry>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         if self.privacy_posture() != crate::HostingPrivacyPosture::Hosted {
             return Err(invalid_authority());

@@ -104,8 +104,8 @@ mod tombstone_review;
 mod verbs;
 mod write_gate;
 pub use documents::{
-    NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
-    NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
+    NoteAnchor, NoteDocument as NoteProgramDocument, NoteProgramEdit, NoteProgramEditOutcome,
+    NoteVersion,
 };
 pub(crate) use kinds::{COMPACTION_INTENT_NOTE_KIND, LENS_INTENT_NOTE_KIND, descriptor_in_txn};
 pub use kinds::{
@@ -610,7 +610,10 @@ mod document_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;
-pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};
+pub use document::{
+    NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome, NoteSpanResolution,
+};
+pub use document::{NoteScalarEdit as NoteEdit, NoteScalarEditOutcome as NoteEditOutcome};
 
 #[cfg(test)]
 mod program_tests;
