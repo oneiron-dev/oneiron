@@ -1139,6 +1139,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.inbox.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxItemRequest,
+                >(),
+            ),
+            (
+                "self.inbox.done",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxItemRequest,
+                >(),
+            ),
+            (
+                "self.inbox.later",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxItemLaterRequest,
+                >(),
+            ),
+            (
                 "vault.skills.bootstrap",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -11974,6 +11992,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.inbox.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.done" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.later" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.skills.bootstrap" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19627,6 +19666,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.inbox.lens" => {
             let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
         }
+        "self.inbox.get" => {
+            let _input: crate::agent_inbox_lens::InboxItemRequest = decode(value.clone())?;
+        }
+        "self.inbox.done" => {
+            let _input: crate::agent_inbox_lens::InboxItemRequest = decode(value.clone())?;
+        }
+        "self.inbox.later" => {
+            let _input: crate::agent_inbox_lens::InboxItemLaterRequest = decode(value.clone())?;
+        }
         "vault.skills.bootstrap" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -23492,6 +23540,9 @@ pub fn invoke(
             encode(vault_weave_link_corrections(memory, decode(value)?)?)
         }
         "self.inbox.lens" => encode(self_inbox_lens(memory, decode(value)?)?),
+        "self.inbox.get" => encode(self_inbox_get(memory, decode(value)?)?),
+        "self.inbox.done" => encode(self_inbox_done(memory, decode(value)?)?),
+        "self.inbox.later" => encode(self_inbox_later(memory, decode(value)?)?),
         "vault.skills.bootstrap" => encode(vault_skills_bootstrap(memory, decode(value)?)?),
         "vault.skill_hubs.default.get" => {
             encode(vault_skill_hubs_default_get(memory, decode(value)?)?)
@@ -27439,6 +27490,24 @@ pub fn self_inbox_lens(
     input: crate::agent_inbox_lens::InboxLensRequest,
 ) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
     memory.inbox_lens(&input)
+}
+pub fn self_inbox_get(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxItemRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxItemView> {
+    memory.inbox_item_get(&input)
+}
+pub fn self_inbox_done(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxItemRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxItemMarked> {
+    memory.inbox_item_done(&input)
+}
+pub fn self_inbox_later(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxItemLaterRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxItemMarked> {
+    memory.inbox_item_later(&input)
 }
 pub fn vault_skills_bootstrap(
     memory: &Memory<'_>,

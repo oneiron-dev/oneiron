@@ -61,6 +61,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::booking::lifecycle::erase_booking_receipt_carriers_in_txn,
     // FIX 9876: an imported MESSAGE's text hash in the history import ledger.
     crate::ingest::history::erase_message_in_txn,
+    // FIX 9775: a PERSON's trusted-contact relations, asks and staged notices.
+    crate::counterparty_contact::erase_trusted_contact_rows_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.

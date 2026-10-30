@@ -360,6 +360,9 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.link.corrections" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.lens" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.get" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.done" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.later" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.bootstrap" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.default.get" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.restoreDefaults" => a.spec.clone().ok_or_else(invalid),
@@ -2187,6 +2190,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.inbox.lens" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.done" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.later" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.bootstrap" => {
@@ -8690,6 +8702,30 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::agent_inbox_lens::InboxLensRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_lens(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.get" => {
+            let input: oneiron::agent_inbox_lens::InboxItemRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.done" => {
+            let input: oneiron::agent_inbox_lens::InboxItemRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_done(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.later" => {
+            let input: oneiron::agent_inbox_lens::InboxItemLaterRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_later(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -1061,6 +1061,21 @@ export_facade! {
     let output = client.self_inbox_lens(&input)?;
     crate::codec::lift_record("self.inbox.lens", &output)
 };
+"self.inbox.get" => fn self_inbox_get(&self, input: InboxItemRequest) -> InboxItemView = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.get", input)?;
+    let output = client.self_inbox_get(&input)?;
+    crate::codec::lift_record("self.inbox.get", &output)
+};
+"self.inbox.done" => fn self_inbox_done(&self, input: InboxItemRequest) -> InboxItemMarked = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.done", input)?;
+    let output = client.self_inbox_done(&input)?;
+    crate::codec::lift_record("self.inbox.done", &output)
+};
+"self.inbox.later" => fn self_inbox_later(&self, input: InboxItemLaterRequest) -> InboxItemMarked = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemLaterRequest = crate::codec::lower_record("self.inbox.later", input)?;
+    let output = client.self_inbox_later(&input)?;
+    crate::codec::lift_record("self.inbox.later", &output)
+};
 "vault.skills.bootstrap" => fn vault_skills_bootstrap(&self) -> Vec<BootstrapSkillView> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.bootstrap")?;
     let output = client.vault_skills_bootstrap(&input)?;
