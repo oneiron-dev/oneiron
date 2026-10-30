@@ -290,17 +290,32 @@ pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
 /// read by the write door's rules before it is served (FIX 2480); a file
 /// this reader cannot be served masked is
 /// [`SecretError::MaskedCopyWithheld`] (FIX 2475).
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it computed
+/// from, or checked against, these exact bytes: the mark is read by it and
+/// the bytes are not hashed again (speed). `None` hashes them here.
 pub(crate) fn sighted_bytes_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     bytes: Vec<u8>,
+    digest: Option<&[u8; 32]>,
     sight: SecretSight,
 ) -> Result<Vec<u8>> {
     use crate::batch::secret_scan;
     if sight != SecretSight::Masked {
         return Ok(bytes);
     }
-    let Some(file) = masked_file_in_txn(store, txn, blake3::hash(&bytes).as_bytes())? else {
+    let hash = match digest {
+        Some(digest) => {
+            debug_assert!(
+                blake3::hash(&bytes).as_bytes() == digest,
+                "a caller's digest names other bytes"
+            );
+            *digest
+        }
+        None => *blake3::hash(&bytes).as_bytes(),
+    };
+    let Some(file) = masked_file_in_txn(store, txn, &hash)? else {
         // A sealed file goes to the owner and a granted agent only: no mark
         // covers what it holds.
         if secret_scan::is_sealed(&bytes) {
@@ -355,7 +370,7 @@ impl Vault {
     /// [`SecretSight`]).
     pub fn sighted_asset_bytes(&self, bytes: Vec<u8>, sight: SecretSight) -> Result<Vec<u8>> {
         let rtxn = self.store.env.read_txn()?;
-        sighted_bytes_in_txn(&self.store, &rtxn, bytes, sight)
+        sighted_bytes_in_txn(&self.store, &rtxn, bytes, None, sight)
     }
 
     /// [`Vault::export_blob_artifact`] for a reader at a serving door. The
@@ -470,7 +485,7 @@ impl Vault {
                 .map(Some);
         }
         self.read_blob_artifact_version_in_txn(txn, artifact_id, version)?
-            .map(|bytes| sighted_bytes_in_txn(&self.store, txn, bytes, sight))
+            .map(|bytes| sighted_bytes_in_txn(&self.store, txn, bytes, None, sight))
             .transpose()
     }
 }
