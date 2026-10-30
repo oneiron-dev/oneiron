@@ -13308,15 +13308,23 @@ pub struct DisarmTurnProgram {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TurnProgramRebindRequest {
-    #[serde(rename = "attempt")]
-    pub attempt: String,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+    #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]
+    pub turn_ref: Option<String>,
+    #[serde(
+        rename = "registration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub registration: Option<String>,
 }
 
 /// `oneiron::dreamer_runner::program::rebind::TurnProgramRebindReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TurnProgramRebindReceipt {
-    #[serde(rename = "attempt")]
-    pub attempt: String,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
     #[serde(rename = "admission")]
     pub admission: String,
     #[serde(rename = "predecessor_slip")]

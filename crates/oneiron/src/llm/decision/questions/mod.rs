@@ -26,7 +26,11 @@ mod windows;
 #[cfg(test)]
 mod standing_tests;
 
-pub use answer_scope::question_answers_in_lane;
+pub use answer_scope::{
+    answers_in_lane, calibration_pairs_in_lane, closed_outcome_windows_in_lane,
+    outcome_labels_in_lane, project_bound_outcomes_in_lane, question_answers_in_lane,
+    schedule_backfill_in_lane,
+};
 pub use answers::question_answers;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
@@ -67,10 +71,10 @@ pub use refresh::{
     refresh_due_questions_by_role, refresh_due_questions_by_role_while, refresh_due_questions_with,
     refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
-pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
+pub(crate) use refresh::{principal_actor, standing_asker_for_question};
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
-pub(crate) use saved_reader::wake_artifact_reads;
+pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
 pub use store::{

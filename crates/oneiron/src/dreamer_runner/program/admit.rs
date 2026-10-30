@@ -59,7 +59,9 @@ impl Vault {
     }
 }
 
-fn admit_in_txn(
+/// [`Vault::admit_turn_program`]'s writer body, also the one an owed wake's
+/// rebind admits through in its own writer (FIX 11833).
+pub(super) fn admit_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     wake: &TurnProgramWake,

@@ -1655,9 +1655,9 @@ export type TurnProgramRegistration = { registration: EntityId; actor: EntityId;
 /** `oneiron::dreamer_runner::program::types::DisarmTurnProgram` */
 export type DisarmTurnProgram = { registration: EntityId }
 /** `oneiron::dreamer_runner::program::rebind::TurnProgramRebindRequest` */
-export type TurnProgramRebindRequest = { attempt: string }
+export type TurnProgramRebindRequest = { attempt?: string | null; turn_ref?: string | null; registration?: string | null }
 /** `oneiron::dreamer_runner::program::rebind::TurnProgramRebindReceipt` */
-export type TurnProgramRebindReceipt = { attempt: string; admission: string; predecessor_slip: string; successor_slip: string; owner_work: boolean }
+export type TurnProgramRebindReceipt = { attempt?: string | null; admission: string; predecessor_slip: string; successor_slip: string; owner_work: boolean }
 /** `oneiron::campaign::surface::saved_query::SavedQueryScopeSpec` */
 export type SavedQueryScopeSpec = { worlds?: EntityId[]; facets?: string[] }
 /** `oneiron::saved_query::filter::ClaimComparison` */
