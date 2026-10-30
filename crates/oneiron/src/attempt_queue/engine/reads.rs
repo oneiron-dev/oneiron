@@ -270,6 +270,34 @@ impl AttemptQueue<'_> {
         Ok(records)
     }
 
+    /// [`Self::list_in_txn`]'s rows among `ids` alone, each read by its key,
+    /// so a reader that knows which rows it wants decodes no others (FIX
+    /// 11318): an id with no row and an archived row are passed over, as the
+    /// working set passes them; creation order.
+    pub(crate) fn working_rows_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        ids: impl IntoIterator<Item = AttemptId>,
+    ) -> Result<Vec<AttemptRecord>> {
+        let mut records = Vec::new();
+        let mut erased = 0usize;
+        for id in ids {
+            let Some(raw_record) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
+                continue;
+            };
+            if !crate::vault_cleanup::attempt_is_archived(self.store, rtxn, id, &raw_record)? {
+                match decode_record(&raw_record, id) {
+                    Ok(record) => records.push(record),
+                    Err(error) if retired_marker(&error) => erased += 1,
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        warn_erased_rows("working_rows_in_txn", erased);
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
     /// Complete kind view for a projection that must not silently truncate.
     ///
     /// The view reads its kind's whole side of the owner-retained boundary
