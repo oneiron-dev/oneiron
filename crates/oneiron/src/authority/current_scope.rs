@@ -145,7 +145,10 @@ pub(in crate::authority) fn merge_narrowings(
 /// The current effective scope of a pact-bound grant: the meet of every pact
 /// that binds it, or `None` when none does. The sync selector's ceiling reads
 /// this one resolver (ONE-1591, FIX 9099).
-pub(crate) fn current_grant_scope(fold: &AuthorityFold, grant: &EntityId) -> Option<FederationDirectionScope> {
+pub(crate) fn current_grant_scope(
+    fold: &AuthorityFold,
+    grant: &EntityId,
+) -> Option<FederationDirectionScope> {
     fold.federation_pacts
         .values()
         .filter(|pact| pact.grant_ref == *grant)
