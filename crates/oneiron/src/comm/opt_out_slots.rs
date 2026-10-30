@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use super::claims::{CommResult, PREDICATE_COMM_OPT_OUT};
+use super::parties::active_comm_party_key_in_txn;
 use super::projection_writes::matching_claims_in_txn;
 use super::records::{CommRecord, put_comm_record_in_txn};
 use crate::Vault;
@@ -106,4 +107,56 @@ pub(super) fn consume_clear_gates_in_txn(
         }
     }
     Ok(())
+}
+
+/// Re-derives the type-132 cache of every contact that folds a
+/// `channel_class` head standing on one of `subjects`.
+///
+/// A contact folds the heads of the ACTIVE party its key resolves to, and that
+/// party reads its shells through, so a head on a shell reaches the contacts of
+/// every active party the shell points at: a twin's survivor shares its key
+/// (F06 H170), and a merge of two different keys puts the survivor's contacts
+/// under the shell's heads (F06 R2-F3). Those parties come from the witnesses
+/// the fold's inbound walk reads, not the redirect table alone, and the walk
+/// has no depth or cycle error, so a dropped table or a long chain can neither
+/// narrow the refresh nor refuse the STOP (F06 R3-F1, R3-F2). A merged
+/// entity's own key is skipped: no active party answers it, so a rebuild there
+/// folds none of the heads it still carries and would drop its STOP (F06
+/// R4-F1). That also keeps a chain at one refresh per active head (R4-F2).
+/// Each key's contacts come from the full scan the send gate also uses:
+/// the party-channel index (ONE-1868) cannot prove it lists every contact.
+/// Channel scope stays the fold's class match, so an email STOP never
+/// re-derives a telegram contact. Answers the contacts whose rows it
+/// re-derived.
+pub(super) fn rematerialize_subject_contacts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    subjects: &BTreeSet<EntityId>,
+    channel_class: &str,
+    now: u64,
+) -> CommResult<Vec<EntityId>> {
+    let mut parties = subjects.clone();
+    parties.extend(crate::identity_redirect::outbound_redirect_heads_in_txn(
+        &vault.store,
+        &*wtxn,
+        subjects,
+    )?);
+    let mut party_keys = BTreeSet::new();
+    for party in parties {
+        party_keys.extend(active_comm_party_key_in_txn(&vault.store, &*wtxn, party)?);
+    }
+    let channel_class = normalize_channel_class(channel_class);
+    let mut contacts = Vec::new();
+    for party_key in party_keys {
+        contacts.extend(
+            crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
+                vault,
+                wtxn,
+                &party_key,
+                Some(&channel_class),
+                now,
+            )?,
+        );
+    }
+    Ok(contacts)
 }
