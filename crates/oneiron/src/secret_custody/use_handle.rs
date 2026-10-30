@@ -626,6 +626,7 @@ fn provider_check(
         label: target.operation.to_owned(),
         effector: target.effector.to_owned(),
         hint: None,
+        optional: false,
     }];
     let check = PackConnectionCheck {
         pack: USE_PACK,

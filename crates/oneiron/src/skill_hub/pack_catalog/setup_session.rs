@@ -581,7 +581,7 @@ impl Vault {
                 .any(|state| state.id == required.id && state.granted)
         });
         let ready = allowed
-            && secrets.iter().all(|secret| secret.stored)
+            && connection.required_secrets_stored(&secrets)
             && matches!(check, PackSetupCheck::Verified { .. });
         Ok(PackSetupConnectionState {
             id: connection.id.clone(),

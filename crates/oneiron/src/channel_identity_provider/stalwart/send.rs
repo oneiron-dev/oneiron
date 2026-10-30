@@ -136,6 +136,33 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
 }
 
 impl StalwartClient {
+    /// Submits `message` from `identity`'s mailbox for a served send
+    /// (OF-187), after the common dispatcher admitted it: the same draft and
+    /// submission path as [`StalwartSendSink`], its Message-ID derived from
+    /// `send_key`, the send's logical reference, so a retry finds its draft
+    /// and its submission rather than sending twice.
+    pub fn submit_served_text(
+        &self,
+        identity: crate::EntityId,
+        message: &NativeMailMessage,
+        send_key: &str,
+        headers: &BTreeMap<String, String>,
+    ) -> OutboundExecutionOutcome {
+        if send_key.trim().is_empty() || message.validate().is_err() {
+            return OutboundExecutionOutcome::failed("native_mail_fields_or_binding");
+        }
+        let mailbox = match self.mailbox(identity) {
+            Ok(mailbox) => mailbox,
+            Err(_) => return OutboundExecutionOutcome::failed("native_mail_fields_or_binding"),
+        };
+        let message_id = format!(
+            "{}@{}",
+            blake3::hash(send_key.as_bytes()).to_hex(),
+            self.config.domain
+        );
+        self.submit(&mailbox, message, &message_id, headers)
+    }
+
     fn submit(
         &self,
         mailbox: &StalwartMailbox,

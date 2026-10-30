@@ -71,7 +71,7 @@ pub use self::setup::{
     BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
     NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck,
     PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks,
-    SLACK_AUTH_TEST_CHECK,
+    SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 
