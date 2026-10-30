@@ -622,8 +622,6 @@ impl<'a> JoinedText<'a> {
     /// `bytes` as text, always copied wiped: for bytes with no owner to
     /// borrow from, like an array of byte values read into a buffer.
     pub(super) fn from_computed(bytes: &[u8]) -> Self {
-        JoinedText::Owned(Zeroizing::new(
-            String::from_utf8_lossy(bytes).into_owned(),
-        ))
+        JoinedText::Owned(Zeroizing::new(String::from_utf8_lossy(bytes).into_owned()))
     }
 }

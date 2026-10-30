@@ -195,7 +195,8 @@ impl EraseOwnerAct<'_> {
             Err(Error::Gate(_)) => return Ok(()),
             Err(error) => return Err(error),
         };
-        let custody = vault.carry_custody_revoke_in_txn(txn, actor, self.surface, secret_ref, at)?;
+        let custody =
+            vault.carry_custody_revoke_in_txn(txn, actor, self.surface, secret_ref, at)?;
         if custody.work.is_some() {
             self.recorded.set(true);
         }

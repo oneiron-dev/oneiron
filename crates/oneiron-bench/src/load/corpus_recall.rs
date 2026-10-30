@@ -368,7 +368,11 @@ fn seed(plan: &Plan, agent: &Agent, corpus: &[Turn], owner: &str) -> Result<Seed
             }
         }
         if (index + 1) % 50 == 0 {
-            say(&format!("witnessed {} of {} turns", index + 1, corpus.len()));
+            say(&format!(
+                "witnessed {} of {} turns",
+                index + 1,
+                corpus.len()
+            ));
         }
     }
     if !plan.claims {
@@ -564,7 +568,12 @@ fn execute(plan: &Plan) -> Result<(), String> {
             .map(|(a, b)| (b - a) / plan.repeat as f64 * 1000.0);
         let medians = stage_medians(&timed.stages);
         let stable = timed.fingerprints.len() == 1;
-        let fingerprint = timed.fingerprints.keys().next().cloned().unwrap_or_default();
+        let fingerprint = timed
+            .fingerprints
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or_default();
         let content = timed.content.keys().next().cloned().unwrap_or_default();
         overall.update(format!("{query}|{fingerprint}|{content}\n").as_bytes());
         let s = summary(&timed.ms);
@@ -694,6 +703,8 @@ fn reuse_seeded(
         token: field("token")?,
         binding_key: field("binding_key")?,
     };
-    let last_at = record["last_at"].as_u64().ok_or("seeded.json has no last_at")?;
+    let last_at = record["last_at"]
+        .as_u64()
+        .ok_or("seeded.json has no last_at")?;
     Ok((vault, credential, last_at))
 }

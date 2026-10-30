@@ -134,14 +134,18 @@ impl ConsolidationExecutor<'_> {
             parent,
             axes.world_ref,
             axes.facet_ref,
-            resources.scope().relationship,
+            resources.scope().relationship.clone(),
         );
         // Each child's reply check reads the citations its candidates would
         // carry into verification against the branch's own pinned text: a
         // range verification refuses the whole partition over refuses the
         // reply here, never memoized (FIX 7274).
         let citations = Arc::new(extraction::CitationCheck::new(
-            resources, axes, attempt_id, ctx.now_ms, namespace,
+            resources,
+            axes,
+            attempt_id,
+            ctx.now_ms,
+            namespace.clone(),
         ));
         // A thing's branch runs as one scoped code-mode agent first (FIX
         // 7508): each slice it extracts is the very durable step below, so
@@ -153,7 +157,7 @@ impl ConsolidationExecutor<'_> {
                 resources,
                 slices: &slices,
                 step: &step_ctx,
-                namespace,
+                namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations: &citations,
                 attempt_id,
@@ -179,7 +183,7 @@ impl ConsolidationExecutor<'_> {
                         sources: &slice.sources,
                     })
                     .collect(),
-                namespace,
+                namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations,
                 width,

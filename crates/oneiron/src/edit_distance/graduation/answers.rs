@@ -286,6 +286,63 @@ fn answer_graduation_offer_in_txn(
     }
 }
 
+/// The owner's decline of an offer whose evidence lives outside MS-06's
+/// counters (a channel identity's draft reviews): the decline half of
+/// [`answer_graduation_offer_as_owner`] once the caller has proved, in
+/// `wtxn`, that the offer stands. `pin` records [`OfferAnswer::ManualPinned`],
+/// else [`OfferAnswer::NotNow`]. The row joins the one answer log, so the
+/// ladder, its backoff and the pin are the ones every offer replays, and
+/// [`latest_decline_at_in_txn`] is where the caller's streak restarts.
+pub(crate) fn record_external_offer_decline_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    scope: &RampScope,
+    pin: bool,
+    at: u64,
+) -> Result<SnoozeState> {
+    scope.validate()?;
+    let answerer = owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+    let state = snooze_state_in_txn(&vault.store, &*wtxn, scope)?;
+    if state.suppresses_asks_at(at) {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "this scope's graduation offer is already held; there is nothing to decline",
+        )));
+    }
+    let backoffs = super::threshold_policy::graduation_policy_in_txn(&vault.store, &*wtxn, scope)?
+        .snooze_backoff_seconds;
+    let answer = if pin {
+        OfferAnswer::ManualPinned
+    } else {
+        OfferAnswer::NotNow
+    };
+    let provenance = AnswerProvenance::new(owner, answerer);
+    append_answer_in_txn(vault, wtxn, scope, answer.as_str(), at, Some(provenance))?;
+    crate::consent_graduation::reset_ramp_streak_in_txn(vault, wtxn, scope, at)?;
+    Ok(if pin {
+        SnoozeState::ManualPinned
+    } else {
+        state.declined_at(at, backoffs)
+    })
+}
+
+/// The `at` of the scope's last decline or manual pin, in answer order: the
+/// instant a streak kept outside MS-06's counters restarts from, as
+/// [`answer_graduation_offer`] resets the counters it keeps.
+pub(crate) fn latest_decline_at_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    scope: &RampScope,
+) -> Result<Option<u64>> {
+    let mut latest = None;
+    for (_, row) in ANSWER.scan_from(store, txn, &scope.key())? {
+        if matches!(row.answer.as_str(), ANSWER_NOT_NOW | ANSWER_MANUAL_PINNED) {
+            latest = Some(row.at);
+        }
+    }
+    Ok(latest)
+}
+
 /// A manual pin can only be cleared by the settings unpin door.
 pub(crate) fn scope_is_manual_pinned_in_txn(
     store: &Store,

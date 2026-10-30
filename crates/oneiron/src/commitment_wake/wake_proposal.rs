@@ -5,25 +5,27 @@ use rmpv::Value;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
-use crate::commitment::CommitmentRecord;
+use crate::commitment::{CommitmentObligorKind, CommitmentRecord};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, DreamerAdmittedAttempt};
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::edge::EdgeActorClass;
+use crate::entity_id::derived_domains::COMMITMENT_WAKE_PROPOSAL;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
+use super::reminder::dispatch_obligor_agent_turn;
 use super::wake_approval::claim_provenance;
 use super::wake_event::{
-    COMMITMENT_WAKE_PROPOSAL_CLAIM_ID_DOMAIN, COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION,
-    CommitmentWakeEvent, KEY_CHANNEL, KEY_CONTENT_REF, KEY_DEDUPE_KEY, KEY_DUE_AT, KEY_FIRE_AT,
-    KEY_IDEMPOTENCY_KEY, KEY_INSTANCE_REF, KEY_OCCURRED_AT, KEY_ON_BEHALF_OF, KEY_PHASE,
-    KEY_SCHEMA_VERSION, KEY_TARGET, KEY_TRIGGER_REF, KEY_VERB, PREDICATE_COMMITMENT_WAKE_PROPOSAL,
-    PROVENANCE_KEY_JOB_ID, PROVENANCE_KEY_RUN, PROVENANCE_KEY_SURFACE,
-    decode_commitment_wake_event, validate_optional_wake_string, validate_wake_string,
+    COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, CommitmentWakeEvent, KEY_CHANNEL, KEY_CONTENT_REF,
+    KEY_DEDUPE_KEY, KEY_DUE_AT, KEY_FIRE_AT, KEY_IDEMPOTENCY_KEY, KEY_INSTANCE_REF,
+    KEY_OCCURRED_AT, KEY_ON_BEHALF_OF, KEY_PHASE, KEY_SCHEMA_VERSION, KEY_TARGET, KEY_TRIGGER_REF,
+    KEY_VERB, PREDICATE_COMMITMENT_WAKE_PROPOSAL, PROVENANCE_KEY_JOB_ID, PROVENANCE_KEY_RUN,
+    PROVENANCE_KEY_SURFACE, decode_commitment_wake_event, validate_optional_wake_string,
+    validate_wake_string,
 };
-use super::wake_fire::{WakeEligibility, wake_eligibility};
+use super::wake_fire::{WakeEligibility, current_wake_eligibility};
 
 // ---------------------------------------------------------------------------
 // 4. Proposal planner, deterministic claim id, and the wrapper executor
@@ -130,26 +132,24 @@ impl CommitmentWakeProposalSkip {
     }
 }
 
-/// The deterministic proposal claim id for one attempt.
-///
-/// Hashes exactly the domain separator plus the 16 attempt bytes, then takes
-/// the first 16 BLAKE3 bytes RAW. A prefix colliding with a reserved sentinel
-/// is perturbed deterministically (`raw[0] ^= 1`, `raw[15] ^= 1`), exactly as
-/// `dreamer_consolidation` does — no RFC-4122 version or variant bits are
-/// rewritten, so the id stays a pure function of the attempt.
+/// The deterministic proposal claim id for one attempt: the one derived-id
+/// rule ([`EntityId::derive`]) under the registered
+/// [`COMMITMENT_WAKE_PROPOSAL`] domain, with the attempt's 16 bytes as its one
+/// part. The result is a version-8 id and a pure function of the attempt.
 #[must_use]
 pub fn commitment_wake_proposal_claim_id(attempt_id: AttemptId) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(COMMITMENT_WAKE_PROPOSAL_CLAIM_ID_DOMAIN);
-    hasher.update(attempt_id.as_bytes());
-    let mut raw = [0_u8; 16];
-    raw.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    entity_id_from_digest_prefix(raw)
+    // The domain is non-empty UTF-8 and the version-8 stamp keeps a derived
+    // id out of every reserved pattern, so neither refusal can occur.
+    EntityId::derive(
+        COMMITMENT_WAKE_PROPOSAL,
+        &[attempt_id.as_bytes().as_slice()],
+    )
+    .unwrap_or_else(|_| unreachable!("a derived commitment wake proposal id is never reserved"))
 }
 
-/// The sentinel-safe raw-prefix rule, factored out so the perturb branch is
-/// reachable by a fixture: a BLAKE3 prefix landing on a reserved id is roughly
-/// a 2^-120 event and would otherwise be untestable.
+/// The sentinel-safe raw-prefix rule for an id taken from a raw digest
+/// prefix: a prefix landing on a reserved id (roughly a 2^-120 event) is
+/// perturbed (`raw[0] ^= 1`, `raw[15] ^= 1`), no RFC-4122 bit rewritten.
 pub(crate) fn entity_id_from_digest_prefix(mut raw: [u8; 16]) -> EntityId {
     EntityId::from_bytes(raw).unwrap_or_else(|_| {
         raw[0] ^= 0x01;
@@ -239,12 +239,31 @@ impl<E> CommitmentWakeExecutor<'_, E> {
                 attempt_id,
             ));
         };
-        if !matches!(wake_eligibility(&record), WakeEligibility::Eligible) {
+        if !matches!(
+            current_wake_eligibility(ctx.vault, &record)?,
+            WakeEligibility::Eligible
+        ) {
             return Ok(skip_completion(
                 CommitmentWakeProposalSkip::IneligibleInstance,
                 event,
                 attempt_id,
             ));
+        }
+        // A promise an agent owes is kept in that agent's own turn, not sent
+        // as a message: the wake dispatches the turn and proposes nothing.
+        if record.obligor.kind == CommitmentObligorKind::Agent {
+            let turn =
+                dispatch_obligor_agent_turn(ctx.vault, event, &record, crate::unix_seconds_now())?;
+            tracing::info!(
+                attempt = %bytes_to_hex_lower(attempt_id.as_bytes()),
+                run = %event.idempotency_key(),
+                turn = ?turn.map(|turn| bytes_to_hex_lower(turn.as_bytes())),
+                "commitment wake handed to the obligor agent's turn"
+            );
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         // Step 4: no planner is a typed COMPLETION, never a partition decode.
         let agent_actor = self.agent_actor;

@@ -26,7 +26,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/types.rs` | src | s | 8 struct · 2 enum · 3 fn | AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryAffect, CoreQueryRequest +2 | Vault-read request shapes and the view / count-mode knobs they carry |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 18 fn · 3 const · 2 mod | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | m | 61 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | m | 65 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
 | `src/error/artifact.rs` | src | m | 2 enum · 1 fn · 1 crate-vis | ArtifactError, LiveDeckRefusal | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
@@ -70,7 +70,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody.rs` | src | s | 2 enum · 4 fn | CustodyClass, CustodyTier | ARCH-0069 S1 custody classes and tiers |
 | `src/secret_lease.rs` | src | s | 1 enum · 2 fn | SecretLeaseStatus | Secret lease status |
 | `src/serialize.rs` | src | s | 1 mod | — | Serde adapters shared by the engine crates' serialized envelopes |
-| `src/serialize/entity_ref.rs` | src | s | 6 fn · 2 mod | — | Hex adapters for typed entity references in host-side serialized envelopes |
+| `src/serialize/entity_ref.rs` | src | s | 8 fn · 3 mod | — | Hex adapters for typed entity references in host-side serialized envelopes |
 | `src/temporal.rs` | src | L | 6 struct · 6 enum · 8 fn · 1 const | OpenPhrase, QueryTemporalHints, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus, TemporalPhraseSpan +4 | `TimeRange`, temporal expressions/parsing, granularity |
 | `src/write_envelope.rs` | src | s | 1 struct · 7 fn | WriteActor | The write actor every write path stamps |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-contracts` made `pub` so `oneiron` can reach them across the crate split |

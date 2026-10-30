@@ -66,14 +66,11 @@ pub(in crate::gate) fn default_docedit_resource_row() -> Value {
             Value::from("archive_bytes"),
             Value::from(512 * 1024 * 1024u64),
         ),
-        (Value::from("entries"), Value::from(10_000u64)),
         (Value::from("part_bytes"), Value::from(64 * 1024 * 1024u64)),
         (
             Value::from("expanded_bytes"),
             Value::from(512 * 1024 * 1024u64),
         ),
-        (Value::from("xml_depth"), Value::from(256u64)),
-        (Value::from("xml_nodes"), Value::from(1_000_000u64)),
     ])
 }
 
