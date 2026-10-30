@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1206 facade rows, 4356 declarations.
+Census: 1206 facade rows, 4354 declarations.
 Inputs: 1134 of 1206 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1206 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -1677,8 +1677,7 @@ class TaskAskClass(TypedDict):
     guest_fact_limit: NotRequired[int | None]
     soft_confirm_surface: NotRequired[TaskAskSurface | None]
     remind: list[int]
-AskAuthorityScopeWire = TypedDict("AskAuthorityScopeWire", {"class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": bool})
-AskAuthorityScope = AskAuthorityScopeWire
+AskAuthorityScope = TypedDict("AskAuthorityScope", {"class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": bool})
 class TaskAssigneeAgentDefBody(TypedDict):
     agent_def_ref: EntityId
 class TaskAssigneeAgentDef(TypedDict):
@@ -3614,15 +3613,14 @@ class ScopeAxisSome(TypedDict, Generic[T]):
 ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
 ScopeId = str
 Sensitivity = Literal["public", "private", "sensitive", "restricted"]
-class SensitivityCeilingWireBottom(TypedDict):
+class SensitivityCeilingBottom(TypedDict):
     kind: Literal["bottom"]
-class SensitivityCeilingWireAll(TypedDict):
+class SensitivityCeilingAll(TypedDict):
     kind: Literal["all"]
-class SensitivityCeilingWireAtMost(TypedDict):
+class SensitivityCeilingAtMost(TypedDict):
     kind: Literal["at_most"]
     value: Sensitivity
-SensitivityCeilingWire = SensitivityCeilingWireBottom | SensitivityCeilingWireAll | SensitivityCeilingWireAtMost
-SensitivityCeiling = SensitivityCeilingWire
+SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAll | SensitivityCeilingAtMost
 class Scope(TypedDict):
     worlds: NotRequired[ScopeAxis[ScopeId]]
     facets: NotRequired[ScopeAxis[ScopeId]]
@@ -20971,6 +20969,7 @@ class ProposalBundle(TypedDict):
     author: DocActor
     forks: list[ForkRecord]
     settled: bool
+    opener_lineage: list[str]
 class SummaryForkView(TypedDict):
     record: ForkRecord
     text: NotRequired[str | None]
