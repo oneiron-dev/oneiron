@@ -44,6 +44,9 @@ pub(super) struct ConnState {
     pub(super) locality: oneiron::claim::CallerLocality,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
+    /// This socket's last touch that named an item by reference, so its
+    /// parts slice one export (FIX 12116); the next touch replaces it.
+    pub(super) residence_touch: Option<crate::livequery::ResidenceTouchStage>,
     /// The authority entry this socket's machine appends in parts, held
     /// until it is whole; it goes with the socket (FIX 8246).
     pub(super) authority_append_stage: Option<oneiron::sync::residence::AuthorityAppendStage>,
@@ -85,6 +88,7 @@ impl ConnState {
             bound_auth: None,
             locality: oneiron::claim::CallerLocality::OffDevice,
             residence_index: None,
+            residence_touch: None,
             authority_append_stage: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,

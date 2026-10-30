@@ -247,43 +247,107 @@ pub(super) fn index_changed() -> AppError {
     )
 }
 
+/// One socket's last touch that named an item by reference (FIX 12116): the
+/// bytes it named, read and exported once, so each part slices them instead
+/// of reading the row and exporting the document again. One per socket: the
+/// next touch drops it, and it goes with the socket. Each part is still
+/// admitted as the touch was, and serves the stage only while that admission
+/// stands on the same basis; any other part reads again, as with none.
+pub(crate) struct ResidenceTouchStage {
+    window: WindowKey,
+    selector: SyncSelector,
+    id: EntityId,
+    basis: TouchBasis,
+    /// Each item the touch named by reference, with the BLAKE3 it named.
+    items: Vec<(TouchItem, [u8; 32], Vec<u8>)>,
+    /// The staged bytes' charge on the server's retained-memory line.
+    _held: crate::byte_line::HeldBytes,
+}
+
+/// What a touch's reads were admitted under: the machine they serve, the
+/// worlds kept off it, the grant's stored row and the selection revision. A
+/// part serves the stage only while its own admission reads the same.
+#[derive(PartialEq, Eq)]
+struct TouchBasis {
+    destination: Destination,
+    withheld: std::collections::BTreeSet<EntityId>,
+    grant: Option<Vec<u8>>,
+    selection_revision: ([u8; 32], u64, u64),
+}
+
 /// One item's touch: its row and its document, each in base64 while the room
 /// [`RESIDENCE_PAGE_REPLY_BYTES`] leaves holds it, the row first, and else by
 /// reference, its BLAKE3 and length, for the machine to fetch in parts
-/// (`touch_part`, FIX 12116).
+/// (`touch_part`, FIX 12116). What it names by reference becomes the socket's
+/// `stage`, in place of the last touch's.
 pub(super) fn touch(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
     params: Value,
+    stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<Answer, AppError> {
     let input: TouchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let touched = touched(server, auth, peer, &input, None)?;
+    *stage = None;
+    let target = touch_target(server, auth, peer, &input)?;
+    // Read before the item, so the stage never names a basis newer than its bytes.
+    let basis = touch_basis(server, &target)?;
+    let (blob, document) = read_touch(server, &target, None)?;
+    let rows = touch_rows(server, target.id)?;
     let mut room = RESIDENCE_PAGE_REPLY_BYTES;
-    let blob = touch_item(touched.blob.as_deref().unwrap_or_default(), &mut room);
-    let document = touch_item(touched.document.as_deref().unwrap_or_default(), &mut room);
-    Ok((
-        json!({
-            "window": touched.window.as_str(),
-            "entityId": touched.id.to_hex(),
-            "blob": blob,
-            "document": document,
-        }),
-        touched.rows,
-    ))
+    let mut named = Vec::new();
+    let blob = touch_item(
+        TouchItem::Blob,
+        blob.unwrap_or_default(),
+        &mut room,
+        &mut named,
+    );
+    let document = touch_item(
+        TouchItem::Document,
+        document.unwrap_or_default(),
+        &mut room,
+        &mut named,
+    );
+    let reply = json!({
+        "window": target.window.as_str(),
+        "entityId": target.id.to_hex(),
+        "blob": blob,
+        "document": document,
+    });
+    if let Some(basis) = basis
+        && !named.is_empty()
+    {
+        // Charged to the retained-memory line; with no room there, nothing
+        // is staged and each part reads again.
+        let bytes = named.iter().map(|(_, _, bytes)| bytes.len()).sum();
+        *stage = server
+            .retained
+            .try_reserve_alone(bytes, server.wire_telemetry.limit_questions())
+            .map(|held| ResidenceTouchStage {
+                window: target.window.clone(),
+                selector: target.selector.clone(),
+                id: target.id,
+                basis,
+                items: named,
+                _held: held,
+            });
+    }
+    Ok((reply, rows))
 }
 
 /// One part of a touched item's row or document a touch named by reference,
-/// read and admitted again as the touch read it, with its whole length (FIX
-/// 12116). Bytes that are no longer the ones the touch named, and an offset at
-/// or past their end, look missing; the machine checks the joined bytes
-/// against the hash.
+/// admitted again as the touch was, with its whole length (FIX 12116): sliced
+/// from the socket's `stage` when its last touch named these bytes on the
+/// same basis, else read again. Bytes that are no longer the ones the touch
+/// named, and an offset at or past their end, look missing; the machine
+/// checks the joined bytes against the hash.
 pub(super) fn touch_part(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
     params: Value,
+    stage: &Option<ResidenceTouchStage>,
 ) -> Result<Answer, AppError> {
     let input: TouchPartRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
@@ -293,14 +357,30 @@ pub(super) fn touch_part(
         selector: input.selector,
         entity_id: input.entity_id,
     };
-    let touched = touched(server, auth, peer, &touch, Some(input.item))?;
-    let bytes = match input.item {
-        TouchItem::Blob => touched.blob,
-        TouchItem::Document => touched.document,
-    }
-    .unwrap_or_default();
+    let target = touch_target(server, auth, peer, &touch)?;
+    let staged = match stage {
+        Some(stage) => match stage.named(&target, input.item, &hash) {
+            Some(bytes) if touch_basis(server, &target)?.as_ref() == Some(&stage.basis) => {
+                Some(bytes)
+            }
+            _ => None,
+        },
+        None => None,
+    };
+    let bytes = match staged {
+        Some(bytes) => std::borrow::Cow::Borrowed(bytes),
+        None => {
+            let (blob, document) = read_touch(server, &target, Some(input.item))?;
+            let bytes = match input.item {
+                TouchItem::Blob => blob,
+                TouchItem::Document => document,
+            }
+            .unwrap_or_default();
+            std::borrow::Cow::Owned(bytes)
+        }
+    };
     let missing = || AppError::not_found("item", None);
-    if *blake3::hash(&bytes).as_bytes() != hash {
+    if staged.is_none() && *blake3::hash(&bytes).as_bytes() != hash {
         return Err(missing());
     }
     let rest = usize::try_from(input.offset)
@@ -314,44 +394,65 @@ pub(super) fn touch_part(
             "total": bytes.len(),
             "part": base64::engine::general_purpose::STANDARD.encode(part),
         }),
-        touched.rows,
+        touch_rows(server, target.id)?,
     ))
+}
+
+impl ResidenceTouchStage {
+    /// The staged `item` of `target` whose BLAKE3 is `hash`.
+    fn named(&self, target: &TouchTarget<'_>, item: TouchItem, hash: &[u8; 32]) -> Option<&[u8]> {
+        if self.window != target.window || self.selector != target.selector || self.id != target.id
+        {
+            return None;
+        }
+        self.items
+            .iter()
+            .find(|(named, named_hash, _)| *named == item && named_hash == hash)
+            .map(|(_, _, bytes)| bytes.as_slice())
+    }
 }
 
 /// One of a touch's two items as its reply carries it (FIX 12116): `inline`
 /// in base64 while `room` holds it, which it then takes, and else by
-/// reference, its BLAKE3 and length.
-fn touch_item(bytes: &[u8], room: &mut usize) -> Value {
+/// reference, its BLAKE3 and length, the item then kept in `named` with
+/// that hash.
+fn touch_item(
+    item: TouchItem,
+    bytes: Vec<u8>,
+    room: &mut usize,
+    named: &mut Vec<(TouchItem, [u8; 32], Vec<u8>)>,
+) -> Value {
     let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     if bytes.len() <= *room {
         *room -= bytes.len();
-        json!({ "inline": encode(bytes) })
+        json!({ "inline": encode(&bytes) })
     } else {
-        json!({ "hash": encode(blake3::hash(bytes).as_bytes()), "total": bytes.len() })
+        let hash = *blake3::hash(&bytes).as_bytes();
+        let reply = json!({ "hash": encode(&hash), "total": bytes.len() });
+        named.push((item, hash, bytes));
+        reply
     }
 }
 
-/// An item's touch, read for the machine this socket proved: its window and
-/// id, its row and its document (only the one `only` names, when it names
-/// one: the document is the costly read), and the rows its receipt carries.
-struct Touched {
+/// A touch's target, admitted for the machine this socket proved: its
+/// window and selector, the window's document, the admission and the id.
+struct TouchTarget<'v> {
     window: WindowKey,
+    selector: SyncSelector,
+    doc: loro::LoroDoc,
+    admission: ResidenceAdmission<'v>,
     id: EntityId,
-    blob: Option<Vec<u8>>,
-    document: Option<Vec<u8>>,
-    rows: Option<Vec<EntityId>>,
 }
 
-/// The touch `input` asks for, admitted as a touch is: the grant, the actor's
+/// The target `input` names, admitted as a touch is: the grant, the actor's
 /// live scoped-read floor and the destination machine's world read settings
 /// each admit the exact target, and either denial looks missing.
-fn touched(
-    server: &SyncServer,
+fn touch_target<'v>(
+    server: &'v SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
     input: &TouchRequest,
-    only: Option<TouchItem>,
-) -> Result<Touched, AppError> {
+) -> Result<TouchTarget<'v>, AppError> {
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     // A stored grant constrains the selector; the actor's live scoped-read
@@ -364,14 +465,59 @@ fn touched(
     {
         return Err(AppError::not_found("item", None));
     }
+    Ok(TouchTarget {
+        window,
+        selector,
+        doc,
+        admission,
+        id,
+    })
+}
+
+/// The basis `target`'s reads stand on; `None` for a machine no standing
+/// proof names, whose withheld worlds each export reads for itself, so its
+/// touch stages nothing.
+fn touch_basis(
+    server: &SyncServer,
+    target: &TouchTarget<'_>,
+) -> Result<Option<TouchBasis>, AppError> {
+    let oneiron::sync::window::Withhold::Worlds(withheld) = target.admission.withhold() else {
+        return Ok(None);
+    };
+    Ok(Some(TouchBasis {
+        destination: target.admission.destination(),
+        withheld: withheld.clone(),
+        grant: server
+            .vault
+            .get_raw(&target.selector.grant_id)
+            .map_err(|_| AppError::internal_server_error("touch grant unavailable"))?,
+        selection_revision: index_selection_revision(&server.vault)
+            .map_err(|_| AppError::internal_server_error("touch selection unavailable"))?,
+    }))
+}
+
+/// `target`'s row and its document (only the one `only` names, when it names
+/// one: the document is the costly read).
+fn read_touch(
+    server: &SyncServer,
+    target: &TouchTarget<'_>,
+    only: Option<TouchItem>,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), AppError> {
+    let TouchTarget {
+        window,
+        selector,
+        doc,
+        admission,
+        id,
+    } = target;
     let blob = selected_item_blob_with(
         &server.vault,
-        &doc,
-        &window,
+        doc,
+        window,
         crate::handler::selector_grant_scope(),
-        &selector,
+        selector,
         admission.withhold(),
-        id,
+        *id,
     )
     .map_err(|_| AppError::internal_server_error("item unavailable"))?
     .ok_or_else(|| AppError::not_found("item", None))?;
@@ -382,10 +528,10 @@ fn touched(
     } else {
         let exported = crate::server::blocking(|| {
             server.reassert_manager.export_document_in_window_with(
-                id,
-                &window,
+                *id,
+                window,
                 crate::handler::selector_grant_scope(),
-                &selector,
+                selector,
                 admission.withhold(),
                 &loro::VersionVector::new().encode(),
             )
@@ -398,19 +544,20 @@ fn touched(
             }
         })?)
     };
-    // FIX 7608 slice 4: the row a copy id names is its source.
-    let rows = Some(vec![
+    Ok((
+        (only != Some(TouchItem::Document)).then_some(blob),
+        document,
+    ))
+}
+
+/// The rows a touch's receipt carries: the row `id` names, its source for a
+/// copy id (FIX 7608 slice 4).
+fn touch_rows(server: &SyncServer, id: EntityId) -> Result<Option<Vec<EntityId>>, AppError> {
+    Ok(Some(vec![
         oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
             .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
             .stored(&id),
-    ]);
-    Ok(Touched {
-        window,
-        id,
-        blob: (only != Some(TouchItem::Document)).then_some(blob),
-        document,
-        rows,
-    })
+    ]))
 }
 
 pub(super) fn promote(

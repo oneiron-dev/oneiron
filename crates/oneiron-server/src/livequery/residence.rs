@@ -44,6 +44,7 @@ use serde_json::{Value, json};
 use self::authority::*;
 use self::bundles::*;
 pub(super) use self::home_handoff::{machine_method, run_machine};
+pub(crate) use self::index::ResidenceTouchStage;
 use self::index::*;
 use self::search::*;
 use super::{AppError, CoreAuth, CoreScope, RpcRequest};
@@ -407,6 +408,7 @@ pub(super) fn run(
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<AuthorityAppendStage>,
+    touch_stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
     // A forwarded search's verified caller, whom its receipt names (FIX 3550).
@@ -419,8 +421,8 @@ pub(super) fn run(
         let budgets = operation_budgets(server)?;
         match request.method.as_str() {
             "residence.index" => index(server, auth, peer, request.params, index_cache, budgets),
-            "residence.touch" => touch(server, auth, peer, request.params),
-            "residence.touch.part" => touch_part(server, auth, peer, request.params),
+            "residence.touch" => touch(server, auth, peer, request.params, touch_stage),
+            "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
             "residence.search" => search(
