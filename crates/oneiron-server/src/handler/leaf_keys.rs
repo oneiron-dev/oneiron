@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron::authority::PeerMachine;
-use oneiron::secret_custody::leaf_delivery::{LeafKeyFailureCause, LeafKeyRequest};
+use oneiron::secret_custody::{LeafKeyFailureCause, LeafKeyRequest};
 use oneiron::sync::TransportError;
 use oneiron::sync::transport::{
     LEAF_KEY_RETRY, TAG_LEAF_KEY_ANSWER, TAG_LEAF_KEY_FAILURE, TAG_LEAF_KEY_REQUEST,
@@ -79,6 +79,9 @@ struct InFlight {
     /// the key.
     holder_conn: Option<u32>,
     expires_at_ms: u64,
+    /// The request itself where the home is its executor: the answer is
+    /// taken against it. Never kept for another executor's request.
+    home_request: Option<LeafKeyRequest>,
 }
 
 /// A live socket a frame goes to.
@@ -103,7 +106,7 @@ enum Admission {
 
 /// How an answer from a holder ends its request.
 enum Answered {
-    Delivered,
+    Delivered(InFlight),
     Expired(InFlight),
 }
 
@@ -129,7 +132,8 @@ impl RelayState {
     }
 
     /// Takes request `id` into the relay, `home` being the home's own
-    /// machine, after dropping every entry past its expiry.
+    /// machine, after dropping every entry past its expiry. The home's own
+    /// request is kept with its entry.
     fn admit(
         &mut self,
         id: [u8; 32],
@@ -163,6 +167,7 @@ impl RelayState {
                 holder,
                 holder_conn,
                 expires_at_ms: request.expires_at_ms(),
+                home_request: (Some(request.executor_machine()) == home).then(|| request.clone()),
             },
         );
         admission
@@ -186,7 +191,7 @@ impl RelayState {
             return Some(Answered::Expired(entry));
         }
         self.completed.insert(id, entry.expires_at_ms);
-        Some(Answered::Delivered)
+        Some(Answered::Delivered(entry))
     }
 
     /// Ends request `id` with the failure `holder` sent: `None` where no
@@ -346,13 +351,19 @@ pub(super) fn handle(
                     logged(tag, &id, holder, executor, "expired");
                     fail_executor(server, home, id, &entry, &LeafKeyFailureCause::Expired);
                 }
-                Some(Answered::Delivered) if Some(executor) == home => {
-                    match server.vault().accept_leaf_key_answer(&answer) {
-                        Ok(()) => logged(tag, &id, holder, executor, "accepted_here"),
-                        Err(_) => logged(tag, &id, holder, executor, "accept_failed_here"),
-                    }
+                Some(Answered::Delivered(entry)) if Some(executor) == home => {
+                    let accepted = entry
+                        .home_request
+                        .as_ref()
+                        .map(|request| server.vault().accept_leaf_key_answer(request, &answer));
+                    let outcome = match accepted {
+                        Some(Ok(())) => "accepted_here",
+                        Some(Err(_)) => "accept_failed_here",
+                        None => "no_request_kept_here",
+                    };
+                    logged(tag, &id, holder, executor, outcome);
                 }
-                Some(Answered::Delivered) => {
+                Some(Answered::Delivered(_)) => {
                     let outcome = if push(server, newest(server, executor), frame) {
                         "relayed"
                     } else {
@@ -499,20 +510,18 @@ fn route(
     }
 }
 
-/// The home holds the key `request` asks for: its answer, or its refusal,
-/// goes back on the executor's socket `lane`, whose machine is `peer`.
+/// The home holds the key `request` asks for: its answer, or its refusal by
+/// cause, goes back on the executor's socket `lane`, whose machine is `peer`.
 fn answer_here(server: &SyncServer, request: &LeafKeyRequest, peer: PeerMachine, lane: &Lane) {
     let id = request.request_id();
     let (holder, executor) = (request.holder_machine(), request.executor_machine());
-    let answered = server
-        .vault()
-        .answer_leaf_key_request(request, peer)
-        .map_err(|error| error.to_string())
-        .and_then(|answer| {
-            encode_leaf_key_answer(&answer)
-                .into_result()
-                .map_err(|error| error.to_string())
-        });
+    let answered = match server.vault().answer_leaf_key_request(request, peer) {
+        Ok(answer) => encode_leaf_key_answer(&answer)
+            .into_result()
+            .map_err(|error| LeafKeyFailureCause::HolderRefused(error.to_string())),
+        Err(error) => Err(LeafKeyFailureCause::of_refusal(&error)
+            .unwrap_or_else(|| LeafKeyFailureCause::HolderRefused(error.to_string()))),
+    };
     let mut state = server.leaf_keys.state();
     let entry = state.in_flight.remove(&id);
     match answered {
@@ -524,9 +533,8 @@ fn answer_here(server: &SyncServer, request: &LeafKeyRequest, peer: PeerMachine,
             let _ = lane.send(frame);
             logged(TAG_LEAF_KEY_ANSWER, &id, holder, executor, "answered_here");
         }
-        Err(reason) => {
+        Err(cause) => {
             drop(state);
-            let cause = LeafKeyFailureCause::HolderRefused(reason);
             reply_failure(lane, &id, &cause);
             logged(
                 TAG_LEAF_KEY_FAILURE,
