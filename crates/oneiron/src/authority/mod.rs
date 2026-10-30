@@ -396,7 +396,7 @@ pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use history_admission::{
     RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
 };
-pub(crate) use host_action::{HostActionGuard, host_action_refused};
+pub(crate) use host_action::{HostActionGuard, HostActionIdentity, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
 #[cfg(test)]
