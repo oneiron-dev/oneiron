@@ -196,6 +196,24 @@ pub const PLANNER_BIG_PLAN_WIDTH: SettingSpec = SettingSpec {
     seed: 16.0,
 };
 
+/// The fewest families an offer eval set needs (FIX 10446): the owner's
+/// floor for a measured card. Zero asks for none.
+pub const EVAL_FLOOR_MIN_FAMILIES: SettingSpec = SettingSpec {
+    key: "eval_floor_min_families",
+    min: 0.0,
+    max: 1_000_000.0,
+    seed: 0.0,
+};
+
+/// The fewest families each required floor slice needs (FIX 10446). Zero
+/// asks for none.
+pub const EVAL_FLOOR_MIN_FAMILIES_PER_SLICE: SettingSpec = SettingSpec {
+    key: "eval_floor_min_families_per_slice",
+    min: 0.0,
+    max: 1_000_000.0,
+    seed: 0.0,
+};
+
 /// Every learned knob the engine reads.
 pub const SETTING_CATALOG: &[SettingSpec] = &[
     ATTRIBUTION_UNCLEAR_FLOOR,
@@ -213,6 +231,8 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     PLANNER_SOLO_SUCCESS_FLOOR,
     PLANNER_SOLO_MARGIN,
     PLANNER_BIG_PLAN_WIDTH,
+    EVAL_FLOOR_MIN_FAMILIES,
+    EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_LOOP_REPEATS,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_CHECK_FAILS,
