@@ -19,6 +19,7 @@ mod keys;
 mod proposals;
 mod queue;
 mod queue_promotion;
+mod queue_root;
 mod storage;
 mod tree_codec;
 mod tree_inventory;
