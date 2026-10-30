@@ -54,8 +54,10 @@ pub(super) struct ConnState {
     /// (FIX 7608 slice 4): another one is replaced at an equal vector.
     pub(super) repo_copy_generations:
         std::sync::Mutex<std::collections::HashMap<WindowKey, [u8; 32]>>,
-    /// This socket's by-reference ASSET body transfers (FIX 5489).
-    pub(super) asset_bodies: oneiron::sync::AssetBodySession,
+    /// This socket's by-reference ASSET body transfers (FIX 5489). Only the
+    /// socket's loop takes it, through `&mut`; the mutex keeps the state
+    /// `Sync`.
+    pub(super) asset_bodies: std::sync::Mutex<oneiron::sync::AssetBodySession>,
 }
 
 impl ConnState {
@@ -79,7 +81,7 @@ impl ConnState {
             window_pads: oneiron::sync::transport::WindowPadAssembly::default(),
             window_pad_carrier: std::collections::HashSet::new(),
             repo_copy_generations: std::sync::Mutex::default(),
-            asset_bodies: oneiron::sync::AssetBodySession::default(),
+            asset_bodies: std::sync::Mutex::default(),
         }
     }
 

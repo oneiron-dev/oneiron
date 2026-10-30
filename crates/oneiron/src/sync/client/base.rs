@@ -75,8 +75,9 @@ pub struct SyncClient {
     /// this connection. Cleared at every connect.
     pub(crate) artifact_publication_resend: HashMap<[u8; 32], std::time::Instant>,
     /// This connection's by-reference ASSET body transfers (FIX 5489).
-    /// Started again at every connect.
-    pub(crate) asset_bodies: crate::sync::AssetBodySession,
+    /// Started again at every connect. Only the client's own `&mut` takes
+    /// it; the mutex keeps the client `Sync`.
+    pub(crate) asset_bodies: Mutex<crate::sync::AssetBodySession>,
     /// The machine the home proved on this connection's upgrade (OF-534
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
