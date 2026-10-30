@@ -1039,6 +1039,7 @@ fn engine_seat_task(
         override_model,
         override_effort: None,
         listed,
+        worlds: Vec::new(),
     }
 }
 

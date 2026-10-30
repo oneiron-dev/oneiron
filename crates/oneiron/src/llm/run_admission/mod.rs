@@ -39,7 +39,7 @@ pub use gate::GatedBackend;
 pub use host::{
     AccountStatus, Allocation, AllocationGrantError, AllocationRef, AllocationRefusal, HostAccount,
     KeyCustody, OfferBinding, OfferRoute, OfferRouteError, PaidConnector, Payer, PayerAccount,
-    PayerPerson, UnitRate,
+    PayerPerson, UnitRate, offer_id,
 };
 pub use job_maximum::{
     AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused,

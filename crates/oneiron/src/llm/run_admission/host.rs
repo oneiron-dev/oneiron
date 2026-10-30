@@ -145,6 +145,17 @@ impl OfferRoute {
     }
 }
 
+/// The one route id every model input mints (FIX 11768): `model@where`,
+/// the model's full [`ModelId`] and the [`ModelLocality`] wire spelling.
+/// A [`ModelId`] already holds `@` (its revision separator), so an id
+/// holds two (`acme/gpt@7@third_party`): callers compare whole strings,
+/// never parse. The ladder and the seat birth both mint through this one
+/// fn, so the ids they judge against a world's order are byte-identical.
+#[must_use]
+pub fn offer_id(model: &ModelId, locality: ModelLocality) -> String {
+    format!("{}@{}", model.as_str(), locality.as_str())
+}
+
 /// Schemes whose origin is a host and a port, and whose path a URL parser
 /// would read even from a lax spelling.
 const WEB_SCHEMES: [&str; 4] = ["http", "https", "ws", "wss"];

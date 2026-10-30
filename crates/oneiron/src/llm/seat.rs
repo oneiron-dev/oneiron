@@ -14,12 +14,14 @@ use serde::{Deserialize, Serialize};
 
 use super::decision::TypedDecision;
 use super::registry::ModelWireFormat;
+use super::run_admission::offer_id;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
 use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
+use crate::authority::WorldModelRoutes;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
-    Vault,
+    EntityId, Vault,
     error::{Error, Result},
 };
 
@@ -266,6 +268,11 @@ pub struct SeatTask {
     /// Empty: the agent lists none, and any eligible model may seat it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listed: Vec<AgentModel>,
+    /// The run's worlds (FIX 11768): the worlds' own order narrows the
+    /// birth's pick to the routes it names. Empty: the birth inherits the
+    /// vault's order, as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub worlds: Vec<EntityId>,
 }
 
 /// The pick sees only models admitted by the engine's route, capability,
@@ -485,6 +492,30 @@ impl SeatPool {
                 description: lines,
             });
         }
+        // The run's worlds narrow the pick (FIX 11768): a candidate the
+        // worlds' order does not name seats no one, pins included. Empty
+        // worlds inherit, as a fold over no world meets nothing, so no
+        // storage read runs and an empty-worlds birth reads what it read
+        // before. A routes read that fails closes the birth: no candidate
+        // is admitted and the empty-candidates refusal below fires; the
+        // storage error never propagates.
+        let routes = if task.worlds.is_empty() {
+            WorldModelRoutes::Inherit
+        } else {
+            vault
+                .store
+                .env
+                .read_txn()
+                .ok()
+                .and_then(|txn| {
+                    vault
+                        .world_model_routes_in_txn(&txn, task.worlds.clone())
+                        .ok()
+                })
+                .unwrap_or(WorldModelRoutes::Ordered(Vec::new()))
+        };
+        candidates
+            .retain(|candidate| routes.admits(&offer_id(&candidate.model, candidate.locality)));
         // With a list, no fallback: the wake holds rather than run unlisted.
         if candidates.is_empty() {
             return Err(if task.listed.is_empty() {
@@ -502,6 +533,7 @@ impl SeatPool {
                 && seat.locality == route
                 && eligible.contains(&seat.model)
                 && list_admits(&task.listed, &seat.model)
+                && routes.admits(&offer_id(&seat.model, seat.locality))
                 && candidates
                     .iter()
                     .find(|candidate| candidate.model == seat.model)
@@ -518,11 +550,15 @@ impl SeatPool {
             reused.receipt.reused = true;
             return Ok(reused);
         }
-        if self
-            .seats
-            .iter()
-            .any(|seat| seat.warm && seat.kind == task.kind && seat.warm_scope == task.warm_scope)
-        {
+        // Only an admitted warm seat holds the fold (FIX 11768): a warm
+        // seat the worlds' order no longer names retires, and the fresh
+        // pick below runs instead of refusing reuse with a fold error.
+        if self.seats.iter().any(|seat| {
+            seat.warm
+                && seat.kind == task.kind
+                && seat.warm_scope == task.warm_scope
+                && routes.admits(&offer_id(&seat.model, seat.locality))
+        }) {
             return Err(invalid("model or effort change requires an epoch fold"));
         }
         let started = Instant::now();

@@ -191,6 +191,7 @@ impl TurnProgramRuntime for ServerTurnPrograms {
             override_model: None,
             override_effort: None,
             listed: Vec::new(),
+            worlds: Vec::new(),
         });
         // Its refusal's text can quote the vault: it is not logged.
         let Ok(seat) = seat else {

@@ -300,6 +300,7 @@ impl Child {
                         override_model: profiled.clone(),
                         override_effort: None,
                         listed,
+                        worlds: Vec::new(),
                     };
                     let provider = self.provider.as_ref();
                     match self.session {
