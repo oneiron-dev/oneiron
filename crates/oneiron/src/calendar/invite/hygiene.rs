@@ -7,7 +7,6 @@ use super::payload::{CALENDAR_INVITE_CHANNEL, CalendarInviteMethod, CalendarInvi
 use crate::Vault;
 use crate::booking::invite_grant::BookingInviteCoverage;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityFacts, ChannelIdentityShape};
-use crate::claim::ClaimLifecycleStatus;
 use crate::comm::{CommParties, PREDICATE_COMM_LAST_TOUCH, count_active_party_claims_in_txn};
 use crate::entity_id::EntityId;
 use crate::outbound_grant::{
@@ -502,7 +501,11 @@ fn live(grant: &StandingOutboundGrant) -> bool {
     grant.status == StandingOutboundGrantStatus::Active && grant.revoked_at.is_none()
 }
 
-/// Whether a live `calendar.attendee` claim already binds this recipient.
+/// Whether a settled `calendar.attendee` claim already binds this recipient:
+/// one with current authority (Auto or Approved, active, not stale) whose
+/// owner's critical confirm is settled. A proposed, rejected, stale or
+/// held attendee binds nothing, so its recipient rides a grant or stays a
+/// proposal.
 fn recipient_is_bound_attendee(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -526,7 +529,9 @@ fn recipient_is_bound_attendee(
             continue;
         };
         if body.predicate != PREDICATE_CALENDAR_ATTENDEE
-            || body.lifecycle != ClaimLifecycleStatus::Active
+            || !crate::claim::claim_surfaceable(&body)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &claim_id)
+                .map_err(CalendarError::from)?
         {
             continue;
         }
