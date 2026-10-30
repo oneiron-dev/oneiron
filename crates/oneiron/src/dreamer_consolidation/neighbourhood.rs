@@ -41,8 +41,6 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, EN
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// A label is cut here.
-const LABEL_BYTES: usize = 64;
 /// Names of up to four words ("Mary Ann van Dyke").
 const SPAN_WORDS: usize = 4;
 /// Kinds a passage names by an identity hint.
@@ -633,19 +631,9 @@ fn label(body: &[u8]) -> Option<String> {
         .as_str()?
         .trim()
         .to_owned();
-    (!name.is_empty()).then(|| cut(&name, LABEL_BYTES))
-}
-
-/// `text` cut to at most `limit` bytes on a character boundary, marked.
-fn cut(text: &str, limit: usize) -> String {
-    if text.len() <= limit {
-        return text.to_owned();
-    }
-    let mut end = limit;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
+    // The name rides whole (Rule 5, FIX 10518): a wide one widens its line,
+    // and a line wider than a page has a page of its own.
+    (!name.is_empty()).then_some(name)
 }
 
 impl Vault {
