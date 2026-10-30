@@ -1,8 +1,12 @@
 //! Frozen callable cases (FIX 12093). Each call of a callable skill whose
 //! answer passed its return contract is kept as a case: its arguments, that
-//! answer, and the caller it was made for. The helper gate scores a
-//! Candidate helper and its parent on the parent's cases, each run here as a
-//! call runs, in the same sandbox and under the same contract.
+//! answer, and the caller it was made for, admitted through the side-row
+//! wall. The helper gate scores a Candidate helper and its parent on the
+//! calls of both that callers other than the helper's author made, each run
+//! here as a call runs, in the same sandbox and under the same contract.
+//!
+//! An erase reaches them ([`erase`]): an erased caller is kept in its erased
+//! form, an erased skill's cases go, and so does a case naming an erased row.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -20,23 +24,45 @@ use crate::engine_executor::{
     StepCancellation,
 };
 use crate::error::Result;
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::helper::CallableCase;
 use crate::skill::{SkillRecord, SkillRole};
 use crate::skill_hub::HubFile;
 use crate::{EntityId, Vault};
 
-/// Most frozen cases one skill keeps: as a new one lands, the oldest past
-/// it go. The helper gate reads up to this many of a parent's (CALL).
-const FROZEN_CASES_PER_SKILL: usize = 64;
+mod erase;
 
-/// Largest call frozen, its arguments and its answer as JSON text together;
-/// a larger call is not kept (CALL).
-const FROZEN_CASE_MAX_BYTES: u64 = 64 * 1024;
+pub(crate) use self::erase::{erase_callable_case_actor_in_txn, erase_callable_cases_in_txn};
+
+/// Most frozen cases one skill keeps: as a new one lands, the oldest past
+/// it go. The helper gate reads up to this many of a helper's and its
+/// parent's together (CALL).
+const FROZEN_CASES_PER_SKILL: usize = 64;
 
 /// Key: id16 (the skill that ran) + u64be at + u64be step seq + receipt.
 const CASES: SideTable<Vec<u8>, FrozenCall, Named> =
     SideTable::new(&side_table::SKILL_CALLABLE_CASE);
+
+/// Who a frozen call was made for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CaseCaller {
+    /// A host that names no actor.
+    Unknown,
+    Actor(EntityId),
+    /// An actor since erased (FIX 12093): the case stays, naming no one.
+    Erased,
+}
+
+impl CaseCaller {
+    fn actor(self) -> Option<EntityId> {
+        match self {
+            Self::Actor(actor) => Some(actor),
+            Self::Unknown | Self::Erased => None,
+        }
+    }
+}
 
 /// One frozen call, as stored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,8 +71,10 @@ struct FrozenCall {
     receipt: String,
     /// The skill revision that answered.
     version: String,
-    /// The actor the call was made for.
-    caller: Option<EntityId>,
+    caller: CaseCaller,
+    /// The rows the arguments and the answer were made from, as an eval
+    /// case keeps them; `None` is unknown.
+    source_rows: Option<Vec<EntityId>>,
     /// JSON text.
     arguments: String,
     /// JSON text: the answer that passed the return contract.
@@ -64,7 +92,10 @@ pub(super) struct FrozenCallSite<'a> {
 
 /// Keeps one call that passed its contract as a case of `skill`, the skill
 /// that ran. Capture only: the call has already succeeded, and nothing here
-/// changes what it answers.
+/// changes what it answers. Its texts are measured against the `[limits]
+/// maintenance_text_bytes` row: past it the row asks, and the call is kept
+/// as no case. Its sources are unknown, since a run that calls a callable
+/// keeps no record of the rows it read (FIX 6130).
 pub(super) fn freeze_callable_case(
     vault: &Vault,
     skill: &EntityId,
@@ -74,7 +105,11 @@ pub(super) fn freeze_callable_case(
 ) -> Result<()> {
     let arguments =
         serde_json::to_string(args).map_err(|_| invalid("call arguments cannot be encoded"))?;
-    if answer.byte_len().saturating_add(arguments.len() as u64) > FROZEN_CASE_MAX_BYTES {
+    let longest = answer.byte_len().max(arguments.len() as u64);
+    if vault
+        .measure_limit(EngineLimit::MaintenanceTextBytes, longest)
+        .is_some()
+    {
         return Ok(());
     }
     let mut text = String::new();
@@ -86,11 +121,13 @@ pub(super) fn freeze_callable_case(
     let row = FrozenCall {
         receipt: site.receipt,
         version: site.version.to_owned(),
-        caller: site.caller,
+        caller: site.caller.map_or(CaseCaller::Unknown, CaseCaller::Actor),
+        source_rows: None,
         arguments,
         answer: text,
     };
     vault.with_write_txn_grouped(|txn| {
+        // The side-row wall admits the texts as it does other caller text.
         CASES.put(&vault.store, txn, &key, &row)?;
         let kept = CASES.scan_keys(&vault.store, &*txn, skill.as_bytes())?;
         for old in kept.iter().take(kept.len().saturating_sub(FROZEN_CASES_PER_SKILL)) {
@@ -100,11 +137,12 @@ pub(super) fn freeze_callable_case(
     })
 }
 
-/// The frozen cases the helper gate scores `helper` on: its parent's calls,
-/// newest first, each named by its receipt, with the answer it gave as the
-/// expected one and its caller as its author. A call the helper's own author
-/// made is left out, since a helper's author never supplies the cases that
-/// promote it. A helper with no parent has none.
+/// The frozen cases the helper gate scores `helper` on (FIX 12093): the
+/// calls of its parent and of the helper itself (its exploration trials),
+/// newest first. Each is named by its receipt, its expected answer is the
+/// one its caller kept, and its author is that caller. A call the helper's
+/// own author made is left out, since a helper's author never supplies the
+/// cases that promote it.
 ///
 /// # Errors
 ///
@@ -113,34 +151,44 @@ pub fn callable_helper_cases(vault: &Vault, helper: &EntityId) -> Result<Vec<Cal
     let Some(record) = vault.get_skill_record(helper)? else {
         return Ok(Vec::new());
     };
-    let Some(parent) = record.forked_from else {
-        return Ok(Vec::new());
-    };
     let rtxn = vault.store.env.read_txn()?;
     let author = crate::memory::skill_author_in_txn(vault, &rtxn, helper, &record)?;
-    let mut cases = Vec::new();
-    for row in CASES.iter_rev_from(&vault.store, &rtxn, parent.as_bytes())? {
-        let (_, frozen) = row?;
-        if author.is_some() && frozen.caller == author {
-            continue;
-        }
-        let (Ok(arguments), Ok(expected)) = (
-            serde_json::from_str(&frozen.arguments),
-            serde_json::from_str(&frozen.answer),
-        ) else {
-            continue;
-        };
-        cases.push(CallableCase {
-            case_ref: frozen.receipt,
-            arguments,
-            expected,
-            source_author: frozen.caller,
-        });
-        if cases.len() == FROZEN_CASES_PER_SKILL {
-            break;
+    let mut dated = Vec::new();
+    for skill in std::iter::once(*helper).chain(record.forked_from) {
+        let mut taken = 0;
+        for row in CASES.iter_rev_from(&vault.store, &rtxn, skill.as_bytes())? {
+            let (key, frozen) = row?;
+            let caller = frozen.caller.actor();
+            if author.is_some() && caller == author {
+                continue;
+            }
+            let (Ok(arguments), Ok(expected)) = (
+                serde_json::from_str(&frozen.arguments),
+                serde_json::from_str(&frozen.answer),
+            ) else {
+                continue;
+            };
+            dated.push((
+                key.get(16..24).map(<[u8]>::to_vec).unwrap_or_default(),
+                CallableCase {
+                    case_ref: frozen.receipt,
+                    arguments,
+                    expected,
+                    source_author: caller,
+                },
+            ));
+            taken += 1;
+            if taken == FROZEN_CASES_PER_SKILL {
+                break;
+            }
         }
     }
-    Ok(cases)
+    dated.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(dated
+        .into_iter()
+        .take(FROZEN_CASES_PER_SKILL)
+        .map(|(_, case)| case)
+        .collect())
 }
 
 /// Runs one frozen case on `files`, the exact source of `skill` at `record`,

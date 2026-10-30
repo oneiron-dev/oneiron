@@ -7,8 +7,9 @@
 //! cohort, nothing is asked.
 //!
 //! Once that row is Final, the same pass asks the gate: the helper and its
-//! parent each run its parent's frozen calls in the code sandbox, and an
-//! accepted verdict admits the helper.
+//! parent each run, in the code sandbox, the frozen calls of both that
+//! callers other than the helper's author made, and an accepted verdict
+//! admits the helper.
 
 use std::sync::Arc;
 
@@ -105,10 +106,10 @@ pub(in crate::ai_host) fn request_helper_measurements(
 }
 
 /// Asks the gate of `helper` once its paired measurement `digest` is Final,
-/// on its parent's frozen calls, and admits it on an accepted verdict. With
-/// no Final row or no case, the gate is not asked this pass. A helper whose
-/// standing verdict already reads this measurement as worse is not run
-/// again: nothing it is scored on can change that.
+/// on its own and its parent's frozen calls, and admits it on an accepted
+/// verdict. With no Final row or no case, the gate is not asked this pass.
+/// A helper whose standing verdict already reads this measurement as worse
+/// is not run again: nothing it is scored on can change that.
 fn gate_measured_helper(
     vault: &Arc<Vault>,
     helper: &EntityId,

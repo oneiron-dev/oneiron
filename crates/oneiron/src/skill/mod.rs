@@ -25,7 +25,10 @@ mod validate;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::call::{AnswerMemory, execute_callable_skill_cancellable, matches_shape};
+pub(crate) use self::call::{
+    AnswerMemory, erase_callable_case_actor_in_txn, erase_callable_cases_in_txn,
+    execute_callable_skill_cancellable, matches_shape,
+};
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};

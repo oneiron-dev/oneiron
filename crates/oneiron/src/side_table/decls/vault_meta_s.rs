@@ -355,9 +355,10 @@ side_tables! {
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
     /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
-    /// its contract, the caller, the revision. Key: id16 (skill that ran) + u64be at + u64be step
-    /// seq + receipt string.
-    SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named;
+    /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
+    /// at + u64be step seq + receipt string.
+    SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
+        [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
     /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
     /// the exact content hash it scored). Key: id16 (skill entity).
     SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
