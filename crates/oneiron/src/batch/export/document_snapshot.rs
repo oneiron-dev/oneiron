@@ -552,6 +552,12 @@ impl Vault {
             }
             writer.side_rows_withheld(withheld);
         }
+        // FIX 11844: a custody secret only the fold knows here is named for
+        // its holder too, as a held row's unopened value is above.
+        if include_secrets && only.is_none() && cut == ExportCut::Archive {
+            let fold_only = self.fold_only_holder_needs_in_txn(&rtxn);
+            holder_requests.extend(fold_only.into_iter().map(HolderExportRequest::unrecorded));
+        }
         // Each carried thread's binding, read in this snapshot, so its
         // members are told should its root go before the audit (FIX 6681).
         thread_roots.capture_in(&self.store.read(), &rtxn);
