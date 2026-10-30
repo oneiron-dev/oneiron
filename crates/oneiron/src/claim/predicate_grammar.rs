@@ -135,7 +135,6 @@ const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
 /// registry admits only public `core.*`/`companion.*`/`persona.*` predicates.
 pub const PREDICATE_ACTOR_PEER_BINDING: &str = "actor.peer_binding";
 
-/// Per-`(actor, scope)` amendment cost: how much a decider had to edit this
 /// Predicate families a Dreamer-authored write is ISOLATED into at the gate.
 ///
 /// The distinction is what a wrong head costs. A persona-core head answers
