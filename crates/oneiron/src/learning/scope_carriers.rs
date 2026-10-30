@@ -122,7 +122,8 @@ pub(crate) fn erase_team_receipt_scope_in_txn(
 /// is scoped to erased `entity`: the cell to one fresh opaque scope, each
 /// artifact id (derived from the scope) to a fresh opaque id wherever the
 /// review names it, and the review's row to a fresh opaque key with its
-/// verdict's pointer. Registered on both stores; the first call does both.
+/// verdict's pointer. A critic's erase forgets it on the artifacts it wrote,
+/// in place (FIX 5221). Registered on both stores; the first call does both.
 ///
 /// # Errors
 ///
@@ -165,6 +166,38 @@ pub(crate) fn erase_review_scope_in_txn(
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(%error, "a critique artifact that no longer decodes is deleted");
+                ARTIFACT.delete(&vault.store, wtxn, &key)?;
+            }
+        }
+    }
+    // A critic's erase forgets it on every artifact it wrote (FIX 5221): its
+    // ref and the person executor that copied it, in place — the key holds
+    // no critic, so no row moves.
+    let rows = ARTIFACT
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (key, value) in rows {
+        if !contains(&value, named.as_bytes()) {
+            continue;
+        }
+        let mut artifact = match ARTIFACT.decode_value(&value) {
+            Ok(artifact) => artifact,
+            Err(_) => continue,
+        };
+        if artifact.provenance.critic_ref != named {
+            continue;
+        }
+        let opaque = crate::critic::erased_critic_ref(vault.store.clock.entity_id()?);
+        artifact.forget_critic(&opaque);
+        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+        match ARTIFACT.put(&vault.store, &mut savepoint, &key, &artifact) {
+            Ok(()) => savepoint.commit()?,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "a critique artifact the side-row wall no longer admits is dropped by its critic's erase"
+                );
+                drop(savepoint);
                 ARTIFACT.delete(&vault.store, wtxn, &key)?;
             }
         }
