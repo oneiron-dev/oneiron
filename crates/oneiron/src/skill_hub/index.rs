@@ -79,6 +79,8 @@ impl Vault {
         // Explicit restore may have minted a newer live holder for these exact
         // bytes. Prefer it; otherwise ordinary re-import preserves an inactive
         // holder and adds the new provenance without reviving it (owner ruling A).
+        // Every source is eligible: an authored or converted holder of the exact
+        // tree is named as-is, its lifecycle and approval untouched.
         let mut exact_live = None;
         let mut other_live = None;
         let mut exact_inactive = None;
@@ -86,9 +88,6 @@ impl Vault {
         for (entity, record) in
             self.structured_skills_for_content_hash_in_txn(rtxn, content_hash)?
         {
-            if record.source != ClaimSource::Imported {
-                continue;
-            }
             let exact = if let Some(source) = source {
                 self.default_skill_present_for_entity_in_txn(rtxn, &entity, source)?
             } else {

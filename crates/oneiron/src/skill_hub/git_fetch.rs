@@ -242,7 +242,7 @@ fn github_shorthand(endpoint: &str) -> Option<String> {
     };
     (valid(owner) && valid(repo)).then(|| format!("https://github.com/{owner}/{repo}.git"))
 }
-fn normalize_endpoint(endpoint: &str) -> Result<String> {
+pub(super) fn normalize_endpoint(endpoint: &str) -> Result<String> {
     if let Some(url) = github_shorthand(endpoint) {
         return Ok(url);
     }
