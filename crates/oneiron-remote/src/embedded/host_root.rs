@@ -67,6 +67,7 @@ impl EmbeddedClient {
             room_turn: None,
             off_record_session: None,
             host_open: None,
+            read_proof: None,
         };
         Ok((client, HostRootProfile::from_core(profile)))
     }

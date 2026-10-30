@@ -44,11 +44,12 @@ impl HostBinding {
     /// row's own id, lease owner and attempt count. A row with no live
     /// lease binds nothing. `run_ref` is the run entity a caller actually
     /// bound, or `None`: the queue's string `run_id` tag is never read as
-    /// one.
-    pub(crate) fn from_leased(
-        record: &AttemptRecord,
-        run_ref: Option<EntityId>,
-    ) -> MemoryResult<Self> {
+    /// one. A host binds a template step's `self.use` with it (FIX 8334).
+    ///
+    /// # Errors
+    ///
+    /// An invalid-state refusal for a row that holds no live lease.
+    pub fn from_leased(record: &AttemptRecord, run_ref: Option<EntityId>) -> MemoryResult<Self> {
         match record.lease_owner.as_deref() {
             Some(lease_owner) if record.state.is_running() => Ok(Self::new(
                 record.id,
@@ -278,7 +279,7 @@ pub(super) fn runner_actor_in(
         && payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
     {
         let input = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)?;
-        return crate::agent_dispatch::agent_dispatch_actor(&input).map(Some);
+        return crate::agent_dispatch::agent_dispatch_run_actor(&input, record.id).map(Some);
     }
     if let Some(stamp) = vault.dreamer_attempt_authority_in_txn(txn, record.id)? {
         return Ok(Some(WriteActor::new(stamp.actor, EdgeActorClass::System)));

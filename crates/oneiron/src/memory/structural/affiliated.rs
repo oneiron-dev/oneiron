@@ -239,7 +239,7 @@ impl Memory<'_> {
                 input.source_id.clone(),
                 id,
                 ImportedEvidenceEntityResolution::subject(subject),
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 occurred,
                 learned_at,
             )

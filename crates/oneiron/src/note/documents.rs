@@ -74,7 +74,7 @@ pub struct NoteVersion {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NoteEdit {
+pub enum NoteProgramEdit {
     ReplaceSpan {
         start: NoteAnchor,
         end: NoteAnchor,
@@ -99,7 +99,7 @@ pub enum NoteEdit {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum NoteEditOutcome {
+pub enum NoteProgramEditOutcome {
     Edited {
         head: EntityId,
     },
@@ -113,6 +113,12 @@ pub enum NoteEditOutcome {
         receipt: crate::memory::CommitReceipt,
     },
 }
+
+// The old paths inside this crate-visible module (it is `pub(crate) mod documents`).
+#[allow(unused_imports)]
+pub(crate) use NoteProgramEdit as NoteEdit;
+#[allow(unused_imports)]
+pub(crate) use NoteProgramEditOutcome as NoteEditOutcome;
 
 pub struct NoteDocument {
     pub(super) note: EntityId,
@@ -179,29 +185,29 @@ impl NoteDocument {
     /// operation door may admit these edits; proposal documents are disposable.
     pub(super) fn semantic_edit(
         &self,
-        edit: &NoteEdit,
-    ) -> Result<Option<(Vec<u8>, Vec<super::NoteEdit>)>> {
+        edit: &NoteProgramEdit,
+    ) -> Result<Option<(Vec<u8>, Vec<super::NoteScalarEdit>)>> {
         let mut base = self.doc.oplog_frontiers().encode();
         let change = match edit {
-            NoteEdit::ReplaceSpan { start, end, text } => {
+            NoteProgramEdit::ReplaceSpan { start, end, text } => {
                 let start = self.position(start)?;
                 let end = self.position(end)?;
                 if end < start {
                     return Err(invalid("reversed span"));
                 }
-                super::NoteEdit {
+                super::NoteScalarEdit {
                     start,
                     delete: end - start,
                     insert: text.clone(),
                 }
             }
-            NoteEdit::InsertAfter { anchor, text }
-            | NoteEdit::AppendToSection { end: anchor, text } => super::NoteEdit {
+            NoteProgramEdit::InsertAfter { anchor, text }
+            | NoteProgramEdit::AppendToSection { end: anchor, text } => super::NoteScalarEdit {
                 start: self.position(anchor)?,
                 delete: 0,
                 insert: text.clone(),
             },
-            NoteEdit::WholeText {
+            NoteProgramEdit::WholeText {
                 text,
                 timeout_ms,
                 base: version,
@@ -232,20 +238,20 @@ impl NoteDocument {
                 }
                 text_change(&original, text)
             }
-            NoteEdit::Rewrite { .. } => return Ok(None),
+            NoteProgramEdit::Rewrite { .. } => return Ok(None),
         };
         Ok(Some((base, vec![change])))
     }
     pub(super) fn apply(
         &self,
         clock: &crate::ports::StoreClock,
-        edit: &NoteEdit,
+        edit: &NoteProgramEdit,
         actor: EntityId,
         at: u64,
     ) -> Result<Option<Self>> {
         let text = self.doc.get_text(TEXT);
         match edit {
-            NoteEdit::ReplaceSpan {
+            NoteProgramEdit::ReplaceSpan {
                 start,
                 end,
                 text: replacement,
@@ -260,18 +266,18 @@ impl NoteDocument {
                 text.insert(start, replacement)
                     .map_err(|_| invalid("replace text"))?;
             }
-            NoteEdit::InsertAfter {
+            NoteProgramEdit::InsertAfter {
                 anchor,
                 text: insertion,
             }
-            | NoteEdit::AppendToSection {
+            | NoteProgramEdit::AppendToSection {
                 end: anchor,
                 text: insertion,
             } => {
                 text.insert(self.position(anchor)?, insertion)
                     .map_err(|_| invalid("insert text"))?;
             }
-            NoteEdit::WholeText {
+            NoteProgramEdit::WholeText {
                 text: replacement,
                 timeout_ms,
                 base,
@@ -312,7 +318,7 @@ impl NoteDocument {
                     .map_err(|_| invalid("diff import"))?;
                 return Ok(None);
             }
-            NoteEdit::Rewrite { text } => {
+            NoteProgramEdit::Rewrite { text } => {
                 return self.rewrite(clock.entity_id()?, text, actor, at).map(Some);
             }
         }
@@ -572,7 +578,7 @@ fn measure_retained(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId, doc: &
 
 /// Conservative Unicode diff. A wide changed span is reviewed if it crosses
 /// a citation; never use guessed CRDT IDs or drop intervening citation guards.
-pub(super) fn text_change(before: &str, after: &str) -> super::NoteEdit {
+pub(super) fn text_change(before: &str, after: &str) -> super::NoteScalarEdit {
     let before: Vec<_> = before.chars().collect();
     let after: Vec<_> = after.chars().collect();
     let start = before
@@ -586,7 +592,7 @@ pub(super) fn text_change(before: &str, after: &str) -> super::NoteEdit {
         .zip(after[start..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
-    super::NoteEdit {
+    super::NoteScalarEdit {
         start,
         delete: before.len() - start - suffix,
         insert: after[start..after.len() - suffix].iter().collect(),

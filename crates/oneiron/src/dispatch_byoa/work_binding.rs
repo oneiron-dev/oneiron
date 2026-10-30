@@ -281,8 +281,9 @@ pub(super) struct SpentCapture {
     pub(super) receipt: ByoaTerminalReceipt,
     /// The spend read from it.
     pub(super) spent: SeatSpent,
-    /// The seat it ran on.
-    pub(super) seat: usize,
+    /// The seat it ran on, or `None` to search fresh from the first seat
+    /// when its stored index names a different quota identity (FIX 11650).
+    pub(super) seat: Option<usize>,
     /// The capture's time.
     pub(super) now: u64,
 }
@@ -304,47 +305,69 @@ pub(super) fn head_hop(
     head_record(vault, rtxn, &binding.0)
 }
 
-/// The current-policy index of `hop`'s quota identity when exactly one seat
-/// has it, else `fallback` (FIX 9239). A removed or duplicated seat never
-/// becomes a new refusal.
+/// A current-policy index of `hop`'s quota identity. Prefer `fallback` when
+/// it still matches, then the first match: duplicates share one quota record,
+/// so any match charges correctly. `None` when no seat matches, so no foreign
+/// seat is charged and NextSeat searches fresh (FIX 11650).
 pub(super) fn remap_seat(
     policy: &RunnerSeatPolicy,
     hop: &RunnerWorkHop,
     fallback: usize,
-) -> ByoaResult<usize> {
-    let mut matched = None;
-    for (index, seat) in policy.seats.iter().enumerate() {
+) -> ByoaResult<Option<usize>> {
+    if let Some(seat) = policy.seats.get(fallback) {
         if seat_quota_id(seat)?.as_bytes() == &hop.quota {
-            if matched.is_some() {
-                return Ok(fallback);
-            }
-            matched = Some(index);
+            return Ok(Some(fallback));
         }
     }
-    Ok(matched.unwrap_or(fallback))
+    for (index, seat) in policy.seats.iter().enumerate() {
+        if seat_quota_id(seat)?.as_bytes() == &hop.quota {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
 }
 
 /// The seat a capture's own head hop maps to in the current policy. An
-/// unbound capture, a missing or later head, or an ambiguous map keeps the
-/// caller's index, exactly as before FIX 9239.
+/// unbound capture, a missing or later head keeps the caller's index. A
+/// quota-differing stored seat returns `None` (FIX 11650).
 pub(super) fn capture_seat_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     policy: &RunnerSeatPolicy,
     receipt: &ByoaTerminalReceipt,
     fallback: usize,
-) -> ByoaResult<usize> {
+) -> ByoaResult<Option<usize>> {
     let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
-        return Ok(fallback);
+        return Ok(Some(fallback));
     };
     let binding = RunnerWorkBindingId::from_bytes(work.binding)?;
     let Some(head) = head_hop(vault, txn, binding)? else {
-        return Ok(fallback);
+        return Ok(Some(fallback));
     };
     if head.attempt != *receipt.attempt.id.as_bytes() {
-        return Ok(fallback);
+        return Ok(Some(fallback));
     }
     remap_seat(policy, &head, fallback)
+}
+
+/// The stored seat and quota identity stamped on the capture's own head hop.
+/// Only a quota-differing capture path needs this read (FIX 11650).
+pub(super) fn capture_hop_seat_quota_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &ByoaTerminalReceipt,
+) -> ByoaResult<(usize, [u8; 16])> {
+    let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
+        return Err(Error::InvariantViolation("capture hop seat/quota missing").into());
+    };
+    let binding = RunnerWorkBindingId::from_bytes(work.binding)?;
+    let Some(head) = head_hop(vault, txn, binding)? else {
+        return Err(Error::InvariantViolation("capture hop seat/quota missing").into());
+    };
+    if head.attempt != *receipt.attempt.id.as_bytes() {
+        return Err(Error::InvariantViolation("capture hop seat/quota changed").into());
+    }
+    Ok((seat_index(head.seat), head.quota))
 }
 
 /// Appends `hop` to `binding`'s record when its head names `from`: the
@@ -477,9 +500,13 @@ where
         let vault = self.vault();
         let binding = RunnerWorkBindingId::of(request.parent_attempt_id, &request.step_key)?;
         if let Some(head) = head_hop(vault, wtxn, binding)? {
+            let reported = seat_index(head.seat);
+            // FIX 11644: an existing bind reports the current-policy seat too;
+            // a removed identity keeps the stored index for truth.
+            let seat = remap_seat(policy, &head, reported)?.unwrap_or(reported);
             return Ok(RunnerWorkBound::Bound {
                 binding,
-                seat: seat_index(head.seat),
+                seat,
                 attempt: AttemptId::from_bytes(&head.attempt)?,
                 existing: true,
             });

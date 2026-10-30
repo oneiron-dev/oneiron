@@ -19,7 +19,9 @@
 //! nobody takes over. A register whose surface stated no `manifest_ref`
 //! carries what this holder checked the record against in that enacted
 //! result, and in its output binding, so a retry answers with it too (FIX
-//! 5334).
+//! 5334). An input sealed under its own carrier key (FIX 7402) opens only
+//! with that key here; while it is not, the request stays pending, and once
+//! the work is done its key goes with the input.
 
 use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
 use zeroize::{Zeroize, Zeroizing};
@@ -34,7 +36,8 @@ use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
 use super::input::{
-    Attached, InputBinding, WitnessJoin, assembled_input_in_txn, drop_input_in_txn, split_attached,
+    Attached, InputBinding, WitnessJoin, drop_input_in_txn, input_carrier_binds,
+    input_carrier_in_txn, kept_input_in_txn, open_leaf_input, retire_input_carriers_in_txn,
     witness_joined_in_txn,
 };
 use super::manifest::{RegisterVerdict, check_register_in_txn, judgment_text};
@@ -389,7 +392,8 @@ impl Vault {
         }
     }
 
-    /// The input `digest` names, kept here, opened under `binding`.
+    /// The input `digest` names, kept here, opened under `binding`: its rows
+    /// read in order and let go, never joined (FIX 11140).
     fn opened_input_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -400,7 +404,7 @@ impl Vault {
         let Some(digest) = digest else {
             return Ok(Opened::Invalid);
         };
-        let Some(kept) = assembled_input_in_txn(&self.store, txn, &digest)? else {
+        let Some(kept) = kept_input_in_txn(&self.store, txn, &digest)? else {
             return Ok(Opened::Missing);
         };
         // A witness in parts proves its request whole before any effect;
@@ -408,12 +412,26 @@ impl Vault {
         if witness_joined_in_txn(&self.store, txn, &digest)? == WitnessJoin::Missing {
             return Ok(Opened::Missing);
         }
-        let Some((envelope, attached)) = split_attached(&kept) else {
-            return Ok(Opened::Invalid);
-        };
-        Ok(binding
-            .open(envelope, secret)
-            .map_or(Opened::Invalid, |body| Opened::Body(body, attached)))
+        // An input sealed under its own carrier key opens only with that key
+        // here: answered live, or minted here as its recorder. Until then the
+        // request stays pending (FIX 7402).
+        if let Some(carrier) = input_carrier_in_txn(&self.store, txn, &digest)? {
+            if !input_carrier_binds(&carrier, binding) {
+                return Ok(Opened::Invalid);
+            }
+            let Some(leaf) = self.carrier_leaf_in_writer(&carrier) else {
+                return Ok(Opened::Missing);
+            };
+            return Ok(open_leaf_input(&kept, &carrier, binding, &leaf, secret)?
+                .map_or(Opened::Invalid, |(body, attached)| {
+                    Opened::Body(body, attached)
+                }));
+        }
+        Ok(kept
+            .open(binding, secret)?
+            .map_or(Opened::Invalid, |(body, attached)| {
+                Opened::Body(body, attached)
+            }))
     }
 
     /// A register: a new portable record under the request's id, at the
@@ -602,7 +620,7 @@ impl Vault {
 
     /// The output binding of the request `enactment` names, with the
     /// manifest judgment its result signs, and the input it consumed, every
-    /// part of it, forgotten here.
+    /// part of it, forgotten here, its carrier key with it (FIX 7402).
     fn close_out_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -612,6 +630,9 @@ impl Vault {
     ) -> Result<()> {
         put_output_in_txn(self, txn, &enactment.request, binding, check)?;
         if let Some(digest) = enactment.input {
+            if let Some(carrier) = input_carrier_in_txn(&self.store, txn, &digest)? {
+                retire_input_carriers_in_txn(self, txn, &[carrier]);
+            }
             drop_input_in_txn(self, txn, &digest)?;
         }
         Ok(())
