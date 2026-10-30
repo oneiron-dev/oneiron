@@ -6,38 +6,42 @@ use super::frame::{BoardFrameError, BoardSection, SectionPolicy, ShedRank};
 use super::people::PeopleView;
 use super::scratchpad::clip;
 use super::{one_line_token, quoted_leaf};
-use crate::agent_inbox_lens::{AgentInboxItemKind, AgentInboxLensItem};
+use crate::agent_inbox_lens::{AgentInboxItemKind, AgentInboxLensItem, AgentInboxReadState};
 use crate::entity_id::EntityId;
 
 /// Longest stated reason a review row quotes, in bytes: READERS' bound.
 const REVIEW_REASON_SHOWN_BYTES: usize = 160;
 
-/// INBOX for `actor`, or `None` when its slice is empty. One row per item,
-/// led by its sender's handle where it has an admitted one (FIX 9745), then
-/// the item handle, its kind, impact, the actor's own identity that carries
-/// it as route metadata (none on a row the vault itself sent, such as a
-/// digest), the thread, how many identities share that thread, and the other
-/// persons on it, named by handle (PEOPLE, ARCH-0067). A comm widen ask names
-/// the widening it asks (FIX 3901). A concern row (OF-568)
-/// names the agent it is about, its signal and tone, and sits with the other
-/// concerns on that agent. Rows hold refs only; foreign message text never
-/// renders here. The one quote is a pending diary-read review's (OF-490): it
-/// names its reader and quotes the reason they stated, clipped as READERS
-/// clips it, so the agent can answer without another read.
+/// INBOX for `actor`, or `None` when no row waits and none is put off. One
+/// row per waiting item, led by its sender's handle where it has an admitted
+/// one (FIX 9745), then the item handle, its kind, impact, read state, the
+/// actor's own identity that carries it as route metadata (none on a row the
+/// vault itself sent, such as a digest), the thread, how many identities
+/// share that thread, and the other persons on it, named by handle (PEOPLE,
+/// ARCH-0067). A comm widen ask names the widening it asks (FIX 3901). A
+/// concern row (OF-568) names the agent it is about, its signal and tone,
+/// and sits with the other concerns on that agent. Rows hold refs only;
+/// foreign message text never renders here. The one quote is a pending
+/// diary-read review's (OF-490): it names its reader and quotes the reason
+/// they stated, clipped as READERS clips it, so the agent can answer without
+/// another read. The counts name the put-off rows behind the waiting ones.
 pub fn assemble_inbox_section(
     actor: EntityId,
-    items: &[AgentInboxLensItem],
+    items: &[(AgentInboxLensItem, AgentInboxReadState)],
+    later: usize,
     people: &PeopleView<'_>,
 ) -> Result<Option<BoardSection>, BoardFrameError> {
-    if items.is_empty() {
+    if items.is_empty() && later == 0 {
         return Ok(None);
     }
     // Concerns group per agent: each after the last row on the same subject.
-    let mut ordered: Vec<&AgentInboxLensItem> = Vec::with_capacity(items.len());
+    let mut ordered: Vec<&(AgentInboxLensItem, AgentInboxReadState)> =
+        Vec::with_capacity(items.len());
     for item in items {
-        let group = item.concern.and_then(|concern| {
+        let group = item.0.concern.and_then(|concern| {
             ordered.iter().rposition(|row| {
-                row.concern
+                row.0
+                    .concern
                     .is_some_and(|other| other.subject == concern.subject)
             })
         });
@@ -48,7 +52,8 @@ pub fn assemble_inbox_section(
     }
     let rows = ordered
         .into_iter()
-        .map(|item| {
+        .map(|entry| {
+            let (item, state) = entry;
             let kind = match item.kind {
                 AgentInboxItemKind::Conversation => "conversation",
                 AgentInboxItemKind::ApprovalRequired => "waiting",
@@ -66,9 +71,10 @@ pub fn assemble_inbox_section(
                 row.push_str(&format!("from={} ", people.label(sender)));
             }
             row.push_str(&format!(
-                "{} {kind} impact={}",
+                "{} {kind} impact={} state={}",
                 one_line_token(&item.item_id),
-                item.impact.0
+                item.impact.0,
+                state.as_str()
             ));
             if let Some(via) = via {
                 row.push_str(&format!(" via={}", via.to_hex()));
@@ -120,11 +126,18 @@ pub fn assemble_inbox_section(
             row
         })
         .collect();
+    let mut counts = Vec::new();
+    if !items.is_empty() {
+        counts.push(format!("count: {}", items.len()));
+    }
+    if later > 0 {
+        counts.push(format!("later: {later}"));
+    }
     BoardSection::new(
         "INBOX",
         Vec::new(),
         rows,
-        vec![format!("count: {}", items.len())],
+        counts,
         SectionPolicy {
             pinned: false,
             shed_rank: Some(ShedRank::TasksToCounts),
