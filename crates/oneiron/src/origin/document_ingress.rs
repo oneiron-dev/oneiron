@@ -7,6 +7,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
 use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, LegacyCompact, SideKey, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
@@ -304,17 +305,41 @@ fn bytes<'a>(files: &'a BTreeMap<String, super::tree::OriginTreeFile>, path: &st
     files.get(path).map_or(b"", |file| file.content.as_slice())
 }
 
+/// The files `oid` names, a valid annotated-tag chain peeled to its end
+/// however long (rule 5, FIX 9999): past its scan row the peel raises a check
+/// and reads on. A malformed or looping chain still fails.
 fn read_files(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     oid: &crate::git_wire::GitOid,
 ) -> Result<BTreeMap<String, super::tree::OriginTreeFile>> {
+    let mut count = {
+        let vault = wire.vault();
+        let rtxn = vault.store.env.read_txn()?;
+        ScanCount::start(
+            &vault.store,
+            &rtxn,
+            EngineScan::OriginTagPeelSteps,
+            repo.identity().as_hex().as_bytes(),
+        )?
+    };
+    let mut seen = BTreeSet::new();
     let mut tip = oid.clone();
-    for _ in 0..64 {
+    loop {
+        count.row();
+        if !seen.insert(tip.clone()) {
+            return Err(Error::CorruptedIndex("tag object chain loops"));
+        }
         let kinds = wire.object_info(repo, std::slice::from_ref(&tip))?;
         match kinds.get(&tip).map(String::as_str) {
-            Some("blob") => return Ok(BTreeMap::new()),
-            Some("commit" | "tree") => return super::tree::read_tree_files(wire, repo, &tip),
+            Some("blob") => {
+                count.finish(wire.vault());
+                return Ok(BTreeMap::new());
+            }
+            Some("commit" | "tree") => {
+                count.finish(wire.vault());
+                return super::tree::read_tree_files(wire, repo, &tip);
+            }
             Some("tag") => {
                 let raw = wire.read_object(repo, &tip)?;
                 let first = raw
@@ -330,5 +355,4 @@ fn read_files(
             _ => return Err(Error::EntityNotFound),
         }
     }
-    Err(Error::IndexOverflow("nested origin tags"))
 }
