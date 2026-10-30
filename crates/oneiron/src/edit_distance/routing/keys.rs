@@ -172,8 +172,8 @@ pub(super) struct StoredExecutor {
     /// The anchored task outcome this receipt's fold counted, so the
     /// settle-time refold moves that count between the folded head and the
     /// head the judgment names now instead of recounting (FIX 11618,
-    /// FIX 11707). Absent on a row written before refolds, and on a fold
-    /// that counted none.
+    /// FIX 11707). Absent on a fold that counted none yet (a holding
+    /// judgment, or no anchored outcome joined).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<String>,
     /// The head the fold counted on, in aggregate-key wire form, so the
