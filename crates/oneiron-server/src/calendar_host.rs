@@ -16,13 +16,14 @@ pub(crate) use caldav::HttpCalDav;
 pub(crate) use feed_poll::spawn_ics_feed_polls;
 pub(crate) use ics::HttpIcsFeed;
 
-pub(super) fn client() -> Result<reqwest::blocking::Client, reqwest::Error> {
-    reqwest::blocking::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
-        .build()
+/// How long one calendar read or submission may take in all: a feed or a
+/// CalDAV report can carry up to sixteen megabytes.
+const CALENDAR_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The calendar's client, built on the shared outbound network boundary
+/// ([`ServedChannelSink::client_with_timeout`]) with the calendar's bound.
+pub(super) fn client() -> oneiron::Result<reqwest::blocking::Client> {
+    ServedChannelSink::client_with_timeout(CALENDAR_REQUEST_TIMEOUT)
 }
 
 pub(super) fn authorization(value: &[u8]) -> oneiron::Result<HeaderValue> {
