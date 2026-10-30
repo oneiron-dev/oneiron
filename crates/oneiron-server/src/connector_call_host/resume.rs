@@ -321,7 +321,7 @@ impl ServedConnectorCallHost {
             .ok_or("connector_route_gone")?;
         let presented = self
             .presenting(route)
-            .present_again(&self.vault)
+            .present_again(&self.vault, Some((&binding.key_ref, binding.tool.as_str())))
             .ok_or("credential_not_presented")?;
         let live = LiveSession {
             client: self.client.clone(),
