@@ -20,11 +20,15 @@ pub(crate) async fn vault_message_streams_refused(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    off_runtime_listing(VERB, move |_| {
+    let (answer, mut rows) = off_runtime_listing(VERB, move |_| {
         server
             .vault()
             .stream_recovery_refusals(&owner)
             .map_err(Into::into)
     })
-    .await
+    .await;
+    if let Ok(refusals) = &answer {
+        rows.extend(refusals.iter().map(|refusal| refusal.message_id));
+    }
+    (answer, rows)
 }
