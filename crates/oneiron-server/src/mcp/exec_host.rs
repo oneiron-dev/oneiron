@@ -1,8 +1,10 @@
 //! MCP code-execution host seam and the engine-native host binding.
 
+use super::LiveLeaseBackend;
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
+use crate::ai_host::live_lease::LiveLease;
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
@@ -794,9 +796,10 @@ impl<'a> ScopeMeter<'a> {
 /// model.
 ///
 /// A run that spends under a scope (`spend`: a pumped agent run's, OF-533)
-/// makes its model calls on the meter its host opened for the entry, and
-/// what that meter used is booked on the scope once the entry ends, whatever
-/// it answered. With none, the calls run on the provider's own meter.
+/// makes its model calls on the meter its host opened for the entry, read
+/// live ([`LiveLease`]): each call is admitted against what the scope has
+/// left then, and what no call's look booked is booked once the entry ends,
+/// whatever it answered. With none, the calls run on the provider's own meter.
 ///
 /// A planned child no seat binds (`planned`, FIX 2310) makes its calls
 /// through the provider's planned backend on that same meter and payer,
@@ -838,18 +841,19 @@ pub(crate) fn enter_engine_native_run(
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
+    let limit = guard.read().limit_units;
+    let live = LiveLease::new(vault, Some(scope.clone()), guard, limit, 0);
     let entered = enter_on(
         vault,
         provider,
-        backend.as_ref(),
+        &LiveLeaseBackend::new(&live, backend.as_ref()),
         bound,
         config,
         compaction,
         reactor,
         seat,
     );
-    AgentDispatcher::new(vault)
-        .record_guard_spend(scope, guard.read().used_units)
+    live.book_rest()
         .map_err(|error| EngineRunError::Binding(error.to_string()))?;
     entered
 }

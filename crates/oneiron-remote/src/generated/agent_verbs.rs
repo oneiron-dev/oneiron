@@ -166,12 +166,27 @@ impl OneironClient {
                 "vault.shape.apply" => remote_agent_verb_output::<
                     oneiron::vault_shape::ShapeApplyReceipt,
                 >(client, verb, &input),
+                "vault.shape.plan.card" => remote_agent_verb_output::<
+                    oneiron::memory::ShapePlanCardView,
+                >(client, verb, &input),
+                "vault.shape.items.receipt" => remote_agent_verb_output::<
+                    Option<oneiron::memory::ShapeItemReceipt>,
+                >(client, verb, &input),
+                "vault.shape.groups" => remote_agent_verb_output::<
+                    Vec<oneiron::vault_shape::ShapeInboxGroup>,
+                >(client, verb, &input),
+                "vault.shape.groups.resolve" => remote_agent_verb_output::<
+                    oneiron::vault_shape::ShapeApplyReceipt,
+                >(client, verb, &input),
                 "self.message" => {
                     remote_agent_verb_output::<oneiron::memory::MessagePersonReceipt>(
                         client, verb, &input,
                     )
                 }
                 "self.grants.ask" => remote_agent_verb_output::<oneiron::memory::GrantAskReceipt>(
+                    client, verb, &input,
+                ),
+                "self.grants.asked" => remote_agent_verb_output::<oneiron::memory::GrantAskedPage>(
                     client, verb, &input,
                 ),
                 "vault.companions.access_requests.answer" => remote_agent_verb_output::<
@@ -574,6 +589,9 @@ impl OneironClient {
                 "vault.turn_programs.disarm" => {
                     remote_agent_verb_output::<bool>(client, verb, &input)
                 }
+                "vault.turn_programs.rebind" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::TurnProgramRebindReceipt,
+                >(client, verb, &input),
                 "self.saved_query.create" => remote_agent_verb_output::<
                     oneiron::campaign::surface::SavedQueryRecordView,
                 >(client, verb, &input),
@@ -648,9 +666,12 @@ impl OneironClient {
                 "vault.inbox.lens" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
-                "vault.inbox.groups" => {
-                    remote_agent_verb_output::<oneiron::inbox::InboxGroupPage>(client, verb, &input)
-                }
+                "vault.inbox.groups" => remote_agent_verb_output::<
+                    oneiron::inbox::UnifiedInboxGroupPage,
+                >(client, verb, &input),
+                "vault.inbox.groups.resolve" => remote_agent_verb_output::<
+                    oneiron::inbox::InboxGroupResolution,
+                >(client, verb, &input),
                 "vault.weave.digest.render" => remote_agent_verb_output::<
                     Option<oneiron::claim::WeaveDigestRendered>,
                 >(client, verb, &input),
@@ -1385,6 +1406,9 @@ impl OneironClient {
                 }
                 "vault.coach.training_offers.pilots.get" => remote_agent_verb_output::<
                     Option<oneiron::skill_optimize::offer_pilot::OfferPilot>,
+                >(client, verb, &input),
+                "vault.coach.training_offers.sources" => remote_agent_verb_output::<
+                    oneiron::edit_distance::reservoir::ReservoirSourcePreview,
                 >(client, verb, &input),
                 "vault.research.bind" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ResearchBinding,
@@ -3579,6 +3603,18 @@ impl OneironClient {
                 "vault.identity.proposals.for_pair" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::IdentityPairProposals,
                 >(client, verb, &input),
+                "vault.custody.members.drain.begin" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodyDrainTicketView,
+                >(client, verb, &input),
+                "vault.custody.members.drain.commit" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodySetRevision,
+                >(client, verb, &input),
+                "vault.custody.members.drain.folder" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodySetRevision,
+                >(client, verb, &input),
+                "vault.custody.members.reenrol" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodySetRevision,
+                >(client, verb, &input),
                 "connector.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallReply,
                 >(client, verb, &input),
@@ -4250,6 +4286,54 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.shape.apply", value)
     }
+    pub fn vault_shape_plan_card(
+        &self,
+        input: &oneiron::vault_shape::ShapePlanRequest,
+    ) -> Result<oneiron::memory::ShapePlanCardView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.plan.card", value)
+    }
+    pub fn vault_shape_items_receipt(
+        &self,
+        input: &oneiron::memory::ShapeItemReceiptRequest,
+    ) -> Result<Option<oneiron::memory::ShapeItemReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.items.receipt", value)
+    }
+    pub fn vault_shape_groups(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::vault_shape::ShapeInboxGroup>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.groups", value)
+    }
+    pub fn vault_shape_groups_resolve(
+        &self,
+        input: &oneiron::memory::ShapeGroupResolveRequest,
+    ) -> Result<oneiron::vault_shape::ShapeApplyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.groups.resolve", value)
+    }
     pub fn self_message(
         &self,
         input: &oneiron::memory::MessagePersonRequest,
@@ -4273,6 +4357,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.grants.ask", value)
+    }
+    pub fn self_grants_asked(
+        &self,
+        input: &oneiron::memory::GrantAskedRequest,
+    ) -> Result<oneiron::memory::GrantAskedPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.grants.asked", value)
     }
     pub fn vault_companions_access_requests_answer(
         &self,
@@ -5967,6 +6063,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.turn_programs.disarm", value)
     }
+    pub fn vault_turn_programs_rebind(
+        &self,
+        input: &oneiron::dreamer_runner::TurnProgramRebindRequest,
+    ) -> Result<oneiron::dreamer_runner::TurnProgramRebindReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.turn_programs.rebind", value)
+    }
     pub fn self_saved_query_create(
         &self,
         input: &oneiron::campaign::surface::SavedQueryCreateRequest,
@@ -6258,7 +6366,7 @@ impl OneironClient {
     pub fn vault_inbox_groups(
         &self,
         input: &oneiron::agent_inbox_lens::InboxRunGroupsRequest,
-    ) -> Result<oneiron::inbox::InboxGroupPage, MemoryError> {
+    ) -> Result<oneiron::inbox::UnifiedInboxGroupPage, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -6266,6 +6374,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.inbox.groups", value)
+    }
+    pub fn vault_inbox_groups_resolve(
+        &self,
+        input: &oneiron::inbox::InboxGroupResolveRequest,
+    ) -> Result<oneiron::inbox::InboxGroupResolution, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.inbox.groups.resolve", value)
     }
     pub fn vault_weave_digest_render(
         &self,
@@ -9167,6 +9287,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.coach.training_offers.pilots.get", value)
+    }
+    pub fn vault_coach_training_offers_sources(
+        &self,
+        input: &oneiron::task_verb::sdk::ReservoirSourcesRequest,
+    ) -> Result<oneiron::edit_distance::reservoir::ReservoirSourcePreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.sources", value)
     }
     pub fn vault_research_bind(
         &self,
@@ -17918,6 +18050,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.identity.proposals.for_pair", value)
+    }
+    pub fn vault_custody_members_drain_begin(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyMemberRef,
+    ) -> Result<oneiron::task_verb::sdk::CustodyDrainTicketView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.drain.begin", value)
+    }
+    pub fn vault_custody_members_drain_commit(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyDrainCommitRequest,
+    ) -> Result<oneiron::task_verb::sdk::CustodySetRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.drain.commit", value)
+    }
+    pub fn vault_custody_members_drain_folder(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyMemberRef,
+    ) -> Result<oneiron::task_verb::sdk::CustodySetRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.drain.folder", value)
+    }
+    pub fn vault_custody_members_reenrol(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyMemberReenrolRequest,
+    ) -> Result<oneiron::task_verb::sdk::CustodySetRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.reenrol", value)
     }
     pub fn connector_answer(
         &self,

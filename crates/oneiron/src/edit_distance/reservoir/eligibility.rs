@@ -25,6 +25,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
 use super::{FIELD_EXPORT_EXCLUDED, FIELD_EXPORT_EXCLUDED_REASONS, TrainingPair};
 use crate::authority::AuthorityView;
 use crate::claim::ScopedRead;
@@ -265,6 +267,151 @@ fn source_people_in(
         }
     }
     Ok(SourcePeople::Owner)
+}
+
+/// FIX 11352: who a source a training run's corpus would hold to the
+/// owner's tick holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReservoirSourcePeople {
+    /// Someone other than the acting owner and the vault's own agents.
+    Others,
+    /// People that cannot be read.
+    Unknown,
+}
+
+/// FIX 11352: one source a training run's corpus would hold to the owner's
+/// "I obtained consent" tick.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReservoirSourceRow {
+    /// The key a tick names: a TURN's conversation, else the source row.
+    pub source: EntityId,
+    pub people: ReservoirSourcePeople,
+    /// The scope's pairs that rest on it.
+    pub pairs: u64,
+    /// Whether the ticks the preview was given name it.
+    pub consented: bool,
+}
+
+/// FIX 11352: what a training run's corpus over one reservoir scope would
+/// hold, read before the owner prepares it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReservoirSourcePreview {
+    /// The pairs the corpus would carry under the ticks given.
+    pub carried: u64,
+    /// The pairs the source check would leave out under them, by reason
+    /// code.
+    pub excluded: BTreeMap<String, u64>,
+    /// Each source with other people or people that cannot be read, in key
+    /// order: what the owner ticks.
+    pub sources: Vec<ReservoirSourceRow>,
+}
+
+/// FIX 11352: the preview of a training run's corpus over `scope`, under
+/// `consented`, the ticks the owner gave so far: each source its pairs rest
+/// on that holds other people or people that cannot be read, and how many
+/// pairs the source check would carry and leave out, as the run's export
+/// would judge them in one snapshot. It reads as the owner's own read at
+/// the off-device destination, as that export does. Read only: it clears
+/// no consent, spends no approve-once, keeps no receipt and returns no pair
+/// body.
+///
+/// # Errors
+///
+/// The owner's standing lapsed; an unusable task-class filter; the
+/// off-record tripwire; storage errors.
+pub fn reservoir_source_preview(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    scope: super::ReservoirScope,
+    consented: &[EntityId],
+) -> Result<ReservoirSourcePreview> {
+    let scope = super::normalized_scope(scope)?;
+    let key = vault.owner_proof_read_key(owner)?;
+    let reader = vault.scoped_read(key.at(crate::claim::CallerLocality::OffDevice));
+    reader.persist_grant_clock()?;
+    let rtxn = vault.store.env.read_txn()?;
+    let pairs = super::resolve_candidates(vault, &rtxn, &scope)?;
+    let sources = ticked_sources_in(vault, &rtxn, owner, &reader, &pairs, consented)?;
+    let corpus_use = CorpusUse::TrainingRun {
+        consented_sources: consented,
+    };
+    let (carried, excluded) = admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?;
+    Ok(ReservoirSourcePreview {
+        carried: carried.len() as u64,
+        excluded,
+        sources,
+    })
+}
+
+/// The sources `pairs` rest on that a run holds to the owner's tick, each
+/// with the pairs that rest on it. A pair its own rows or its source's keep
+/// out whatever the tick, or whose rows refuse or do not decode, names
+/// none.
+fn ticked_sources_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    owner: &AuthenticatedOwner,
+    reader: &ScopedRead<'_>,
+    pairs: &[TrainingPair],
+    consented: &[EntityId],
+) -> Result<Vec<ReservoirSourceRow>> {
+    let policy = reader.live_policy_manifest_in(rtxn)?;
+    let readable = |id: &EntityId| reader.is_entity_readable_with_policy_in(rtxn, &policy, id);
+    let run = RunTerms {
+        consented: consented.iter().copied().collect(),
+        actor: owner.revalidate_in_txn(vault, rtxn)?,
+        fold: vault.authority_view_readonly_in_txn(rtxn)?,
+    };
+    let mut sources = BTreeMap::<EntityId, ReservoirSourceRow>::new();
+    for pair in pairs {
+        let people = match ticked_source_in(vault, rtxn, &readable, &run, pair.receipt_ref) {
+            Ok(people) => people,
+            Err(error) if fails_export(&error) => return Err(error),
+            Err(_) => None,
+        };
+        let (source, people) = match people {
+            Some(SourcePeople::Others(key)) => (key, ReservoirSourcePeople::Others),
+            Some(SourcePeople::Unknown(key)) => (key, ReservoirSourcePeople::Unknown),
+            Some(SourcePeople::Owner) | None => continue,
+        };
+        sources
+            .entry(source)
+            .or_insert(ReservoirSourceRow {
+                source,
+                people,
+                pairs: 0,
+                consented: run.consented.contains(&source),
+            })
+            .pairs += 1;
+    }
+    Ok(sources.into_values().collect())
+}
+
+/// Who the input source of the pair whose artifact is `artifact` holds,
+/// when the pair's own row and its source pass every check but the tick;
+/// `None` when they do not, or when the pair has no source.
+fn ticked_source_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    readable: &dyn Fn(&EntityId) -> Result<bool>,
+    run: &RunTerms,
+    artifact: EntityId,
+) -> Result<Option<SourcePeople>> {
+    match row_check_in(vault, rtxn, readable, artifact)? {
+        RowCheck::Absent | RowCheck::Passes(_) => {}
+        RowCheck::Unreadable | RowCheck::Withheld => return Ok(None),
+    }
+    let Some(source) = PROPOSAL_ARTIFACT
+        .get(&vault.store, rtxn, &artifact)?
+        .and_then(|stored| stored.record.source_turn_ref)
+    else {
+        return Ok(None);
+    };
+    let RowCheck::Passes(entity_type) = row_check_in(vault, rtxn, readable, source)? else {
+        return Ok(None);
+    };
+    source_people_in(vault, rtxn, run, source, entity_type).map(Some)
 }
 
 /// The export receipt's exclusion fields: the count always, and each reason

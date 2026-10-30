@@ -97,13 +97,47 @@ pub(crate) fn write_parts(
     Ok(())
 }
 
+/// The free memory a join leaves untouched: the larger of 256 MiB and a
+/// sixteenth of the machine's memory, the floor the host's memory admission
+/// keeps. A floor, never a cap on how many parts a carrier lists.
+const JOIN_RESERVE_FLOOR_BYTES: u64 = 256 << 20;
+
+/// Whether `len` assembled bytes fit the memory this process can take now,
+/// past the reserve (FIX 8880). Where the memory available cannot be read,
+/// the machine's whole memory stands in; where neither can, the allocation
+/// alone decides.
+fn assembly_fits(len: u64) -> bool {
+    use oneiron_contracts::limit_ask::{available_memory_bytes, machine_memory_bytes};
+    let reserve = machine_memory_bytes().map_or(JOIN_RESERVE_FLOOR_BYTES, |total| {
+        (total / 16).max(JOIN_RESERVE_FLOOR_BYTES)
+    });
+    available_memory_bytes()
+        .or_else(machine_memory_bytes)
+        .is_none_or(|room| room.saturating_sub(reserve) >= len)
+}
+
 /// The carrier `parts` lists, joined from `map`; `None` while a part has not
-/// landed.
+/// landed, or while the host has no memory to hold the joined carrier.
+///
+/// A manifest may list one part many times, so a small carrier can name an
+/// assembly far past its own size: the assembled length is measured against
+/// the host's memory before any byte is copied, and the buffer is reserved
+/// without aborting (FIX 8880). A carrier that does not fit waits in its
+/// window for a later pass, as one missing a part does.
 pub(crate) fn join_parts(map: &LoroMap, parts: &Parts) -> Option<Vec<u8>> {
     if !parts.well_formed() {
         return None;
     }
-    let mut bytes = Vec::with_capacity(usize::try_from(parts.len).ok()?);
+    if !assembly_fits(parts.len) {
+        tracing::warn!(
+            bytes = parts.len,
+            parts = parts.parts.len(),
+            "carrier join waits for memory to hold it"
+        );
+        return None;
+    }
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(usize::try_from(parts.len).ok()?).ok()?;
     for digest in &parts.parts {
         let part = map_get_bytes(map, &part_key(digest))?;
         if blake3::hash(&part).as_bytes() != digest {

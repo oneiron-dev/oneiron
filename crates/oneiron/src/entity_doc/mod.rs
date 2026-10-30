@@ -37,6 +37,8 @@ mod side_keys;
 mod storage;
 #[cfg(feature = "sync")]
 mod sweep;
+#[cfg(feature = "sync")]
+mod sync;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
@@ -79,6 +81,11 @@ pub(crate) use storage::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
+#[cfg(feature = "sync")]
+pub(crate) use sync::{
+    SyncEdit, edit_sync_text_in_txn, join_sync_update_in_txn, replace_sync_text_in_txn,
+    sync_text_in,
+};
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 
 /// Resolve an active document's identity and live frontier in a caller-owned
