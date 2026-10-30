@@ -33,7 +33,8 @@
 //! - **Incoming copy edits are translated, never imported raw.** A copy key
 //!   resolves to its source, a copy row to the stored bytes, and a changed
 //!   body goes through the shipped visible diff; only its ruled
-//!   `projection_edit_conflict` / `sealed_file_edited` results hold.
+//!   `projection_edit_conflict` / `sealed_file_edited` results hold, each
+//!   kept as a held record and never applied (FIX 10598).
 //!
 //! The source -> copy map is derived, never stored: its rules are
 //! [`SyncSecretProjection::SCHEMA`] (CALL 4-I, ruling (e)), its lifetime is
@@ -47,6 +48,7 @@
 
 mod documents;
 mod frames;
+mod held;
 mod history;
 mod reauthor;
 mod release;

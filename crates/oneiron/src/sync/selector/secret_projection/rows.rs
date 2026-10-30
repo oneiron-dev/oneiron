@@ -43,12 +43,18 @@ pub(crate) enum InboundRow {
     /// The copy translated to its source: the row the canonical store takes
     /// under `id`, with the stored bytes or the visible diff applied to them.
     Source { id: EntityId, row: Vec<u8> },
-    /// A ruled hold: the edit stays the peer's pending work, never lands as
-    /// masked or placeholder bytes, and is never acknowledged as landed.
-    Held {
-        id: EntityId,
-        cause: RepoProjectionDiffResult,
-    },
+    /// A ruled hold: the edit never lands as masked or placeholder bytes and
+    /// is never applied; its held record is all that is kept (FIX 10598).
+    Held(HeldEdit),
+}
+
+/// One copy edit held on its ruled cause: the source it would land on, the
+/// cause, and the `xxh3_64` of the row the peer wrote, never its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeldEdit {
+    pub(crate) source: EntityId,
+    pub(crate) cause: RepoProjectionDiffResult,
+    pub(crate) edit: u64,
 }
 
 impl SyncSecretProjection {
@@ -121,7 +127,11 @@ impl SyncSecretProjection {
                 id,
                 row: [header, bytes.as_slice()].concat(),
             },
-            Translated::Held(cause) => InboundRow::Held { id, cause },
+            Translated::Held(cause) => InboundRow::Held(HeldEdit {
+                source: id,
+                cause,
+                edit: crate::sync::quarantine::payload_hash(submitted),
+            }),
         })
     }
 }

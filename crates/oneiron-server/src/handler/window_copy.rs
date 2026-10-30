@@ -1,5 +1,6 @@
 //! The masked repo copy generation each socket was last sent of a window
-//! (FIX 7608 slice 4, C3 of the s4 soundness read).
+//! (FIX 7608 slice 4, C3 of the s4 soundness read), and the answer to a
+//! device's copy edit held on its ruled cause (FIX 10598).
 //!
 //! A copy's generation is its stamp, never a version vector: a later mark
 //! (or a mask that changes spans under the same mark ids) changes what a
@@ -8,12 +9,16 @@
 //! window's replacement on its next version exchange, so a stale copy is not
 //! kept on. A window that carries no marked repo item answers as today.
 
+use std::ops::ControlFlow;
+
 use loro::{LoroDoc, VersionVector};
 use oneiron::Vault;
 use oneiron::sync::WindowKey;
+use oneiron::sync::transport::WindowPadReceipt;
 use oneiron::sync::window::WindowExport;
 
 use super::conn_state::ConnState;
+use crate::protocol::ProtocolError;
 
 /// `export`, this socket's answer to `remote` for window `key`, bound to
 /// the generation of `doc`'s masked repo copies: the replacement
@@ -65,4 +70,31 @@ where
         }
         None => Ok(export),
     }
+}
+
+/// The answer to a device's update of window `window_key`, sent under
+/// `sub_tag` with its pads admitted as `receipt`, whose copy edit the
+/// admission held on its ruled cause and recorded (FIX 10598): the
+/// acknowledgment a landed update gets (a residence update's, `residence_seq`,
+/// or an owner-lane update's receipt), so the device retires it from its
+/// queue and stops sending it. Nothing of it persisted, imported or relayed,
+/// and its edit is never applied; the device keeps its operations in its own
+/// window.
+///
+/// # Errors
+/// The receipt's encoding, or a closed reply channel.
+pub(super) fn acknowledge_held(
+    window_key: &str,
+    sub_tag: u8,
+    residence_seq: Option<u64>,
+    receipt: &WindowPadReceipt,
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<ControlFlow<()>, ProtocolError> {
+    if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
+        let frame = super::window_pads::receipt_frame(window_key, sub_tag, receipt)?;
+        direct_tx.send(frame).map_err(|_| {
+            ProtocolError::Persistence("held copy edit acknowledgment channel closed".into())
+        })?;
+    }
+    Ok(ControlFlow::Continue(()))
 }

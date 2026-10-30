@@ -19,7 +19,7 @@
 //! ([`SyncSecretProjection::translate_history`]: copy keys to source keys,
 //! copy rows to the stored bytes or the shipped visible diff), then encoded
 //! again over the same spans on a second copy that does not hold them. A
-//! ruled hold keeps the whole update the peer's pending work.
+//! ruled hold imports nothing of the update; only its held record is kept.
 //!
 //! A blob nothing marked touches goes as it came. One the checkpoint cannot
 //! take goes as it came only when its operations and state carry nothing
@@ -36,11 +36,11 @@ use loro::{
     LoroValue, VersionVector,
 };
 
+use super::rows::HeldEdit;
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext, SyncError};
-use crate::origin::secret_projection::edit::RepoProjectionDiffResult;
 use crate::store::Store;
 
 /// The root map whose values are rows.
@@ -62,8 +62,8 @@ pub(crate) enum WindowAdmission<'a> {
     /// its sources.
     Admit(Cow<'a, [u8]>),
     /// Edits of a copy the visible diff holds on a ruled cause: nothing of the
-    /// blob persists, imports, relays or is acknowledged.
-    Held(Vec<(EntityId, RepoProjectionDiffResult)>),
+    /// blob persists, imports or relays, and no edit of it is ever applied.
+    Held(Vec<HeldEdit>),
 }
 
 /// Every key a plain one, every value one holder's: the skeleton is joined at
@@ -310,7 +310,7 @@ impl SyncSecretProjection {
         store: &Store,
         context: Option<&LoroDoc>,
         parts: &mut Parts,
-        held: &mut Vec<(EntityId, RepoProjectionDiffResult)>,
+        held: &mut Vec<HeldEdit>,
     ) -> Result<bool> {
         let rows = parts.skeleton.roots.iter().position(|root| root == ROWS);
         let sites = sites(&parts.skeleton);
@@ -329,7 +329,7 @@ impl SyncSecretProjection {
                     atom.payload = Payload::Value(LoroValue::Binary(row.into()));
                     changed = true;
                 }
-                InboundRow::Held { id, cause } => held.push((id, cause)),
+                InboundRow::Held(edit) => held.push(edit),
                 InboundRow::Ordinary => self.unread_row(store, context, &id)?,
             }
         }
