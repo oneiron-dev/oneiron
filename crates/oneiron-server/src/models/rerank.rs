@@ -7,9 +7,11 @@
 //! through the seat's ladder, so each rung it reaches is admitted on its own
 //! permit and sent through the run's gate, and its digest covers the query
 //! and every document that leave ([`rerank_request`]). The answer comes back
-//! as one score per document, in order ([`rerank_scores`]), however many
+//! as one score per document, in order ([`rerank_outcome`]), however many
 //! documents the call names: they go in batches on its one permit
-//! ([`batches`], FIX 9514).
+//! ([`batches`], FIX 9514). A call whose later batch would overrun its line,
+//! or failed, answers what its finished batches scored ([`outcome`], FIX
+//! 11228).
 use std::collections::BTreeMap;
 
 use oneiron::llm::SingleRouteBackend;
@@ -24,7 +26,10 @@ use serde_json::Value as JsonValue;
 use super::http::{HttpFailure, ProviderHttp};
 
 mod batches;
+mod outcome;
 use batches::{joined_usage, merge_indexed_scores, rerank_batches};
+use outcome::{LATER_BATCH_FAILURE_ENDS_PARTIAL, RerankPartial, line_admits};
+pub(crate) use outcome::{RerankLine, RerankOutcome, RerankStop, on_line, rerank_outcome};
 
 /// The protocol path, joined to the provider's base URL.
 const RERANK_PATH: &str = "/v1/rerank";
@@ -73,14 +78,6 @@ pub(crate) fn rerank_request(
         provider_options: BTreeMap::new(),
         host_segments: None,
     }
-}
-
-/// One score per document, in order, from a rerank call's answer.
-pub(crate) fn rerank_scores(response: &LlmResponse) -> Option<Vec<f32>> {
-    let [ContentPart::Text { text }] = response.message.content.as_slice() else {
-        return None;
-    };
-    serde_json::from_str(text).ok()
 }
 
 /// The query and documents a rerank request carries. A rung's instruction
@@ -153,7 +150,7 @@ impl LlmBackend for RerankBackend {
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             self.preflight(&request, false)?;
@@ -162,25 +159,60 @@ impl LlmBackend for RerankBackend {
             let mut scores = vec![None; documents.len()];
             let mut tokens = 0u64;
             let mut usages = Vec::new();
+            let mut stopped = None;
             for batch in rerank_batches(&documents) {
-                let answer = self.send_batch(wire_model, query, &batch).await?;
-                merge_indexed_scores(&mut scores, &batch, answer.scores)
-                    .ok_or(FatalLlmError::EmptyResponse)?;
-                tokens = tokens.saturating_add(answer.tokens);
-                usages.push(answer.usage);
+                // The first batch is the one the call was admitted for; each
+                // later one goes only while the call's line still covers it.
+                let later = batch.offset > 0;
+                let sent = &documents[..batch.offset];
+                if later && !line_admits(lease, tokens, query, sent, batch.documents) {
+                    stopped = Some(RerankStop::Line);
+                    break;
+                }
+                let failed: Option<LlmError> =
+                    match self.send_batch(wire_model, query, &batch).await {
+                        // A batch the provider answered is billed, whatever
+                        // it answered.
+                        Ok(answer) => {
+                            tokens = tokens.saturating_add(answer.tokens);
+                            usages.push(answer.usage);
+                            merge_indexed_scores(&mut scores, &batch, answer.scores)
+                                .is_none()
+                                .then(|| FatalLlmError::EmptyResponse.into())
+                        }
+                        Err(error) => Some(error),
+                    };
+                match failed {
+                    None => {}
+                    Some(error) if later && LATER_BATCH_FAILURE_ENDS_PARTIAL => {
+                        tracing::warn!(
+                            %error,
+                            offset = batch.offset,
+                            documents = documents.len(),
+                            "a later rerank batch failed; the call answers its finished batches"
+                        );
+                        stopped = Some(RerankStop::Failed);
+                        break;
+                    }
+                    Some(error) => return Err(error),
+                }
             }
-            let scores: Vec<f32> = scores
-                .into_iter()
-                .collect::<Option<_>>()
-                .ok_or(FatalLlmError::EmptyResponse)?;
+            let text = match stopped {
+                None => {
+                    let scores: Vec<f32> = scores
+                        .into_iter()
+                        .collect::<Option<_>>()
+                        .ok_or(FatalLlmError::EmptyResponse)?;
+                    serde_json::to_string(&scores)
+                }
+                Some(stopped) => serde_json::to_string(&RerankPartial { scores, stopped }),
+            }
+            .map_err(|_| FatalLlmError::EmptyResponse)?;
             let usage = joined_usage(usages, tokens);
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text {
-                        text: serde_json::to_string(&scores)
-                            .map_err(|_| FatalLlmError::EmptyResponse)?,
-                    }],
+                    content: vec![ContentPart::Text { text }],
                 },
                 usage: LlmUsage {
                     input: LlmInputUsage {

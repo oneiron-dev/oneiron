@@ -1732,7 +1732,7 @@ async fn tasks_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke_born(
@@ -2598,7 +2598,7 @@ async fn tasks_update(
         &["task_ref"],
     )?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke(
@@ -2670,7 +2670,7 @@ async fn tasks_redo(
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke_born(
@@ -4461,6 +4461,74 @@ async fn vault_export(
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: Some(rows),
+    })
+}
+async fn vault_export_transfer_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.export.transfer.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.export.transfer.read", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.export.transfer.read", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_export_transfer_read(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_export_transfer_release(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.export.transfer.release")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.export.transfer.release", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.export.transfer.release", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_export_transfer_release(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_credential_attenuate(
@@ -9594,6 +9662,74 @@ async fn vault_mesh_dial(
     let ran = async {
         let (output, listed) =
             super::host_doors::vault_mesh_dial(server, auth, facade_door_input(&mut hooks)?).await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_outbox_diverged_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.outbox.diverged.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.outbox.diverged.list", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_outbox_diverged_list(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_outbox_diverged_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.outbox.diverged.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.outbox.diverged.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_outbox_diverged_answer(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
@@ -21229,6 +21365,40 @@ async fn vault_code_origin_mirror_get(
     let mut hooks = facade_hooks_pre(server, call, "vault.code.origin.mirror.get", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_code_origin_mirror_get(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_origin_mirror_plan(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.origin.mirror.plan")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.origin.mirror.plan", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.origin.mirror.plan", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_origin_mirror_plan(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -38398,6 +38568,8 @@ async fn call_verb_row(
         "vault.retrieval.policy.admit" => vault_retrieval_policy_admit(server, call, input).await,
         "vault.retrieval.policy.update" => vault_retrieval_policy_update(server, call, input).await,
         "vault.export" => vault_export(server, call, input).await,
+        "vault.export.transfer.read" => vault_export_transfer_read(server, call, input).await,
+        "vault.export.transfer.release" => vault_export_transfer_release(server, call, input).await,
         "self.credential.attenuate" => self_credential_attenuate(server, call, input).await,
         "self.actor" => self_actor(server, call, input).await,
         "vault.scope.position" => vault_scope_position(server, call, input).await,
@@ -38643,6 +38815,8 @@ async fn call_verb_row(
         "vault.mesh.set_alpn_grant" => vault_mesh_set_alpn_grant(server, call, input).await,
         "vault.mesh.revoke_machine" => vault_mesh_revoke_machine(server, call, input).await,
         "vault.mesh.dial" => vault_mesh_dial(server, call, input).await,
+        "vault.outbox.diverged.list" => vault_outbox_diverged_list(server, call, input).await,
+        "vault.outbox.diverged.answer" => vault_outbox_diverged_answer(server, call, input).await,
         "vault.inspection.resolve" => vault_inspection_resolve(server, call, input).await,
         "vault.shared.propose_delete" => vault_shared_propose_delete(server, call, input).await,
         "vault.shared.propose_transfer" => vault_shared_propose_transfer(server, call, input).await,
@@ -39215,6 +39389,7 @@ async fn call_verb_row(
         "vault.code.ingress.get" => vault_code_ingress_get(server, call, input).await,
         "vault.code.origin.register" => vault_code_origin_register(server, call, input).await,
         "vault.code.origin.mirror.get" => vault_code_origin_mirror_get(server, call, input).await,
+        "vault.code.origin.mirror.plan" => vault_code_origin_mirror_plan(server, call, input).await,
         "vault.code.origin.mirror.set" => vault_code_origin_mirror_set(server, call, input).await,
         "vault.code.origin.mirror.strategy" => {
             vault_code_origin_mirror_strategy(server, call, input).await

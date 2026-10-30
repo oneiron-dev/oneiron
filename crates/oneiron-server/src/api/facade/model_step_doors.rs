@@ -40,7 +40,7 @@ async fn submit(
     // and any failed lookup, takes the admission below exactly as before.
     let saved = {
         let (server, owner, probe) = (Arc::clone(server), owner.clone(), input.clone());
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             model_step::saved_terminal_as_owner(server.vault(), &owner, &probe)
         })
         .await
@@ -93,7 +93,7 @@ async fn submit(
     let runtime = tokio::runtime::Handle::current();
     let server = Arc::clone(server);
     let input = input.clone();
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         runtime.block_on(model_step::submit_as_owner(
             server.vault(),
             &owner,
@@ -116,7 +116,7 @@ pub(crate) async fn ai_steps_receipt(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         model_step::receipt_as_owner(server.vault(), &owner, &input)
     })
     .await

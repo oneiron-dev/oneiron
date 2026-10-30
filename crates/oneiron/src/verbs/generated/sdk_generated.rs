@@ -794,6 +794,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
             ),
             (
+                "vault.export.transfer.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ExportTransferReadRequest,
+                >(),
+            ),
+            (
+                "vault.export.transfer.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ExportTransferReleaseRequest,
+                >(),
+            ),
+            (
                 "self.credential.attenuate",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CredentialAttenuationRequest,
@@ -1545,6 +1557,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.mesh.dial",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshDialRequest>(
                 ),
+            ),
+            (
+                "vault.outbox.diverged.list",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.outbox.diverged.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OutboxDivergedAnswerRequest,
+                >(),
             ),
             (
                 "vault.inspection.resolve",
@@ -3635,6 +3658,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.origin.mirror.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.plan",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginMirrorPlanRequest,
                 >(),
             ),
             (
@@ -7423,6 +7452,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.import",
     "vault.code.origin.register",
     "vault.code.origin.mirror.get",
+    "vault.code.origin.mirror.plan",
     "vault.code.origin.mirror.set",
     "vault.code.origin.mirror.strategy",
     "vault.code.origin.mirror.clear",
@@ -9266,6 +9296,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.origin.mirror.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginMirrorView,
+        >(),
+        "vault.code.origin.mirror.plan" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginMirrorPlanView,
         >(),
         "vault.code.origin.mirror.set" => crate::code_run::vault_read::request_schema::<
             crate::origin::mirror::OriginMirrorTarget,
@@ -11472,6 +11505,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.export.transfer.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.export.transfer.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.credential.attenuate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12587,6 +12634,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.mesh.dial" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.outbox.diverged.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.outbox.diverged.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -15027,6 +15088,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.origin.mirror.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.plan" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19337,6 +19405,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
         }
+        "vault.export.transfer.read" => {
+            let _input: crate::memory::ExportTransferReadRequest = decode(value.clone())?;
+        }
+        "vault.export.transfer.release" => {
+            let _input: crate::memory::ExportTransferReleaseRequest = decode(value.clone())?;
+        }
         "self.credential.attenuate" => {
             let _input: crate::task_verb::sdk::CredentialAttenuationRequest =
                 decode(value.clone())?;
@@ -19840,6 +19914,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.mesh.dial" => {
             let _input: crate::task_verb::sdk::MeshDialRequest = decode(value.clone())?;
+        }
+        "vault.outbox.diverged.list" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.outbox.diverged.answer" => {
+            let _input: crate::task_verb::sdk::OutboxDivergedAnswerRequest = decode(value.clone())?;
         }
         "vault.inspection.resolve" => {
             let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
@@ -21032,6 +21112,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.origin.mirror.get" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.plan" => {
+            let _input: crate::origin::publish::OriginMirrorPlanRequest = decode(value.clone())?;
         }
         "vault.code.origin.mirror.set" => {
             let _input: crate::memory::origin_doors::OriginMirrorSetRequest =
@@ -23298,6 +23381,10 @@ pub fn invoke(
             encode(vault_retrieval_policy_update(memory, decode(value)?)?)
         }
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
+        "vault.export.transfer.read" => encode(vault_export_transfer_read(memory, decode(value)?)?),
+        "vault.export.transfer.release" => {
+            encode(vault_export_transfer_release(memory, decode(value)?)?)
+        }
         "self.credential.attenuate" => encode(self_credential_attenuate(memory, decode(value)?)?),
         "self.actor" => encode(self_actor(memory, decode(value)?)?),
         "vault.scope.position" => encode(vault_scope_position(memory, decode(value)?)?),
@@ -23611,6 +23698,10 @@ pub fn invoke(
         "vault.mesh.set_alpn_grant" => encode(vault_mesh_set_alpn_grant(memory, decode(value)?)?),
         "vault.mesh.revoke_machine" => encode(vault_mesh_revoke_machine(memory, decode(value)?)?),
         "vault.mesh.dial" => encode(vault_mesh_dial(memory, decode(value)?)?),
+        "vault.outbox.diverged.list" => encode(vault_outbox_diverged_list(memory, decode(value)?)?),
+        "vault.outbox.diverged.answer" => {
+            encode(vault_outbox_diverged_answer(memory, decode(value)?)?)
+        }
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
@@ -24326,6 +24417,9 @@ pub fn invoke(
         "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
         "vault.code.origin.mirror.get" => {
             encode(vault_code_origin_mirror_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.plan" => {
+            encode(vault_code_origin_mirror_plan(memory, decode(value)?)?)
         }
         "vault.code.origin.mirror.set" => {
             encode(vault_code_origin_mirror_set(memory, decode(value)?)?)
@@ -26867,6 +26961,18 @@ pub fn vault_export(
 ) -> MemoryResult<crate::memory::ExportAnswer> {
     Ok(crate::memory::ExportAnswer::Inline(memory.export(&input)?))
 }
+pub fn vault_export_transfer_read(
+    memory: &Memory<'_>,
+    input: crate::memory::ExportTransferReadRequest,
+) -> MemoryResult<crate::memory::ExportTransferPiece> {
+    crate::task_verb::sdk::host_only(memory, "vault.export.transfer.read", &input)
+}
+pub fn vault_export_transfer_release(
+    memory: &Memory<'_>,
+    input: crate::memory::ExportTransferReleaseRequest,
+) -> MemoryResult<crate::memory::ExportTransferReleased> {
+    crate::task_verb::sdk::host_only(memory, "vault.export.transfer.release", &input)
+}
 pub fn self_credential_attenuate(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::CredentialAttenuationRequest,
@@ -28118,6 +28224,18 @@ pub fn vault_mesh_dial(
     input: crate::task_verb::sdk::MeshDialRequest,
 ) -> MemoryResult<crate::sync::mesh_path::MeshPathReceipt> {
     crate::task_verb::sdk::host_only(memory, "vault.mesh.dial", &input)
+}
+pub fn vault_outbox_diverged_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::OutboxDivergedPage> {
+    crate::task_verb::sdk::host_only(memory, "vault.outbox.diverged.list", &input)
+}
+pub fn vault_outbox_diverged_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OutboxDivergedAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::OutboxDivergedAnswerReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.outbox.diverged.answer", &input)
 }
 pub fn vault_inspection_resolve(
     memory: &Memory<'_>,
@@ -31086,6 +31204,15 @@ pub fn vault_code_origin_mirror_get(
         input,
     )
 }
+pub fn vault_code_origin_mirror_plan(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginMirrorPlanRequest,
+) -> MemoryResult<crate::origin::publish::OriginMirrorPlanView> {
+    memory.origin_mirror_plan_as(
+        &memory.embedded_owner("vault.code.origin.mirror.plan")?,
+        input,
+    )
+}
 pub fn vault_code_origin_mirror_set(
     memory: &Memory<'_>,
     input: crate::memory::origin_doors::OriginMirrorSetRequest,
@@ -32662,6 +32789,7 @@ pub fn vault_skills_attribution_read(
     crate::task_verb::sdk::skill_attribution_read_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.attribution.read")?,
+        crate::claim::CallerLocality::OnDevice,
         &input,
     )
 }

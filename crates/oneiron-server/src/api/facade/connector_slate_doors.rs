@@ -47,7 +47,7 @@ pub(crate) async fn vault_connectors_slates_narrow(
     const VERB: &str = "vault.connectors.slates.narrow";
     let server = Arc::clone(server);
     let (holder, _) = caller;
-    let ran = tokio::task::spawn_blocking(move || {
+    let ran = super::clock_ingress::run_blocking(move || {
         narrow_connector_slate_as(server.vault(), holder, input)
     })
     .await;

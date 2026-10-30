@@ -58,6 +58,7 @@ impl OneironClient {
                         format: transfer.format,
                         bytes: transfer.bytes,
                         digest: transfer.digest,
+                        holder_requests: transfer.holder_requests,
                         act: None,
                     }),
                     (Err(error), Ok(())) => Err(error),

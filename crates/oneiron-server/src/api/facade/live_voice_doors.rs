@@ -119,8 +119,10 @@ pub(crate) async fn ai_voice_usage(
 /// key, each slate read and the custody record its send presented; unknown
 /// when they are not known. The live session takes the reply whole, with
 /// the listed rows, as it did before. For a caller off this device whose
-/// reply names or lists a row that stays here, only the answer narrows, to
-/// the word that it ran.
+/// reply names or lists a row that stays here, only the answer narrows: a
+/// connector's questions as `connector.call` narrows them, beside the
+/// session's processing (FIX 11725), and any other reply to the word that
+/// it ran.
 pub(crate) async fn ai_voice_tool(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -170,14 +172,39 @@ pub(crate) async fn ai_voice_tool(
         listed.append(&mut picked);
         listed
     });
-    let answer = result.map(|processed| LiveVoiceToolReply { processed, reply });
-    match (answer, rows) {
-        (Ok(done), rows) if super::connector_call_doors::answers_as_before(&done.reply) => {
-            (Ok(ActAnswer::Done(done)), rows)
+    let whole = |processed: LiveVoiceProcessed, reply: ConnectorCallReply| LiveVoiceToolReply {
+        processed,
+        reply: LiveVoiceToolCallReply::Done(reply),
+    };
+    match result {
+        Ok(processed) if super::connector_call_doors::answers_as_before(&reply) => {
+            (Ok(ActAnswer::Done(whole(processed, reply))), rows)
         }
-        answer => {
-            crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
+        // FIX 11725: the connector's questions narrow only their text, as
+        // `connector.call`'s do, and the session's processing rides beside
+        // them.
+        Ok(processed) if matches!(reply, ConnectorCallReply::AwaitingInput { .. }) => {
+            let (answer, rows) = super::connector_call_doors::narrowed_questions(
+                server.vault(),
+                &auth.destination(),
+                reply,
+                rows,
+            );
+            let answer = answer.map(|answer| match answer {
+                ActAnswer::Done(reply) => ActAnswer::Done(whole(processed, reply)),
+                ActAnswer::QuestionsNarrowed(questions) => ActAnswer::Done(LiveVoiceToolReply {
+                    processed,
+                    reply: LiveVoiceToolCallReply::QuestionsNarrowed(questions),
+                }),
+                ActAnswer::DetailsOnDevice(_) => ActAnswer::details_on_device(),
+            });
+            (answer, rows)
         }
+        result => crate::device_local::act_answer_maybe(
+            server.vault(),
+            &auth.destination(),
+            (result.map(|processed| whole(processed, reply)), rows),
+        ),
     }
 }
 

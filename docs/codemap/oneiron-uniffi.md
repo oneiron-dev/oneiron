@@ -12,13 +12,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/bin/uniffi_bindgen.rs` | src | s | — | — | Local bindgen entry point, behind the `bindgen-cli` feature |
-| `src/codec.rs` | src | L | 11 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
+| `src/codec.rs` | src | L | 12 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
 | `src/dto.rs` | src | L | 55 struct · 13 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews +60 | The typed UniFFI records of the SDK surface |
 | `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 13 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/generated/facade_generated.rs` | src | generated | — | — | — |
-| `src/generated/facade_types_generated.rs` | src | generated | 3275 struct · 1067 enum | AcceptConnect, AcceptRescopeConnect, AccessFactorPolicy, AccessRequestStatus, AccessStatus, AckPosition, ActAnswerArtifactAskOutcome, ActAnswerConnectorCallReply +4334 | — |
+| `src/generated/facade_types_generated.rs` | src | generated | 3294 struct · 1079 enum | AcceptConnect, AcceptRescopeConnect, AccessFactorPolicy, AccessRequestStatus, AccessStatus, AckPosition, ActAnswerArtifactAskOutcome, ActAnswerConnectorCallReply +4365 | — |
 | `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
 | `src/lib.rs` | src | m | 1 struct · 11 fn · 1 const · 7 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
 | `src/pairing.rs` | src | s | 6 struct · 3 enum | CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy, CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite +1 | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
