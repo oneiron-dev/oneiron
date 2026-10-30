@@ -1,9 +1,10 @@
 //! Strict readers of a masked copy's records (FIX 7608 slice 2b-ii-B2): a
 //! checkout binding found from its lease, an ingress store found from its
-//! identity, a graph's object records walked by occurrence (FIX 9235), and
-//! every record about a graph, for its disposal (FIX 9107). Each record is
-//! decoded at schema 1 and checked against its stored value, subject and
-//! id; one that is gone or no longer active reads as `None`.
+//! identity, a copy commit's originals and a closure's blob found by their
+//! keys (FIX 10275, FIX 9105), and every record about a graph, for its
+//! disposal (FIX 9107). Each record is decoded at schema 1 and checked
+//! against its stored value, subject and id; one that is gone or no longer
+//! active reads as `None`.
 
 use heed::RoTxn;
 
@@ -12,8 +13,9 @@ use std::collections::{HashMap, HashSet};
 use super::{
     REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionCheckout, RepoProjectionCheckoutRecipient,
     RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionPlace, RepoProjectionRecord,
-    RepoProjectionRevealBinding, checkout_key, checkout_recipient_key, corrupt, decode_graph,
-    decode_place, derive_id, entity, field, git_oid, ingress_store_key, text,
+    RepoProjectionRevealBinding, checkout_key, checkout_recipient_key, commit_originals_key,
+    corrupt, decode_graph, decode_place, derive_id, entity, field, git_oid, ingress_store_key,
+    object_key, text,
 };
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -207,7 +209,9 @@ impl RepoProjectionClaim {
 
     /// Every ORIGINAL of `kind` whose copy in `graph` is `copy`, by its
     /// object record (FIX 9235): sorted and once each. A copy may stand
-    /// for several originals; nothing picks a newest or equal one.
+    /// for several originals; nothing picks a newest or equal one. A
+    /// commit's are one keyed read of its originals record (FIX 10275);
+    /// any other kind walks the graph's records.
     ///
     /// # Errors
     /// A store failure, or a record that does not decode.
@@ -218,6 +222,9 @@ impl RepoProjectionClaim {
         copy: &GitOid,
         kind: GitObjectKind,
     ) -> Result<Vec<GitOid>> {
+        if kind == GitObjectKind::Commit {
+            return Self::commit_originals_in_txn(vault, txn, graph, copy);
+        }
         let mut originals = Vec::new();
         for id in vault.claims_for_subject_in_txn(txn, graph)? {
             let Some(body) = standing(vault, txn, &id)? else {
@@ -237,6 +244,59 @@ impl RepoProjectionClaim {
         originals.sort();
         originals.dedup();
         Ok(originals)
+    }
+
+    /// The originals record of the copy commit `copy` in `graph`, sorted;
+    /// none when no commit of the copy is `copy`.
+    fn commit_originals_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        graph: &EntityId,
+        copy: &GitOid,
+    ) -> Result<Vec<GitOid>> {
+        let id = derive_id(Some(graph), &commit_originals_key(copy))?;
+        let Some(body) = standing(vault, txn, &id)? else {
+            return Ok(Vec::new());
+        };
+        let map = body.value.as_map().ok_or_else(corrupt)?;
+        if text(field(map, "kind")?)? != "commit_originals" {
+            return Err(corrupt());
+        }
+        let originals = field(map, "originals")?
+            .as_array()
+            .ok_or_else(corrupt)?
+            .iter()
+            .map(git_oid)
+            .collect::<Result<Vec<_>>>()?;
+        rebuilt(
+            *graph,
+            RepoProjectionRecord::CommitOriginals {
+                copy: copy.clone(),
+                originals: originals.clone(),
+            },
+            &body,
+        )?;
+        Ok(originals)
+    }
+
+    /// Whether the masked copy `graph`'s closure holds the blob `blob`:
+    /// one keyed read of its object record (FIX 9105).
+    ///
+    /// # Errors
+    /// A store failure, or a record that does not decode.
+    pub(crate) fn holds_blob_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        graph: &EntityId,
+        blob: &GitOid,
+    ) -> Result<bool> {
+        let id = derive_id(Some(graph), &object_key(blob, None))?;
+        let Some(body) = standing(vault, txn, &id)? else {
+            return Ok(false);
+        };
+        let map = body.value.as_map().ok_or_else(corrupt)?;
+        Ok(kind_of(&body)? == "object"
+            && text(field(map, "object_type")?)? == GitObjectKind::Blob.as_str())
     }
 
     /// The id and kind of every projection record about `graph`, standing

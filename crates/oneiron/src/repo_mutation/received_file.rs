@@ -10,12 +10,15 @@
 //! enters its queue's same checks once, on its own; with one set it waits
 //! for that policy's critics or the owner's Approve and his explicit
 //! enqueue, like any other proposal.
+use std::collections::BTreeMap;
+
 use heed::{RoTxn, RwTxn};
 
 use super::proposal::persist::PreparedRepoProposal;
 use super::proposal::{
     PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, RepoProposedFile, invalid,
 };
+use super::snapshot::SnapshotCustody;
 use super::types::{RepoMutationOperation, RepoMutationRequest};
 use crate::code_document::CodeOpProvenance;
 use crate::codebase::{RepoRef, entity_id_from_hash_material};
@@ -23,6 +26,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWireRepo};
 use crate::merge_queue::MergeProposal;
+use crate::secret_snapshot::SnapshotWithhold;
 use crate::{EntityId, Vault};
 
 pub(crate) mod tree;
@@ -41,6 +45,42 @@ pub(crate) struct ReceivedFilesProposalInput {
     pub(crate) message: String,
     pub(crate) files: Vec<RepoProposedFile>,
     pub(crate) created_at: u64,
+    /// Each file translated from a masked copy, by path, with its canonical
+    /// ORIGINAL's own key bytes (FIX 10276): the only secret its custody
+    /// check admits. Empty for every ordinary push.
+    pub(crate) original_spans: BTreeMap<String, Vec<Vec<u8>>>,
+}
+
+/// Whether `content` at `path`, which custody withholds as `withheld`,
+/// holds no secret but its canonical ORIGINAL's own keys `keys` (FIX
+/// 10276): with every one of them taken out, custody keeps nothing. A
+/// translated masked file carries its ORIGINAL's keys back; a declared
+/// custody path or registered value, or any other secret, still withholds.
+fn holds_only_original_keys(
+    custody: &SnapshotCustody,
+    path: &str,
+    content: &[u8],
+    withheld: SnapshotWithhold,
+    keys: Option<&Vec<Vec<u8>>>,
+) -> bool {
+    let (SnapshotWithhold::Quarantined(_), Some(keys)) = (withheld, keys) else {
+        return false;
+    };
+    let mut rest = content.to_vec();
+    for key in keys.iter().filter(|key| !key.is_empty()) {
+        let mut kept = Vec::with_capacity(rest.len());
+        let mut at = 0;
+        while at < rest.len() {
+            if rest[at..].starts_with(key) {
+                at += key.len();
+            } else {
+                kept.push(rest[at]);
+                at += 1;
+            }
+        }
+        rest = kept;
+    }
+    custody.withholds(path, &rest).is_none()
 }
 
 /// The deterministic id of a received bundle's proposal.
@@ -96,7 +136,14 @@ impl Vault {
                 return Ok(Err("base_snapshot_differs"));
             }
             if let Some(content) = &file.content
-                && custody.withholds(&file.path, content).is_some()
+                && let Some(withheld) = custody.withholds(&file.path, content)
+                && !holds_only_original_keys(
+                    &custody,
+                    &file.path,
+                    content,
+                    withheld,
+                    input.original_spans.get(&file.path),
+                )
             {
                 return Ok(Err("custody_withheld"));
             }

@@ -489,6 +489,50 @@ impl GitWire<'_> {
         self.visit_small_blobs(repo, oids, u64::MAX, visit)
     }
 
+    /// Hands `visit` the whole bytes of each of `blobs`, sized in batches of
+    /// [`SIZE_BATCH_OIDS`] and read in batches of [`READ_BATCH_BYTES`] (FIX
+    /// 10976): a few Git calls for any number of files, never two a file. A
+    /// blob of a batch's size or more is read alone. `Ok(false)` when one is
+    /// not a blob this store holds; every other is still visited.
+    ///
+    /// # Errors
+    /// A failed read.
+    pub fn for_each_blob(
+        &self,
+        repo: &GitWireRepo,
+        blobs: &[GitOid],
+        mut visit: impl FnMut(&GitOid, &[u8]),
+    ) -> GitWireResult<bool> {
+        let mut complete = true;
+        let mut batch = Vec::new();
+        let mut batch_bytes = 0_u64;
+        for chunk in blobs.chunks(SIZE_BATCH_OIDS) {
+            let output = self.run_read(repo, &FrozenGitArgv::object_info(chunk))?;
+            for (oid, sized) in parse_object_sizes(&output.stdout)? {
+                let Some((_, size)) = sized.filter(|(kind, _)| kind == "blob") else {
+                    complete = false;
+                    continue;
+                };
+                if size >= READ_BATCH_BYTES {
+                    let bytes = self.read_object(repo, &oid)?;
+                    visit(&oid, &bytes);
+                    continue;
+                }
+                if !batch.is_empty() && batch_bytes.saturating_add(size) > READ_BATCH_BYTES {
+                    complete &= self.read_blob_batch(repo, &batch, &mut visit)?;
+                    batch.clear();
+                    batch_bytes = 0;
+                }
+                batch_bytes = batch_bytes.saturating_add(size);
+                batch.push(oid);
+            }
+        }
+        if !batch.is_empty() {
+            complete &= self.read_blob_batch(repo, &batch, &mut visit)?;
+        }
+        Ok(complete)
+    }
+
     /// Reads one batch of blobs into `visit`; `Ok(false)` when one was gone.
     fn read_blob_batch(
         &self,
