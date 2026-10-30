@@ -21,6 +21,9 @@ use crate::api::owner_routes::room_thread_setting_routes::{
     room_thread_change_body_schema, room_thread_settings_schema,
 };
 use crate::api::owner_routes::schema::{secret_scan_receipt_schema, set_secret_scan_body_schema};
+use crate::api::owner_routes::secret_control_routes::export_supplement::{
+    import_body_schema, supplement_imported_schema,
+};
 use crate::api::owner_routes::secret_control_routes::pending::{
     pending_release_receipt_schema, release_body_schema,
 };
@@ -99,6 +102,14 @@ pub(super) fn merge(spec: &mut Value) {
         "post",
         release_body_schema(),
         pending_release_receipt_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/secrets/export-supplements/import",
+        "post",
+        import_body_schema(),
+        supplement_imported_schema(),
         &[],
     );
     bind(
