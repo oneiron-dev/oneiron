@@ -55,7 +55,6 @@ mod held;
 mod history;
 mod reauthor;
 mod release;
-mod remark;
 mod rows;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -66,7 +65,7 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 // FIX 10798: the derivation is featureless, so a source erase reaches the
 // copy's rows in every build; this path keeps it for the copy leaves.
 use crate::origin::secret_projection::copy_id::{REPO_SYNC_PROJECTION_SCHEMA, copy_id};
@@ -173,7 +172,10 @@ impl SyncSecretProjection {
 
     /// The copies `txn` reads: one mark walk, one projection per marked
     /// blob. A blob whose copy fails is unread for this pass: only the
-    /// items it could mark fail safe (FIX 10793).
+    /// items it could mark fail safe (FIX 10793). A marked snapshot ASSET
+    /// whose stored bytes are now another marked blob (a landed copy edit's
+    /// carried mark, FIX 10732) stands for that blob under its own copy id;
+    /// its old blob keeps its placeholder copy.
     ///
     /// # Errors
     /// A store failure in the walk, or a mark that does not decode and
@@ -194,25 +196,92 @@ impl SyncSecretProjection {
                 source,
                 copy: copy_id(&source)?,
             };
-            match blob_copy_in_txn(vault, txn, &marks, &mut kept, id, hash) {
-                Ok(None) => continue,
-                Ok(Some(blob)) => {
-                    projection.copy_bodies.insert(blob.copy_hash, hash);
-                    projection.blobs.insert(hash, blob);
+            let body = match vault.store.port_entity_raw(txn, &source) {
+                Ok(raw) => {
+                    raw.and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
                 }
                 Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        "sync: a marked repo copy is unreadable; only the items it marks fail safe"
-                    );
-                    projection.unread.insert(hash, id);
+                    projection.unreadable(id, hash, &error);
+                    projection.sources.insert(source, hash);
+                    projection.copies.insert(id.copy, source);
+                    continue;
                 }
+            };
+            let (stored, carried) = match body {
+                Some(body) => {
+                    let own = *blake3::hash(&body).as_bytes();
+                    if own == hash {
+                        (Some(body), None)
+                    } else if marks.is_marked(&own) {
+                        (None, Some((own, body)))
+                    } else {
+                        (None, None)
+                    }
+                }
+                None => (None, None),
+            };
+            if !projection.take_blob(vault, txn, &marks, &mut kept, id, hash, stored) {
+                continue;
             }
-            projection.sources.insert(source, hash);
+            let mut bound = hash;
+            if let Some((own, body)) = carried
+                && projection.take_blob(vault, txn, &marks, &mut kept, id, own, Some(body))
+            {
+                bound = own;
+            }
+            projection.sources.insert(source, bound);
             projection.copies.insert(id.copy, source);
         }
         kept.close();
         Ok(projection)
+    }
+
+    /// Makes the copy of the marked blob `hash` for `id` over `stored` and
+    /// keeps it, or keeps the blob unread when its copy fails; `false` when
+    /// its marks leave it exact. A copy over stored bytes is never replaced
+    /// by one without.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the pass, its transaction and marks, and the one blob it makes"
+    )]
+    fn take_blob(
+        &mut self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        marks: &RepoIndexMarks,
+        kept: &mut cache::PassCopies,
+        id: RepoSyncProjectionId,
+        hash: [u8; 32],
+        stored: Option<Vec<u8>>,
+    ) -> bool {
+        match blob_copy_in_txn(vault, txn, marks, kept, id, hash, stored) {
+            Ok(None) => false,
+            Ok(Some(blob)) => {
+                let held = self
+                    .blobs
+                    .get(&hash)
+                    .is_some_and(|held| held.stored.is_some());
+                if blob.stored.is_some() || !held {
+                    self.copy_bodies.insert(blob.copy_hash, hash);
+                    self.blobs.insert(hash, blob);
+                }
+                true
+            }
+            Err(error) => {
+                self.unreadable(id, hash, &error);
+                true
+            }
+        }
+    }
+
+    /// Keeps the marked blob `hash` for `id` unread this pass: its copy
+    /// failed with `error`.
+    fn unreadable(&mut self, id: RepoSyncProjectionId, hash: [u8; 32], error: &Error) {
+        tracing::warn!(
+            %error,
+            "sync: a marked repo copy is unreadable; only the items it marks fail safe"
+        );
+        self.unread.insert(hash, id);
     }
 
     /// No marked repo item: every release is today's bytes.
@@ -350,10 +419,11 @@ impl SyncSecretProjection {
     }
 }
 
-/// The copy of the marked blob `hash`, whose snapshot ASSET is `id.source`;
-/// `None` when its marks leave it exact. A copy `kept` holds under the same
-/// stored bytes, holding and spans is taken again (FIX 10599); any other is
-/// made and kept.
+/// The copy of the marked blob `hash` for the snapshot ASSET `id.source`,
+/// over `stored`, its bytes when it holds exactly that blob's; `None` when
+/// its marks leave it exact. A copy `kept` holds under the same stored
+/// bytes, holding and spans is taken again (FIX 10599); any other is made
+/// and kept.
 ///
 /// # Errors
 /// A store failure, or this blob's own marks or mask row not reading.
@@ -364,12 +434,8 @@ fn blob_copy_in_txn(
     kept: &mut cache::PassCopies,
     id: RepoSyncProjectionId,
     hash: [u8; 32],
+    stored: Option<Vec<u8>>,
 ) -> Result<Option<BlobCopy>> {
-    let stored = vault
-        .store
-        .port_entity_raw(txn, &id.source)?
-        .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
-        .filter(|body| blake3::hash(body).as_bytes() == &hash);
     // What the copy is made over: the spans the marks and mask row place now.
     // Read for every blob, so one whose mark does not decode fails here, kept
     // copy or not (FIX 10793).
