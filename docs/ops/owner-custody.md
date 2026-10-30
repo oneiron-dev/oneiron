@@ -1,9 +1,9 @@
-# Owner custody commands: unlock, wraps, bindings and pending credentials
+# Owner custody commands: unlock, wraps, bindings, pending credentials and export supplements
 
 This page adds to [owner-actions.md](owner-actions.md). It covers the custody commands that take
 an unlock of their own, the wrap a restore can add, secret bindings, the kit push from a running
-server, credentials a restore left pending, and the courtesy asks a stopped-vault guest revoke
-sends. As on that page, a CLI command needs the server stopped, and a running server answers the
+server, credentials a restore left pending, the import of an export's secret supplements, and the
+courtesy asks a stopped-vault guest revoke sends. As on that page, a CLI command needs the server stopped, and a running server answers the
 same action at a route under `/v1/owner`.
 
 ## Secrets typed at a terminal
@@ -135,6 +135,27 @@ A running server answers `GET /v1/owner/secrets/custody/pending` and takes
 batch carries a generic `card` (`kind`, `headline`, `body`, `action`) that a surface can show in
 its own words. Keeping a batch is your election, not a check of the source. A credential whose
 value never opens is still re-entered or reissued. The restore report's pending note points here.
+
+## Import an export's secret supplement
+
+When your export cannot open a custody secret on the install that made it, it asks the install
+that holds the secret to seal the value to the recipient machine you named. The archive names
+that secret as owed (`owed_secrets` in the import report). Read the supplement from a running
+server that keeps the sealed copy (the holder does), then run the import on the recipient
+machine, with its server stopped:
+
+```sh
+oneiron api raw GET /v1/core/export-secret-supplements/<request> > supplement.json
+oneiron secrets import-supplement < supplement.json      # on the recipient, server stopped
+```
+
+The command takes the read's `request` and `sealed` fields. It opens the sealed copy on this
+install and restores the secret under its own id. It prints `{"request", "outcome"}`, where
+`outcome` is `restored`, `unchanged` (the same record is already here) or `skipped` (a revoke
+ended it, or the record here cannot be compared). A read with no `sealed` field is refused: the
+holder has not sealed the copy yet, or the install you read it from keeps none. A copy sealed to
+another machine opens only there. A running server takes the same import at
+`POST /v1/owner/secrets/export-supplements/import` with `{"request", "sealed"}`.
 
 ## Guest revoke with a courtesy ask on a stopped vault
 
