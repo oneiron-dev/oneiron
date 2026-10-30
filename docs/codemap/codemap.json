@@ -2712,7 +2712,7 @@
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
-      "const": 9,
+      "const": 14,
       "crate-vis": 1,
       "fn": 5,
       "struct": 2
@@ -16024,7 +16024,7 @@
      "surface": {
       "crate-vis": 35,
       "mod": 7,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -16065,6 +16065,16 @@
      "purpose": "The replay codec of a `vault.search` outcome and what each verb hook bound to it did in a room (WILL L11-01…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/read_set.rs",
+     "purpose": "Read-set witnesses a resident attempt's replay record can prove (FIX 7020)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -16166,7 +16176,7 @@
      "purpose": "—",
      "surface": {
       "const": 8,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 24,
       "struct": 12
@@ -16726,7 +16736,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 32,
       "fn": 3
      }
     },
@@ -16838,7 +16848,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -16848,7 +16858,7 @@
      "path": "src/code_run/storage/routing/bodies.rs",
      "purpose": "A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -19200,7 +19210,7 @@
       "const": 1,
       "crate-vis": 15,
       "enum": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 6
      }
     },
@@ -32180,7 +32190,7 @@
      "path": "src/engine_executor/capture.rs",
      "purpose": "The executor's step replay capture (FIX 3028, FIX 3694): each step of a leased attempt's canonical run…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -38558,7 +38568,7 @@
      "path": "src/inbox/resolve.rs",
      "purpose": "Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 10
      }
     },
@@ -38602,12 +38612,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InboxGroupKind",
       "InboxGroupResolution",
       "InboxGroupResolveRequest",
+      "InboxGroupResolveTarget",
       "UnifiedInboxGroup",
       "UnifiedInboxGroupCursor",
       "UnifiedInboxGroupPage"
@@ -38615,8 +38626,8 @@
      "path": "src/inbox/unified.rs",
      "purpose": "The owner's one inbox over both group kinds (FIX 3026): the Dreamer run groups over the pending-consent tray…",
      "surface": {
-      "enum": 3,
-      "fn": 4,
+      "enum": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -77274,7 +77285,7 @@
       "ReadBlobVersionRequest",
       "SafeDeleteRequest"
      ],
-     "path": "src/verbs/memory.rs",
+     "path": "src/verbs/memory_requests.rs",
      "purpose": "Typed inputs for the public memory verbs in the SDK inventory",
      "surface": {
       "crate-vis": 8,
@@ -77349,7 +77360,6 @@
      "path": "src/verbs/mod.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 10,
       "re-export": 91,
@@ -77874,23 +77884,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "DiaryEntryReceipt",
-      "DiaryEntryRequest",
-      "SteerReceipt",
-      "SteerRequest"
-     ],
-     "path": "src/verbs/self.rs",
-     "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 5,
-      "struct": 4
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -77901,6 +77894,23 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DiaryEntryReceipt",
+      "DiaryEntryRequest",
+      "SteerReceipt",
+      "SteerRequest"
+     ],
+     "path": "src/verbs/self_verbs.rs",
+     "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -82782,7 +82792,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 169,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84086,7 +84096,7 @@
    },
    "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5640,
+   "source_files": 5641,
    "test_files": 902
   },
   "oneiron-android": {
@@ -119298,6 +119308,7 @@
       "InboxGroupMember",
       "InboxGroupResolution",
       "InboxGroupResolveRequest",
+      "InboxGroupResolveTarget",
       "InboxLensConcern",
       "InboxLensDiaryReview",
       "InboxLensKind",
@@ -121785,7 +121796,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1079,
+      "enum": 1080,
       "struct": 3295
      }
     },

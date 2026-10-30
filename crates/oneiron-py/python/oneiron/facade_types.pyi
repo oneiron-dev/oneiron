@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4382 declarations.
+Census: 1209 facade rows, 4383 declarations.
 Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -5045,11 +5045,27 @@ class UnifiedInboxGroupPage(TypedDict):
     groups: list[UnifiedInboxGroup]
     next: NotRequired[str | None]
 InboxGroupKind = Literal["dreamer", "shape"]
+class InboxGroupResolveTargetFallback(TypedDict):
+    kind: Literal["fallback"]
+class InboxGroupResolveTargetBan(TypedDict):
+    kind: Literal["ban"]
+    text: str
+class InboxGroupResolveTargetStyleRule(TypedDict):
+    kind: Literal["style_rule"]
+    text: str
+class InboxGroupResolveTargetCharterLine(TypedDict):
+    kind: Literal["charter_line"]
+    text: str
+class InboxGroupResolveTargetBriefUpdate(TypedDict):
+    kind: Literal["brief_update"]
+    text: str
+InboxGroupResolveTarget = InboxGroupResolveTargetFallback | InboxGroupResolveTargetBan | InboxGroupResolveTargetStyleRule | InboxGroupResolveTargetCharterLine | InboxGroupResolveTargetBriefUpdate
 class InboxGroupResolveRequest(TypedDict):
     kind: InboxGroupKind
     group_key: str
     verb: InboxBulkVerb
     verb_class: NotRequired[str | None]
+    target: NotRequired[InboxGroupResolveTarget | None]
 class InboxBundleResolution(TypedDict):
     group_key: str
     verb: InboxBulkVerb
