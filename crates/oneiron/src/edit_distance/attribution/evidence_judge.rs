@@ -520,6 +520,9 @@ fn settle_edit_proposal_in_txn(
         wtxn,
         &AttributionJudgment {
             sequence,
+            // Synthetic: only the discovery fields below are read, and the mint
+            // door keeps the held row's id; this one is never stored.
+            row_id: vault.store.clock.entity_id()?,
             verdict: AmendmentClass::Discovery,
             subject: Some(skill),
             evidence_receipts: judgment.evidence_receipts.clone(),

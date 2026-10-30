@@ -12,7 +12,8 @@ use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::llm::CallPurpose;
 use crate::skill_attribution::{
-    AttributionVerdict, SkillEditProposal, attribution_judgments, pending_edit_proposals,
+    AttributionVerdict, SkillEditProposal, attribution_judgment_row_ids, attribution_judgments,
+    edit_proposal_row_ids, pending_edit_proposals,
 };
 use crate::skill_reliability::{SkillReliabilityPosterior, skill_reliability_prior_rows};
 
@@ -241,18 +242,25 @@ pub(crate) fn optimize_brief_bound_at(
     // filters — a second spelling of the rule is a second thing to get wrong.
     let dev: HashSet<String> = dev_receipts(vault, &candidate.skill)?.into_iter().collect();
     let mut defect_receipts = Vec::new();
+    let mut defect_judgments = Vec::new();
     for judgment in attribution_judgments(vault)? {
         if judgment.verdict != AttributionVerdict::SkillDefect
             || judgment.subject != Some(candidate.skill)
         {
             continue;
         }
+        let before = defect_receipts.len();
         defect_receipts.extend(
             judgment
                 .evidence_receipts
-                .into_iter()
-                .filter(|receipt| dev.contains(receipt)),
+                .iter()
+                .filter(|receipt| dev.contains(receipt.as_str()))
+                .cloned(),
         );
+        // Only a judgment the brief forwards a receipt of is a row it read.
+        if defect_receipts.len() > before {
+            defect_judgments.push(judgment);
+        }
     }
 
     // The same partition, applied to the PROPOSALS rather than only to the
@@ -359,15 +367,14 @@ pub(crate) fn optimize_brief_bound_at(
     // themselves, in the same receipt-id shape. Unreadable rows were already
     // skipped with a WARN at the read; a failed read cites nothing.
     cited_receipts.extend(rule_outcome_citations(vault, &candidate.skill, &dev));
-    // The rows the author's call carries (FIX 7102): the DEV attempt rows, the
-    // forwarded substitution proposals, the rejected verdicts with their
-    // proposals, the prior's rows and the reliability claim. Defect judgments
-    // and discovery proposals are u64-keyed rows without an `EntityId`, so any
-    // forwarded one leaves the whole set unknown; capture only, never a refusal.
+    // The rows the author's call carries (FIX 7102, FIX 12088): the DEV attempt
+    // rows, the forwarded defect judgments and discovery proposals by their own
+    // row ids, the forwarded substitution proposals, the rejected verdicts with
+    // their proposals, the prior's rows and the reliability claim. Capture
+    // only, never a refusal.
     let dev_rows = attempt_row_ids(&dev);
-    let defect_rows: Option<Vec<EntityId>> = defect_receipts.is_empty().then_some(Vec::new());
-    let discovery_rows: Option<Vec<EntityId>> =
-        discovery_proposals.is_empty().then_some(Vec::new());
+    let defect_rows = Some(attribution_judgment_row_ids(&defect_judgments));
+    let discovery_rows = Some(edit_proposal_row_ids(&discovery_proposals));
     let substitution_rows: Vec<EntityId> = substitution_proposals
         .iter()
         .map(|proposal| proposal.proposal_id)

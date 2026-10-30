@@ -163,6 +163,9 @@ pub fn run_attribution_projector_with_decisions(
         };
         judgments.push(AttributionJudgment {
             sequence,
+            // The write below adopts the stored row's id on a re-route, so a
+            // replay still compares equal and stays idempotent.
+            row_id: vault.store.clock.entity_id()?,
             verdict,
             subject: Some(subject),
             evidence_receipts: vec![evidence.receipt_ref.clone()],
@@ -179,7 +182,7 @@ pub fn run_attribution_projector_with_decisions(
                 put_unclear_in_txn(vault, wtxn, row)?;
             }
         }
-        for (judgment, (revision, receipts)) in judgments.iter().zip(&stamps) {
+        for (judgment, (revision, receipts)) in judgments.iter_mut().zip(&stamps) {
             // An erase since this pass read the evidence left it naming no
             // one: its judgment is not made (FIX 8988).
             if !still_names_in_txn(vault, wtxn, judgment)? {
@@ -191,6 +194,8 @@ pub fn run_attribution_projector_with_decisions(
                 )?;
             }
             if let Some(existing) = JUDGMENT.get(&vault.store, wtxn, &judgment.sequence)? {
+                // A re-route names the stored row: the id is the row's, not the pass's.
+                judgment.row_id = existing.row_id;
                 if existing != *judgment {
                     return Err(crate::error::Error::InvalidClaimBody(
                         "an attribution judgment cannot be rescored",
@@ -303,7 +308,11 @@ pub(crate) fn mint_edit_proposal_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     judgment: &AttributionJudgment,
 ) -> Result<()> {
-    if let Some(proposal) = edit_proposal_for(judgment) {
+    if let Some(mut proposal) = edit_proposal_for(judgment, vault.store.clock.entity_id()?) {
+        // A re-judged amendment re-mints under its held sequence: the row keeps its id.
+        if let Some(held) = EDIT_PROPOSAL.get(&vault.store, wtxn, &proposal.judgment_sequence)? {
+            proposal.row_id = held.row_id;
+        }
         EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
     }
     Ok(())
@@ -333,15 +342,19 @@ pub(crate) fn withdraw_edit_proposal_in_txn(
     Ok(())
 }
 
-/// The proposal a judgment mints, or `None` when its verdict routes to a
-/// claim instead (§4: only discovery becomes an edit proposal).
-fn edit_proposal_for(judgment: &AttributionJudgment) -> Option<SkillEditProposal> {
+/// The proposal a judgment mints under `row_id`, or `None` when its verdict
+/// routes to a claim instead (§4: only discovery becomes an edit proposal).
+fn edit_proposal_for(
+    judgment: &AttributionJudgment,
+    row_id: EntityId,
+) -> Option<SkillEditProposal> {
     let skill = judgment.subject?;
     judgment
         .verdict
         .mints_edit_proposal()
         .then(|| SkillEditProposal {
             judgment_sequence: judgment.sequence,
+            row_id,
             skill,
             evidence_receipts: judgment.evidence_receipts.clone(),
             at: judgment.at,
