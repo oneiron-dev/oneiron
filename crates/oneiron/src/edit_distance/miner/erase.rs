@@ -17,7 +17,7 @@ use rmpv::Value;
 
 use super::config::{MARK_KIND_PREFERENCE, MINED_EVIDENCE_RECEIPTS_KEY, MINED_EVIDENCE_ROW_LABEL};
 use super::emission::{MINT_MARK, mined_evidence_record_id};
-use super::feedback::DECISION;
+use super::feedback::{CLAIM_RECEIPTS, DECISION};
 use super::influence::is_mined_preference;
 use super::model::{StoredMinedEvidence, SubstitutionCluster};
 use super::store::{SKILL_EDIT, decode_row};
@@ -96,23 +96,82 @@ fn erase_teaching_copies_in_txn(
 ) -> Result<()> {
     let mut receipts = BTreeSet::new();
     let mut actors = BTreeSet::new();
-    for row in DECISION.iter_raw_from(store, &*txn, &[])? {
-        let (key, bytes) = row?;
-        let (Some(receipt), Ok(decision)) =
-            (String::decode_key(&key), DECISION.decode_value(&bytes))
-        else {
-            tracing::warn!("a principal decision row does not decode: the erase passes it over");
-            continue;
-        };
-        let reached = decision.claim == Some(*id)
-            || (reach == Reach::Entity && (decision.actor == *id || decision.principal == *id));
-        if reached {
-            actors.insert(decision.actor);
-            receipts.insert(receipt);
+    // The claim's teaching receipts come from the index alone (FIX 11347): no
+    // vault predates it, so there is no fallback scan for unindexed rows.
+    let mut stale = Vec::new();
+    match CLAIM_RECEIPTS.get(store, &*txn, id) {
+        Ok(Some(indexed)) => {
+            for receipt in indexed {
+                match DECISION.get(store, &*txn, &receipt) {
+                    Ok(Some(decision)) => {
+                        if decision.claim == Some(*id) {
+                            actors.insert(decision.actor);
+                            receipts.insert(receipt);
+                        }
+                    }
+                    Ok(None) => stale.push(receipt),
+                    Err(error) => {
+                        tracing::warn!(%error, "a principal decision row does not decode: the erase passes it over");
+                        stale.push(receipt);
+                    }
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, "a claim-receipt index row does not decode: the erase passes it over");
+        }
+    }
+    if !stale.is_empty()
+        && let Ok(Some(mut indexed)) = CLAIM_RECEIPTS.get(store, &*txn, id)
+    {
+        indexed.retain(|receipt| !stale.contains(receipt));
+        if indexed.is_empty() {
+            CLAIM_RECEIPTS.delete(store, txn, id)?;
+        } else {
+            CLAIM_RECEIPTS.put(store, txn, id, &indexed)?;
+        }
+    }
+    // An entity erase also reaches decisions naming it as actor or principal
+    // (no index covers those; the scan stays for them).
+    if reach == Reach::Entity {
+        for row in DECISION.iter_raw_from(store, &*txn, &[])? {
+            let (key, bytes) = row?;
+            let (Some(receipt), Ok(decision)) =
+                (String::decode_key(&key), DECISION.decode_value(&bytes))
+            else {
+                tracing::warn!(
+                    "a principal decision row does not decode: the erase passes it over"
+                );
+                continue;
+            };
+            if decision.actor == *id || decision.principal == *id {
+                actors.insert(decision.actor);
+                receipts.insert(receipt);
+            }
         }
     }
     if receipts.is_empty() {
         return Ok(());
+    }
+    // Index hygiene: each deleted receipt leaves its claim's row, and an
+    // emptied row goes with the copies it named.
+    for receipt in &receipts {
+        let claim = match DECISION.get(store, &*txn, receipt) {
+            Ok(Some(decision)) => decision.claim,
+            Ok(None) | Err(_) => None,
+        };
+        let Some(claim) = claim else {
+            continue;
+        };
+        if let Ok(Some(mut indexed)) = CLAIM_RECEIPTS.get(store, &*txn, &claim) {
+            indexed.retain(|kept| kept != receipt);
+            if indexed.is_empty() {
+                CLAIM_RECEIPTS.delete(store, txn, &claim)?;
+            } else {
+                CLAIM_RECEIPTS.put(store, txn, &claim, &indexed)?;
+            }
+        }
     }
     // The decisions go first: a downstream claim's own delete re-enters the
     // derived-row eraser, and must find nothing left to follow.
