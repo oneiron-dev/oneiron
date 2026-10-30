@@ -376,6 +376,7 @@ fn continued_seat(
         override_model: Some(config.model.clone()),
         override_effort: config.seat_effort,
         listed,
+        worlds: Vec::new(),
     })
 }
 
