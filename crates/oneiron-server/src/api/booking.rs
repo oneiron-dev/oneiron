@@ -521,7 +521,7 @@ async fn execute_hold(
         },
         None => HoldLeaseSpec::Ordinary,
     };
-    let receipt = run_booking_verb(
+    let (receipt, _) = run_booking_verb(
         server,
         BookingVerbRequest::Hold(HoldSpec {
             page_ref,
@@ -558,14 +558,16 @@ async fn execute_hold(
     Ok((response, rows))
 }
 
-/// Stage two: consume the opaque hold token on the home-node writer.
+/// Stage two: consume the opaque hold token on the home-node writer. Beside
+/// the answer, the rows the writer read (FIX 5483): its re-solve's, kept on
+/// its receipt, or a taken slot's, which no receipt keeps.
 async fn execute_confirm(
     server: &Arc<SyncServer>,
     page_ref: EntityId,
     input: BookingConfirmInput,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
-) -> Result<BookingOperationResponse, ApiError> {
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
     // A confirm naming no live hold of this session, and no booking its hold
     // token already made, gets the writer's own refusal here, before a
@@ -578,7 +580,7 @@ async fn execute_confirm(
     )?;
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
-    let receipt = run_booking_verb(
+    let (receipt, unkept) = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {
             hold_token: OpaqueLifecycleToken(input.hold_token),
@@ -593,14 +595,16 @@ async fn execute_confirm(
     )
     .await?;
     match receipt {
-        BookingVerbReceipt::Confirmed(confirmed) => Ok(BookingOperationResponse::Book(
-            BookingBookResult::Confirmed {
+        BookingVerbReceipt::Confirmed(confirmed) => Ok((
+            BookingOperationResponse::Book(BookingBookResult::Confirmed {
                 reschedule_token: confirmed.reschedule_token.0,
                 cancel_token: confirmed.cancel_token.0,
-            },
+            }),
+            confirmed.reads,
         )),
-        BookingVerbReceipt::SlotTaken { alternatives } => Ok(BookingOperationResponse::Book(
-            BookingBookResult::SlotTaken { alternatives },
+        BookingVerbReceipt::SlotTaken { alternatives } => Ok((
+            BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives }),
+            unkept,
         )),
         other => Err(unexpected_receipt("confirm", &other)),
     }
@@ -613,15 +617,16 @@ async fn execute_confirm(
 /// against this token's own page by [`check_action_token_page`], upstream of
 /// admission, and the booking the lifecycle then loads is the token's. Keying
 /// anything off the URL page at this depth would be a second, later, weaker
-/// copy of that check.
+/// copy of that check. Beside the answer, the rows the writer read, kept on
+/// its receipt (FIX 5483).
 async fn execute_reschedule(
     server: &Arc<SyncServer>,
     _page_ref: EntityId,
     input: BookingRescheduleInput,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
-) -> Result<BookingOperationResponse, ApiError> {
-    let receipt = run_booking_verb(
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
+    let (receipt, _) = run_booking_verb(
         server,
         BookingVerbRequest::Reschedule(RescheduleSpec {
             token: OpaqueLifecycleToken(input.reschedule_token.clone()),
@@ -636,9 +641,12 @@ async fn execute_reschedule(
     )
     .await?;
     match receipt {
-        BookingVerbReceipt::Rescheduled(_) => Ok(BookingOperationResponse::Reschedule {
-            reschedule_token: input.reschedule_token,
-        }),
+        BookingVerbReceipt::Rescheduled(moved) => Ok((
+            BookingOperationResponse::Reschedule {
+                reschedule_token: input.reschedule_token,
+            },
+            moved.reads,
+        )),
         BookingVerbReceipt::SlotTaken { .. } => {
             Err(ApiError::invalid_state(Some("booking_slot_taken")))
         }
@@ -651,14 +659,16 @@ async fn execute_reschedule(
 /// The resolved page is unused for the same reason it is in
 /// [`execute_reschedule`]: [`check_action_token_page`] already bound this token
 /// to the page whose route carried it, before admission and before the queue.
+/// Beside the answer, the rows the writer read, kept on its receipt (FIX
+/// 5483).
 async fn execute_cancel(
     server: &Arc<SyncServer>,
     _page_ref: EntityId,
     input: BookingCancelInput,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
-) -> Result<BookingOperationResponse, ApiError> {
-    let receipt = run_booking_verb(
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
+    let (receipt, _) = run_booking_verb(
         server,
         BookingVerbRequest::Cancel(CancelSpec {
             token: OpaqueLifecycleToken(input.cancel_token.clone()),
@@ -670,9 +680,12 @@ async fn execute_cancel(
     )
     .await?;
     match receipt {
-        BookingVerbReceipt::Cancelled(_) => Ok(BookingOperationResponse::Cancel {
-            cancel_token: input.cancel_token,
-        }),
+        BookingVerbReceipt::Cancelled(cancelled) => Ok((
+            BookingOperationResponse::Cancel {
+                cancel_token: input.cancel_token,
+            },
+            cancelled.reads,
+        )),
         other => Err(unexpected_receipt("cancel", &other)),
     }
 }

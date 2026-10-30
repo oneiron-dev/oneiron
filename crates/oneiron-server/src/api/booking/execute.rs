@@ -51,10 +51,10 @@ pub(crate) async fn execute_booking_operation(
 /// read), or the cached solve's, whose entry kept them; a silent admission
 /// answer lists the publication's alone. A hold lists the publication's and
 /// its offerability solve's (FIX 5483): the hold writer reads only
-/// node-local rows beside them. A confirm, reschedule or cancel lists
-/// unknown (`None`): its home-node writer and its replayed receipt keep no
-/// set of the rows they read. So does a public HTTP request, which no
-/// listing door serves.
+/// node-local rows beside them. A confirm, reschedule or cancel lists the
+/// publication's and its home-node writer's read set, which its receipt
+/// keeps so a replay lists the same rows (FIX 5483). A public HTTP request
+/// lists unknown (`None`): no listing door serves it.
 ///
 /// # Errors
 ///
@@ -78,7 +78,7 @@ async fn execute(
     // A request that books only a published page (an anonymous visitor, a
     // credential caller, a stale owner sign-in: FIX 5327) never reaches the
     // owner's own page resolver below.
-    let (public_authority, mut listed) = if transport.requires_publication {
+    let (public_authority, listed) = if transport.requires_publication {
         let (page_ref, publication, rows) =
             public::resolve_public_booking_page_listing(server, page_token)?;
         let authority = oneiron::booking::publication::PublicBookingAuthority {
@@ -89,13 +89,6 @@ async fn execute(
     } else {
         (None, None)
     };
-    if !matches!(
-        &request,
-        BookingOperationRequest::Availability(_)
-            | BookingOperationRequest::Book(BookingBookInput::Hold(_))
-    ) {
-        listed = None;
-    }
     let page_ref = match &public_authority {
         Some(authority) => authority.page_ref,
         None => resolve_booking_page(server, page_token)?,
@@ -226,19 +219,27 @@ async fn execute(
         }
         BookingOperationRequest::Book(BookingBookInput::Confirm(mut input)) => {
             admission::strip_form_honeypot(&transport, &mut input.intake);
-            execute_confirm(server, page_ref, input, now, public_authority)
-                .await
-                .map(|response| (response, None))
+            let (response, reads) =
+                execute_confirm(server, page_ref, input, now, public_authority).await?;
+            Ok((response, with_reads(listed, reads)))
         }
         BookingOperationRequest::Reschedule(input) => {
-            execute_reschedule(server, page_ref, input, now, public_authority)
-                .await
-                .map(|response| (response, None))
+            let (response, reads) =
+                execute_reschedule(server, page_ref, input, now, public_authority).await?;
+            Ok((response, with_reads(listed, reads)))
         }
         BookingOperationRequest::Cancel(input) => {
-            execute_cancel(server, page_ref, input, now, public_authority)
-                .await
-                .map(|response| (response, None))
+            let (response, reads) =
+                execute_cancel(server, page_ref, input, now, public_authority).await?;
+            Ok((response, with_reads(listed, reads)))
         }
     }
+}
+
+/// The publication's listed rows, joined by a writer's read set.
+fn with_reads(listed: Option<Vec<EntityId>>, reads: Vec<EntityId>) -> Option<Vec<EntityId>> {
+    listed.map(|mut rows| {
+        rows.extend(reads);
+        rows
+    })
 }
