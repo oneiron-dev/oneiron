@@ -48,7 +48,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub(super) use apply::apply;
 use axis::{axis, gone_tables, retarget, retarget_body, shift};
-pub(super) use diff::{admit_at, changes, diff};
+pub(super) use diff::{admit_at, changes, diff, landed, write_body};
 pub(super) use read::{import, read};
 use sheets::{
     decode_sheet, free_name, keep_one_visible, new_sheet, set_sheet_list, set_sheet_states,
