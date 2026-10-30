@@ -44464,13 +44464,53 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/memory/claims/commit/write.rs",
      "purpose": "The guarded claim commit: dedupe, supersede, Gate and publication in one write transaction",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/commit/write/attempt.rs",
+     "purpose": "One write attempt of a claim commit: its candidate and envelope, then one content write that admits, stages…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/commit/write/landing.rs",
+     "purpose": "A claim commit inside its write: admission, support staging, the candidate's gated apply, and the birth…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/commit/write/receipt.rs",
+     "purpose": "A landed claim commit's receipt: final approval, Gate decision, and the head it superseded",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/commit/write/resolve.rs",
+     "purpose": "A claim commit's request, resolved before its write: the typed families it refuses, its references, its…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -46027,11 +46067,51 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/memory/outbound/schedule/dispatch.rs",
      "purpose": "The single outbound scheduling implementation behind every schedule door",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/outbound/schedule/dispatch/admission.rs",
+     "purpose": "A schedule's request checks: context, counterparty spelling, APNs level, and its trigger",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/outbound/schedule/dispatch/enqueue.rs",
+     "purpose": "A held schedule's durable enqueue: its attempt, its connector TASK, an invite's sequence",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/outbound/schedule/dispatch/gate.rs",
+     "purpose": "A schedule's intent, its abort-only enqueue preflight, and its one Gate dispatch",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/outbound/schedule/dispatch/replay.rs",
+     "purpose": "A client retry of a send already delivered: its receipt, read from the delivered-send index",
      "surface": {
       "crate-vis": 1
      }
@@ -46703,6 +46783,56 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/run_review/settle/owner/admission.rs",
+     "purpose": "Who answers a run review, and against which review: the owner, once, on the review shown",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/settle/owner/curators.rs",
+     "purpose": "After an approval commits: the curator rungs it landed apply now",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/settle/owner/members.rs",
+     "purpose": "A reviewed run's members, each settled by its kind: a claim or edge, a note, a topology event",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/settle/owner/record.rs",
+     "purpose": "The owner's answer as a gate decision, appended and anchored to the reviewed run",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/settle/owner/settlement.rs",
+     "purpose": "The owner's answer in the reviewed run's one write: each member settled, the decision recorded, and the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/run_review/snapshot.rs",
      "purpose": "The run review snapshot: the claim author, the member binding and the in-transaction review",
      "surface": {
@@ -46966,6 +47096,36 @@
      "purpose": "The guarded structural put: kind checks, then body, edges and text fields in one content write",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/puts/guarded/admission.rs",
+     "purpose": "A structural put's refusals: CLAIM, MACHINE, NOTE, MESSAGE, a non-owner's PERSON, a non-object body",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/puts/guarded/content_write.rs",
+     "purpose": "A structural put's one content write: owner and marker checks, then body, birth, edges, text",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/puts/guarded/inputs.rs",
+     "purpose": "A structural put's resolved inputs: edges, an ASSET_TEXT's sources and birth, text fields",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -47566,13 +47726,63 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/program/execute.rs",
      "purpose": "The witness program's run: request shape, target, plan, then one write transaction per landing",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/program/execute/answer.rs",
+     "purpose": "A landed witness, after its write commits: the receipt it answers with, and the on-record copy, live window…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/program/execute/guards.rs",
+     "purpose": "The witness write's guards and admission: a base landing's guards, or an overlay landing's guards read…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/program/execute/in_txn.rs",
+     "purpose": "The witness program's one write transaction: guards and admission, staging, `effect`, the reply's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/program/execute/request.rs",
+     "purpose": "The witness program's request: its shape and origin, the landing its target resolves to, and the prose links…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/program/execute/staging.rs",
+     "purpose": "A base landing's staging inside the witness write: its rows, the outbox marks a turn with new words owes…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -47697,13 +47907,43 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/lifecycle/terminal.rs",
      "purpose": "A stream's terminal write, its host gate, and the retirement of a Retry its own proof refuses",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/lifecycle/terminal/continuation.rs",
+     "purpose": "A continuation's terminal: its prose links, read before its writer, and its one write",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/lifecycle/terminal/new_message.rs",
+     "purpose": "A new message's terminal: its witness, with a Retry proven again in the same write",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/lifecycle/terminal/receipts.rs",
+     "purpose": "A terminal's receipts: the one a landed generation holds, and the one a write opens with",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49187,7 +49427,7 @@
      "path": "src/off_record/lifecycle/mod.rs",
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 6
      }
     },
@@ -49431,7 +49671,7 @@
      "path": "src/off_record/mod.rs",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 3
      }
@@ -83630,7 +83870,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 295,
+     "files": 319,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84325,7 +84565,7 @@
    },
    "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5663,
+   "source_files": 5687,
    "test_files": 902
   },
   "oneiron-android": {
@@ -105006,7 +105246,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 51
+      "crate-vis": 54
      }
     },
     {
