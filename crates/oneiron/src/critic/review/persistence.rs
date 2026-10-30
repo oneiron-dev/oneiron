@@ -568,7 +568,11 @@ pub(crate) fn erase_review_session_in_txn(
     let named = entity.to_hex();
     let mut opaque = None;
     let mut verdicts = Vec::new();
-    for predicate in ["review.verdict", "review.automatic_outcome", "review.outcome"] {
+    for predicate in [
+        "review.verdict",
+        "review.automatic_outcome",
+        "review.outcome",
+    ] {
         let mut ids = Vec::new();
         vault.for_each_claim_with_predicate_in_txn(wtxn, predicate, |id, body| {
             if body.session_tag.as_deref() == Some(named.as_str()) {
@@ -633,9 +637,7 @@ fn rewrite_review_claim_in_txn(
     id: &EntityId,
     body: &crate::claim::ClaimBody,
 ) -> Result<()> {
-    let raw = vault
-        .get_raw_in(wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
+    let raw = vault.get_raw_in(wtxn, id)?.ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("review claim header"))?;
     vault.put_reserved_claim_in_txn(
