@@ -17,6 +17,7 @@ pub(crate) use storage::archive_document_tables;
 pub(crate) use storage::checkpoint;
 
 pub use blame::CodeRangePair;
+pub(crate) use blame::code_document_line_writers_in_txn;
 pub use file_metadata::{CodeFileMetadataEdit, CodeFilePresence};
 pub use review_views::{
     CodeFileChange, CodeFileDiffView, CodeProposalFileView, CodeProposalView,
