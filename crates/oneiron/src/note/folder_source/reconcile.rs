@@ -15,8 +15,9 @@ use super::{
 };
 use crate::batch::secret_scan::{SecretScanMode, scan_write_payload, secret_scan_mode_in_txn};
 use crate::consent::AuthenticatedOwner;
-use crate::edge::EdgeActorClass;
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Result;
+use crate::ports::EdgeDirection;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -180,7 +181,7 @@ impl Vault {
         if !links.is_empty() {
             let landed = self.with_write_txn(|txn| {
                 let owner_actor = owner.revalidate_in_txn(self, txn)?;
-                self.land_imported_notes_in_txn(
+                let landed = self.land_imported_notes_in_txn(
                     txn,
                     owner_actor,
                     &landing.namespace,
@@ -189,7 +190,9 @@ impl Vault {
                     Vec::new(),
                     &[],
                     &links,
-                )
+                )?;
+                self.record_landed_links_in_txn(txn, landing.folder, &landing.namespace, &links)?;
+                Ok(landed)
             });
             match landed {
                 Ok(links) => report.links += links,
@@ -244,6 +247,7 @@ impl Vault {
                     note: Some(*id),
                     file_hash: hash.clone(),
                     landed_hash: hash,
+                    landed_links: Vec::new(),
                     raw_hash: raw_hashes.get(&note.path).cloned(),
                     state: FolderFileState::Landed,
                     meta: next_meta(old, facts.get(&note.path).copied(), at, Some(at)),
@@ -251,8 +255,32 @@ impl Vault {
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
             }
+            self.record_landed_links_in_txn(txn, landing.folder, &batch.folder, &batch.links)?;
             Ok(links)
         })
+    }
+
+    /// Records `links` on their from-files' ledger rows: the mentions
+    /// targets this landing made, the only edges a later rescan deletes
+    /// for them (FIX 1363). A from-file with no row keeps none.
+    fn record_landed_links_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        folder: &str,
+        namespace: &str,
+        links: &[ImportedNoteLink],
+    ) -> Result<()> {
+        for link in links {
+            let to = Self::imported_note_id(namespace, &link.to)?;
+            let key = file_key(folder, &link.from);
+            if let Some(mut row) = FILES.get(&self.store, txn, &key)? {
+                if !row.landed_links.contains(&to) {
+                    row.landed_links.push(to);
+                }
+                FILES.put(&self.store, txn, &key, &row)?;
+            }
+        }
+        Ok(())
     }
 
     /// One file the folder still holds, against what its note holds.
@@ -330,6 +358,7 @@ impl Vault {
             note: Some(id),
             file_hash: String::new(),
             landed_hash: String::new(),
+            landed_links: Vec::new(),
             raw_hash: None,
             state: FolderFileState::Landed,
             meta: None,
@@ -338,6 +367,25 @@ impl Vault {
         row.note = Some(id);
         row.raw_hash = raw_hash;
         if current == file.markdown {
+            // The note already holds the file's text; only its links may be
+            // behind (their landing failed, or their target landed since).
+            // A file the host could not resolve whole leaves them alone.
+            if let Some(links) = file.links.as_deref() {
+                match self.reconcile_present_file_links(
+                    &landing.namespace,
+                    &id,
+                    links,
+                    &row.landed_links,
+                ) {
+                    Ok((landed, landed_links)) => {
+                        report.links += landed;
+                        row.landed_links = landed_links;
+                    }
+                    Err(error) => {
+                        report.first_error.get_or_insert_with(|| error.to_string());
+                    }
+                }
+            }
             row.file_hash = hash.clone();
             row.landed_hash = hash;
             row.state = FolderFileState::Landed;
@@ -384,6 +432,25 @@ impl Vault {
                 report.superseded += 1;
                 row.landed_hash = hash.clone();
                 indexed = true;
+                // The note holds the file's new text: its links land with
+                // it, and what the file dropped goes. A file the host could
+                // not resolve whole leaves its edges for a later rescan.
+                if let Some(links) = file.links.as_deref() {
+                    match self.reconcile_present_file_links(
+                        &landing.namespace,
+                        &id,
+                        links,
+                        &row.landed_links,
+                    ) {
+                        Ok((landed, landed_links)) => {
+                            report.links += landed;
+                            row.landed_links = landed_links;
+                        }
+                        Err(error) => {
+                            report.first_error.get_or_insert_with(|| error.to_string());
+                        }
+                    }
+                }
                 FolderFileState::Landed
             }
             Ok(
@@ -418,6 +485,78 @@ impl Vault {
         })
     }
 
+    /// Reconciles one present note's `mentions` edges to the links its file
+    /// holds now: a link the file newly holds lands as a new note's link
+    /// lands, and a link the file dropped is deleted only when this file's
+    /// import landed it, as `landed` records. An edge another writer added
+    /// is never the file's to drop and stays, and a link whose note never
+    /// landed waits for a later rescan. Returns how many edges landed and
+    /// the targets this import now holds, for the file's ledger row.
+    ///
+    /// # Errors
+    /// A storage error, or an edge the write door refuses.
+    fn reconcile_present_file_links(
+        &self,
+        namespace: &str,
+        note: &EntityId,
+        links: &[String],
+        landed: &[EntityId],
+    ) -> Result<(usize, Vec<EntityId>)> {
+        let author = Self::imported_note_author(namespace)?;
+        let txn = self.store.env.read_txn()?;
+        let mut desired = HashSet::new();
+        for path in links {
+            let id = Self::imported_note_id(namespace, path)?;
+            if super::super::verbs::note_core(self, &txn, id).is_ok() {
+                desired.insert(id);
+            }
+        }
+        let existing = self.filtered_edge_peers(
+            &txn,
+            EdgeDirection::Out,
+            note,
+            EdgeKind::Mentions,
+            None,
+        )?;
+        let mut adds = Vec::new();
+        for id in &desired {
+            if !existing.contains(id) {
+                adds.push(*id);
+            }
+        }
+        // Only what this file's import landed is its to drop: an edge the
+        // owner or another writer added stays, even to a folder note.
+        let mut deletes = Vec::new();
+        for id in landed {
+            if existing.contains(id) && !desired.contains(id) {
+                deletes.push(*id);
+            }
+        }
+        drop(txn);
+        let mut now: Vec<EntityId> = desired.into_iter().collect();
+        now.sort();
+        if adds.is_empty() && deletes.is_empty() {
+            return Ok((0, now));
+        }
+        // The file's links are the import's edges, never the owner's: the
+        // folder's import MACHINE writes them, as its new notes' are.
+        self.with_write_txn(|txn| {
+            let actor = WriteActor::new(author, EdgeActorClass::System);
+            let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+            let mut batch = self.batch_in();
+            for id in &deletes {
+                batch = batch.delete_edge(note, EdgeKind::Mentions, id);
+            }
+            for id in &adds {
+                batch = batch.edge(note, EdgeKind::Mentions, id, 1.0);
+            }
+            content.apply_batch(batch)?;
+            content.finish()?;
+            drop(content);
+            Ok((adds.len(), now))
+        })
+    }
+
     /// A file of a Files source with no text the vault takes: the ledger
     /// holds it by its name, and a note its earlier text landed goes to the
     /// archive until its text comes back. A path the vault never held is
@@ -444,6 +583,7 @@ impl Vault {
                     note: None,
                     file_hash: String::new(),
                     landed_hash: String::new(),
+                    landed_links: Vec::new(),
                     raw_hash: None,
                     state,
                     meta: Some(FileMeta::first(file.facts, at, None)),
