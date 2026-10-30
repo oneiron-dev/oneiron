@@ -1324,6 +1324,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.consolidation.home.get" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.home.pick" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.lineage" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.candidate_decisions" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.promote" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.pin" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.frontier" => a.spec.clone().ok_or_else(invalid),
@@ -4759,6 +4760,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.lineage" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consolidation.candidate_decisions" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.promote" => {
@@ -22051,6 +22055,28 @@ async fn execute_agent_verb_row_on(
             ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.candidate_decisions" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.consolidation.candidate_decisions",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::DreamerCandidateDecisionsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consolidation_candidate_decisions(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "vault.consolidation.promote" => {

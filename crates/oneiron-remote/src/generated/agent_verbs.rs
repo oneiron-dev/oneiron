@@ -3297,6 +3297,9 @@ impl OneironClient {
                 "vault.consolidation.lineage" => remote_agent_verb_output::<
                     Option<oneiron::dreamer_runner::ConsolidationLineageView>,
                 >(client, verb, &input),
+                "vault.consolidation.candidate_decisions" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::DreamerDecidedCandidateView>,
+                >(client, verb, &input),
                 "vault.consolidation.promote" => remote_agent_verb_output::<
                     oneiron::memory::consolidation::ConsolidationPromotion,
                 >(client, verb, &input),
@@ -16861,6 +16864,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.lineage", value)
+    }
+    pub fn vault_consolidation_candidate_decisions(
+        &self,
+        input: &oneiron::memory::DreamerCandidateDecisionsRequest,
+    ) -> Result<Vec<oneiron::memory::DreamerDecidedCandidateView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.candidate_decisions", value)
     }
     pub fn vault_consolidation_promote(
         &self,

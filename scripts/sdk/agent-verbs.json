@@ -17855,6 +17855,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consolidation.candidate_decisions",
+      "description": "The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value.",
+      "input": "crate::memory::DreamerCandidateDecisionsRequest",
+      "output": "Vec<crate::memory::DreamerDecidedCandidateView>",
+      "call": "crate::memory::read_dreamer_candidate_decisions_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.candidate_decisions\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.consolidation.promote",
       "description": "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals.",
       "input": "crate::memory::consolidation::ConsolidationPromoteRequest",
