@@ -45224,6 +45224,12 @@ pub struct SlideUnitRefused {
     pub reason: SlideUnitRefusalReason,
     #[serde(rename = "offer", default, skip_serializing_if = "Option::is_none")]
     pub offer: Option<PptxCommentTarget>,
+    #[serde(
+        rename = "judged_live",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_live: Option<LivePin>,
 }
 
 /// `oneiron::blob_artifact::verbs::SlideReviewOutcome`.

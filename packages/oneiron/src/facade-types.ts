@@ -5715,7 +5715,7 @@ export type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecis
 /** `oneiron::edit_roundtrip::slides_review::SlideUnitRefusalReason` */
 export type SlideUnitRefusalReason = "MissingShape" | "AmbiguousShape" | "TargetChanged" | "UnresolvedGeometry" | "EvidenceBudget" | "UnreadableImage" | "RunDeadline"
 /** `oneiron::blob_artifact::verbs::SlideUnitRefused` */
-export type SlideUnitRefused = { target: PptxCommentTarget; reason: SlideUnitRefusalReason; offer?: PptxCommentTarget | null }
+export type SlideUnitRefused = { target: PptxCommentTarget; reason: SlideUnitRefusalReason; offer?: PptxCommentTarget | null; judged_live?: LivePin | null }
 /** `oneiron::blob_artifact::verbs::SlideReviewOutcome` */
 export type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgments: SlideJudgment[]; comments: PptxCommentPatch[]; abstained: SlideAbstention[]; refused: SlideUnitRefused[] }
 /** `oneiron::blob_artifact::verbs::FolderItemInput` */

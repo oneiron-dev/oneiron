@@ -14270,6 +14270,7 @@ class SlideUnitRefused(TypedDict):
     target: PptxCommentTarget
     reason: SlideUnitRefusalReason
     offer: NotRequired[PptxCommentTarget | None]
+    judged_live: NotRequired[LivePin | None]
 class SlideReviewOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     judgments: list[SlideJudgment]
