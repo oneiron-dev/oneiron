@@ -22,6 +22,11 @@ pub(in crate::sync) use document_admission::{
 mod edge;
 mod guest_document;
 pub use guest_document::{export_guest_document_for_guest, share_guest_document_as_owner};
+mod guest_proposal;
+pub use guest_proposal::{
+    accept_connect_proposal_as_owner, connect_proposals_as_owner, propose_as_connect_guest,
+    reject_connect_proposal_as_owner,
+};
 mod held_retire;
 mod machine_history;
 pub(in crate::sync) use machine_history::machine_history_controls;

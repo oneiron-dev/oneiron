@@ -26,6 +26,15 @@ pub(crate) use connect_grant::{
     grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
     require_one_connect_per_peer,
 };
+mod connect_proposal;
+pub(crate) use connect_proposal::{
+    drop_pending_connect_proposals_in_txn, erase_connect_proposer_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use connect_proposal::{
+    land_connect_proposal_in_txn, pending_connect_proposal_in_txn,
+    pending_connect_proposals_in_txn, settle_connect_proposal_in_txn,
+};
 mod content_write;
 pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
 mod coreference;
