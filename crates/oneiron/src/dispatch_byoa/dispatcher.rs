@@ -11,7 +11,7 @@ use crate::attempt_queue::{
 use crate::checkout::{CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLiveness};
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::limit_ask::EngineLimit;
 use crate::llm::{BudgetLease, LlmBackend, LlmError, LlmRequest};
 
@@ -41,13 +41,14 @@ use super::seat::{
     HostedSeatBound, OnSeatSpent, RunnerSeatPolicy, RunnerWork, SeatIdentity, SeatRoute, SeatSpent,
     hosted_seat_bound, spent_seat_in,
 };
-use super::seat_quota::{record_seat_quota_in_txn, seat_quota_id};
+use super::seat_quota::{record_seat_quota_by_id_in_txn, seat_quota_id};
 use super::validate::{
     encode_execution_transcript, encoded_json_len, validate_cli_sandbox, validate_connector,
     validate_endpoint, validate_execution_budget, validate_exhaust,
 };
 use super::work_binding::{
-    RunnerWorkBinding, SpentCapture, capture_seat_in_txn, note_spent_hop_in_txn,
+    RunnerWorkBinding, SpentCapture, capture_hop_seat_quota_in_txn, capture_seat_in_txn,
+    note_spent_hop_in_txn,
 };
 use super::work_resume::moved_on_in_txn;
 /// Resolves an endpoint config into a concrete host-owned backend.
@@ -440,8 +441,21 @@ where
                 return Ok(route);
             }
             let seat = capture_seat_in_txn(self.vault, wtxn, policy, &receipt, seat)?;
-            let ran = policy.seat(seat)?;
-            record_seat_quota_in_txn(self.vault, wtxn, ran, &receipt.attempt, spent.as_ref())?;
+            // Charge the identity that ran even when its seat was removed:
+            // the current seat, else the capture hop's frozen quota (FIX 11984).
+            let quota = match seat {
+                Some(index) => seat_quota_id(policy.seat(index)?)?,
+                None => EntityId::from_bytes(
+                    capture_hop_seat_quota_in_txn(self.vault, wtxn, &receipt)?.1,
+                )?,
+            };
+            record_seat_quota_by_id_in_txn(
+                self.vault,
+                wtxn,
+                quota,
+                &receipt.attempt,
+                spent.as_ref(),
+            )?;
             let Some(spent) = spent else {
                 return Ok(SeatRoute::Settled(receipt));
             };
@@ -469,14 +483,11 @@ where
             };
             // A bound work the spend kept on this seat notes it for its outcome.
             if !matches!(route, SeatRoute::NextSeat { .. }) {
-                note_spent_hop_in_txn(
-                    self.vault,
-                    wtxn,
-                    route.receipt(),
-                    seat,
-                    *seat_quota_id(ran)?.as_bytes(),
-                    &spent,
-                )?;
+                let (seat, quota) = match seat {
+                    Some(index) => (index, *seat_quota_id(policy.seat(index)?)?.as_bytes()),
+                    None => capture_hop_seat_quota_in_txn(self.vault, wtxn, route.receipt())?,
+                };
+                note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, quota, &spent)?;
             }
             Ok(route)
         })
