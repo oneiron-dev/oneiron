@@ -37,6 +37,15 @@ impl TextLog {
         }
     }
 
+    /// One text's spans, for a pass whose first text read is that text.
+    pub(super) fn seeded(text: &[u8], spans: TextSpans) -> Self {
+        Self {
+            records: false,
+            entries: vec![(*blake3::hash(text).as_bytes(), spans)],
+            next: 0,
+        }
+    }
+
     /// This log, for the pass that reads the same texts in the same order.
     pub(super) fn replayed(self) -> Self {
         Self {

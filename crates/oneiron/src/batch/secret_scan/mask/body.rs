@@ -46,6 +46,12 @@ impl Masker {
     }
 }
 
+/// Whether [`Masker::mask_body`] reads `data` as one text, all of it, and
+/// tries no decoder: no decoder can take it, and it is UTF-8.
+pub(super) fn reads_as_text(data: &[u8]) -> bool {
+    !opens_json(data) && !opens_whole_messagepack(data) && std::str::from_utf8(data).is_ok()
+}
+
 /// Whether serde_json can read `data` as a value: past the four blanks it
 /// skips, its first byte opens one (`{`, `[`, `"`, `-`, a digit, or the `t`,
 /// `f`, `n` of `true`, `false`, `null`). Its parser refuses any other first

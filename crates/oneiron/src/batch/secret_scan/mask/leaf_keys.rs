@@ -8,6 +8,8 @@ use zeroize::Zeroizing;
 
 use super::super::container::{MAX_FILE_KEYS, REASON_OVER_BUDGET};
 use super::super::secret_scan_error;
+use super::body::reads_as_text;
+use super::text_log::{TextLog, TextSpans};
 use super::{FileKey, Masker, REASON_KNOWN_VALUE, escaped_span, file_spans, merged, occurrences};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -47,6 +49,15 @@ impl Masker {
                 at: self.at.clone(),
                 ..Masker::default()
             };
+            // A leaf no decoder takes is read as one text, whose spans are
+            // the ones just found: they are not found again (speed).
+            if reads_as_text(leaf) {
+                let leaf_spans = TextSpans {
+                    known: Vec::new(),
+                    shapes: spans.clone(),
+                };
+                fields.text_log = TextLog::seeded(leaf, leaf_spans);
+            }
             fields.mask_body(leaf)?;
             for found in fields.found {
                 let mut hits: Vec<Range<usize>> = occurrences(leaf, &found.value).collect();
