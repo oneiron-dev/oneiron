@@ -13,12 +13,12 @@
 //!
 //! Only the one-shot digest moves. The action requirement every Grant is
 //! matched on, the grant echo, budgets, connector settings and the consent
-//! precedence never read the target, and an effect that carries none (mail,
-//! code waits, artifact publish, brief share, task cancel, and the families
-//! FIX 6424's last part pins) composes exactly the digest it composed
-//! before. No target names a provider id the send has not been given yet. A
-//! failure-signal batch pins once the next pass carries a held batch's ref
-//! and content (FIX 6679).
+//! precedence never read the target, and an effect that carries none
+//! (native and member mail, code waits, artifact publish, brief share, task
+//! cancel, and the families FIX 6424's last part pins) composes exactly the
+//! digest it composed before. No target names a provider id the send has
+//! not been given yet. A failure-signal batch pins once the next pass
+//! carries a held batch's ref and content (FIX 6679).
 //!
 //! FIX 6424 part 2a (Engine 10-20 21:0x) adds a Linear issue mutation, on
 //! the outbound dispatch door and on the mirror's direct admission of both
@@ -50,6 +50,9 @@ const ESIGN_CONNECTOR: &str = "esign";
 /// next pass under its own send ref and recomposed from its frozen ledger
 /// bytes like an e-sign send's (FIX 6679).
 const FAILURE_SIGNALS_CONNECTOR: &str = "failure_signals";
+/// The connector native and member mail ride; the provider rails
+/// (`email_resend`, `email_ses`, `email_postmark`) never carry their sends.
+const MAIL_CONNECTOR: &str = "email";
 /// Whether a failure-signal batch pins its target (CALLS `FIX 6679 held
 /// failure-signal batch carries over`, superseding `FIX 6424 failure-signal
 /// batches keep the unpinned digest`): the next pass carries a held batch's
@@ -336,17 +339,25 @@ pub(crate) struct OutboundSendFacts<'a> {
 
 impl ApprovalTarget {
     /// The target one send on the common outbound adapter pins, by its
-    /// connector's family. Mail keeps its own canonical digest (native and
-    /// member mail) or stays outside FIX 6424's non-mail census, and a
-    /// Linear send's [`Self::LinearDispatch`] is built by its producer from
-    /// the request's stable identity: those carry none here. A connector the
-    /// registry gains later pins as a communication until it is given its
-    /// own variant.
+    /// connector's family. A Linear send's [`Self::LinearDispatch`] is built
+    /// by its producer from the request's stable identity: it carries none
+    /// here. A connector the registry gains later pins as a communication
+    /// until it is given its own variant.
+    ///
+    /// FIX 6606 (ARCH-0046, a press per send): mail with no native or
+    /// member sender (a provider rail, an `email` send or replace with no
+    /// sender bound, an e-sign or trusted-contact notice among them) pins
+    /// as a communication: sender, original target, thread, content ref and
+    /// send ref. An `email` act with a bound sender keeps none: the Gate
+    /// reads that sender's row and names a native or member mail send by
+    /// mail's own canonical digest, which this pure composer cannot tell
+    /// apart from another sender's and must not shadow.
     pub(crate) fn for_outbound(facts: &OutboundSendFacts<'_>) -> Option<Self> {
         let send_ref = facts.send_ref.to_owned();
         let content_ref = facts.content_ref.map(str::to_owned);
         let target = match facts.connector {
-            "email" | "email_resend" | "email_ses" | "email_postmark" | "linear" => return None,
+            "linear" => return None,
+            MAIL_CONNECTOR if facts.sender.is_some() => return None,
             FAILURE_SIGNALS_CONNECTOR if !FAILURE_SIGNAL_BATCHES_PIN => return None,
             ESIGN_CONNECTOR => Self::Esign {
                 document: facts.target.to_owned(),

@@ -150,8 +150,7 @@ struct BatchApplyState {
     persist_gate_pending_consent: bool,
     claim_materializations: VecDeque<ClaimMaterialization>,
     claim_transitions: VecDeque<super::VerifiedClaimTransition>,
-    preflight_gate_decision_ids:
-        HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
+    preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
     pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
     nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
@@ -347,8 +346,13 @@ pub(super) fn apply_ops_with_origin(
         // K4: the op-decode point, inside the applying transaction. Every arm
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
-        let materialization =
-            prepare_replay_op(store, &*wtxn, &mut state.claim_materializations, &mut op, origin)?;
+        let materialization = prepare_replay_op(
+            store,
+            &*wtxn,
+            &mut state.claim_materializations,
+            &mut op,
+            origin,
+        )?;
         let transition =
             consume_next(&mut state.claim_transitions, &op, iter.remaining.as_slice())?;
         let mut put_options = PutOptions::for_batch_op(&op, &gate_mode);
@@ -414,11 +418,7 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 ops_claim::apply_reconcile_lexical_arm(
-                    store,
-                    &mut *wtxn,
-                    &mut state,
-                    source,
-                    keep,
+                    store, &mut *wtxn, &mut state, source, keep,
                 )?;
             }
             BatchOp::Vector {
@@ -466,14 +466,7 @@ pub(super) fn apply_ops_with_origin(
                 provenance,
             } => {
                 ops_vector::apply_media_vector_arm(
-                    store,
-                    &mut *wtxn,
-                    space,
-                    id,
-                    kind,
-                    text_hash,
-                    vector,
-                    provenance,
+                    store, &mut *wtxn, space, id, kind, text_hash, vector, provenance,
                 )?;
             }
             BatchOp::Phonetic { id, codes } => {
