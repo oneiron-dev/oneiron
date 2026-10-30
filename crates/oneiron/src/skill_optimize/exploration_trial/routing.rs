@@ -175,10 +175,30 @@ fn dispatch_charge_in_txn(
 enum SliceAnswer {
     /// Inside the slice, or inside an approved overrun: the ledger to keep.
     Charge(SliceLedger),
-    /// Past it: the trial now asks its project's board about this exact charge.
-    Ask,
+    /// Past it: the trial now asks its project's board about this exact
+    /// charge. The ledger with the charge counted goes with it, for a run
+    /// that loads whatever the board says (FIX 12074).
+    Ask(SliceLedger),
     /// The ledger is another project's or unit's: no trial.
     Refuse,
+}
+
+/// The goal claim's slice ledger as `trial` charges it: stored, or fresh.
+/// `None` when it is another project's or unit's.
+fn ledger_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    trial: &ExplorationTrial,
+) -> Result<Option<SliceLedger>> {
+    let ledger = SLICES
+        .get(&vault.store, txn, &trial.goal_claim)?
+        .unwrap_or_else(|| SliceLedger {
+            project: trial.project,
+            unit: trial.unit.clone(),
+            charged: 0,
+            approved_overrun: 0,
+        });
+    Ok((ledger.unit == trial.unit && ledger.project == trial.project).then_some(ledger))
 }
 
 fn slice_answer_in_txn(
@@ -188,17 +208,9 @@ fn slice_answer_in_txn(
     charge: u64,
     slice: u64,
 ) -> Result<SliceAnswer> {
-    let mut ledger = SLICES
-        .get(&vault.store, txn, &trial.goal_claim)?
-        .unwrap_or_else(|| SliceLedger {
-            project: trial.project,
-            unit: trial.unit.clone(),
-            charged: 0,
-            approved_overrun: 0,
-        });
-    if ledger.unit != trial.unit || ledger.project != trial.project {
+    let Some(mut ledger) = ledger_in_txn(vault, txn, trial)? else {
         return Ok(SliceAnswer::Refuse);
-    }
+    };
     let remaining = slice
         .saturating_add(ledger.approved_overrun)
         .saturating_sub(ledger.charged);
@@ -225,7 +237,8 @@ fn slice_answer_in_txn(
                     seq: None,
                     climbed_at: None,
                 });
-                return Ok(SliceAnswer::Ask);
+                ledger.charged = ledger.charged.saturating_add(charge);
+                return Ok(SliceAnswer::Ask(ledger));
             }
         }
     }
@@ -297,7 +310,8 @@ pub(crate) fn route_in_txn(
     };
     let ledger = match slice_answer_in_txn(vault, txn, &mut trial, charge, slice)? {
         SliceAnswer::Charge(ledger) => ledger,
-        SliceAnswer::Ask => {
+        // A routed run past the slice does not load, so it is not counted.
+        SliceAnswer::Ask(_) => {
             TRIALS.put(&vault.store, txn, &proposal, &trial)?;
             return Ok(Routed {
                 load: None,
@@ -366,8 +380,11 @@ fn reserve_in_txn(
 /// incumbent, binds another basis, or has closed charges nothing; so does a
 /// run the slice does not count (no agent dispatch of the goal's project, no
 /// estimate in its unit). Past the slice, the trial asks its board about
-/// this exact charge, as it does for a routed run: the proposal is returned
-/// for the caller to queue that ask once its transaction commits.
+/// this exact charge, as it does for a routed run, and the run, which loads
+/// anyway, is still counted on the slice's ledger with its route row; so is
+/// a run while that ask stands, and the ask stands (FIX 12074). The
+/// proposal is returned for the caller to queue an unqueued ask once its
+/// transaction commits.
 ///
 /// # Errors
 ///
@@ -400,25 +417,32 @@ pub(crate) fn charge_pinned_in_txn(
     if take_answer_in_txn(vault, txn, &mut trial)? {
         TRIALS.put(&vault.store, txn, proposal, &trial)?;
     }
-    match &trial.state {
+    // The standing ask, when one is pending: queued again only if unqueued.
+    let standing = match &trial.state {
         TrialState::Closed(_) => return Ok(None),
-        TrialState::AskPending(pending) => {
-            return Ok(pending.seq.is_none().then_some(*proposal));
-        }
-        TrialState::Open | TrialState::Approved { .. } => {}
-    }
+        TrialState::AskPending(pending) => Some(pending.seq.is_none().then_some(*proposal)),
+        TrialState::Open | TrialState::Approved { .. } => None,
+    };
     let Some(charge) = dispatch_charge_in_txn(vault, txn, attempt, trial.project, &trial.unit)?
     else {
-        return Ok(None);
+        return Ok(standing.flatten());
     };
+    if let Some(ask) = standing {
+        // One question at a time: the ask stands, and this run is counted.
+        if let Some(mut ledger) = ledger_in_txn(vault, txn, &trial)? {
+            ledger.charged = ledger.charged.saturating_add(charge);
+            reserve_in_txn(vault, txn, attempt, proposal, &trial, &ledger, charge, at)?;
+        }
+        return Ok(ask);
+    }
     let slice = basis.budget.exploration_slice;
     match slice_answer_in_txn(vault, txn, &mut trial, charge, slice)? {
         SliceAnswer::Charge(ledger) => {
             reserve_in_txn(vault, txn, attempt, proposal, &trial, &ledger, charge, at)?;
             Ok(None)
         }
-        SliceAnswer::Ask => {
-            TRIALS.put(&vault.store, txn, proposal, &trial)?;
+        SliceAnswer::Ask(ledger) => {
+            reserve_in_txn(vault, txn, attempt, proposal, &trial, &ledger, charge, at)?;
             Ok(Some(*proposal))
         }
         SliceAnswer::Refuse => Ok(None),
