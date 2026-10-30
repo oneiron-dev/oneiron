@@ -51,6 +51,16 @@ pub(crate) async fn handle_mcp_request(
             );
             // It states the credential's scope, so it is released as every
             // result is (DEC-0005).
+            // The vault this origin answers for (FIX 11695): its authority
+            // id, so a hosted login confirms the vault it was told before it
+            // records the credential. Null until the vault is rooted, or when
+            // the fold does not compute; the handshake never fails for it.
+            let vault_id = server
+                .vault()
+                .authority_vault_id()
+                .ok()
+                .flatten()
+                .map(|id| crate::owner::vault_key::hex(&id));
             let result = json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "serverInfo": {
@@ -69,6 +79,7 @@ pub(crate) async fn handle_mcp_request(
                     && super::admission::mcp_execute_code_admitted(server, &actor),
                 "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call to call one. A call runs as this credential's actor; it need not name one, and an actor block that names anyone else is refused.",
                 "actor": mcp_actor_result(&actor),
+                "vault_id": vault_id,
             });
             super::device_release::mcp_release_result(server, &actor, &[], false, result)
         }

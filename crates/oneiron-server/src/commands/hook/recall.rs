@@ -180,16 +180,19 @@ impl Recall<'_> {
 
 /// Whether the server at `url` admits `auth` over `oneiron mcp` by
 /// `deadline`: its `initialize` answers, as it does only for a caller it
-/// admitted. The bridge's own refusal, which never quotes a credential,
-/// goes to this process's stderr.
+/// admitted, and answers the authority vault id it serves (FIX 11695),
+/// `None` when it answers none. The bridge's own refusal, which never
+/// quotes a credential, goes to this process's stderr.
 pub(super) fn admits(
     oneiron: &Path,
     url: &str,
     auth: RecallAuth<'_>,
     deadline: Instant,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     let mut bridge = Bridge::start(oneiron, url, auth, deadline, Stdio::inherit())?;
-    let answered = bridge.initialize().map(drop);
+    let answered = bridge
+        .initialize()
+        .map(|result| result.get("vault_id").and_then(Value::as_str).map(str::to_owned));
     bridge.close();
     answered
 }
