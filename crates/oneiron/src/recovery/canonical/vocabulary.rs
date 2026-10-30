@@ -42,6 +42,10 @@ pub struct CanonicalEntityDocument {
     pub text: String,
     /// Editable fields, each encoded as one MessagePack value.
     pub metadata: BTreeMap<String, Vec<u8>>,
+    /// A scope summary's typed purpose and derivation, as its meta map holds
+    /// them; never editable fields (FIX 756).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub summary_meta: BTreeMap<String, Vec<u8>>,
     /// Native record fields projected by the immutable adapter at birth.
     pub record_fields: Vec<String>,
     /// None once the birth's actor was erased (FIX 6072): it stays no one.
@@ -85,6 +89,9 @@ pub struct CanonicalDocumentVersion {
     pub suffix: u32,
     pub middle: String,
     pub metadata: BTreeMap<String, Vec<u8>>,
+    /// A scope summary's purpose and derivation at this version (FIX 756).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub summary_meta: BTreeMap<String, Vec<u8>>,
 }
 
 /// An immutable citation pin: the quoted span of one version, in characters.
@@ -225,6 +232,7 @@ impl CanonicalEntityDocumentHistory {
             suffix: u32::try_from(suffix).map_err(|_| invalid("entity document version size"))?,
             middle: new[prefix..new.len() - suffix].iter().collect(),
             metadata: BTreeMap::new(),
+            summary_meta: BTreeMap::new(),
         })
     }
 }

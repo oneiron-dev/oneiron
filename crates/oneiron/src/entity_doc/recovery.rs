@@ -26,6 +26,7 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, UpdateOptions, VersionVector};
 
 mod canonical_order;
+mod summary_meta;
 
 use canonical_order::{canonical_order, hasse, names};
 
@@ -81,6 +82,7 @@ pub(crate) fn capture(
         },
         text: doc.text(),
         metadata: doc.metadata_bytes()?,
+        summary_meta: summary_meta::bytes(&doc.doc),
         record_fields: doc.record_fields()?,
         birth_actor: raw_actor(doc.birth().actor),
         birth_at: doc.birth().at,
@@ -238,10 +240,12 @@ fn history(
 
     let mut texts = Vec::with_capacity(versions.frontiers.len());
     let mut metadata = Vec::with_capacity(versions.frontiers.len());
+    let mut summaries = Vec::with_capacity(versions.frontiers.len());
     for frontier in &versions.frontiers {
         let version = doc.fork(&frontier.encode())?;
         texts.push(version.text());
         metadata.push(version.metadata_bytes()?);
+        summaries.push(summary_meta::bytes(&version.doc));
     }
     let parents = hasse(&versions.vvs);
     let names = names(texts.len(), &pin_rows, &receipt_rows, &forks, &purge_rows)?;
@@ -265,6 +269,7 @@ fn history(
         let mut version = CanonicalEntityDocumentHistory::splice(first, &texts[node])?;
         version.parents = mapped;
         version.metadata = metadata[node].clone();
+        version.summary_meta = summaries[node].clone();
         carried.push(version);
     }
     let at = |node: usize| order[node] as u32;
@@ -423,6 +428,7 @@ pub(crate) fn restore(
         None => {
             let doc = EntityDoc::rebuild_value(entity, &row.text, birth_actor, row.birth_at)?;
             EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
+            summary_meta::write(&doc.doc, &row.summary_meta)?;
             EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
             doc.doc.commit();
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
@@ -536,6 +542,7 @@ fn replay(
             .update(text, UpdateOptions::default())
             .map_err(|_| invalid("entity document version replay"))?;
         EntityDoc::replace_metadata(&branch, &version.metadata)?;
+        summary_meta::write(&branch, &version.summary_meta)?;
         branch
             .get_map("meta")
             .insert(
@@ -563,6 +570,7 @@ fn replay(
     if &doc.doc.oplog_frontiers() != head
         || doc.text() != row.text
         || doc.metadata_bytes()? != row.metadata
+        || summary_meta::bytes(&doc.doc) != row.summary_meta
     {
         return Err(Error::InvariantViolation("replayed head differs"));
     }
