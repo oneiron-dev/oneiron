@@ -176,11 +176,11 @@ fn hidden_member(bytes: &[u8]) -> bool {
 
 /// Whether a key at `path` in the member `bytes` stands as its handle text
 /// in a masked copy (FIX 7944): the UTF-8 text of a ZIP entry, a gzip
-/// payload, a tar entry, an xz payload (FIX 2471) or a PDF object's
-/// strings, each encoded again around its new length. The stored bytes' own
-/// spans, a binary member's, a PDF stream's (an object stream names its
-/// objects by offset) and a PDF's own bytes (its cross-reference does) keep
-/// the filler's width.
+/// payload, a tar entry, an xz payload (FIX 2471), a PDF content stream
+/// (FIX 11550) or a PDF object's strings, each encoded again around its new
+/// length. The stored bytes' own spans, a binary member's, a PDF object
+/// stream's (it names its objects by byte offset) and a PDF's own bytes
+/// (its cross-reference does) keep the filler's width.
 fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
     matches!(
         path.last(),
@@ -189,6 +189,7 @@ fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
                 | MemberStep::Gzip
                 | MemberStep::Tar { .. }
                 | MemberStep::Xz
+                | MemberStep::PdfStream { .. }
                 | MemberStep::PdfStrings { .. }
         )
     ) && std::str::from_utf8(bytes).is_ok()

@@ -87,8 +87,12 @@ pub(crate) enum MemberStep {
     Tar { entry: u32 },
     /// An xz file's decompressed payload (FIX 2471).
     Xz,
-    /// A PDF stream, by its object's id.
+    /// A PDF stream other than an object stream, by its object's id (FIX
+    /// 11550): a page content stream and the like.
     PdfStream { object: u32, generation: u16 },
+    /// A PDF object stream's decoded bytes, by its object's id (FIX 11550):
+    /// its header names each object by byte offset.
+    PdfObjectStream { object: u32, generation: u16 },
     /// A PDF object's text strings, each decoded, in the object's order
     /// (FIX 2469), by the object's id.
     PdfStrings { object: u32, generation: u16 },
