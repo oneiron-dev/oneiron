@@ -29,24 +29,16 @@ pub use crate::calc::RouteDecision;
 /// byte-identical, and every external formula keeps its cell and text.
 ///
 /// `Err` carries the reason the output is refused, including when either
-/// package cannot be inspected under `limits`. Pure: it only reads.
+/// package cannot be inspected under `limits`. Both packages open through
+/// the caller's `resources` port (FIX 10588). Pure: it only reads.
 pub fn preserve_external_links(
     before: &[u8],
     after: &[u8],
     limits: Limits,
+    resources: &oneiron_docedit::resource::Resources,
 ) -> std::result::Result<(), &'static str> {
-    let before = Package::open(
-        before,
-        limits,
-        &oneiron_docedit::resource::Resources::measuring(),
-    )
-    .map_err(|_| "unreadable input package")?;
-    let after = Package::open(
-        after,
-        limits,
-        &oneiron_docedit::resource::Resources::measuring(),
-    )
-    .map_err(|_| "unreadable output package")?;
+    let before = Package::open(before, limits, resources).map_err(|_| "unreadable input package")?;
+    let after = Package::open(after, limits, resources).map_err(|_| "unreadable output package")?;
     for name in before.names() {
         let link_part = name.starts_with("xl/externalLinks/");
         if !link_part && !name.ends_with(".rels") {
@@ -56,8 +48,8 @@ pub fn preserve_external_links(
             .part(name)
             .map_err(|_| "unreadable input part")?
             .ok_or("missing external-link input part")?;
-        let protected =
-            link_part || !route_workbook([], [part.as_slice()], [], limits.xml).is_in_process();
+        let protected = link_part
+            || !route_workbook([], [part.as_slice()], [], limits.xml, resources).is_in_process();
         if protected
             && after
                 .part(name)
@@ -89,13 +81,15 @@ pub fn preserve_external_links(
 /// `part_names` are OPC part paths; `rels_xml` are the bytes of every `.rels`
 /// part, read under `limits`; `formulas` are UI formula strings, parsed here
 /// within the crate's formula bounds so a parse failure, or a formula over
-/// the bounds, also fails closed. Pure and deterministic: same inputs, same
-/// decision.
+/// the bounds, also fails closed. The rels parses reserve through the
+/// caller's `resources` port (FIX 10588). Pure and deterministic: same
+/// inputs, same decision.
 pub fn route_workbook<'a>(
     part_names: impl IntoIterator<Item = &'a str>,
     rels_xml: impl IntoIterator<Item = &'a [u8]>,
     formulas: impl IntoIterator<Item = &'a str>,
     limits: XmlLimits,
+    resources: &oneiron_docedit::resource::Resources,
 ) -> RouteDecision {
     for name in part_names {
         if name.starts_with("xl/externalLinks/") {
@@ -105,7 +99,7 @@ pub fn route_workbook<'a>(
         }
     }
     for xml in rels_xml {
-        if rels_has_external_target(xml, limits) {
+        if rels_has_external_target(xml, limits, resources) {
             return RouteDecision::Openpyxl {
                 reason: "external-rels-target",
             };
@@ -127,15 +121,16 @@ pub fn route_workbook<'a>(
 /// True when a `.rels` document names an external target. The scan is a
 /// namespace-aware parse of `TargetMode="External"`, including entities; unknown XML
 /// elsewhere in the part is ignored, never stripped or rewritten.
-fn rels_has_external_target(xml: &[u8], _limits: XmlLimits) -> bool {
-    crate::xml::Xml::parse(xml, &oneiron_docedit::resource::Resources::measuring()).map_or(
-        true,
-        |xml| {
-            xml.nodes
-                .iter()
-                .any(|node| node.attr("TargetMode") == Some("External"))
-        },
-    )
+fn rels_has_external_target(
+    xml: &[u8],
+    _limits: XmlLimits,
+    resources: &oneiron_docedit::resource::Resources,
+) -> bool {
+    crate::xml::Xml::parse(xml, resources).map_or(true, |xml| {
+        xml.nodes
+            .iter()
+            .any(|node| node.attr("TargetMode") == Some("External"))
+    })
 }
 
 /// Whether a formula names another workbook. The parser builds an external
