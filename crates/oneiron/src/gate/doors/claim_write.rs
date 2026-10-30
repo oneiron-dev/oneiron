@@ -2,8 +2,10 @@
 
 mod closer;
 mod decision_context;
+mod reference_hook;
 mod reference_read;
 
+pub(crate) use reference_hook::check_claim_policy_for_write_with_record_with_reader_reference_probe;
 pub(crate) use reference_read::unresolved_claim_reference;
 
 use super::burst_inputs::claim_burst_inputs;
@@ -141,6 +143,7 @@ pub(crate) fn check_claim_policy_for_write(
         &mut recorded_decision,
         None,
         operation_effect_body,
+        false,
         None,
     )
 }
@@ -170,6 +173,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         // The batch/replay claim door only ever carries PERSISTED candidates,
         // so it never opens the synthetic-operation mode.
         false,
+        false,
         None,
     )
 }
@@ -193,6 +197,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         recorded_decision,
         None,
         // Every caller of the record seam writes a persisted candidate.
+        false,
         false,
         None,
     )
@@ -230,6 +235,7 @@ pub(crate) fn check_claim_policy_for_write_with_record_with_reader(
         mode,
         recorded_decision,
         None,
+        false,
         false,
         Some(reader),
     )
@@ -270,6 +276,7 @@ fn check_claim_policy_for_write_with_record_inner(
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
     preflight_decision_id: Option<GateDecisionId>,
     operation_effect_body: bool,
+    skip_precommit: bool,
     reader: Option<&crate::claim::ScopedRead<'_>>,
 ) -> Result<()> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
@@ -305,7 +312,7 @@ fn check_claim_policy_for_write_with_record_inner(
     // malformed or evidence-free Dreamer candidate instead of letting the
     // bootstrap path commit it unchecked.
     //
-    // `operation_effect_body` is the ONE exception, and it is not an exemption
+    // `operation_effect_body` is the ONE exception on a real write, and it is not an exemption
     // from the floor: a host-typed synthetic memory-verb effect body is GATE
     // MATERIAL, never a persisted claim (the verb's traps persist a lifecycle
     // Put plus an Edge, never the body they gate), so asking a claim-candidate
@@ -319,22 +326,14 @@ fn check_claim_policy_for_write_with_record_inner(
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
     let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
-    let precommit_denial = if dreamer_candidate {
+    let precommit_denial = if dreamer_candidate && !skip_precommit {
         dreamer_precommit_denial(store, &*wtxn, body)
     } else {
         None
     };
-    // OF-063 (FIX 1218): with the writer's own read, a record the body names
-    // that does not resolve for it here, in this final snapshot, is a hard
-    // deny in the same slot as a validity refusal, after it. A synthetic
-    // operation body is not a persisted claim and is not judged.
-    let mut reference_denial = None;
-    if let Some(reader) = reader.filter(|_| !operation_effect_body)
-        && let Some(field) = reference_read::unresolved_claim_reference(reader, &*wtxn, body)?
-    {
-        tracing::info!(%field, "a claim names a record its writer cannot read; denied");
-        reference_denial = Some(GateReasonCode::DenyUnresolvedRecordReference);
-    }
+    // OF-063 (FIX 1218): the reference verdict over the writer's own read.
+    let reference_denial =
+        reference_hook::reference_denial(&*wtxn, body, reader, operation_effect_body)?;
     let hard_denial = precommit_denial.or(reference_denial);
 
     if policy.enforces_write_gate() {
