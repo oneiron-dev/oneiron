@@ -32,6 +32,17 @@ const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 /// The shortest wait between two passes that found nothing ready.
 const MIN_IDLE: Duration = Duration::from_millis(250);
 
+/// What a probe of the tagger found: `Ready` when it answered as the
+/// configured one and its card was accepted, `Unreachable` when it did not
+/// answer but is still configured, `Refused` when it answered as another
+/// model or the vault binds another extraction encoder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaggerConfigured {
+    Ready,
+    Unreachable,
+    Refused,
+}
+
 impl SyncServer {
     /// The model-slot workers serve starts: embedding and tagging, each only
     /// when its slot is configured, the resident run pump when a code host
@@ -141,7 +152,7 @@ impl SyncServer {
                 () = stop.as_mut() => return None,
                 configured = self.tagger_still_configured() => configured,
             };
-            if !configured {
+            if matches!(configured, TaggerConfigured::Refused) {
                 return None;
             }
             if self
@@ -209,12 +220,13 @@ impl SyncServer {
         }
     }
 
-    /// Probes the tagger. `false` when it answers as another model, or when
-    /// the vault's manifest binds another extraction encoder, which stops
-    /// the worker once what it owns has settled: the markers wait for a
-    /// tagger that is the configured and bound one. An unreachable tagger is
-    /// still configured.
-    async fn tagger_still_configured(self: &Arc<Self>) -> bool {
+    /// Probes the tagger: `Ready` when it answers as the configured one,
+    /// `Unreachable` when it does not answer but is still configured, and
+    /// `Refused` when it answers as another model or the vault's manifest
+    /// binds another extraction encoder, which stops the worker once what
+    /// it owns has settled: the markers wait for a tagger that is the
+    /// configured and bound one.
+    async fn tagger_still_configured(self: &Arc<Self>) -> TaggerConfigured {
         let server = Arc::clone(self);
         let selected = tokio::task::spawn_blocking(move || {
             server
@@ -231,7 +243,7 @@ impl SyncServer {
                     .is_some() =>
             {
                 tracing::error!(%error, "the vault does not select this tagger; tagging stops and markers wait");
-                return false;
+                return TaggerConfigured::Refused;
             }
             // A manifest that cannot be read this pass selects nothing new:
             // the configured tagger keeps serving and the next pass reads
@@ -239,7 +251,7 @@ impl SyncServer {
             Ok(Some(Err(error))) => {
                 tracing::warn!(%error, "the vault's extraction_encoder binding is unreadable; tagging continues");
             }
-            Ok(None) | Err(_) => return false,
+            Ok(None) | Err(_) => return TaggerConfigured::Refused,
         }
         let server = Arc::clone(self);
         let probed = tokio::task::spawn_blocking(move || {
@@ -247,20 +259,20 @@ impl SyncServer {
             Some(match slot.tagger().probe() {
                 Ok(ProbeOutcome::Ready(card)) => {
                     slot.accept_card(card);
-                    Ok(())
+                    Ok(TaggerConfigured::Ready)
                 }
-                Ok(ProbeOutcome::Unreachable(_)) => Ok(()),
+                Ok(ProbeOutcome::Unreachable(_)) => Ok(TaggerConfigured::Unreachable),
                 Err(error) => Err(error),
             })
         })
         .await;
         match probed {
-            Ok(Some(Ok(_))) => true,
+            Ok(Some(Ok(configured))) => configured,
             Ok(Some(Err(error))) => {
                 tracing::error!(%error, "the tagger is not the configured one; tagging stops and markers wait");
-                false
+                TaggerConfigured::Refused
             }
-            Ok(None) | Err(_) => false,
+            Ok(None) | Err(_) => TaggerConfigured::Refused,
         }
     }
 }

@@ -34,14 +34,13 @@ use oneiron::{
 };
 
 use super::CHAT_ROLE;
+use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
 
-mod live_lease;
 mod secret_use;
 
-use live_lease::LiveLease;
 use secret_use::StepSecretUse;
 
 /// The purpose a workflow step's calls are metered and routed under.

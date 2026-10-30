@@ -296,10 +296,11 @@ impl Vault {
                         &prior.pack_name,
                         &prior.content_hash,
                     )?;
-                    self.halt_updated_pack_connector_routes_in_txn(
+                    self.follow_updated_pack_connector_routes_in_txn(
                         txn,
                         &prior.source_id,
                         &prior.content_hash,
+                        &receipt,
                         at,
                     )?;
                 }

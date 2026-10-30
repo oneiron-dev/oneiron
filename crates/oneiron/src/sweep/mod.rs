@@ -5,7 +5,7 @@
 //! transaction itself and queues a durable `h:{seq:8BE}` obligation row for
 //! the HISTORICAL carriers — the persisted Loro op-history that still
 //! embeds the erased payload bytes (`d:w:{key}` full snapshots above all,
-//! plus the `u:w:{key}:{seq:08x}` incremental rows). This module is the
+//! plus the `u:w:{key}:{seq:016x}` incremental rows). This module is the
 //! consumer of those rows.
 //!
 //! # Mechanism (OWNER-DECISION, ONE-1087 design)

@@ -335,9 +335,18 @@ pub(in crate::sync) fn submit(
         quarantine_parent(vault, txn, window, source, target, value, &remote)?;
         return Ok(ParentOutcome::Rejected);
     }
+    // A withdrawn Shell's Parent has no body to prove it (FIX 931): it waits
+    // in the window as a deleted endpoint's does, and leaves no evidence.
     if tombstoned
         || vault.local_hard_delete_marker_exists_in_txn(txn, &source)?
         || vault.local_hard_delete_marker_exists_in_txn(txn, &target)?
+        || crate::sync::withdrawn_cutoffs::withdrawn_shell_edge_in(
+            &vault.store,
+            txn,
+            EdgeKind::Parent,
+            &source,
+            &target,
+        )?
     {
         settle(vault, txn, window, &source, &target)?;
         return Ok(ParentOutcome::Ignored);

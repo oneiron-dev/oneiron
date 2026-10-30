@@ -28,7 +28,8 @@ use super::{ResidenceRpc, refused, residence_budgets};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::sync::client::{ImportTier, SyncClientConfig};
 use crate::sync::machine_history::{
-    OwedHistory, OwedStatus, is_history_of, keep_cursor, note_home, owed_targets, release,
+    OwedHistory, OwedStatus, is_history_of, keep_cursor, note_home, note_home_whole, owed_targets,
+    release,
 };
 use crate::sync::manager::WindowManager;
 use crate::sync::replay::{ReplicatedEntity, replay_entity};
@@ -182,6 +183,7 @@ async fn fetch_target(
         let next = reply.cursor.ok_or_else(refused)?;
         keep_cursor(vault, target, &next).map_err(storage)?;
         if !reply.more {
+            note_home_whole(vault, target).map_err(storage)?;
             return Ok(landed);
         }
         // A page that moves no further is refused, so no home holds a round

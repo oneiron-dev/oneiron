@@ -20,6 +20,7 @@
 
 pub(crate) mod instance;
 pub(crate) mod loro;
+pub(crate) mod retirement;
 pub(crate) mod rows;
 
 use heed::RwTxn;

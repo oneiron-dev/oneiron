@@ -863,7 +863,7 @@ def mcp_input_dispatch(row):
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode +
                  (f'let (output, listed) = {door};\n'
                   '// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\n'
-                  'served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));\n'
+                  'served.listed(crate::api::facade::host_doors::support::ListedRows::rows(listed));\n'
                   f'let output = output.map_err({door_error})?;\n' if row.get('host_door_lists') else
                   f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
@@ -1428,7 +1428,7 @@ def facade_dispatch(facade_rows):
                 // presents neither: the request's own owner proof, which the
                 // export revalidates in its snapshot. Never the hosted root.
                 let owner = match (proof, &action) {{
-                    (None, None) if auth.managed_owner().is_some() => Some(super::host_doors::owner_proof(auth, server, {json.dumps(name)})?),
+                    (None, None) if auth.managed_owner().is_some() => Some(super::host_doors::support::owner_proof(auth, server, {json.dumps(name)})?),
                     _ => None,
                 }};
                 if proof.is_none() && action.is_none() && owner.is_none() {{
@@ -1486,14 +1486,14 @@ def facade_dispatch(facade_rows):
                           else 'facade_hooks_post(server, hooks, output)')
             # A source door's failure keeps its program's feedback beside
             # its refusal, released apart by the rows it read (FIX 10389).
-            door_output = ('output.map_err(|failure| super::host_doors::source_run_refusal(server, auth, Some(listed.as_slice()), failure))?'
+            door_output = ('output.map_err(|failure| super::host_doors::support::source_run_refusal(server, auth, Some(listed.as_slice()), failure))?'
                            if name in SOURCE_FEEDBACK_DOORS else 'output?')
             answer = (f'''let ran = async {{
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
-                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
+                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::support::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
                       f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
                 let output = match ran {{ Ok(output) => output, {failed} }};{landed}
                 Ok(FacadeCallOutput::unlisted({post_hooks}.await?))''')
@@ -1636,7 +1636,7 @@ def facade_dispatch(facade_rows):
         Ok(FacadeCallOutput::listed(output, &producers))
         }})
         .await
-        .map_err(|_| FacadeApiError::from(super::host_doors::internal("{name}")))?
+        .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("{name}")))?
         }}\n'''
             continue
         dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}

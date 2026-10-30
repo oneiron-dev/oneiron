@@ -95,7 +95,27 @@ pub(crate) fn request_connection() -> String {
 pub(crate) async fn attempt_witnessed<F: Future>(
     call: F,
 ) -> (F::Output, Option<CallAttemptWitness>) {
+    attempt_witnessed_inside(None, call).await
+}
+
+/// The live-run hold an outer call holds around a call it makes in process
+/// (FIX 10938): an action's own hold, which each of its verb rows runs
+/// inside. Only the host puts it on an in-process request; no wire sets it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HeldOuterAttempt(pub(crate) CallAttemptWitness);
+
+/// [`attempt_witnessed`] for a call made inside an `outer` call's hold (FIX
+/// 10938): the outer hold counts as one the call published, so a call that
+/// holds nothing more names the outer attempt, and one that holds another
+/// attempt names none.
+pub(crate) async fn attempt_witnessed_inside<F: Future>(
+    outer: Option<CallAttemptWitness>,
+    call: F,
+) -> (F::Output, Option<CallAttemptWitness>) {
     let (publish, published) = std::sync::mpsc::channel();
+    if let Some(outer) = outer {
+        let _ = publish.send(outer);
+    }
     let output = CALL_ATTEMPTS.scope(publish, call).await;
     let mut held = published.try_iter();
     let witness = held
