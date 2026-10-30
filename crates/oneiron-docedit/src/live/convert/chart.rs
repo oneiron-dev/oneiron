@@ -542,6 +542,17 @@ pub(in crate::live) fn settle_chart(
             .collect();
         place_ordinals(&mut targets, &mut assign, &resolved, &moves);
     }
+    // An of-pie plot drawn once per placement its series' sets give its
+    // custom split (FIX 9375).
+    let mut wanted_settings = settings.clone();
+    special::split_views(
+        &mut wanted_settings,
+        categories,
+        series,
+        &resolved,
+        (&mut targets, &mut assign),
+        &mut done,
+    );
     if was.is_some() {
         for target in &targets {
             match target.held {
@@ -601,7 +612,7 @@ pub(in crate::live) fn settle_chart(
     settle_categories(&mut categories, &mut lines, &kinds, any_category, &mut done);
     special::align_surfaces(&mut categories, &mut lines, &kinds, &mut done);
     settle_sizes(was, &mut lines, &kinds, &mut done);
-    let mut settings = settle_plots(&plots, &targets, settings, &mut done);
+    let mut settings = settle_plots(&plots, &targets, &wanted_settings, &mut done);
     stock.apply(&mut settings);
     let line_targets: Vec<usize> = order.iter().map(|&index| assign[index]).collect();
     special::settle_splits(
