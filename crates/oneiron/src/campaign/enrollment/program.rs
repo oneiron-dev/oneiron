@@ -75,6 +75,10 @@ pub struct CampaignProgramOutbound {
     /// duplicate one. Derived from the connector's descriptor when one
     /// describes the channel (FIX 2774).
     pub idempotency_supported: bool,
+    /// Email subject (FIX 11641): `Some` on channel `email`, `None` on any
+    /// other channel, enforced at the checked doors. Small structured data:
+    /// it rides the program row directly, never a filed blob.
+    pub subject: Option<String>,
 }
 
 /// One step of a campaign program.
@@ -284,6 +288,11 @@ pub fn campaign_program_step(
 /// `campaign.member` channel, which every enrollment at the step copies, so a
 /// longer token could never enroll anyone.
 pub const CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES: usize = 512;
+
+/// Longest accepted email subject, in bytes (FIX 11641): the Gmail
+/// `Subject:` room inside RFC 5322's line limit. The stalwart 998-byte cap
+/// accepts it too, so one bound serves both email halves.
+pub const CAMPAIGN_PROGRAM_EMAIL_SUBJECT_MAX_BYTES: usize = 600;
 
 /// The authored half of a campaign program, stored beside its binding by the
 /// checked doors ([`create_campaign_program`] and its siblings).
@@ -831,8 +840,32 @@ fn validate_step_draft(step: &CampaignProgramStepDraft) -> Result<()> {
             return Err(invalid("a step's outbound verb must be a non-empty name"));
         }
         descriptor_checked(&step.channel, outbound)?;
+        validate_outbound_subject(&step.channel, outbound)?;
     }
     Ok(())
+}
+
+/// The subject rule (FIX 11641): channel `email` carries one, any other
+/// channel carries none, so no dead field lands on slack/line rows. The
+/// channel is normalized by now ([`validate_step_draft`] refused any other
+/// spelling above), so the email check is exact.
+fn validate_outbound_subject(channel: &str, outbound: &CampaignProgramOutbound) -> Result<()> {
+    match (channel == "email", outbound.subject.as_ref()) {
+        (true, Some(subject)) => {
+            if subject.is_empty()
+                || subject.len() > CAMPAIGN_PROGRAM_EMAIL_SUBJECT_MAX_BYTES
+                || subject.chars().any(char::is_control)
+            {
+                return Err(invalid(
+                    "a step's email subject must be 1..=600 bytes without control characters",
+                ));
+            }
+            Ok(())
+        }
+        (true, None) => Err(invalid("a step's email outbound requires a subject")),
+        (false, None) => Ok(()),
+        (false, Some(_)) => Err(invalid("only a step's email outbound carries a subject")),
+    }
 }
 
 fn require_active_campaign(campaign: &CampaignRecord) -> Result<()> {
@@ -962,6 +995,7 @@ struct ProgramOutboundRow {
     verb: String,
     payload: String,
     idempotency_supported: bool,
+    subject: Option<String>,
 }
 
 fn encode_program(program: &CampaignProgram) -> ProgramRow {
@@ -1041,6 +1075,7 @@ fn encode_program_step(step: &CampaignProgramStep) -> ProgramStepRow {
             verb: outbound.verb.clone(),
             payload: bytes_to_hex_lower(&outbound.payload),
             idempotency_supported: outbound.idempotency_supported,
+            subject: outbound.subject.clone(),
         }),
     }
 }
@@ -1060,6 +1095,7 @@ fn decode_program_step(
                 verb: outbound.verb,
                 payload: bytes_from_hex(&outbound.payload, CONTEXT)?,
                 idempotency_supported: outbound.idempotency_supported,
+                subject: outbound.subject,
             })
         })
         .transpose()?;

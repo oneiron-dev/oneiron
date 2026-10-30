@@ -13,6 +13,7 @@ use super::runner::{
 use super::storage::{CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, invalid};
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
+use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{
@@ -83,17 +84,20 @@ pub(super) enum CampaignEnvelopeBytes {
     BodyUnpinned,
 }
 
-/// Derives the v1 envelope bytes the outward leg freezes: exactly these
-/// five keys, never the raw body (FIX 11513). Both resolutions are
-/// read-only fns of `(vault, event, step)`, so the membership leg calls
-/// this too and `enrollment_intent_id` hashes the bytes the leg freezes
-/// (FIX 11670).
+/// Derives the v1 envelope bytes the outward leg freezes: the five base
+/// keys, never the raw body (FIX 11513), plus the three email keys
+/// (`subject`, `composed_at`, `sender_ref`) iff the step's channel is
+/// email (FIX 11641). Both resolutions are read-only fns of `(vault,
+/// event, step)`, so the membership leg calls this too and
+/// `enrollment_intent_id` hashes the bytes the leg freezes (FIX 11670).
 ///
 /// # Errors
 ///
 /// Storage errors propagate; every unresolvable shape is a variant,
-/// never an error. JSON encoding of the envelope cannot fail in
-/// practice and surfaces as [`Error::InvalidConfig`].
+/// never an error. A row that violates the checked doors' subject rule
+/// (an email step with no subject) is corrupt and errors as
+/// [`Error::InvalidConfig`]. JSON encoding of the envelope cannot fail
+/// in practice and surfaces the same way.
 pub(super) fn campaign_envelope_bytes(
     vault: &Vault,
     event: &CampaignEnrollmentEvent,
@@ -115,15 +119,34 @@ pub(super) fn campaign_envelope_bytes(
         return Ok(CampaignEnvelopeBytes::BodyUnpinned);
     };
     // The wire payload is the v1 envelope the channel sender decodes with
-    // `deny_unknown_fields`, never the raw body: exactly these five keys,
-    // none of the chokepoint-sniffed ones (FIX 11513).
-    let envelope = serde_json::json!({
-        "target": target.target,
-        "content_ref": content_ref,
-        "counterparty_ref": target.party_key,
-        "actor": event.owner_actor.to_hex(),
-        "trigger_ref": event.event_ref.to_hex(),
-    });
+    // `deny_unknown_fields`, never the raw body: the five base keys, none
+    // of the chokepoint-sniffed ones (FIX 11513), plus the email keys iff
+    // the step's channel is email (FIX 11641). `composed_at` is the
+    // event's detection time, never now(): a redrive must freeze the same
+    // bytes, or the ledger would mint a fresh intent — a second send.
+    let envelope = if step.channel == EMAIL_CHANNEL {
+        let Some(subject) = outbound.subject.as_ref() else {
+            return Err(invalid("a campaign email step's subject is absent"));
+        };
+        serde_json::json!({
+            "target": target.target,
+            "content_ref": content_ref,
+            "counterparty_ref": target.party_key,
+            "actor": event.owner_actor.to_hex(),
+            "trigger_ref": event.event_ref.to_hex(),
+            "subject": subject,
+            "composed_at": event.detected_at,
+            "sender_ref": step.sender_ref.to_hex(),
+        })
+    } else {
+        serde_json::json!({
+            "target": target.target,
+            "content_ref": content_ref,
+            "counterparty_ref": target.party_key,
+            "actor": event.owner_actor.to_hex(),
+            "trigger_ref": event.event_ref.to_hex(),
+        })
+    };
     let envelope_bytes = serde_json::to_vec(&envelope)
         .map_err(|_| invalid("a campaign envelope is not JSON-encodable"))?;
     Ok(CampaignEnvelopeBytes::Resolved(envelope_bytes))
@@ -391,6 +414,13 @@ fn enrollment_gate_input(
         },
         verb: outbound.verb.clone(),
         channel: step.channel.clone(),
+        // FIX 11641 (L06-A ruling 30 Oct): email legs leave this unset,
+        // exactly as slack/line do. Populating it hard-errors every
+        // campaign email send in the gate's may-send check (the bound
+        // agent never equals the asserted sender identity), before any
+        // hold logic. The cold-recipient hold stays skipped for campaign
+        // mail: a named policy gap for FIX 11514 / a campaign
+        // actor-assertion redesign, not this pack.
         channel_identity_ref: None,
         counterparty: Some(event.entity_ref.to_hex()),
         brief_ref: Some(event.campaign_ref.to_hex()),

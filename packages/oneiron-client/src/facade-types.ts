@@ -1625,7 +1625,7 @@ export type CampaignUnsubscribeRequest = { campaign_ref: string; person_ref: str
 /** `oneiron::campaign::surface::actions::CampaignUnsubscribeReceipt` */
 export type CampaignUnsubscribeReceipt = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string; suppression_claim_ref: string; member_claim_refs: string[]; receipt_ref: string }
 /** `oneiron::campaign::surface::program::CampaignProgramOutboundSpec` */
-export type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean }
+export type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean; subject?: string | null }
 /** `oneiron::campaign::surface::program::CampaignProgramStepSpec` */
 export type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null }
 /** `oneiron::campaign::surface::program::CampaignProgramAudienceSpec` */
