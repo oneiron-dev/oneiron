@@ -36,9 +36,7 @@ pub(super) fn write_new_message_terminal(
                 None,
                 callback,
                 || {},
-                |txn| {
-                    prepare_retry_in_txn(vault, memory, seed, lanes.as_ref(), gate, refused, txn)
-                },
+                |txn| prepare_retry_in_txn(vault, memory, seed, lanes.as_ref(), gate, refused, txn),
                 |txn| -> MemoryResult<()> {
                     // The new MESSAGE keeps its words inline: its document
                     // is born at its first later edit (FIX 4840).

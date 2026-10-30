@@ -16,9 +16,12 @@ pub(super) fn apply_vector_arm(
 ) -> Result<()> {
     let vector = Zeroizing::new(vector);
     let pending_embedding_token = Zeroizing::new(pending_embedding_token);
-    let same_batch_token = pending_embedding_token
-        .as_deref()
-        .or_else(|| state.pending_embedding_tokens_written.get(&id).map(Vec::as_slice));
+    let same_batch_token = pending_embedding_token.as_deref().or_else(|| {
+        state
+            .pending_embedding_tokens_written
+            .get(&id)
+            .map(Vec::as_slice)
+    });
     let plan = state.nsw_plans.get_mut(&id).and_then(VecDeque::pop_front);
     let applied = apply_vector(
         store,

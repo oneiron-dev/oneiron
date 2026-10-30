@@ -35,149 +35,149 @@ impl Vault {
         window_label: &str,
         captured: &ProvenanceCapture,
     ) -> Result<DeleteEntityOutcome> {
-            // `user_delete` keeps the local 25 B shell (ARCH-0038 "Tombstone
-            // revision (empty content); keep the message shell") but now
-            // writes a reason=user_delete CRDT tombstone (ONE-1090 write
-            // side): a soft delete with NO cross-device record would leave
-            // the deleted body live on every other device.
-            let mut wtxn = self.store.env.write_txn()?;
-            self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
-            // TOCTOU close: `user_delete` scrubs the body in THIS txn, so the
-            // owner authority is re-proven against THIS txn's view. A
-            // RevokeActor committed since the gate ran is visible here and
-            // refuses before a single byte is scrubbed. PRE-publication: this
-            // arm publishes its tombstone after the scrub, so the re-fold below
-            // in the publish txn is the decision that binds.
-            reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
-            // A due owner delete scrubs only while its request still waits
-            // (FIX 1465): this scrub is its first destructive commit.
-            if let Some(due) = due {
-                due.prove_in(self, &wtxn, id)?;
+        // `user_delete` keeps the local 25 B shell (ARCH-0038 "Tombstone
+        // revision (empty content); keep the message shell") but now
+        // writes a reason=user_delete CRDT tombstone (ONE-1090 write
+        // side): a soft delete with NO cross-device record would leave
+        // the deleted body live on every other device.
+        let mut wtxn = self.store.env.write_txn()?;
+        self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
+        // TOCTOU close: `user_delete` scrubs the body in THIS txn, so the
+        // owner authority is re-proven against THIS txn's view. A
+        // RevokeActor committed since the gate ran is visible here and
+        // refuses before a single byte is scrubbed. PRE-publication: this
+        // arm publishes its tombstone after the scrub, so the re-fold below
+        // in the publish txn is the decision that binds.
+        reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
+        // A due owner delete scrubs only while its request still waits
+        // (FIX 1465): this scrub is its first destructive commit.
+        if let Some(due) = due {
+            due.prove_in(self, &wtxn, id)?;
+        }
+        // A Connect guest's PERSON leaves its pacts first (FIX 3875).
+        revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
+        // This scrub is the first destructive commit. The intent rides
+        // the same transaction as the pt: propagation marker.
+        reserve_topology_delete_in_txn(
+            &self.store,
+            &mut wtxn,
+            id,
+            &tombstone,
+            header.learned_at,
+            TopologyDeletePhase::Committed,
+        )?;
+        // A deleted world keeps its keys, pads and sealed copies, so it
+        // restores from old bundles until they age out (DEC-0006); only
+        // an erase destroys them (the hard arm's purge). Its delete time
+        // bounds how long a pin change still rewraps them.
+        let (existed, had_vector, _ledger_changed) =
+            self.soft_erase_active_store_in_txn(&mut wtxn, id, false)?;
+        if existed && reason == DeleteReason::UserDelete {
+            crate::world_keys::note_world_deleted_in_txn(
+                &self.store,
+                &mut wtxn,
+                *id,
+                tombstone.deleted_at,
+            )?;
+        }
+        if had_vector {
+            crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+        }
+        let mut changed = vec![*id];
+        // D16: SoftErase tombstones the Claim, and "the derived edge
+        // flag follows the Claim" — refresh in the SAME transaction.
+        if existed && let Some(captured) = captured.refs() {
+            changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
+                &mut wtxn,
+                id,
+                &captured.subject,
+            )?);
+        }
+        if existed {
+            if window_label.contains('@') {
+                self.store.sync_state.put(
+                    &mut wtxn,
+                    &format!("m:dw:{}", id.to_hex()),
+                    window_label.as_bytes(),
+                )?;
             }
-            // A Connect guest's PERSON leaves its pacts first (FIX 3875).
-            revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
-            // This scrub is the first destructive commit. The intent rides
-            // the same transaction as the pt: propagation marker.
-            reserve_topology_delete_in_txn(
+            if reason.publishes_crdt_tombstone() {
+                // OWNER-DECISION (cfg-off durability): the pending-tombstone
+                // marker rides the SAME txn as the shell scrub.
+                self.put_pending_tombstone_in_txn(&mut wtxn, window_label, id, &tombstone)?;
+            } else {
+                // ONE-1931 archive: same "intent rides the scrub txn"
+                // discipline, different marker. `ac:` is GLOBAL and is
+                // never replayed into a window doc, so an archive that
+                // survives a crash is still just a local archive.
+                self.put_archive_tombstone_in_txn(&mut wtxn, id, &tombstone)?;
+            }
+            if let Some(decision) = gate_decision.as_ref() {
+                self.store
+                    .append_gate_decision_in_txn(&mut wtxn, decision)?;
+            }
+        }
+        if !existed || !reason.publishes_crdt_tombstone() {
+            clear_own_topology_delete_in_txn(
                 &self.store,
                 &mut wtxn,
                 id,
-                &tombstone,
-                header.learned_at,
-                TopologyDeletePhase::Committed,
+                &tombstone.request_id,
+                false,
             )?;
-            // A deleted world keeps its keys, pads and sealed copies, so it
-            // restores from old bundles until they age out (DEC-0006); only
-            // an erase destroys them (the hard arm's purge). Its delete time
-            // bounds how long a pin change still rewraps them.
-            let (existed, had_vector, _ledger_changed) =
-                self.soft_erase_active_store_in_txn(&mut wtxn, id, false)?;
-            if existed && reason == DeleteReason::UserDelete {
-                crate::world_keys::note_world_deleted_in_txn(
-                    &self.store,
-                    &mut wtxn,
-                    *id,
-                    tombstone.deleted_at,
-                )?;
+        }
+        wtxn.commit()?;
+        if existed {
+            self.notify_local_delete_materialized(&changed);
+            gate.as_ref()
+                .inspect(|gate| gate.note_soft_scrub_committed());
+        }
+        // An archive publishes nothing (`publishes_crdt_tombstone` is
+        // false for exactly one reason): there is no remote-binding act
+        // to re-gate, and nothing for a peer to obey, so the local `ac:`
+        // marker committed above IS the whole archive.
+        if existed && reason.publishes_crdt_tombstone() {
+            // fix-leg 7 P1-1: the tombstone publish carries the GATE.
+            // The scrub txn's re-fold proved authority for a LOCAL act and
+            // then dropped its snapshot; publication is a separate,
+            // remote-binding act, and a `RevokeActor` landing in between
+            // used to reach peers unchallenged (the soft arm passed no gate
+            // at all, so nothing re-checked before `d:w:`/`u:w:`/`q:` were
+            // written and the delta routed).
+            //
+            // The DECISION record stays `None` here on purpose: the scrub
+            // txn above already appended it to the real gate ledger, which
+            // it must, because that append is the soft arm's only
+            // cfg-independent authority record (`write_crdt_tombstone` is a
+            // no-op in non-`sync` builds). Passing it again would stage a
+            // recovery sidecar for an already-ledgered decision that this
+            // path has no TXN3 to consume.
+            //
+            // A refusal must additionally WITHDRAW the `pt:` marker the
+            // scrub txn committed: it holds the verbatim tombstone wire
+            // value, so a sync-enabled boot would replay it into exactly
+            // the publication the refusal denied. Nothing replayable may
+            // survive a refusal — `begin_tombstone_publish_txn` withdraws
+            // it in the refusing txn itself.
+            let crdt_persisted = self.write_crdt_tombstone(
+                id,
+                header.learned_at,
+                window_label,
+                &tombstone,
+                None,
+                gate.as_ref(),
+            )?;
+            signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
+            if crdt_persisted {
+                self.finish_published_topology_delete(window_label, id, &tombstone)?;
             }
-            if had_vector {
-                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
-            }
-            let mut changed = vec![*id];
-            // D16: SoftErase tombstones the Claim, and "the derived edge
-            // flag follows the Claim" — refresh in the SAME transaction.
-            if existed && let Some(captured) = captured.refs() {
-                changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
-                    &mut wtxn,
-                    id,
-                    &captured.subject,
-                )?);
-            }
-            if existed {
-                if window_label.contains('@') {
-                    self.store.sync_state.put(
-                        &mut wtxn,
-                        &format!("m:dw:{}", id.to_hex()),
-                        window_label.as_bytes(),
-                    )?;
-                }
-                if reason.publishes_crdt_tombstone() {
-                    // OWNER-DECISION (cfg-off durability): the pending-tombstone
-                    // marker rides the SAME txn as the shell scrub.
-                    self.put_pending_tombstone_in_txn(&mut wtxn, window_label, id, &tombstone)?;
-                } else {
-                    // ONE-1931 archive: same "intent rides the scrub txn"
-                    // discipline, different marker. `ac:` is GLOBAL and is
-                    // never replayed into a window doc, so an archive that
-                    // survives a crash is still just a local archive.
-                    self.put_archive_tombstone_in_txn(&mut wtxn, id, &tombstone)?;
-                }
-                if let Some(decision) = gate_decision.as_ref() {
-                    self.store
-                        .append_gate_decision_in_txn(&mut wtxn, decision)?;
-                }
-            }
-            if !existed || !reason.publishes_crdt_tombstone() {
-                clear_own_topology_delete_in_txn(
-                    &self.store,
-                    &mut wtxn,
-                    id,
-                    &tombstone.request_id,
-                    false,
-                )?;
-            }
-            wtxn.commit()?;
-            if existed {
-                self.notify_local_delete_materialized(&changed);
-                gate.as_ref()
-                    .inspect(|gate| gate.note_soft_scrub_committed());
-            }
-            // An archive publishes nothing (`publishes_crdt_tombstone` is
-            // false for exactly one reason): there is no remote-binding act
-            // to re-gate, and nothing for a peer to obey, so the local `ac:`
-            // marker committed above IS the whole archive.
-            if existed && reason.publishes_crdt_tombstone() {
-                // fix-leg 7 P1-1: the tombstone publish carries the GATE.
-                // The scrub txn's re-fold proved authority for a LOCAL act and
-                // then dropped its snapshot; publication is a separate,
-                // remote-binding act, and a `RevokeActor` landing in between
-                // used to reach peers unchallenged (the soft arm passed no gate
-                // at all, so nothing re-checked before `d:w:`/`u:w:`/`q:` were
-                // written and the delta routed).
-                //
-                // The DECISION record stays `None` here on purpose: the scrub
-                // txn above already appended it to the real gate ledger, which
-                // it must, because that append is the soft arm's only
-                // cfg-independent authority record (`write_crdt_tombstone` is a
-                // no-op in non-`sync` builds). Passing it again would stage a
-                // recovery sidecar for an already-ledgered decision that this
-                // path has no TXN3 to consume.
-                //
-                // A refusal must additionally WITHDRAW the `pt:` marker the
-                // scrub txn committed: it holds the verbatim tombstone wire
-                // value, so a sync-enabled boot would replay it into exactly
-                // the publication the refusal denied. Nothing replayable may
-                // survive a refusal — `begin_tombstone_publish_txn` withdraws
-                // it in the refusing txn itself.
-                let crdt_persisted = self.write_crdt_tombstone(
-                    id,
-                    header.learned_at,
-                    window_label,
-                    &tombstone,
-                    None,
-                    gate.as_ref(),
-                )?;
-                signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
-                if crdt_persisted {
-                    self.finish_published_topology_delete(window_label, id, &tombstone)?;
-                }
-            }
-            return Ok(DeleteEntityOutcome {
-                existed,
-                receipt_id: None,
-                sweep_key: None,
-                turn_program_details: turn_program_details.to_vec(),
-            });
+        }
+        return Ok(DeleteEntityOutcome {
+            existed,
+            receipt_id: None,
+            sweep_key: None,
+            turn_program_details: turn_program_details.to_vec(),
+        });
     }
 
     /// Publishes the hard delete's tombstone first, then soft-erases the
