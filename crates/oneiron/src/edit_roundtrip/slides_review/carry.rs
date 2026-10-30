@@ -30,10 +30,9 @@ pub(crate) fn deck_slides_now(bytes: &[u8], limits: Limits) -> Result<Vec<SlideN
     let inspection = inspect_pptx(bytes).map_err(|error| {
         crate::office_body::document_error(error.resource(), "held slide review deck")
     })?;
-    let package = Package::open(bytes, limits, &crate::office_body::document_resources())
-        .map_err(|error| {
-            crate::office_body::document_error(error.resource(), "held slide review deck")
-        })?;
+    let package = Package::open(bytes, limits, &crate::office_body::document_resources()).map_err(
+        |error| crate::office_body::document_error(error.resource(), "held slide review deck"),
+    )?;
     let view = DeckView::read(&package).map_err(|error| {
         crate::office_body::document_error(error.resource(), "held slide review deck view")
     })?;

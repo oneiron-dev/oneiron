@@ -1720,9 +1720,9 @@ fn insert_tree_partner_adjacent(
     while let Some(el) = stack.pop() {
         let survivor_at = el.children.iter().position(|child| {
             matches!(child, XMLNode::Element(c)
-                if tree_range_marker_of(c).is_some_and(|(family, id, is_start)| {
-                    family == key.0 && id == key.1 && is_start == survivor_is_start
-                }))
+            if tree_range_marker_of(c).is_some_and(|(family, id, is_start)| {
+                family == key.0 && id == key.1 && is_start == survivor_is_start
+            }))
         });
         if let Some(i) = survivor_at {
             let at = if survivor_is_start { i + 1 } else { i };
@@ -2424,7 +2424,8 @@ impl ResolvePass<'_> {
     fn visit_accept(&mut self, el: Element, opaque: bool) -> Option<Descend<ResolveDisposition>> {
         if is_drop_revision(&el) {
             // w:del, w:moveFrom → drop entirely
-            self.stats.count_resolved(opaque, 1 + count_nested_revisions(&el));
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
             return None;
         }
         if is_del_text(&el) {
@@ -2458,7 +2459,8 @@ impl ResolvePass<'_> {
             // for inserted rows (w:trPr/w:ins), and keeps this path in
             // agreement with the IR accept path (tracked_model.rs), which also
             // removes the row.
-            self.stats.count_resolved(opaque, 1 + count_nested_revisions(&el));
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
             return None;
         }
         if is_w_tag(&el, "tc") && has_cell_tracking(&el, "cellDel") {
@@ -2467,7 +2469,8 @@ impl ResolvePass<'_> {
             // path (tracked_model.rs), which removes the cell. A STACKED cell
             // (cellIns + cellDel) also lands here: it drops in both full
             // resolutions (origin rules).
-            self.stats.count_resolved(opaque, 1 + count_nested_revisions(&el));
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
             return None;
         }
         Some(Self::descend_into(el, opaque))
@@ -2481,7 +2484,8 @@ impl ResolvePass<'_> {
     ) -> Option<Descend<ResolveDisposition>> {
         if is_w_tag(&el, "ins") || is_w_tag(&el, "moveTo") {
             // w:ins, w:moveTo → drop entirely (reject additions)
-            self.stats.count_resolved(opaque, 1 + count_nested_revisions(&el));
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
             return None;
         }
         if is_w_tag(&el, "del") || is_w_tag(&el, "moveFrom") {
@@ -2515,7 +2519,8 @@ impl ResolvePass<'_> {
             // Row-level tracked insertion (w:trPr/w:ins): drop the entire row
             // on reject. The row was added as a tracked change — undoing that
             // means removing it entirely.
-            self.stats.count_resolved(opaque, 1 + count_nested_revisions(&el));
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
             return None;
         }
         if is_w_tag(&el, "tc") && has_cell_tracking(&el, "cellIns") {
@@ -2524,7 +2529,8 @@ impl ResolvePass<'_> {
             // change, undoing that removes it. Mirrors the IR reject path
             // (tracked_model.rs). A STACKED cell (cellIns + cellDel) also
             // lands here: it drops in both full resolutions.
-            self.stats.count_resolved(opaque, 1 + count_nested_revisions(&el));
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
             return None;
         }
         Some(Self::descend_into(el, opaque))

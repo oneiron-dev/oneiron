@@ -103,7 +103,9 @@ pub(super) struct InPlace {
 /// A workbook read or write failure as the rebuild's reason: a resource
 /// refusal as itself (FIX 10587), any other one the editor's refusal.
 fn projection(error: XlsxBodyError) -> RebuildReason {
-    error.resource().map_or(RebuildReason::Projection, RebuildReason::Resource)
+    error
+        .resource()
+        .map_or(RebuildReason::Projection, RebuildReason::Resource)
 }
 
 /// Plan the edit of a chart's own workbook `part`, reading the chart's

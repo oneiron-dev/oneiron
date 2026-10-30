@@ -20,7 +20,8 @@ pub fn inspect_pptx(
     let limits = &Codec { limits, resources };
     let archive = Archive::read(bytes, limits)?;
     let mut inspection = inspect_parts(&archive.parts, limits)?;
-    resolve_positions(bytes, &archive.parts, &mut inspection, limits).map_err(PptxError::Resource)?;
+    resolve_positions(bytes, &archive.parts, &mut inspection, limits)
+        .map_err(PptxError::Resource)?;
     Ok(inspection)
 }
 

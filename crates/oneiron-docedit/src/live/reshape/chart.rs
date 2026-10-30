@@ -147,17 +147,14 @@ fn resource(refusal: crate::resource::ResourceRefusal) -> LiveError {
 /// The sheet the rebuilt data goes on in the chart's own workbook `book`:
 /// a new one beside its sheets, or, `None`, none (the rebuild is afresh).
 /// A resource refusal is the live error (FIX 10587), never afresh.
-fn rebuilt_sheet(
-    package: &Package,
-    book: &str,
-    mode: &Mode,
-) -> Result<Option<String>, LiveError> {
+fn rebuilt_sheet(package: &Package, book: &str, mode: &Mode) -> Result<Option<String>, LiveError> {
     if !matches!(mode, Mode::Rebuild(Some(_))) {
         return Ok(None);
     }
     match package.part(book) {
-        Ok(Some(source)) => dataset::free_sheet(&source, package.limits(), package.resources())
-            .map_err(resource),
+        Ok(Some(source)) => {
+            dataset::free_sheet(&source, package.limits(), package.resources()).map_err(resource)
+        }
         Ok(None) => Ok(None),
         Err(error) => {
             if error.resource().is_some() {
@@ -649,10 +646,10 @@ fn rewrite(
                 // resource refusal is the live error (FIX 10587), never afresh.
                 let kept = match beside.as_deref() {
                     Some(name) => match package.part(book) {
-                        Ok(Some(source)) => dataset::beside(
-                            &source, &dataset, name, limits, &resources,
-                        )
-                        .map_err(resource)?,
+                        Ok(Some(source)) => {
+                            dataset::beside(&source, &dataset, name, limits, &resources)
+                                .map_err(resource)?
+                        }
                         Ok(None) => None,
                         Err(error) => {
                             if error.resource().is_some() {

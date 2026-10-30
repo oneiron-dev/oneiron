@@ -339,7 +339,7 @@ impl<'a> ValidatedXmlPart<'a> {
             ffi::XML_SetParamEntityParsing(parser.0, 0);
         }
         // An empty part still makes one final call, so Expat rejects it.
-        let mut at = 0;
+        let mut at = 0_usize;
         loop {
             let end = source.len().min(at.saturating_add(XML_CHUNK));
             let chunk = &source[at..end];
