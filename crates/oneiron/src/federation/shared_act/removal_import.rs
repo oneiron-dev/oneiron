@@ -77,7 +77,10 @@ fn utc_date(seconds: u64) -> String {
     i64::try_from(seconds)
         .ok()
         .and_then(|seconds| chrono::DateTime::from_timestamp(seconds, 0))
-        .map_or_else(|| seconds.to_string(), |stamp| stamp.date_naive().to_string())
+        .map_or_else(
+            || seconds.to_string(),
+            |stamp| stamp.date_naive().to_string(),
+        )
 }
 
 impl Vault {

@@ -71,6 +71,13 @@ async fn ws_upgrade_handler(
     // owner his supervisor attested. There each call it carries is admitted
     // under the reap freeze as one `POST /mcp` is (FIX 5128).
     if super::mcp_socket::requested(&ws) {
+        // A member whose supervisor signed the upgrade holds a socket that
+        // reaches the member doors and nothing more (FIX 1302 stage 2).
+        if let Some(holder) =
+            super::mcp_socket::signed_person_holder(&headers, &extensions, &server)
+        {
+            return super::mcp_socket::person_upgrade(ws, &headers, &extensions, server, holder);
+        }
         // A stale owner sign-in, whose per-request booking doors serve him,
         // holds a socket that books and nothing more (FIX 5935).
         if let Some(holder) =
