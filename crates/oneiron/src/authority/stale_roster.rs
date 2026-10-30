@@ -8,24 +8,74 @@
 //! confirms, critical-write confirms and every machine standing short of a
 //! removal carry the reusable approval facts.
 
-use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
+/// A row the stale-roster window reads: its signed entry, and its hash. A
+/// caller that holds each row's hash already passes it in, so no row is
+/// hashed again (FIX 12309); a bare entry is hashed here.
+pub(super) trait LogRow {
+    fn entry(&self) -> &AuthorityLogEntry;
+    /// None where the entry does not hash, which the window skips.
+    fn entry_hash(&self) -> Option<AuthorityEntryHash>;
+}
+
+impl LogRow for AuthorityLogEntry {
+    fn entry(&self) -> &AuthorityLogEntry {
+        self
+    }
+
+    fn entry_hash(&self) -> Option<AuthorityEntryHash> {
+        authority_entry_hash(self).ok()
+    }
+}
+
+impl LogRow for &AuthorityLogEntry {
+    fn entry(&self) -> &AuthorityLogEntry {
+        self
+    }
+
+    fn entry_hash(&self) -> Option<AuthorityEntryHash> {
+        authority_entry_hash(self).ok()
+    }
+}
+
+impl LogRow for (AuthorityEntryHash, &AuthorityLogEntry) {
+    fn entry(&self) -> &AuthorityLogEntry {
+        self.1
+    }
+
+    fn entry_hash(&self) -> Option<AuthorityEntryHash> {
+        Some(self.0)
+    }
+}
+
+/// Whether `op` revokes a device, rotates a key or re-roots the vault: the
+/// rows the window reads revocations from. Over rows with none of these it
+/// expires no approval and finds no deadline.
+pub(super) fn revokes_roster_key(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::RevokeDevice { .. }
+            | AuthorityOp::RotateKey { .. }
+            | AuthorityOp::ReRoot { .. }
+    )
+}
+
 /// Earliest second at which each currently valid approval becomes stale.
 /// A checked deadline at the u64 ceiling never arrives, just as the original
 /// saturating-subtraction predicate could never exceed its window there.
-fn stale_roster_approval_deadlines<E: Borrow<AuthorityLogEntry>>(
+fn stale_roster_approval_deadlines<E: LogRow>(
     entries: &[E],
     fold: &AuthorityFold,
     first_seen: &BTreeMap<AuthorityEntryHash, u64>,
     window_secs: u64,
 ) -> BTreeMap<AuthorityEntryHash, u64> {
     let mut revoked_at = BTreeMap::<AuthorityKey, u64>::new();
-    for entry in entries {
-        let entry: &AuthorityLogEntry = entry.borrow();
-        let Ok(hash) = authority_entry_hash(entry) else {
+    for row in entries {
+        let entry = row.entry();
+        let Some(hash) = row.entry_hash() else {
             continue;
         };
         if !fold.valid_entries.contains(&hash) {
@@ -56,8 +106,8 @@ fn stale_roster_approval_deadlines<E: Borrow<AuthorityLogEntry>>(
     }
     entries
         .iter()
-        .filter_map(|entry| {
-            let entry: &AuthorityLogEntry = entry.borrow();
+        .filter_map(|row| {
+            let entry = row.entry();
             let approval = match &entry.op {
                 AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
                 AuthorityOp::FederationConfirm(action) => {
@@ -76,7 +126,7 @@ fn stale_roster_approval_deadlines<E: Borrow<AuthorityLogEntry>>(
             if !approval {
                 return None;
             }
-            let hash = authority_entry_hash(entry).ok()?;
+            let hash = row.entry_hash()?;
             // An anchor's mark rests on no roster key, even one a roster
             // enrolled under the anchor's public key and then revoked.
             if !fold.valid_entries.contains(&hash) || fold.anchor_entries.contains(&hash) {
@@ -95,7 +145,7 @@ fn stale_roster_approval_deadlines<E: Borrow<AuthorityLogEntry>>(
         .collect()
 }
 
-fn expired_stale_roster_approvals<E: Borrow<AuthorityLogEntry>>(
+fn expired_stale_roster_approvals<E: LogRow>(
     entries: &[E],
     fold: &AuthorityFold,
     first_seen: &BTreeMap<AuthorityEntryHash, u64>,
@@ -115,16 +165,13 @@ fn expired_stale_roster_approvals<E: Borrow<AuthorityLogEntry>>(
 /// key revoked since. Whether one has expired turns on an install's own
 /// first-seen clock, so a portable checkpoint image declares them unresolved
 /// rather than deciding them (OF-469, checkpoint v2).
-pub(super) fn stale_roster_subject_approvals<E: Borrow<AuthorityLogEntry>>(
+pub(super) fn stale_roster_subject_approvals<E: LogRow>(
     entries: &[E],
     fold: &AuthorityFold,
 ) -> BTreeSet<AuthorityEntryHash> {
     let seen: BTreeMap<_, _> = entries
         .iter()
-        .filter_map(|entry| {
-            let entry: &AuthorityLogEntry = entry.borrow();
-            Some((authority_entry_hash(entry).ok()?, 0))
-        })
+        .filter_map(|row| Some((row.entry_hash()?, 0)))
         .collect();
     stale_roster_approval_deadlines(entries, fold, &seen, 0)
         .into_keys()
@@ -133,7 +180,7 @@ pub(super) fn stale_roster_subject_approvals<E: Borrow<AuthorityLogEntry>>(
 
 /// First still-future stale-roster change after an exact fold. Called only on
 /// a cache miss, so hot checks do not rescan the authority log.
-pub(super) fn next_stale_roster_deadline<E: Borrow<AuthorityLogEntry>>(
+pub(super) fn next_stale_roster_deadline<E: LogRow>(
     entries: &[E],
     fold: &AuthorityFold,
     first_seen: &BTreeMap<AuthorityEntryHash, u64>,
@@ -149,7 +196,7 @@ pub(super) fn next_stale_roster_deadline<E: Borrow<AuthorityLogEntry>>(
 /// Project after the structural DAG fold has reached its fixed point. All
 /// authorization consumers use this projection, including the readonly fold.
 /// The approvals it expired come back beside: the valid entries it took out.
-pub(super) fn apply_stale_roster_window<E: Borrow<AuthorityLogEntry>>(
+pub(super) fn apply_stale_roster_window<E: LogRow>(
     entries: &[E],
     mut fold: AuthorityFold,
     first_seen: &BTreeMap<AuthorityEntryHash, u64>,
@@ -165,15 +212,14 @@ pub(super) fn apply_stale_roster_window<E: Borrow<AuthorityLogEntry>>(
     // tuples from multiple valid entries are usable if one fresh approval
     // supports them; divergent tuples already failed closed during the merge.
     for (key, binding) in &mut fold.actor_bindings {
-        let has_live_approval = entries.iter().any(|entry| {
-            let entry: &AuthorityLogEntry = entry.borrow();
-            let Ok(hash) = authority_entry_hash(entry) else {
+        let has_live_approval = entries.iter().any(|row| {
+            let Some(hash) = row.entry_hash() else {
                 return false;
             };
             if !fold.valid_entries.contains(&hash) || expired.contains(&hash) {
                 return false;
             }
-            match &entry.op {
+            match &row.entry().op {
                 AuthorityOp::BindActor {
                     authority_key,
                     actor_ref,
@@ -204,10 +250,9 @@ pub(super) fn apply_stale_roster_window<E: Borrow<AuthorityLogEntry>>(
     // for the trusted chain only a mark it accepts (Sol code-R2 S2-F1). An
     // anchor's own chain rests on no roster key, so it never goes stale.
     let renewed = |revision: &MachineRevision, trusted: bool| {
-        entries.iter().any(|entry| {
-            let entry: &AuthorityLogEntry = entry.borrow();
-            matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile)
-                && authority_entry_hash(entry).is_ok_and(|hash| {
+        entries.iter().any(|row| {
+            matches!(&row.entry().op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile)
+                && row.entry_hash().is_some_and(|hash| {
                     fold.valid_entries.contains(&hash)
                         && !expired.contains(&hash)
                         && !fold.anchor_entries.contains(&hash)
