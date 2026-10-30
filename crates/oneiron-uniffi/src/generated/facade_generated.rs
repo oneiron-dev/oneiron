@@ -418,6 +418,11 @@ export_facade! {
     let output = client.vault_runners_seats_top_up(&input)?;
     crate::codec::lift_record("vault.runners.seats.top_up", &output)
 };
+"vault.runners.seats.resume" => fn vault_runners_seats_resume(&self, input: RunnerWorkResumeRequest) -> RunnerWorkResumeView = |client| {
+    let input: oneiron::dispatch_byoa::RunnerWorkResumeRequest = crate::codec::lower_record("vault.runners.seats.resume", input)?;
+    let output = client.vault_runners_seats_resume(&input)?;
+    crate::codec::lift_record("vault.runners.seats.resume", &output)
+};
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;
@@ -2860,6 +2865,11 @@ export_facade! {
     let input: oneiron::lens::LensProposeRequest = crate::codec::lower_record("vault.lenses.propose", input)?;
     let output = client.vault_lenses_propose(&input)?;
     crate::codec::lift_record("vault.lenses.propose", &output)
+};
+"vault.lenses.propose_from_pack" => fn vault_lenses_propose_from_pack(&self, input: PackLensProposeRequest) -> LensProposalReceipt = |client| {
+    let input: oneiron::skill_hub::pack_catalog::PackLensProposeRequest = crate::codec::lower_record("vault.lenses.propose_from_pack", input)?;
+    let output = client.vault_lenses_propose_from_pack(&input)?;
+    crate::codec::lift_record("vault.lenses.propose_from_pack", &output)
 };
 "vault.lenses.activate" => fn vault_lenses_activate(&self, input: LensActivateRequest) -> LensActivationReceipt = |client| {
     let input: oneiron::lens::LensActivateRequest = crate::codec::lower_record("vault.lenses.activate", input)?;

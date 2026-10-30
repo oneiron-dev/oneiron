@@ -37,6 +37,19 @@ impl Vault {
         self.get_claim_in_txn(&rtxn, id)
     }
 
+    /// Whether the claim `id` may consolidate or take effect on this device:
+    /// no owner answer to a critical confirm is outstanding on it (ARCH-0026
+    /// §G3). The owner-answer obligation is this device's own state, so a
+    /// peer's revision that lands over an open one stays held here until its
+    /// owner answers. A reader that widens, consolidates or acts on a claim
+    /// read through [`Vault::get_claim`] asks this; retrieval, history and a
+    /// restriction never do. A read fault is an `Err`: the caller treats the
+    /// claim as still owed.
+    pub fn claim_critical_confirm_settled(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &rtxn, id)
+    }
+
     /// [`Vault::get_claim_in_txn`] for a reader about to ACT on the claim.
     ///
     /// A critical claim whose owner confirmation is outstanding, attached or
