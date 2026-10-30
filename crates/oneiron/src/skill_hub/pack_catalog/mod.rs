@@ -25,11 +25,13 @@ mod source;
 pub use crate::gate::PackInstallPolicyOverride;
 pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
-pub(crate) use hooks::is_hook_binding;
 pub use hooks::{
     FOREIGN_SKILL_PUBLISHER, HookActorClass, HookAuthor, HookOutcomeKind, HookPhase,
     HookRenderClass, HookSelector, HookWidening, PackHook, PackHookBinding, PackHookProposal,
     PackHookProposalStatus,
+};
+pub(crate) use hooks::{
+    erase_hook_proposal_in_txn, is_hook_binding, scrub_hook_proposal_actor_in_txn,
 };
 pub use hub_install::hub_pin;
 pub use import_notice::PackImportPreview;
