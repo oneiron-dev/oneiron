@@ -41,8 +41,10 @@ const fn disposition(reason: Option<TombstoneReason>) -> PayloadDisposition {
 /// An erase marks every incarnation erased and stages each leaf's retirement
 /// for the finisher after the commit
 /// ([`Store::finish_checkpoint_payload_retirements_after_commit`]); any
-/// other delete, and one with no reservation (a remote tombstone's replay),
-/// keeps the leaves and retains the active incarnation.
+/// other delete, and one with no reservation, keeps the leaves and retains
+/// the active incarnation. A remote tombstone's replay reserves none, so it
+/// then settles by the tombstone's own reason
+/// ([`settle_checkpoint_payloads_for_reason_in_txn`]).
 ///
 /// # Errors
 ///
@@ -56,6 +58,21 @@ pub(crate) fn settle_checkpoint_payloads_in_txn(
     let reason = topology_delete_reservation_in_txn(store, wtxn, id)?
         .filter(|reserved| request_id.is_none_or(|request| reserved.request_id == *request))
         .map(|reserved| reserved.reason);
+    settle_checkpoint_payloads_for_reason_in_txn(store, wtxn, id, reason)
+}
+
+/// [`settle_checkpoint_payloads_in_txn`] by a `reason` the caller holds: a
+/// peer's privacy erase retires this replica's leaves too (FIX 11798).
+///
+/// # Errors
+///
+/// Storage faults, an incarnation row that does not decode.
+pub(crate) fn settle_checkpoint_payloads_for_reason_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    reason: Option<TombstoneReason>,
+) -> Result<()> {
     let disposition = disposition(reason);
     for subtype in ENTITY_OWNED {
         settle_owner_in_txn(store, wtxn, subtype, id.as_bytes(), disposition)?;

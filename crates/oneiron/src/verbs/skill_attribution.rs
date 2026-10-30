@@ -26,6 +26,7 @@ use crate::edit_distance::delta::{
     put_amendment_uncaptured_in_txn,
 };
 use crate::entity_id::EntityId;
+use crate::learning::TypeRef;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::skill_attribution::{
     AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, EditHunk,
@@ -156,6 +157,10 @@ pub struct ProposalDeltaSettleRequest {
     /// The terminal pack receipt of the attempt whose proposal was amended.
     #[serde(default)]
     pub attempt_receipt: Option<String>,
+    /// The executor identity at revision that drafted the proposal, for a
+    /// host without an attempt receipt; a named attempt's own stamp wins.
+    #[serde(default)]
+    pub executor: Option<String>,
     /// The original proposal artifact; absent for an edit imported with its
     /// endpoints only, which is measured as reconstructed (FIX 10176).
     #[serde(default)]
@@ -236,10 +241,27 @@ pub struct AmendmentJudgmentView {
     pub d_norm: f32,
     pub engine_ver: String,
     pub at: u64,
+    /// A rejection's judgment: the decider discarded the proposal, so there
+    /// is no delta and `d_norm` is the whole proposal's edit mass.
+    pub rejected: bool,
+    /// The executor identity at revision that drafted the proposal, frozen
+    /// from the evidence when judged; `None` when unknown.
+    pub executor: Option<String>,
+    /// The task type the drafting run was placed in, when one placed it.
+    pub type_ref: Option<TypeRef>,
+    /// The judge revision whose answers this judgment stands on; `None` for
+    /// settled, unjudged or owner-scripted labels.
+    pub judge: Option<String>,
+    /// The answering model's identity behind `judge`, when one model gave
+    /// every answer.
+    pub judge_model: Option<String>,
+    /// Whether the proposal was drafted on the judge's own model.
+    pub on_judge_model: bool,
 }
 
 impl From<AmendmentJudgment> for AmendmentJudgmentView {
     fn from(judgment: AmendmentJudgment) -> Self {
+        let on_judge_model = judgment.on_judge_model();
         Self {
             receipt_id: judgment.receipt_id,
             split: judgment
@@ -256,6 +278,12 @@ impl From<AmendmentJudgment> for AmendmentJudgmentView {
             d_norm: judgment.d_norm,
             engine_ver: judgment.engine_ver,
             at: judgment.at,
+            rejected: judgment.rejected,
+            executor: judgment.executor,
+            type_ref: judgment.type_ref,
+            judge: judgment.judge,
+            judge_model: judgment.judge_model,
+            on_judge_model,
         }
     }
 }
@@ -372,6 +400,9 @@ pub fn skill_attribution_settle_as_owner(
         AmendmentEvidence::new(receipt_id.as_str(), input.actor, input.scope.clone()).at(input.at);
     evidence.skill = input.skill;
     evidence.attempt_receipt = input.attempt_receipt.clone();
+    if let Some(executor) = input.executor.as_deref() {
+        evidence = evidence.with_executor(executor);
+    }
     evidence.cause = input.cause.map(Into::into);
     evidence.followed_skill = input.followed_skill;
     evidence.skill_covered_step = input.skill_covered_step;

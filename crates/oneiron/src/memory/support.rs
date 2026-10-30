@@ -187,6 +187,11 @@ pub struct HostWriteOrigin {
     /// one run a creation this origin's writer asserts can be proved in
     /// (FIX 1211).
     bound_run: Option<EntityId>,
+    /// The code-mode step the call is in its durable run (FIX 11683): the
+    /// invocation the dispatcher derives from the call's place, the same
+    /// across replays of the run, never from the guest. A `reveal.wait` a
+    /// live re-attempt of that step makes reads its value again under it.
+    step: Option<crate::runtime_hooks::InvocationId>,
 }
 
 impl HostWriteOrigin {
@@ -199,7 +204,17 @@ impl HostWriteOrigin {
             hook_ask: None,
             read_proof: None,
             bound_run: None,
+            step: None,
         }
+    }
+
+    /// This origin naming the code-mode step its call is, if it is one.
+    pub(crate) const fn with_step(
+        mut self,
+        step: Option<crate::runtime_hooks::InvocationId>,
+    ) -> Self {
+        self.step = step;
+        self
     }
 
     /// This origin with the waking slip a turn program's call runs under,

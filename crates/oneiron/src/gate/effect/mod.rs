@@ -8,8 +8,8 @@ mod evaluate;
 mod record;
 
 pub(crate) use self::approval_target::{
-    ApprovalTarget, CampaignLegFacts, ChannelIdentityLifecycleFacts, LinearMirrorFacts,
-    OutboundSendFacts, ScopedMcpCallFacts,
+    ApprovalTarget, BrowserSendTarget, CampaignLegFacts, ChannelIdentityLifecycleFacts,
+    LinearMirrorFacts, OutboundSendFacts, ScopedMcpCallFacts,
 };
 pub(super) use self::effect_consent::{
     external_effect_action_requirement, external_effect_composed_effect,

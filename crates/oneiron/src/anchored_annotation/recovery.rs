@@ -135,14 +135,27 @@ impl DocxReanchor {
             return Ok(None);
         }
         let limits = vault.text_limits_in_txn(txn)?;
+        // Both DOCX reads run in the host's memory (FIX 10651); a resource
+        // refusal is the engine's error, never a quiet drift (FIX 10587).
+        let resources = crate::office_body::document_resources();
         let read = |version| -> Result<Option<Paragraphs>> {
-            Ok(vault
-                .read_blob_artifact_version_in_txn(txn, artifact, version)?
-                .and_then(|bytes| {
-                    oneiron_docedit::preflight_with_limits(&bytes, limits.docx).ok()?;
-                    let document = oneiron_docedit::Document::parse(&bytes).ok()?;
-                    Some(Paragraphs::new(docx_anchor_blocks(&document)))
-                }))
+            let Some(bytes) = vault.read_blob_artifact_version_in_txn(txn, artifact, version)?
+            else {
+                return Ok(None);
+            };
+            let parsed = resources.docx(|| {
+                oneiron_docedit::preflight_with_limits(&bytes, limits.docx)?;
+                oneiron_docedit::Document::parse(&bytes)
+            });
+            match parsed {
+                Ok(document) => Ok(Some(Paragraphs::new(docx_anchor_blocks(&document)))),
+                Err(error) => {
+                    if let Some(refusal) = oneiron_docedit::docx_resource(&error) {
+                        return Err(crate::office_body::document_refused(refusal));
+                    }
+                    Ok(None)
+                }
+            }
         };
         let (before, after) = (read(from)?, read(to)?);
         let shares_ids = match (&before, &after) {
@@ -288,7 +301,8 @@ impl Vault {
         let snapshot = match self.read_blob_artifact_version_in_txn(wtxn, artifact_id, pinned)? {
             Some(bytes) => {
                 let limits = self.text_limits_in_txn(wtxn)?;
-                anchor_text(&bytes, &thread.anchor.locator, &limits)
+                // A resource refusal is the engine's error (FIX 10587), never a missing snapshot.
+                anchor_text(&bytes, &thread.anchor.locator, &limits)?
             }
             None => None,
         };
@@ -374,19 +388,21 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             self.text_limits_in_txn(&rtxn)?
         };
-        Ok(unattached
+        // A resource refusal is the engine's error (FIX 10587), never empty offers.
+        let mut offers = Vec::new();
+        for (thread_id, words) in unattached
             .iter()
             .filter_map(|thread| Some((thread.thread.thread_id, thread.snapshot.as_deref()?)))
-            .flat_map(|(thread_id, words)| {
-                find_text(&bytes, format, words, &limits)
-                    .into_iter()
-                    .map(move |locator| ReattachOffer {
-                        thread_id,
-                        version: head.version,
-                        locator,
-                    })
-            })
-            .collect())
+        {
+            for locator in find_text(&bytes, format, words, &limits)? {
+                offers.push(ReattachOffer {
+                    thread_id,
+                    version: head.version,
+                    locator,
+                });
+            }
+        }
+        Ok(offers)
     }
 
     /// One-click reattach of an unattached comment at `locator` in `version`.
@@ -419,7 +435,8 @@ impl Vault {
                 .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
                 .ok_or(Error::EntityNotFound)?;
             let limits = self.text_limits_in_txn(wtxn)?;
-            if anchor_text(&bytes, locator, &limits).as_deref() != Some(snapshot.as_str()) {
+            // A resource refusal is the engine's error (FIX 10587), never a word mismatch.
+            if anchor_text(&bytes, locator, &limits)?.as_deref() != Some(snapshot.as_str()) {
                 return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                     "the words at that place are not the comment's words",
                 )));

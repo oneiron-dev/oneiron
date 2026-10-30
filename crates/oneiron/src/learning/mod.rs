@@ -54,8 +54,8 @@ pub use evidence::{
     withdraw_evidence,
 };
 pub use judge::{
-    DivergenceCase, JudgeConversion, TakeoverVerdict, fit_score_map, judge_takeover_verdict,
-    record_judge_conversion, withdraw_judge_conversion,
+    ConversionChainStatus, DivergenceCase, JudgeConversion, TakeoverVerdict, fit_score_map,
+    judge_takeover_verdict, record_judge_conversion, withdraw_judge_conversion,
 };
 pub use prior::put_cell_prior;
 pub use project::{SettingFit, reproject_all_cells};
