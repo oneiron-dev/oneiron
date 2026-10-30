@@ -6,6 +6,7 @@
 //! served sinks send through, and the Slack app's manifest and OAuth install.
 
 mod checks;
+mod gmail;
 mod handles;
 mod native_mail;
 mod probes;
