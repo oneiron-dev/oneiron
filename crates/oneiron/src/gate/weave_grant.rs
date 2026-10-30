@@ -188,9 +188,7 @@ pub(crate) fn decision_names_weave_grant_in_txn(
 /// A writer class an auto-weave Grant names: an agent or the system. The
 /// gate admits only those two past Proposed
 /// ([`landing_weave_grant_in_txn`]), so the door takes no human.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoWeaveWriterClass {
     Agent,
@@ -263,10 +261,9 @@ pub fn mint_auto_weave_grant(
             WeaveScope::Skill(id)
         }
         _ => {
-            return Err(crate::error::Error::InvalidConfig(
-                "unknown auto-weave scope".to_owned(),
-            )
-            .into());
+            return Err(
+                crate::error::Error::InvalidConfig("unknown auto-weave scope".to_owned()).into(),
+            );
         }
     };
     Ok(vault
