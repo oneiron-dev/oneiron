@@ -225,7 +225,9 @@ async fn dns_query(nameserver: SocketAddr, domain: &str, qtype: u16) -> Option<D
     let mut buffer = vec![0_u8; DNS_DATAGRAM_BYTES];
     tokio::time::timeout(DNS_QUERY_TIMEOUT, async {
         loop {
-            let len = socket.recv(&mut buffer).await.ok()?;
+            let Ok(len) = socket.recv(&mut buffer).await else {
+                return None;
+            };
             let answer = &buffer[..len];
             // A datagram that is not the answer to this question is skipped.
             if answer.len() < DNS_HEADER_BYTES
