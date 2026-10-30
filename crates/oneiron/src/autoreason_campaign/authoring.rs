@@ -95,7 +95,8 @@ pub struct TournamentTeam {
     pub models: Vec<String>,
     /// Role counts beyond the authors, such as critics and judges.
     pub roles: BTreeMap<String, u32>,
-    /// The ranking rule, signed before the work began.
+    /// The ranking rule, signed when the host observed it; lateness is labeled on the
+    /// finalization, never refused.
     pub referee_rule: String,
     pub rule_signed_at: u64,
     pub confessions: u32,
@@ -127,6 +128,9 @@ pub struct AuthoringFinalization {
     pub terminal_receipt_ref: String,
     /// The anchored outcome, once an observer settles it.
     pub outcome: Option<TeamOutcome>,
+    /// The ranking rule was signed after the work began; the run still finalizes
+    /// (Orchestrator 10-22 ruling: label, never refusal).
+    pub referee_rule_late: bool,
     pub at: u64,
 }
 
@@ -332,8 +336,7 @@ pub(crate) fn tournament_start_check(
 /// # Errors
 /// An unbound campaign, a run attempt that is not a campaign experiment, a
 /// failed run with no winner, no persisted evidence for the winner, a winner
-/// claim that never landed, a
-/// rule signed after the work, a malformed or duplicate team receipt, an
+/// claim that never landed, a malformed or duplicate team receipt, an
 /// already-finalized run, or storage errors.
 pub fn finalize_claim_tournament(
     vault: &Vault,
@@ -383,9 +386,7 @@ pub fn finalize_claim_tournament(
     let claim = vault.get_claim(&winner.claim_id)?.ok_or(invalid(
         "the tournament winner never landed through the gate",
     ))?;
-    if team.rule_signed_at > at {
-        return Err(invalid("the ranking rule must be signed before the work"));
-    }
+    let referee_rule_late = team.rule_signed_at > at;
     let branches: BTreeSet<[u8; 16]> = evidence
         .iter()
         .map(|row| *row.branch_attempt.as_bytes())
@@ -448,6 +449,7 @@ pub fn finalize_claim_tournament(
         team_ref,
         terminal_receipt_ref: crate::receipt::attempt_pack_receipt_id(&attempt),
         outcome: None,
+        referee_rule_late,
         at,
     };
     vault.with_write_txn_grouped(|txn| {
