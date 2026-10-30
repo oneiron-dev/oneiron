@@ -1,12 +1,14 @@
 //! Exact xref framing and lossless object-stream expansion before rewriting.
 //! Each stream decodes under its own bound; nothing is summed over the file.
 //! An inspection's host admits the memory each table, decode and snapshot
-//! takes before it is allocated ([`super::admitted`], FIX 8065).
+//! takes before it is allocated ([`super::admitted`], FIX 8065), and the
+//! object trees it parses ([`trees`], FIX 12230).
 use super::admitted::{Stage, btree_entry_bytes};
 use super::streams::decoded_admitted;
 use super::*;
 use lopdf::xref::XrefEntry;
 mod dictionary;
+mod trees;
 use dictionary::leading_dictionary;
 
 struct Frame {
@@ -19,6 +21,11 @@ struct Frame {
 
 /// What one xref entry takes in a table of them.
 const XREF_ENTRY_BYTES: usize = btree_entry_bytes::<u32, XrefEntry>();
+
+/// What one object-stream member takes in its expansion's index, twice
+/// over for the index's growth, and in its set of numbers seen.
+const MEMBER_ENTRY_BYTES: usize =
+    2 * std::mem::size_of::<(u32, usize)>() + btree_entry_bytes::<usize, ()>();
 
 /// Neutralize ObjStm before lopdf eagerly inflates it. We expand it ourselves
 /// with exact Flate checks and exact object indexes.
@@ -110,6 +117,8 @@ fn load_objects(bytes: &[u8], bound: StreamBound, stage: &Stage) -> Result<Docum
     if doc.is_encrypted() || doc.was_encrypted() {
         return Err(PdfPreparationError::EncryptedPdf);
     }
+    // lopdf's parsed trees, measured once its load returns.
+    trees::keep_loaded(stage, &doc)?;
     let ids: Vec<_> = doc
         .objects
         .iter()
@@ -140,6 +149,7 @@ fn load_objects(bytes: &[u8], bound: StreamBound, stage: &Stage) -> Result<Docum
         for _ in 0..count {
             let object = integer(tokens.next())?;
             let offset = integer(tokens.next())?;
+            expansion.admit(MEMBER_ENTRY_BYTES)?;
             if object == 0
                 || object > u32::MAX as usize
                 || !seen.insert(object)
@@ -157,13 +167,20 @@ fn load_objects(bytes: &[u8], bound: StreamBound, stage: &Stage) -> Result<Docum
             let end = index
                 .get(position + 1)
                 .map_or(decoded.len(), |v| first + v.1);
-            let object = operand(&decoded[first + offset..end])?;
+            let source = &decoded[first + offset..end];
+            // The parse at its bound, given back once the object is
+            // measured or dropped.
+            let parse = expansion.nested();
+            parse.admit(operand_bytes(source.len()))?;
+            let object = operand(source)?;
             // Check every embedded object for signatures, including stale entries.
             // Signature names normally are direct. Full indirect checks follow on doc.
             reject_direct_signature(&object)?;
             if matches!(doc.reference_table.entries.get(&number),
                 Some(XrefEntry::Compressed { container, index }) if *container == id.0 && usize::from(*index) == position)
             {
+                // The document keeps the tree: admitted for as long.
+                trees::keep(stage, &object)?;
                 doc.objects.insert((number, 0), object);
             }
         }
@@ -451,10 +468,22 @@ fn trim_start(mut bytes: &[u8]) -> &[u8] {
     }
     bytes
 }
+/// What [`operand`] ends its input with: the operator its one operand is
+/// parsed before.
+const OPERAND_END: &[u8] = b"\nESIGNOPERAND";
+
+/// The most [`operand`] allocates to parse `bytes` bytes: its input copy, and
+/// the content and object tree it parses from that copy.
+fn operand_bytes(bytes: usize) -> usize {
+    let input = bytes.saturating_add(OPERAND_END.len());
+    input.saturating_add(input.saturating_mul(trees::TREE_BYTES_PER_SOURCE_BYTE))
+}
+
 fn operand(bytes: &[u8]) -> Result<Object> {
     source::reject_inline_images(bytes)?;
-    let mut input = bytes.to_vec();
-    input.extend_from_slice(b"\nESIGNOPERAND");
+    let mut input = Vec::with_capacity(bytes.len().saturating_add(OPERAND_END.len()));
+    input.extend_from_slice(bytes);
+    input.extend_from_slice(OPERAND_END);
     let mut content = Content::decode_strict(&input)?;
     if content.operations.len() != 1 {
         return Err(PdfPreparationError::MalformedPdf);
