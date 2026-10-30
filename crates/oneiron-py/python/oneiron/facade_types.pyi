@@ -12414,6 +12414,7 @@ class CodeRepoImportView(TypedDict):
     state: CodeRepoImportState
     baseline_revision: NotRequired[EntityId | None]
     promotion_receipt: NotRequired[EntityId | None]
+    hold: NotRequired[str | None]
 class CodeRepoGetRequest(TypedDict):
     repo: EntityId
 class CodeRepoImportLink(TypedDict):

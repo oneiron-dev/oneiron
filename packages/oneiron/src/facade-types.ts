@@ -4997,7 +4997,7 @@ export type CodeImportManifestView = { manifest_ref: EntityId; digest: string; a
 /** `oneiron::memory::origin_doors::import_types::CodeRepoImportState` */
 export type CodeRepoImportState = "manifest_ready" | "held_baseline" | "held_review" | "promoted"
 /** `oneiron::memory::origin_doors::import_types::CodeRepoImportView` */
-export type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null }
+export type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null; hold?: string | null }
 /** `oneiron::memory::origin_doors::workbench_types::CodeRepoGetRequest` */
 export type CodeRepoGetRequest = { repo: EntityId }
 /** `oneiron::memory::origin_doors::workbench_types::CodeRepoImportLink` */
