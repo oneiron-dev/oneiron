@@ -34,12 +34,7 @@ impl<'a> IngestCtx<'a> {
     }
 
     /// Reads the body references of `doc`, the window the values come from,
-    /// for a caller that judges no residence: endpoint hydration and the
-    /// recovery preflight.
-    #[allow(
-        dead_code,
-        reason = "the endpoint hydration and recovery preflight hooks call this (NOTES)"
-    )]
+    /// for a caller that judges no residence: endpoint hydration.
     pub(in crate::sync) fn with_body_refs(mut self, doc: &'a loro::LoroDoc) -> Self {
         self.body_refs = Some(doc);
         self
