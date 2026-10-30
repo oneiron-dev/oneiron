@@ -16,6 +16,8 @@ use super::{
     SourcePin, hash_json, invalid,
 };
 
+pub(super) mod stream;
+
 impl SourcePin {
     pub(super) fn validate(&self) -> Result<()> {
         if self.repository.trim().is_empty()
@@ -101,6 +103,41 @@ pub(super) fn read_pin(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &ArtifactPin) 
     Ok(bytes)
 }
 
+/// [`read_pin`] without the bytes: the pin against its stored version, then
+/// the length against the bytes as they stream. The blob reader checks the
+/// hash as the bytes stream, so no check here holds the file; a custody
+/// re-read on a large shard stays out of the transaction's memory.
+pub(super) fn verify_pin(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &ArtifactPin) -> Result<()> {
+    let metadata = vault
+        .blob_artifact_version_metadata_in_txn(txn, &pin.artifact, pin.version)?
+        .ok_or(Error::EntityNotFound)?;
+    if metadata.content_hash != pin.blake3 {
+        return Err(invalid(
+            "training artifact pin differs from its stored version",
+        ));
+    }
+    if !vault.blob_artifact_bytes_readable_in_txn(txn, &pin.artifact)? {
+        return Err(Error::EntityNotFound);
+    }
+    let mut bytes = 0u64;
+    let found = crate::ports::BlobStore::port_blob_reader(
+        vault,
+        txn,
+        &pin.blake3,
+        &mut |reader: &mut dyn std::io::Read| {
+            bytes += std::io::copy(reader, &mut std::io::sink())?;
+            Ok(())
+        },
+    )?;
+    if !found {
+        return Err(Error::EntityNotFound);
+    }
+    if bytes != pin.bytes {
+        return Err(invalid("training artifact content hash or length mismatch"));
+    }
+    Ok(())
+}
+
 pub(super) fn keep_checkpoint(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -178,7 +215,7 @@ impl PinnedCheckpoint {
             if !names.insert(&file.name) {
                 return Err(invalid("checkpoint contains duplicate files"));
             }
-            read_pin(vault, txn, &file.content)?;
+            verify_pin(vault, txn, &file.content)?;
         }
         Ok(())
     }

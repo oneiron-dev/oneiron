@@ -7,19 +7,19 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::validate_claim_body_and_decode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
+use crate::registry::ENTITY_TYPE_CLAIM;
 #[cfg(feature = "test-hooks")]
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::loro_support::map_for_each_value_bytes;
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 
-use super::FederationAdmissionRole;
-use super::refuse_peer_agent_definition_widening;
 #[cfg(feature = "sync")]
 use super::super::edge::refuse_admitted_stamps;
 #[cfg(feature = "sync")]
 use super::super::validators::validate_federated_pack;
+use super::FederationAdmissionRole;
+use super::refuse_peer_agent_definition_widening;
 
 /// Re-runs federated claim admission over ALREADY-ADMITTED window bytes using
 /// the policy resolved RIGHT NOW.

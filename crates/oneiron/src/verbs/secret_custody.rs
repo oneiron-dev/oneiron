@@ -18,6 +18,7 @@
 //! routes. A request that holds a value wipes it when it drops, and none
 //! prints it.
 
+mod sealed_spool;
 mod surface_seal;
 
 use base64::Engine as _;
@@ -538,9 +539,8 @@ pub fn submit_sealed_custody_as(
         .iter()
         .map(SecretCustodyPermit::permit)
         .collect::<MemoryResult<Vec<_>>>()?;
-    let sealed = base64::engine::general_purpose::STANDARD
-        .decode(input.input_base64.as_bytes())
-        .map_err(|_| MemoryError::bad_request("input_base64 must be standard base64"))?;
+    // Decoded onto a spool file, as the HTTP door's body is (FIX 11880).
+    let (file, len) = sealed_spool::spool_sealed_input(vault, &input.input_base64)?;
     let custody = vault.seal_custody_change_as_owner(
         owner,
         surface,
@@ -552,7 +552,7 @@ pub fn submit_sealed_custody_as(
             seen: digest("seen", &input.seen)?,
             holder: entity_id("holder", &input.holder)?,
             recipients: &recipients,
-            input: SealedInput::Slice(&sealed),
+            input: SealedInput::File { file: &file, len },
         },
         vault.now_recorded_at(),
     )?;
