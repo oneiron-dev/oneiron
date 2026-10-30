@@ -298,6 +298,25 @@ impl AttemptQueue<'_> {
         Ok(records)
     }
 
+    /// The rows the workflow pump's wake reads (FIX 11318): every Queued or
+    /// Scheduled try and every row of `kind` in any state, so a Leased wave
+    /// plan with no instant comes back; working set, creation order.
+    pub fn pump_wake_rows(&self, kind: &str) -> Result<Vec<AttemptRecord>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut ids = std::collections::BTreeSet::new();
+        for row in self.store.attempt_ready.iter(&rtxn)? {
+            let (_, value) = row?;
+            let Ok(id) = AttemptId::from_bytes(&value) else {
+                continue;
+            };
+            ids.insert(id);
+        }
+        ids.extend(crate::attempt_queue::index::kind_ids_in_txn(
+            self.store, &rtxn, kind,
+        )?);
+        self.working_rows_in_txn(&rtxn, ids)
+    }
+
     /// Complete kind view for a projection that must not silently truncate.
     ///
     /// The view reads its kind's whole side of the owner-retained boundary
