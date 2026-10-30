@@ -23,8 +23,8 @@ impl WindowManager {
         self.documents.notify_note(id);
     }
     /// The owner lane's text-plane export for an own device: NOTE documents
-    /// only, with no selector, under the state-copy and resync rule of the
-    /// selector export.
+    /// and typed bodies (FIX 2458), with no selector, under the state-copy
+    /// and resync rule of the selector export.
     pub fn export_owner_document(
         self: &Arc<Self>,
         id: crate::EntityId,
@@ -33,6 +33,17 @@ impl WindowManager {
         self.documents
             .open(id)?
             .export_owner(remote_vv, crate::sync::window::Withhold::Unknown)
+    }
+
+    /// Whether the owner lane exports `id`'s document now: a NOTE's, or a
+    /// typed body this vault holds (FIX 2458). An own device's REQUEST for an
+    /// office artifact with no body here yet waits.
+    pub fn owner_document_held(&self, id: crate::EntityId) -> Result<bool> {
+        use crate::typed_body::sync_frame::has_typed_body_in_txn;
+        let txn = self.vault.store.env.read_txn()?;
+        let note = self.vault.get_entity_type_in_txn(&txn, &id)?
+            == Some(crate::registry::ENTITY_TYPE_NOTE);
+        Ok(note || has_typed_body_in_txn(&self.vault.store, &txn, &id)?)
     }
 
     /// [`Self::export_owner_document`] judged for the machine `peer` the lane

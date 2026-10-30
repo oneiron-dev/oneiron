@@ -216,7 +216,9 @@ pub(super) fn handle_document(
 /// An own device's owner REQUEST: a v11 connection that is not
 /// selector-scoped, with a bound NOTE session whose principal is the vault
 /// owner. The connection is then an owner connection for good. A REQUEST for
-/// a NOTE this server does not hold yet waits for the NOTE's next notice.
+/// a NOTE this server does not hold yet waits for the NOTE's next notice, and
+/// one for an office artifact whose typed body it does not hold yet waits for
+/// the next REQUEST (FIX 2458).
 fn owner_request(
     server: &SyncServer,
     state: &mut ConnState,
@@ -236,6 +238,10 @@ fn owner_request(
         .get_raw(&entity)
         .map_err(storage_error)?
         .is_some()
+        && server
+            .reassert_manager
+            .owner_document_held(entity)
+            .map_err(storage_error)?
     {
         let frame = crate::server::blocking(|| {
             server
