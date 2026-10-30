@@ -5,8 +5,8 @@ use axum::routing::{get, post};
 
 use super::super::{OwnerRoute, OwnerTable};
 use super::{
-    accept, accept_staged, attest, enabled, proxy, qualify, refresh, register, revoke_proxy_write,
-    setup,
+    accept, accept_staged, approve_charter, attest, charter, discard_charter, enabled,
+    propose_charter, proxy, qualify, refresh, register, revoke_proxy_write, setup,
 };
 
 pub(in super::super) fn owner_table() -> OwnerTable {
@@ -82,6 +82,42 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 row: None,
             },
             post(enabled),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/connectors/charter",
+                summary: "The connector key's stamped GOV-10 charter and its staged proposal.",
+                row: None,
+            },
+            get(charter),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/charter/propose",
+                summary: "Compiles a charter text and stages it on the connector's key; enforcement does not change until the owner approves it.",
+                row: None,
+            },
+            post(propose_charter),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/charter/approve",
+                summary: "The owner's stamp on the staged charter whose text and compile hashes he reviewed; the gate enforces its compile from then on.",
+                row: None,
+            },
+            post(approve_charter),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/charter/discard",
+                summary: "Drops the staged charter proposal; a stamped charter stands.",
+                row: None,
+            },
+            post(discard_charter),
         ),
         (
             OwnerRoute {
