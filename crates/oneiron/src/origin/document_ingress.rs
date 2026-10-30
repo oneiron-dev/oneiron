@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::side_table::{self, LegacyCompact, SideKey, SideTable};
+use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -38,6 +38,35 @@ pub struct ReceivedFileOperation {
 /// NUL, exactly the shape this row has always spelled.
 pub(super) const CODE_OPERATIONS: SideTable<ProvenanceRefKey, ReceivedRefIngress, LegacyCompact> =
     SideTable::new(&side_table::ORIGIN_CODE_OPERATIONS);
+
+/// Each received ref update by its exact (store, ref, old, new) and then the push that
+/// carried it, written with that push's [`CODE_OPERATIONS`] row (FIX 7595).
+pub(super) const RECEIVED_UPDATES: SideTable<([u8; 32], EntityId), (), Raw> =
+    SideTable::new(&side_table::ORIGIN_RECEIVED_UPDATE);
+
+/// The [`RECEIVED_UPDATES`] key prefix of one exact ref update in the object store `store`.
+pub(super) fn received_update_hash(
+    store: &str,
+    ref_name: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:received-update:v1");
+    for part in [Some(store), Some(ref_name), old, new] {
+        match part {
+            Some(part) => {
+                hasher.update(&[1]);
+                hasher.update(&(part.len() as u64).to_be_bytes());
+                hasher.update(part.as_bytes());
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
 
 pub(super) struct ProvenanceRefKey {
     pub(super) provenance: EntityId,
@@ -249,6 +278,18 @@ impl Vault {
                 txn,
                 &receipt_key,
                 held.as_ref().unwrap_or(&fresh),
+            )?;
+            let update = received_update_hash(
+                &fresh.source.object_store,
+                &fresh.source.ref_name,
+                fresh.source.old_oid.as_deref(),
+                fresh.source.new_oid.as_deref(),
+            );
+            RECEIVED_UPDATES.put(
+                &self.store,
+                txn,
+                &(update, attribution.provenance_claim_id),
+                &(),
             )?;
             Ok(())
         })
