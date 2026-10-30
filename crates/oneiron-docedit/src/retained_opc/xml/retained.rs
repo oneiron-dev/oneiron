@@ -364,7 +364,7 @@ impl<'a> ValidatedXmlPart<'a> {
                     c_int::from(last),
                 )
             };
-            if let Some(error) = state.error {
+            if let Some(error) = state.error.take() {
                 return Err(error);
             }
             if result != 1 {
