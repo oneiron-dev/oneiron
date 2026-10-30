@@ -312,8 +312,9 @@ impl Vault {
     /// past the checkpoint is invented, and saved text is never dropped.
     /// A refused replay (a revoked grant, an actor that no longer proves, a
     /// policy that moved) is that stream's alone (FIX 9974): its seed stays
-    /// for explicit repair, its typed refusal is answered and logged, and the
-    /// open goes on for every other stream. A storage failure fails the open.
+    /// for explicit repair, its typed refusal is logged and returned (the open
+    /// does not keep the list yet: FIX-LIST 11933), and the open goes on for
+    /// every other stream. A storage failure fails the open.
     pub(crate) fn recover_message_streams(
         &self,
     ) -> MessageStreamResult<Vec<StreamRecoveryRefusal>> {
