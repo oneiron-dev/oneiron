@@ -8,7 +8,7 @@ use super::super::applied::MaintenanceInverse;
 use super::{
     ASK_ANSWER_CONTEXT, ASKS, Answer, IDENTITY_NOTIFICATION_PRODUCER, IDENTITY_RECHECK_FACET,
     IS_PREFIX, IdentityAsk, MAX_CANDIDATES, ProvisionalInverse, SOMEONE_NEW, SOMEONE_NEW_RATIONALE,
-    erase, evidence, key_hex, put_hint_in_txn,
+    erase, evidence, index, key_hex, put_hint_in_txn,
 };
 use crate::claim::ClaimSource;
 use crate::identity_topology::{
@@ -175,6 +175,7 @@ pub(super) fn settle_ask_in_txn(
 ) -> Result<EntityId> {
     let entity = apply_in_txn(vault, txn, ask, answer, said, now)?;
     ASKS.delete(&vault.store, txn, key)?;
+    index::sync_ask_membership(&vault.store, txn, key, Some(ask), None)?;
     Ok(entity)
 }
 
@@ -228,6 +229,9 @@ pub(super) fn keep_separate_in_txn(
         ..ask.clone()
     };
     ASKS.put(&vault.store, txn, key, &kept)?;
+    // A kept ask's erase set is unchanged (a stamp only); the sync is an
+    // idempotent re-add for uniformity (FIX 10376).
+    index::sync_ask_membership(&vault.store, txn, key, Some(&ask), Some(&kept))?;
     let source = erase::ask_anchor_in_txn(vault, txn, &ask)?;
     let actor = vault.dreamer_authority_in_txn(txn, now)?;
     super::super::applied::record_disposition_in_txn(
@@ -258,5 +262,8 @@ pub(super) fn escalate_in_txn(
     ask.escalated_at = Some(now);
     ask.surfaced_turn = Some(ask.turn);
     ASKS.put(&vault.store, txn, key, &ask)?;
+    // Always (re-)added, idempotently (FIX 10376): a rewrite stamps only,
+    // but a revert re-opens its ask through this door while no row stands.
+    index::sync_ask_membership(&vault.store, txn, key, None, Some(&ask))?;
     notify_in_txn(vault, txn, key, &ask.turn, now)
 }
