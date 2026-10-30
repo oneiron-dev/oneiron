@@ -642,6 +642,7 @@ impl Child {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
+                host_keyless: false,
             },
             messages: vec![
                 LlmMessage {

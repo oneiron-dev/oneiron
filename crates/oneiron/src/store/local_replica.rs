@@ -403,11 +403,12 @@ struct Removal {
     order: Vec<EntityId>,
     /// The same members, for the demotion leaves.
     gone: BTreeSet<EntityId>,
-    /// The kept TURNs a removed MESSAGE is part of: their words read partly
-    /// here until promotion, so their own rows stay as they are.
+    /// The stored kept TURNs a removed MESSAGE is part of: their words read
+    /// partly here until promotion, so their own rows stay as they are.
     partial: BTreeSet<EntityId>,
     /// Each of those TURNs with the removed MESSAGEs it is part of, for its
-    /// missing-membership marker.
+    /// missing-membership marker, plus the PartOf targets whose TURN row is
+    /// already gone (FIX 6263).
     missing: BTreeMap<EntityId, BTreeSet<EntityId>>,
 }
 
@@ -425,7 +426,17 @@ impl Removal {
         loop {
             let gone: BTreeSet<EntityId> = order.iter().copied().collect();
             let missing = partial_turns(store, txn, &gone)?;
-            let partial: BTreeSet<EntityId> = missing.keys().copied().collect();
+            // The demotion leaves only know stored turns; the marker keeps
+            // the absent targets too (FIX 6263).
+            let mut partial = BTreeSet::new();
+            for turn in missing.keys() {
+                if store
+                    .port_entity_record(txn, turn)?
+                    .is_some_and(|row| row.entity_type == registry::ENTITY_TYPE_TURN)
+                {
+                    partial.insert(*turn);
+                }
+            }
             let kept = crate::tagging::demotion_kept_origins_in_txn(store, txn, &gone, &partial)?;
             if kept.is_empty() {
                 return Ok(Self {
@@ -443,8 +454,10 @@ impl Removal {
     }
 }
 
-/// The kept TURNs a MESSAGE in `gone` is part of, each with those MESSAGEs,
-/// read before their edges go.
+/// The TURN targets a MESSAGE in `gone` is part of, each with those
+/// MESSAGEs, read before their edges go. A target whose TURN row is already
+/// demoted (FIX 6263) is recorded too: a later promotion of its window alone
+/// must know what it still lacks.
 fn partial_turns(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -463,7 +476,7 @@ fn partial_turns(
             if !gone.contains(&turn)
                 && store
                     .port_entity_record(txn, &turn)?
-                    .is_some_and(|row| row.entity_type == registry::ENTITY_TYPE_TURN)
+                    .is_none_or(|row| row.entity_type == registry::ENTITY_TYPE_TURN)
             {
                 turns.entry(turn).or_default().insert(*id);
             }
@@ -478,7 +491,6 @@ fn partial_turns(
 /// whose cursor has passed it, a read. A kept TURN whose MESSAGEs come back
 /// is owed both once the last one its missing-membership marker lists is
 /// back with its `PartOf` edge ([`crate::store::turn_missing`], FIX 3859).
-#[allow(dead_code, reason = "L03's OF-534 promotion calls this")]
 pub(crate) fn owe_promoted_turn_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -589,6 +601,8 @@ fn remove_vectors(
     report: &mut RemovedReplica,
 ) -> Result<()> {
     store.clear_pending_embedding(txn, id)?;
+    // The member's queued embed job goes with its marker, in the same txn.
+    crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
     if store.vectors.delete(txn, id.as_bytes())? {
         report.vectors += 1;
     }

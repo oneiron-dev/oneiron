@@ -163,6 +163,7 @@ impl CoachHealthHost for HostModel<'_> {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality: seat.locality,
+                host_keyless: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),

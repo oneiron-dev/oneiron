@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
+use crate::llm::decision::DecisionReceipt;
 use crate::side_table::{self, CodecError, FixedSideKey, HexId, Raw, RawValue, SideKey, SideTable};
 use crate::skill_attribution::AuditBatch;
 
@@ -190,6 +191,10 @@ pub(super) struct StoredJudgment {
     /// A rejection's judgment, which carries no Δ (FIX 7823).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) rejected: bool,
+    /// The receipt of each decision that gave the verdict, in order; empty
+    /// when no ladder was asked (FIX 447, 11511).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) receipts: Vec<DecisionReceipt>,
 }
 
 /// One amendment judgment's labels, kept write-once per receipt and judge

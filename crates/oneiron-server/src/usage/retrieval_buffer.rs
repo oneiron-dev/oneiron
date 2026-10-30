@@ -76,12 +76,7 @@ impl RetrievalMeterBuffer {
         if pending.rows.len() >= RETRIEVAL_BUFFER_ROWS
             && let Some(oldest) = pending.rows.pop_front()
         {
-            count_dropped(
-                &mut pending.dropped,
-                &oldest.owner,
-                &oldest.vault_id,
-                1,
-            );
+            count_dropped(&mut pending.dropped, &oldest.owner, &oldest.vault_id, 1);
         }
         pending.rows.push_back(row);
     }
@@ -115,12 +110,7 @@ impl RetrievalMeterBuffer {
         rows.append(&mut pending.rows);
         while rows.len() > RETRIEVAL_BUFFER_ROWS {
             if let Some(oldest) = rows.pop_front() {
-                count_dropped(
-                    &mut pending.dropped,
-                    &oldest.owner,
-                    &oldest.vault_id,
-                    1,
-                );
+                count_dropped(&mut pending.dropped, &oldest.owner, &oldest.vault_id, 1);
             }
         }
         pending.rows = rows;
@@ -133,9 +123,9 @@ impl RetrievalMeterBuffer {
         if batch.is_empty() {
             return;
         }
-        if let Err(error) = self
-            .ledger
-            .record_meters(&batch.rows, &batch.dropped, super::keys::now_secs())
+        if let Err(error) =
+            self.ledger
+                .record_meters(&batch.rows, &batch.dropped, super::keys::now_secs())
         {
             self.put_back(batch);
             tracing::warn!(
@@ -160,7 +150,9 @@ impl Drop for RetrievalMeterBuffer {
 }
 
 fn lock(pending: &Mutex<Pending>) -> std::sync::MutexGuard<'_, Pending> {
-    pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    pending
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn count_dropped(
