@@ -14,7 +14,7 @@ use super::records::{code_run_value, source_order};
 use super::{Gather, HealLink, kind};
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt};
-use crate::code_run::blocked::read_blocked_receipt;
+use crate::code_run::blocked::decode_blocked_receipt;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_id};
@@ -109,17 +109,20 @@ impl Gather<'_> {
                 return;
             }
         };
-        let vault = self.vault;
         let mut missing = Vec::new();
         for ((receipt, entry), row) in self.reports.iter_mut().zip(rows) {
             let part = format!("report:{}", receipt.to_hex());
-            if row.is_none() {
+            let Some(row) = row else {
                 missing.push((part, "missing_or_withheld".to_owned()));
                 continue;
-            }
+            };
+            let Some(admitted) = row.body else {
+                missing.push((part, "missing".to_owned()));
+                continue;
+            };
             // The lane admitted the witnessed MESSAGE; its receipt decodes from that same
             // immutable row.
-            match read_blocked_receipt(vault, receipt) {
+            match decode_blocked_receipt(&admitted) {
                 Ok(Some(body)) => {
                     if let Some(attempt) = body
                         .attempt

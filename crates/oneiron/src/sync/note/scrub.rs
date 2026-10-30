@@ -60,7 +60,9 @@ fn attachments_deleted(doc: &LoroDoc, notes: &[EntityId]) -> Result<bool> {
         {
             continue;
         }
-        row.bundle.waiting.retain(|fork| !notes.contains(&fork.note));
+        row.bundle
+            .waiting
+            .retain(|fork| !notes.contains(&fork.note));
         row.bundle
             .landed
             .retain(|receipt| !notes.contains(&receipt.note));

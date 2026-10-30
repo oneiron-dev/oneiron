@@ -136,6 +136,19 @@ impl Vault {
             {
                 return Ok(None);
             }
+            // A host-built urgent delivery names the witness its own
+            // assembly enqueued (FIX 10942); every other audience keeps
+            // `witness()`.
+            let witness = match &audience {
+                DigestAudience::Owner(_, Some(assessment))
+                    if !due && breakthrough && !groups.is_empty() =>
+                {
+                    Some(super::urgent::enqueue_host_witness_in_txn(
+                        self, txn, assessment, now,
+                    )?)
+                }
+                _ => audience.witness(),
+            };
             self.finish_digest_in_txn(
                 txn,
                 DigestParts {
@@ -150,7 +163,7 @@ impl Vault {
                     health_cards,
                     presentation,
                     recipient,
-                    witness: audience.witness(),
+                    witness,
                     due,
                     breakthrough,
                     now,
