@@ -456,6 +456,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.mesh.set_alpn_grant" => a.spec.clone().ok_or_else(invalid),
         "vault.mesh.revoke_machine" => a.spec.clone().ok_or_else(invalid),
         "vault.mesh.dial" => a.spec.clone().ok_or_else(invalid),
+        "vault.outbox.diverged.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.outbox.diverged.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.inspection.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_delete" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_transfer" => a.spec.clone().ok_or_else(invalid),
@@ -2471,6 +2473,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mesh.dial" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.outbox.diverged.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.outbox.diverged.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.inspection.resolve" => {
@@ -5378,7 +5386,48 @@ async fn execute_agent_verb_listing(
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
 /// on `memory`, the caller's surface `surface` built. A task row that may ask
 /// the host's decision ladder builds its own from `surface`, off the runtime.
+/// A code-mode call's engine call writes for the leased run its origin seals
+/// in every poll of the row, as a blocking hop writes for it (FIX 11698).
 async fn execute_agent_verb_row(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    input: Value,
+    actor: &McpCallContext,
+    memory: oneiron::Memory<'_>,
+    surface: McpRowSurface,
+    served: &mut McpServed,
+    board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
+    let run_writes = surface
+        .run
+        .as_ref()
+        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+    crate::api::facade::run_write_polls::scoped(
+        run_writes,
+        execute_agent_verb_row_on(
+            server,
+            tool,
+            input,
+            actor,
+            memory,
+            surface,
+            served,
+            board_hooks,
+        ),
+    )
+    .await
+}
+
+/// [`execute_agent_verb_row`]'s row, inside the run's write envelope.
+async fn execute_agent_verb_row_on(
     server: &Arc<SyncServer>,
     tool: &str,
     input: Value,
@@ -10381,6 +10430,40 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_mesh_dial(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.outbox.diverged.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_outbox_diverged_list(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.outbox.diverged.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OutboxDivergedAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_outbox_diverged_answer(server, auth, input)
+                    .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,

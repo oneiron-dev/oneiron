@@ -318,9 +318,9 @@ impl PipelineBuilder<'_> {
             };
             let verdict = expander.assess_evidence(&request(&scores, &claim_bodies))?;
             let mut second_insufficient = false;
+            let mut retried = false;
             if matches!(verdict, EvidenceVerdict::Insufficient { .. })
                 && options.retry_once
-                && policy_trace.is_none()
                 && !self.deadline_reached()
             {
                 // Replace every retrieval artifact with the widened fresh transaction.
@@ -339,6 +339,7 @@ impl PipelineBuilder<'_> {
                         skip_ret01_abstain: true,
                     },
                 )?;
+                retried = true;
                 self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
@@ -381,7 +382,7 @@ impl PipelineBuilder<'_> {
             }
             let abstain = second_insufficient
                 || (matches!(verdict, EvidenceVerdict::Insufficient { .. })
-                    && (!options.retry_once || policy_trace.is_some()))
+                    && (!options.retry_once || (policy_trace.is_some() && !retried)))
                 || (self.context_pack_budget.is_some()
                     && self.post_assessment_evidence_abstains(
                         &scores,

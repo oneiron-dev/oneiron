@@ -27,6 +27,7 @@ mod resident;
 pub mod resident_doors;
 mod settle;
 mod wire;
+mod work_context;
 
 pub use admission::{
     RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
@@ -58,6 +59,7 @@ pub use receipt::{
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
 pub use settle::CallOutcome;
 pub use wire::{WireCallError, WireSeat};
+pub use work_context::{WorkCancel, WorkContext, WorkId, WorkPhysical};
 
 #[cfg(test)]
 mod tests;

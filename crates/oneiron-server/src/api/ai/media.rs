@@ -469,6 +469,7 @@ pub(crate) fn prepare_media_call(
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: false,
             seat_effort: None,
         },
         operation,

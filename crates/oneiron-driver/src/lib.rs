@@ -51,17 +51,24 @@ pub use session::{
     SessionLifecycleDriver, SessionTicks,
 };
 pub use supervisor::{
+    ADMISSION_WAIT_LIMIT, AUTO_PROFILE_SUBSTITUTION, AdmissionSnapshot, AdmissionStop,
+    BACKGROUND_FAIRNESS, BackgroundFairness, CANCEL_RELEASE_LIMIT, DEFAULT_DEADLINE,
+    DEFAULT_WORK_CLASS, DEFAULT_WORKER_IDLE_STOP, DEVICE_HEADROOM_MIB, DeclaredEnvelope,
+    DeviceAdmission, DeviceGrant, DeviceLedger, DeviceRow, DeviceSnapshot, ExecutorRegistration,
+    GrantId, InferenceWorker, LaunchFailure, LauncherFuture, LoadGrant, PRESSURE_ACTION_ORDER,
+    PressureAction, PressureDecision, PressureState, QUEUE_ORDER, QueueOrder, RESIDENT_FRESHNESS,
+    ResidentFreshness, ResidentReport, ResidentSource, RunningWorker, TicketId, TryReserveOutcome,
+    UNKNOWN_MEMORY_POLICY, UNLOAD_EXTERNAL, UNMEDIATED_SHARED_DEVICE, UnknownMemoryPolicy,
+    UnloadOutcome, UnmediatedPolicy, WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS,
+    WORKER_LIVENESS_POLL, WORKER_STOP_GRACE, WorkEnvelope, WorkRequest, WorkTicket, WorkerActivity,
+    WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerProbe, WorkerProbeFuture,
+    WorkerQueueStatus, WorkerSpec, WorkerUnavailable,
+};
+pub use supervisor::{
     AttachedPassFuture, ConsolidationExecutorFactory, LinkedShutdown, NowSeconds, PassAttachment,
     PassAttachmentSource, PassExecutorFactory, ProgramExecutorFactory, RestartBackoffConfig,
     ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor, WakeSupervisorConfig,
     WakeSupervisorReport, WaveReadyDispatcher,
-};
-pub use supervisor::{
-    DEFAULT_WORKER_IDLE_STOP, DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot,
-    InferenceWorker, LaunchFailure, LauncherFuture, ResidentReport, ResidentSource, RunningWorker,
-    WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL, WORKER_STOP_GRACE,
-    WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerProbe,
-    WorkerProbeFuture, WorkerSpec, WorkerUnavailable,
 };
 pub use tick::{
     ArmedLane, AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource,

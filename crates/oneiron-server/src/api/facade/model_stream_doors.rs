@@ -104,7 +104,7 @@ async fn durable<T: Send + 'static>(
     call: impl FnOnce(&oneiron::Vault) -> MemoryResult<T> + Send + 'static,
 ) -> MemoryResult<T> {
     let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || call(&vault))
+    super::clock_ingress::run_blocking(move || call(&vault))
         .await
         .map_err(|_| internal(verb))?
 }

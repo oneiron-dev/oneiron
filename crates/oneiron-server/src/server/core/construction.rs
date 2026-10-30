@@ -243,6 +243,7 @@ impl SyncServer {
         // Another vault of this process reads this one through this handle
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
+        let hyde_queue_wait = config.limits.queue_wait();
         Ok(Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
@@ -255,6 +256,9 @@ impl SyncServer {
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
             usage_ledger: UsageLedger::new(vault.clone()),
+            retrieval_buffer: crate::usage::RetrievalMeterBuffer::new(UsageLedger::new(
+                vault.clone(),
+            )),
             // Each resident's share of the allocation, kept in the vault (FIX 7767).
             host_account: oneiron::llm::run_admission::HostAccount::with_residents(
                 oneiron::llm::VaultResidentLedger::new(vault.clone()),
@@ -278,7 +282,7 @@ impl SyncServer {
             reassert_manager,
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
-            lifecycle_in_flight: Mutex::new(HashSet::new()),
+            lifecycle_in_flight: std::sync::Mutex::new(HashSet::new()),
             housekeeping_passes: Default::default(),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
@@ -328,7 +332,9 @@ impl SyncServer {
             ai: crate::ai_host::AiHandle::inert(),
             pattern_launch_runner: None,
             rerank_runtime: Default::default(),
-            hyde_host: Default::default(),
+            // Engine 00:59 for parked L14: the configured queue wait bounds
+            // admission, not a new timeout of its own.
+            hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
             owner_host: None,
             feedback: None,
