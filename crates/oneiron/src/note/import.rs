@@ -690,10 +690,8 @@ pub(super) fn validate_batch(batch: &ImportedNoteBatch) -> Result<()> {
         if !paths.insert(note.path.as_str()) {
             return Err(invalid("a path appears twice in the note import batch"));
         }
+        // No body length refuses an imported note (rule 5, FIX 10345).
         super::validate_markdown(&note.markdown)?;
-        if note.markdown.len() > super::document::MAX_NOTE_BYTES {
-            return Err(invalid("NOTE body exceeds bound"));
-        }
         if let Some(title) = &note.title {
             super::document::validate_title(title)?;
             if !titles.insert(super::title_index::normalized(title)) {

@@ -185,12 +185,12 @@ pub(super) fn persist_scanned(
     };
     let text = doc.text();
     let remark = scan(vault, txn, entity, h, &text)?;
-    // A NOTE written on this plane keeps the NOTE door's body bound and its
-    // seal (OF-073 stage 1).
+    // A NOTE written on this plane keeps the NOTE door's seal (OF-073 stage
+    // 1); no body length refuses it (rule 5, FIX 10345).
     if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
         let read: &RoTxn<'_> = txn;
         let moved = before.is_some_and(|before| before.encode() != doc.doc.oplog_vv().encode());
-        crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, &doc.text(), || {
+        crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, || {
             Ok(moved || text_changed(store, read, entity, doc)?)
         })?;
     }

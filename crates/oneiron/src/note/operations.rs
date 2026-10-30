@@ -85,18 +85,14 @@ pub struct NoteOperationReceipt {
     pub outcome: NoteScalarEditOutcome,
 }
 
+/// No length refuses an operation (rule 5, FIX 10345). A peer's bytes are
+/// bounded by the frame that carried them, and a JSON decode allocates no
+/// more than they hold.
 impl NoteOperation {
     pub fn encode(&self) -> crate::Result<Vec<u8>> {
-        let bytes = serde_json::to_vec(self).map_err(|_| invalid("NOTE operation encode"))?;
-        if bytes.len() > 4 * 1024 * 1024 {
-            return Err(invalid("NOTE operation exceeds bound"));
-        }
-        Ok(bytes)
+        serde_json::to_vec(self).map_err(|_| invalid("NOTE operation encode"))
     }
     pub fn decode(bytes: &[u8]) -> crate::Result<Self> {
-        if bytes.len() > 4 * 1024 * 1024 {
-            return Err(invalid("NOTE operation exceeds bound"));
-        }
         serde_json::from_slice(bytes).map_err(|_| invalid("invalid NOTE operation"))
     }
     pub(super) fn hash(&self) -> crate::Result<[u8; 32]> {
@@ -142,15 +138,14 @@ pub(super) fn record_birth_authorship(
     insert_authorship(doc, record, &super::NoteActor::Erased.to_wire())
 }
 
-/// Inserts `record` and commits it under the engine stamp naming `named`.
+/// Inserts `record` and commits it under the engine stamp naming `named`. No
+/// authorship count refuses it: a NOTE's edits are never capped (rule 5, FIX
+/// 10345).
 fn insert_authorship(
     doc: &NoteDocument,
     record: &NoteAuthorship,
     named: &str,
 ) -> crate::Result<()> {
-    if authorship(&doc.doc)?.len() >= 4096 {
-        return Err(invalid("NOTE authorship cap reached"));
-    }
     let value = serde_json::to_string(record).map_err(|_| invalid("NOTE authorship encode"))?;
     doc.doc
         .get_map("authorship")
@@ -378,6 +373,10 @@ impl Memory<'_> {
             outcome,
         };
         let payload = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
+        // The receipt goes to its requester whole in one NOTE_RECEIPT
+        // document frame: an 18-byte head and this payload within the
+        // transport's 8 MiB frame (`sync::transport::encode_document`). This
+        // bound protects that frame and stays (FIX 10345).
         if payload.len() > MAX_RECEIPT_PAYLOAD - 18 {
             return Err(invalid("NOTE receipt exceeds wire bound").into());
         }
@@ -397,16 +396,12 @@ pub(super) fn cited_by(
     note: EntityId,
 ) -> crate::Result<Vec<NotePin>> {
     let mut pins = Vec::new();
-    let mut budget = 0usize;
     let prefix = format!("{}:", note.to_hex());
+    // No byte budget refuses an edit of a NOTE many others cite: these are
+    // this store's own reverse pins, each admitted when it was written (rule
+    // 5, FIX 10345).
     for row in NOTE_PIN_SOURCE.iter_raw_from(&vault.store, txn, prefix.as_bytes())? {
         let (_, bytes) = row?;
-        budget = budget.saturating_add(bytes.len());
-        if budget > 4 * 1024 * 1024 {
-            return Err(invalid("NOTE citation guard budget exceeded"));
-        }
-        // Undecoded rows, deliberately: decoding through the typed table would
-        // parse each row before this budget guard could refuse it.
         let pin: NotePin = NOTE_PIN_SOURCE.decode_value(&bytes)?;
         pin.validate()?;
         if pin.document != note {
