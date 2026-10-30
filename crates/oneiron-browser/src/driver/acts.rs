@@ -1,16 +1,21 @@
 use super::*;
 
 /// Whether an act's input whose call failed, after the browser was sent
-/// one of its calls, has an unknown outcome (`unknown_outcome_policy`,
+/// `calls` of its calls, has an unknown outcome (`unknown_outcome_policy`,
 /// CALLS row, FIX 10426): its call ran out of time, the guest went, or the
-/// browser answered an error, so the input may have taken effect, wholly
-/// or in part. The driver's own refusals (a cover, a missing option) are
+/// browser answered an error past its first call, so the input may have
+/// taken effect, wholly or in part. An answered error on the input's
+/// first call is the browser refusing it: nothing took effect (FIX
+/// 11582). The driver's own refusals (a cover, a missing option) are
 /// answers about the page, and land no receipt.
-fn unknown_outcome_policy(error: &BrowserError) -> bool {
-    matches!(
-        error,
-        BrowserError::CallTimeout(_) | BrowserError::GuestLost | BrowserError::Protocol(_)
-    )
+fn unknown_outcome_policy(error: &BrowserError, calls: u64) -> bool {
+    match error {
+        BrowserError::Answered(_) => calls > 1,
+        BrowserError::CallTimeout(_) | BrowserError::GuestLost | BrowserError::Protocol(_) => {
+            calls > 0
+        }
+        _ => false,
+    }
 }
 
 impl CdpDriver {
@@ -27,23 +32,59 @@ impl CdpDriver {
         let (at, rebound) = match_target(target, &capture.rows, &capture.scope, known.as_ref())
             .ok_or_else(stale)?;
         let node = capture.nodes[at].ok_or_else(stale)?;
-        let resolved = self.page("DOM.resolveNode", json!({"backendNodeId": node}))?;
+        // On the row's own frame session (FIX 11576): an OOPIF row's node
+        // id is its frame's process's, and must never resolve on the
+        // page's session. One the read names on no session, or on two, is
+        // stale, as a row with no node is.
+        let session = self.row_session(&capture.ax, node).ok_or_else(stale)?;
+        let resolved = self.call_in(&session, "DOM.resolveNode", json!({"backendNodeId": node}))?;
         let object = resolved
             .pointer("/object/objectId")
             .cloned()
             .ok_or_else(stale)?;
         let node = json!({"backendNodeId": node, "objectId": object});
         // Read in its document now, and still in it when resolved.
-        let connected =
-            self.call_on(&node, "function() { return this.isConnected; }", json!([]))?;
+        let connected = self.call_on_in(
+            &session,
+            &node,
+            "function() { return this.isConnected; }",
+            json!([]),
+        )?;
         if connected != Value::Bool(true) {
             return Err(stale());
         }
         Ok(Target {
             row: capture.rows[at].clone(),
             node,
+            session,
             rebound,
         })
+    }
+
+    /// The session the row whose backend node is `node` resolves and reads
+    /// on (FIX 11576): the session the read was made on, which the graft
+    /// stamps on each node, else its frame's own where the read names it
+    /// there, else the front tab's. The stamp is what a same-process
+    /// frame under an OOPIF resolves by: its frame id alone names no
+    /// session. None where no node of the read carries it, or nodes on
+    /// two sessions do: a foreign id is never resolved on the page's
+    /// session.
+    fn row_session(&self, ax: &[Value], node: u64) -> Option<String> {
+        let mut session = None;
+        let reads = ax
+            .iter()
+            .filter(|read| read.get("backendDOMNodeId").and_then(Value::as_u64) == Some(node));
+        for read in reads {
+            let found = match read.get("sessionId").and_then(Value::as_str) {
+                Some(stamped) => stamped.to_owned(),
+                None => self.frame_session(read.get("frameId").and_then(Value::as_str)),
+            };
+            if session.as_ref().is_some_and(|held| *held != found) {
+                return None;
+            }
+            session = Some(found);
+        }
+        session
     }
 
     /// The viewport point, in CSS pixels, at fractions `x`, `y` of a held
@@ -111,10 +152,19 @@ impl CdpDriver {
         Ok(None)
     }
 
-    /// A left click at viewport point (`x`, `y`).
+    /// A left click at viewport point (`x`, `y`) of the front tab.
     fn mouse_click(&self, x: f64, y: f64) -> Result<(), BrowserError> {
+        self.mouse_click_in(&self.session, x, y)
+    }
+
+    /// A left click at viewport point (`x`, `y`), sent on `session`
+    /// (FIX 11576): the front tab's, the viewport a mouse press is routed
+    /// by, and a frame target's point reaches here already carried out
+    /// of its frame's viewport.
+    fn mouse_click_in(&self, session: &str, x: f64, y: f64) -> Result<(), BrowserError> {
         for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
-            self.page(
+            self.call_in(
+                session,
                 "Input.dispatchMouseEvent",
                 json!({"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}),
             )?;
@@ -144,12 +194,15 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
+        let session = &target.session;
         let covered = || BrowserError::Covered(target.row.target.clone());
-        self.page(
+        self.call_in(
+            session,
             "DOM.scrollIntoViewIfNeeded",
             json!({"backendNodeId": node["backendNodeId"]}),
         )?;
-        let model = self.page(
+        let model = self.call_in(
+            session,
             "DOM.getBoxModel",
             json!({"backendNodeId": node["backendNodeId"]}),
         )?;
@@ -164,7 +217,8 @@ impl CdpDriver {
         let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
         let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
         // The point must land on the element or inside it, not on a cover.
-        let hit = self.call_on(
+        let hit = self.call_on_in(
+            session,
             node,
             "function(x, y) { const e = document.elementFromPoint(x, y); return !!e && (e === this || this.contains(e)); }",
             json!([{"value": x}, {"value": y}]),
@@ -172,7 +226,21 @@ impl CdpDriver {
         if hit != Value::Bool(true) {
             return Err(covered());
         }
-        let watch = Watch::Click(change::row_target(&target.row), Some(node));
+        // A mouse press is routed by the main frame's viewport, and the
+        // box was read in the frame's (FIX 11576): the press goes on the
+        // front tab's session at the point carried out by the frame's
+        // own offset. One that does not read is a cover: the press is not
+        // shown to land on the target. Keyboard input goes the other
+        // way, to the renderer of the session it is sent on, which is
+        // why `type_target` sends it on the row's own session.
+        let Some((across, down)) = self.frame_page_offset(session) else {
+            return Err(covered());
+        };
+        let (x, y) = (x + across, y + down);
+        let watch = Watch::Click(
+            change::row_target(&target.row),
+            Some((node, session.as_str())),
+        );
         let mut observation =
             self.act(base, &watch, |_| Ok(()), |driver| driver.mouse_click(x, y))?;
         observation.rebound.clone_from(&target.rebound);
@@ -191,6 +259,7 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
+        let session = &target.session;
         if let Entry::Secret(handle) = entry
             && let Some(backend) = node["backendNodeId"].as_u64()
         {
@@ -198,14 +267,19 @@ impl CdpDriver {
             self.typed
                 .insert(backend, kind.unwrap_or(SecretKind::Password));
         }
-        let watch = Watch::Entry(change::row_target(&target.row), node);
+        let watch = Watch::Entry(change::row_target(&target.row), node, session.as_str());
         let mut observation = self.act(
             base,
             &watch,
             |driver| {
-                driver.page("DOM.focus", json!({"backendNodeId": node["backendNodeId"]}))?;
+                driver.call_in(
+                    session,
+                    "DOM.focus",
+                    json!({"backendNodeId": node["backendNodeId"]}),
+                )?;
                 if clear {
-                    driver.call_on(
+                    driver.call_on_in(
+                        session,
                         node,
                         "function() { if (typeof this.select === 'function') this.select(); else getSelection().selectAllChildren(this); }",
                         json!([]),
@@ -215,13 +289,13 @@ impl CdpDriver {
             },
             |driver| match entry {
                 Entry::Text(text) => driver
-                    .page("Input.insertText", json!({"text": text}))
+                    .call_in(session, "Input.insertText", json!({"text": text}))
                     .map(drop),
                 Entry::Secret(handle) => {
                     let use_ = SecretUse::Type;
                     driver.secrets.with_value(handle, use_, &mut |text: &str| {
                         driver
-                            .page("Input.insertText", json!({"text": text}))
+                            .call_in(session, "Input.insertText", json!({"text": text}))
                             .map(drop)
                     })
                 }
@@ -240,9 +314,11 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
-        let watch = Watch::Entry(change::row_target(&target.row), node);
+        let session = &target.session;
+        let watch = Watch::Entry(change::row_target(&target.row), node, session.as_str());
         let mut observation = self.act(base, &watch, |_| Ok(()), |driver| {
-            let picked = driver.call_on(
+            let picked = driver.call_on_in(
+                session,
                 node,
                 "function(want) {
                     if (this.tagName !== 'SELECT') return false;
@@ -281,7 +357,13 @@ impl CdpDriver {
         let start = Instant::now();
         // An act that closed its own tab can fail or stop settling as the
         // tab goes; the tab it gave way to is then the act's result.
+        // The input's calls are its setup's and its act's both (FIX
+        // 11582): a type's focus, and its clear, are input calls before
+        // the text, and an error the browser answers to them comes from
+        // the input itself. The mark's reads between them are not.
+        let before_setup = crate::cdp::written_here();
         let set = setup(self);
+        let setup_calls = crate::cdp::written_here().saturating_sub(before_setup);
         let mark = if set.is_ok() { self.mark(watch) } else { None };
         let written = crate::cdp::written_here();
         let acted = set.and_then(|()| act(self));
@@ -289,9 +371,10 @@ impl CdpDriver {
         self.sent = acted.is_ok();
         // A call of the input failed once the browser was sent part of it:
         // the effect may stand, its outcome unknown (FIX 10426).
-        self.unknown = acted.as_ref().is_err_and(|error| {
-            unknown_outcome_policy(error) && crate::cdp::written_here() > written
-        });
+        let calls = setup_calls + crate::cdp::written_here().saturating_sub(written);
+        self.unknown = acted
+            .as_ref()
+            .is_err_and(|error| unknown_outcome_policy(error, calls));
         let fact = match (&acted, mark) {
             (Ok(()), Some(mark)) => self.no_effect(&mark, watch, Instant::now()),
             _ => None,

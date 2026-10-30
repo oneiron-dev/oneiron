@@ -10,6 +10,7 @@ use super::detection::{
 use super::home_node::{
     CampaignHomeNodeAdmission, CampaignHomeNodeDesignation, require_campaign_home_node,
 };
+use super::outbound_leg::{CampaignEnvelopeBytes, campaign_envelope_bytes};
 use super::program::{
     CampaignProgramStep, campaign_program, campaign_program_step, require_program_step_enrolls,
 };
@@ -170,9 +171,9 @@ pub enum CampaignEnrollmentClaim {
 /// What one execution of a claimed enrollment attempt did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnrollmentExecution {
-    /// The cohort row landed. `outbound_intent` is the stable identity the
-    /// outward leg will use, derived from the durable attempt id and the
-    /// program step's `call_seq` — it is not evidence that a send happened.
+    /// The cohort row landed. `outbound_intent` is the stable identity over
+    /// the envelope bytes the outward leg freezes (raw-payload fallback
+    /// while unresolvable) — it is not evidence that a send happened.
     Applied {
         /// Stable outward-leg identity, when the step declares one.
         outbound_intent: Option<IntentId>,
@@ -411,7 +412,7 @@ impl<'a> CampaignEnrollmentRunner<'a> {
                 }
             });
         }
-        let outbound_intent = enrollment_intent_id(&event, &step)?;
+        let outbound_intent = enrollment_intent_id(self.vault, &event, &step)?;
         Ok(match committed {
             MembershipCommitOutcome::Applied => EnrollmentExecution::Applied { outbound_intent },
             // The event landed on a membership whose own state holds: nothing
@@ -632,21 +633,35 @@ pub(super) fn enrollment_consequence_id(
     AttemptId::from_bytes(&hasher.finalize()[..16])
 }
 
-/// The stable outward-leg identity for this consequence, derived exactly the
-/// way ONE-1691 will derive it at dispatch.
+/// The stable outward-leg identity for this consequence: the envelope
+/// bytes the outward leg freezes (raw-payload fallback while
+/// unresolvable).
 pub(super) fn enrollment_intent_id(
+    vault: &Vault,
     event: &CampaignEnrollmentEvent,
     step: &CampaignProgramStep,
 ) -> Result<Option<IntentId>> {
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(None);
     };
+    // FIX 11670: hash the envelope bytes the outward leg freezes, not the
+    // raw body. Unresolvable (target or body pin) falls back to the raw
+    // payload as before so `Some`-ness is preserved: the pump keys the
+    // outward leg off `Some`, and the outward leg is what logs K11/K12 and
+    // returns `NothingOwed`. Returning `None` instead would skip the
+    // outward leg (same settlement, lost warn logs, divergent path).
+    let payload_bytes = match campaign_envelope_bytes(vault, event, step, outbound)? {
+        CampaignEnvelopeBytes::Resolved(bytes) => bytes,
+        CampaignEnvelopeBytes::UnresolvableTarget | CampaignEnvelopeBytes::BodyUnpinned => {
+            outbound.payload.clone()
+        }
+    };
     derive_intent_id(
         enrollment_consequence_id(event, step)?,
         outbound.call_seq,
         &step.channel,
         &outbound.verb,
-        &crate::outbound_intent_ledger::hash_frozen_payload(&outbound.payload),
+        &crate::outbound_intent_ledger::hash_frozen_payload(&payload_bytes),
     )
     .map(Some)
     .map_err(|_| invalid("campaign enrollment outbound identity is not derivable"))
@@ -692,19 +707,26 @@ pub fn derive_enrollment_outbound_request(
         return Ok(None);
     }
     let consequence_id = enrollment_consequence_id(event, &step)?;
-    let CampaignProgramStep {
-        channel, outbound, ..
-    } = step;
-    Ok(outbound.map(|outbound| {
-        OutboundCallRequest::new(
-            consequence_id,
-            outbound.call_seq,
-            channel,
-            outbound.verb,
-            outbound.payload,
-            now_ms,
-        )
-    }))
+    let Some(outbound) = step.outbound.as_ref() else {
+        return Ok(None);
+    };
+    // FIX 11670: the derived request carries the envelope bytes when
+    // resolvable, else the raw payload — the same fallback as
+    // `enrollment_intent_id`, keeping the two consistent.
+    let request_payload = match campaign_envelope_bytes(vault, event, &step, outbound)? {
+        CampaignEnvelopeBytes::Resolved(bytes) => bytes,
+        CampaignEnvelopeBytes::UnresolvableTarget | CampaignEnvelopeBytes::BodyUnpinned => {
+            outbound.payload.clone()
+        }
+    };
+    Ok(Some(OutboundCallRequest::new(
+        consequence_id,
+        outbound.call_seq,
+        step.channel.clone(),
+        outbound.verb.clone(),
+        request_payload,
+        now_ms,
+    )))
 }
 
 // ---------------------------------------------------------------------------
