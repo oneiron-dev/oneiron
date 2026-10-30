@@ -322,31 +322,53 @@ impl MediaRuntime {
 
     /// Sends kept job `id`'s submit again under its key, to a wire that
     /// dedupes by it, so the job its first submit started is learned and
-    /// taken up on a fresh permit (FIX 2248). A send that fails leaves it to
-    /// its next poll; one that starts no job ends it as lost.
+    /// taken up on a fresh permit (FIX 2248). A job a spend scope funds is
+    /// sent on a fresh guard of that scope's own, as its take-up runs
+    /// ([`Self::job_run`]), and what that guard used is booked on the scope
+    /// when its permit settles (FIX 11726); any other goes on the media
+    /// meter. A send that fails leaves it to its next poll, its scope booked
+    /// with what the send charged; one that starts no job ends it as lost.
     pub(super) async fn resubmit_kept(&self, id: &str, row: JobRow) -> LlmResult<MediaJobState> {
         if self.claim_submit(id, &row.model, false).is_some() {
             return Ok(MediaJobState::Queued);
         }
-        let sent = self.walk(
-            row.request.clone(),
-            None,
-            row.payer.clone(),
-            None,
-            Some(id.to_owned()),
-        );
-        let answer = match sent {
-            Ok(walk) => walk.await,
-            Err(error) => Err(error),
+        let answer = if row.line.as_ref().is_some_and(|line| line.scope.is_some()) {
+            match self
+                .job_run(id, &row)
+                .and_then(|run| Ok((self.ladder(&row.request)?, run)))
+            {
+                Ok((ladder, run)) => {
+                    let run = run.submit_keyed(Some(id.to_owned()));
+                    let deadline = crate::models::CallDeadline::Open;
+                    ladder
+                        .media_by(&run, row.request.clone(), None, None, deadline)
+                        .await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            let sent = self.walk(
+                row.request.clone(),
+                None,
+                row.payer.clone(),
+                None,
+                Some(id.to_owned()),
+            );
+            match sent {
+                Ok(walk) => walk.await,
+                Err(error) => Err(error),
+            }
         };
         let job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
                 self.lock_jobs().remove(id);
+                self.book_job_scope(id);
                 return Ok(self.lost(id, row));
             }
             Err(error) => {
                 self.lock_jobs().remove(id);
+                self.book_job_scope(id);
                 return Err(error);
             }
         };

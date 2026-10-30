@@ -531,8 +531,8 @@ const fn unavailable(refusal: VerbAskRefusal) -> CallerUnavailable {
         VerbAskRefusal::ScopeRefused => CallerUnavailable::ScopeRefused,
         VerbAskRefusal::ContextUnavailable => CallerUnavailable::ContextUnavailable,
         // A person no longer this vault's live owner is acted for not at
-        // all, as a person with no credential is.
-        VerbAskRefusal::OwnerNotLive => CallerUnavailable::ContextUnavailable,
+        // all; the receipt names his lapse, not a door fault (FIX 11690).
+        VerbAskRefusal::OwnerNotLive => CallerUnavailable::OwnerNotLive,
     }
 }
 

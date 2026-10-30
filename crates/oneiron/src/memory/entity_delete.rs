@@ -220,6 +220,7 @@ impl Memory<'_> {
             reverify(txn)?;
             recheck(txn)
         };
+        let revokes_guests = guest_revoke.is_some();
         let gated = if stop_check_after_soft_scrub {
             crate::deletion::GatedDeletion::with_pre_scrub_check(gate, &reverify, &recheck)
         } else {
@@ -229,8 +230,16 @@ impl Memory<'_> {
         .with_guest_revoke(guest_revoke);
         let outcome = self
             .vault
-            .delete_entity_with_reason_gated(id, reason.delete_reason(), gated)
-            .map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
+            .delete_entity_with_reason_gated(id, reason.delete_reason(), gated);
+        // FIX 11743: a Connect guest's slips its delete revoked in one of
+        // its writes; once they have committed, every stream judging a
+        // credential judges again, as after a slip revoke. The notice says
+        // only "judge again", so a delete that revoked none sends a spare one.
+        if revokes_guests {
+            self.vault.store.notify_credential_revocations();
+        }
+        let outcome =
+            outcome.map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
             reason: reason.as_str().to_owned(),
