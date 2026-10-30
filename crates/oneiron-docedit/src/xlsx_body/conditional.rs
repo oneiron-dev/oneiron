@@ -139,7 +139,7 @@ pub fn check_conditional(format: &XlsxConditionalFormat) -> Result<()> {
         ));
     }
     for formula in format.rule.formulas() {
-        check_cell(&XlsxValue::Blank, Some(formula))?;
+        check_cell(&XlsxValue::Blank, Some(formula.as_str()))?;
     }
     check_differential_format(&format.format)
 }
