@@ -300,13 +300,22 @@ impl Child {
                         override_model: profiled.clone(),
                         override_effort: None,
                         listed,
+                        worlds: Vec::new(),
                     };
                     let provider = self.provider.as_ref();
+                    // No read scope is threaded here: the birth inherits (FIX 11768).
                     match self.session {
-                        None => run_seat(vault, provider, job.run, parent_at, seat_task),
-                        Some(_) => {
-                            provider.run_seat_on(vault, bound, job.run, parent_at, seat_task)
+                        None => {
+                            run_seat(vault, provider, job.run, parent_at, Vec::new(), seat_task)
                         }
+                        Some(_) => provider.run_seat_on(
+                            vault,
+                            bound,
+                            job.run,
+                            parent_at,
+                            Vec::new(),
+                            seat_task,
+                        ),
                     }
                 },
             )

@@ -18,6 +18,7 @@
 use std::sync::{PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
+use super::CustodyRecipientPermit;
 use crate::error::Error;
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::work_line::{LinePermit, WaitTimedOut};
@@ -74,6 +75,17 @@ pub fn set_authority_work_policy(policy: AuthorityWorkPolicy) {
     *POLICY.write().unwrap_or_else(PoisonError::into_inner) = Some(policy);
 }
 
+/// Sets the longest a turn waits from a host's own wait, in milliseconds
+/// (FIX 8091): whether a crossing only measures stays as it stands, so the
+/// default measure-only policy still takes no turn and refuses nothing.
+pub fn set_authority_work_wait_ms(wait_ms: u64) {
+    let mut policy = POLICY.write().unwrap_or_else(PoisonError::into_inner);
+    *policy = Some(AuthorityWorkPolicy {
+        wait: Duration::from_millis(wait_ms),
+        ..policy.unwrap_or_default()
+    });
+}
+
 /// A turn that waited past its policy's wait or its caller's deadline:
 /// nothing was started, and the reason names the row and the wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +140,54 @@ pub(crate) fn measure_authority_work(watch: &LimitWatch, items: usize) -> Option
     })
 }
 
+/// The sync frame floor a signed authority row rides whole under: the
+/// WindowSync frame and residence touch blob bound
+/// (`sync::MAX_DECODED_PAYLOAD_BYTES`), unchanged.
+const AUTHORITY_FRAME_FLOOR: usize = 8 * 1024 * 1024;
+#[cfg(feature = "sync")]
+const _: () = assert!(AUTHORITY_FRAME_FLOOR == crate::sync::MAX_DECODED_PAYLOAD_BYTES);
+
+/// What a custody request's permits may fill, encoded, before its writer
+/// asks (FIX 8087): half of one frame, so the question comes well before the
+/// request stops riding one frame whole beside the rest of its row.
+const CUSTODY_PERMITS_ASK_BYTES: usize = AUTHORITY_FRAME_FLOOR / 2;
+
+/// Measures a custody request's `permits` (FIX 8087), the mirror of a
+/// profile revision's rides-whole probe: by count on the
+/// `authority_record_items` row ([`measure_authority_work`]), and under it,
+/// encoded as the request's row carries them, against
+/// [`CUSTODY_PERMITS_ASK_BYTES`], where the row is asked with the permits
+/// that fit there as its bound. The request is still signed and kept whole:
+/// never clipped, held or refused. A set past one frame needs the request in
+/// pieces, which are not built yet.
+pub(crate) fn measure_custody_permits(watch: &LimitWatch, permits: &[CustodyRecipientPermit]) {
+    if permits.is_empty() || measure_authority_work(watch, permits.len()).is_some() {
+        return;
+    }
+    // A codec that cannot say counts as past the frame: the row only asks.
+    let encoded =
+        oneiron_authority::authority::custody_recipients_encoded_len(permits).unwrap_or(usize::MAX);
+    if encoded <= CUSTODY_PERMITS_ASK_BYTES {
+        return;
+    }
+    let fits = CUSTODY_PERMITS_ASK_BYTES / encoded.div_ceil(permits.len());
+    watch.crossed(
+        EngineLimit::AuthorityRecordItems,
+        u64::try_from(fits).unwrap_or(u64::MAX),
+        u64::try_from(permits.len()).unwrap_or(u64::MAX),
+    );
+}
+
 impl Vault {
+    /// Measures a set of `items` a host door carries (a mesh dial's direct
+    /// addresses) against the `authority_record_items` row (FIX 8091), as
+    /// the engine's own doors measure theirs: past it the installed port is
+    /// asked and the bound returned. It only measures: it never waits, takes
+    /// no turn and never refuses.
+    pub fn measure_authority_items(&self, items: usize) -> Option<u64> {
+        measure_authority_work(self.limit_watch(), items)
+    }
+
     /// The turn for authority work carrying `items`, before its writer
     /// opens: measured first, and at once when under the row or measure-only
     /// (today's path never waits, and `key` is not read). Otherwise a turn

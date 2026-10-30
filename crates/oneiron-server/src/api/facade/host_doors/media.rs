@@ -64,21 +64,24 @@ pub(crate) fn calling_line() -> Option<RunAdmission> {
 /// filtered by the vault's inference-policy admission and priced from the
 /// model registry, none of which is a record, or from the installed model
 /// catalog pack when the registry holds no row for the model: that pack's
-/// source is the one row it lists. A caller shown no option lists none; a
-/// catalog that cannot be read leaves the answer unlisted.
+/// source is the one row it lists. A caller shown no option lists none, and
+/// so does a catalog whose installed pack cannot be read: no price came from
+/// it (FIX 6080).
 pub(crate) async fn ai_options(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiOptionsRequest,
-) -> (MemoryResult<AiOptions>, Option<Vec<EntityId>>) {
+) -> Listed<AiOptions> {
     let answer = ai_options_answer(server, auth, &input);
     let listed = match &answer {
         Ok(options) if !options.options.is_empty() => server
             .vault
             .model_catalog_source()
             .ok()
-            .map(|source| source.into_iter().collect()),
-        _ => Some(Vec::new()),
+            .flatten()
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
     };
     (answer, listed)
 }

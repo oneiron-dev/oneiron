@@ -122,6 +122,15 @@ struct SidePast {
     main: BTreeSet<AuthorityEntryHash>,
 }
 
+/// A frontier candidate's two parts before any bound: the main-log heads no
+/// chosen side leaf names beneath itself, and those side leaves, with the
+/// rows read to find them.
+struct Candidate {
+    heads: BTreeSet<AuthorityEntryHash>,
+    leaves: BTreeSet<AuthorityEntryHash>,
+    rows: Rows,
+}
+
 /// The frontier parents of the next key record a machine signs in one world,
 /// and the rows read to find them.
 pub(crate) struct KeyFrontier {
@@ -136,8 +145,9 @@ impl KeyFrontier {
     /// that `chain` is, or is beneath. A side leaf is the latest valid row of
     /// some signer of the world that no other such row descends from. None
     /// when no candidate stands here: no main head, a `chain` row this vault
-    /// cannot read, or more parents than one record names (the side-leaf
-    /// bound, kept on the explicit parents).
+    /// cannot read, or more parents than one record names. A writer joins
+    /// such heads first ([`Self::wide_heads_in_txn`], FIX 8497), so only the
+    /// side-leaf bound is kept on the explicit parents.
     pub(crate) fn of_in_txn(
         store: &Store,
         txn: &heed::RoTxn<'_>,
@@ -145,11 +155,59 @@ impl KeyFrontier {
         world: EntityId,
         chain: Option<AuthorityEntryHash>,
     ) -> Result<Option<Self>> {
+        let Some(candidate) = Self::candidate_in_txn(store, txn, fold, world, chain)? else {
+            return Ok(None);
+        };
+        let mut parents = candidate.heads;
+        parents.extend(candidate.leaves);
+        if parents.len() > MAX_PARENTS {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            parents,
+            rows: candidate.rows,
+        }))
+    }
+
+    /// The main-log heads the next record of `world` would name past one
+    /// record's bound on `fold` (FIX 8497, L04 09:40 (a)), and how many of
+    /// them it names beside its side leaves: the heads its writer joins
+    /// before it, so the record names the join tips and every head stays
+    /// beneath it. None when the candidate fits, when none stands here
+    /// ([`Self::of_in_txn`]), or when the side leaves alone fill the record:
+    /// today's explicit parents.
+    pub(crate) fn wide_heads_in_txn(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        world: EntityId,
+        chain: Option<AuthorityEntryHash>,
+    ) -> Result<Option<(BTreeSet<AuthorityEntryHash>, usize)>> {
+        let Some(Candidate { heads, leaves, .. }) =
+            Self::candidate_in_txn(store, txn, fold, world, chain)?
+        else {
+            return Ok(None);
+        };
+        if heads.len() + leaves.len() <= MAX_PARENTS || leaves.len() >= MAX_PARENTS {
+            return Ok(None);
+        }
+        Ok(Some((heads, MAX_PARENTS - leaves.len())))
+    }
+
+    /// The candidate on `fold` before any bound ([`Candidate`]).
+    fn candidate_in_txn(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        world: EntityId,
+        chain: Option<AuthorityEntryHash>,
+    ) -> Result<Option<Candidate>> {
         if fold.append_heads.is_empty() {
             return Ok(None);
         }
         let mut rows = Rows::default();
         let mut parents = fold.append_heads.clone();
+        let mut chosen = BTreeSet::new();
         if let Some(chain) = chain {
             let mut tips: BTreeSet<_> = fold
                 .scope_heads
@@ -187,12 +245,13 @@ impl KeyFrontier {
             for leaf in &leaves {
                 parents.retain(|head| !pasts[leaf].main.contains(head));
             }
-            parents.extend(leaves);
+            chosen = leaves;
         }
-        if parents.len() > MAX_PARENTS {
-            return Ok(None);
-        }
-        Ok(Some(Self { parents, rows }))
+        Ok(Some(Candidate {
+            heads: parents,
+            leaves: chosen,
+            rows,
+        }))
     }
 
     /// The parents the first record names.

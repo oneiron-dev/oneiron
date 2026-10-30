@@ -99,23 +99,27 @@ fn stalled_actor_revoke(
 /// Explicit outcomes for EACH missing parent.
 enum ParentOutcome<'a> {
     Ready(&'a FoldState),
-    RejectedAncestry,
+    RejectedAncestry(&'a AuthorityLogEntry),
     Unavailable,
 }
 
+/// A seeded state answers first, so a parent a checkpoint seeded resolves
+/// even when its raw entry is not in the tail (FIX 3008).
 fn parent_outcome<'a>(
     hash: AuthorityEntryHash,
-    entry: &AuthorityLogEntry,
+    entry: Option<&'a AuthorityLogEntry>,
     states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
     rejected: &BTreeSet<AuthorityEntryHash>,
 ) -> ParentOutcome<'a> {
     if let Some(state) = states.get(&hash) {
         return ParentOutcome::Ready(state);
     }
-    if rejected.contains(&hash) && skippable_permissive(&entry.op) {
-        return ParentOutcome::RejectedAncestry;
+    match entry {
+        Some(entry) if rejected.contains(&hash) && skippable_permissive(&entry.op) => {
+            ParentOutcome::RejectedAncestry(entry)
+        }
+        _ => ParentOutcome::Unavailable,
     }
-    ParentOutcome::Unavailable
 }
 
 /// Resolve every branch to real folded evidence. An otherwise rejected grant
@@ -139,7 +143,6 @@ fn resolve_parent(
         if !visited.insert(hash) {
             continue;
         }
-        let entry = entries.get(&hash)?;
         if context
             .entry_ancestors
             .and_then(|index| index.get(&hash))
@@ -147,7 +150,7 @@ fn resolve_parent(
         {
             return None;
         }
-        match parent_outcome(hash, entry, states, rejected) {
+        match parent_outcome(hash, entries.get(&hash), states, rejected) {
             ParentOutcome::Ready(state) => {
                 merged = Some(match merged {
                     Some(current) if current.vault_id != state.vault_id => return None,
@@ -155,7 +158,7 @@ fn resolve_parent(
                     None => state.clone(),
                 });
             }
-            ParentOutcome::RejectedAncestry => {
+            ParentOutcome::RejectedAncestry(entry) => {
                 if entry.parent_hashes.is_empty() {
                     return None;
                 }

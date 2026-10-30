@@ -21,8 +21,9 @@ use super::CustodyTransition;
 use crate::Vault;
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, CustodyChange,
-    CustodyRecipientPermit, CustodyRequestAuthority, OwnerAct, OwnerActKind, OwnerWorkBody,
-    OwnerWorkRequest, RecoveryRootId, authority_entry_hash, next_sequence, sign_side_entry,
+    CustodyRecipientPermit, CustodyRequestAuthority, FrontierSigner, MAX_PARENTS, OwnerAct,
+    OwnerActKind, OwnerWorkBody, OwnerWorkRequest, RecoveryRootId, authority_entry_hash,
+    next_sequence, sign_side_entry,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -100,6 +101,11 @@ fn record_in_txn(
         },
         privacy_basis: None,
     };
+    // FIX 8498 (Engine 09:31; L04 09:40 (c)): the anchor joins a frontier
+    // wider than the request names, ahead of its own row, else today's path.
+    let joiner = FrontierSigner::Anchor(anchor);
+    let joined = vault.prepare_authority_frontier_in_txn(wtxn, fold, joiner, MAX_PARENTS)?;
+    let fold = joined.as_deref().unwrap_or(fold);
     let signer = AuthorityKey::Ed25519(anchor.verifying_key().to_bytes());
     let seq = next_sequence(fold, &signer)?;
     let now = vault.instant_in_txn(wtxn)?.secs();

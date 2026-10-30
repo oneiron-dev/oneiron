@@ -480,14 +480,15 @@ impl PinsReceipt {
         vault: &std::sync::Arc<oneiron::Vault>,
     ) -> Result<(), ApiError> {
         let vault = std::sync::Arc::clone(vault);
-        tokio::task::spawn_blocking(move || {
+        // A keyed hydration's receipt counts on its intent (FIX 10379).
+        tokio::task::spawn_blocking(oneiron::store::carry_idempotency_intent(move || {
             vault.record_standing_disclosure_uses(
                 &self.delivered,
                 self.interlocutors.as_ref(),
                 &std::collections::BTreeMap::new(),
                 &self.channels,
             )
-        })
+        }))
         .await
         .map_err(|_| ApiError::internal_server_error("disclosure receipt task failed"))?
         .map_err(|error| core_engine_error("disclosure receipt failed", error))?;

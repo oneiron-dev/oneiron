@@ -157,6 +157,9 @@ pub struct ConflictSettleReceipt {
     /// alternative its Keep landed, when the Gate held that landing for
     /// review (FIX 5753); `None` on every other settlement.
     pub approval_ref: Option<String>,
+    /// The work still owed after the settlement committed, such as the
+    /// approved alternative's pending VAD (FIX 7600); empty when none is.
+    pub warnings: Vec<crate::memory::SettleWarning>,
 }
 
 /// What reverting one settlement did (OF-023, owner ruling 10-18): the marker

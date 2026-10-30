@@ -1,5 +1,5 @@
 //! Public event correlation and dequeue fencing, independent of transport.
-use super::speech::{PlayoutGate, TurnSources, add_rows, notice_rows};
+use super::speech::{PlayoutGate, TurnSources, notice_rows};
 use super::{PlayoutFrame, VoiceHost};
 use oneiron::EntityId;
 use oneiron::memory::{MemoryError, MemoryResult};
@@ -27,12 +27,14 @@ pub(super) struct Journal {
     floor: u64,
     /// The rows each generation was made from, by generation, as its brain
     /// handed them over before speech consumed its first event (FIX 4778).
+    /// The listing is total because the voice loop is concrete over
+    /// `ChatBrain`, which always knows its rows (FIX 6080); a loop made
+    /// generic over `Brain` brings back an unknown set.
     sources: BTreeMap<u64, TurnSources>,
 }
 
-/// A page of events beside the rows they were made from, `None` when
-/// unknown.
-pub(crate) type ListedPage = (LiveVoiceEvents, Option<Vec<EntityId>>);
+/// A page of events beside the rows they were made from.
+pub(crate) type ListedPage = (LiveVoiceEvents, Vec<EntityId>);
 
 impl Journal {
     pub(super) fn new(session_ref: String) -> Self {
@@ -58,23 +60,29 @@ impl Journal {
     /// generation's model input (a notice also from the policy row it
     /// names); its memories receipt counts the rows the read found. Every
     /// other event is control only: the cursor, epoch, playout, tool
-    /// source label, error and end events list none. A generation whose
-    /// rows were never handed over lists unknown.
-    fn event_rows(&self, event: &LiveVoiceEvent) -> Option<Vec<EntityId>> {
+    /// source label, error and end events list none. A generation's brain
+    /// hands its rows over with its first event, before anything it says
+    /// is spoken or judged, so a generation with none kept served nothing
+    /// made from its input: its events list none (FIX 6080).
+    fn event_rows(&self, event: &LiveVoiceEvent) -> Vec<EntityId> {
         let sources = event
             .generation
             .and_then(|generation| self.sources.get(&generation));
         match &event.event {
-            LiveVoiceEventKind::Pcm { .. } | LiveVoiceEventKind::Safeguard { .. } => {
-                sources.and_then(|sources| sources.said.clone())
-            }
+            LiveVoiceEventKind::Pcm { .. } | LiveVoiceEventKind::Safeguard { .. } => sources
+                .map(|sources| sources.said.clone())
+                .unwrap_or_default(),
             LiveVoiceEventKind::Notice { notice } => {
-                let mut rows = sources.and_then(|sources| sources.said.clone());
-                add_rows(&mut rows, Some(&notice_rows(notice)));
+                let mut rows = sources
+                    .map(|sources| sources.said.clone())
+                    .unwrap_or_default();
+                rows.extend(notice_rows(notice));
                 rows
             }
-            LiveVoiceEventKind::Memories { .. } => sources.map(|sources| sources.found.clone()),
-            _ => Some(Vec::new()),
+            LiveVoiceEventKind::Memories { .. } => sources
+                .map(|sources| sources.found.clone())
+                .unwrap_or_default(),
+            _ => Vec::new(),
         }
     }
 
@@ -214,8 +222,8 @@ impl Journal {
     }
 
     /// The page, beside the rows its served events were made from: their
-    /// union, unknown when one is (FIX 4778). An event the page skips as a
-    /// stale epoch's lists nothing.
+    /// union (FIX 4778). An event the page skips as a stale epoch's lists
+    /// nothing.
     pub(super) fn page(&mut self, input: LiveVoiceEventsRequest) -> MemoryResult<ListedPage> {
         if input.after < self.floor || input.after > self.cursor || input.limit == Some(0) {
             return Err(MemoryError::bad_request(
@@ -233,12 +241,12 @@ impl Journal {
         }
         let limit = input.limit.unwrap_or(64);
         let mut events = Vec::new();
-        let mut rows = Some(Vec::new());
+        let mut rows = Vec::new();
         let mut cursor = input.after;
         for (event, guard) in &self.events {
             cursor = event.sequence;
             if guard.as_ref().is_none_or(PlayoutGate::is_current) {
-                add_rows(&mut rows, self.event_rows(event).as_deref());
+                rows.extend(self.event_rows(event));
                 events.push(event.clone());
             }
             if events.len() >= limit {

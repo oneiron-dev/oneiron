@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `build.rs` | src | s | — | — | N-API build script |
 | `src/expression_preference.rs` | src | s | 4 struct · 3 fn | NapiExpressionPreferenceInput, NapiExpressionPreferenceReceipt, NapiExpressionPreferenceWinner, NapiExpressionPreferences | JS bindings for the typed `companion.expression.*` doors |
 | `src/facade/boundary.rs` | src | s | 10 crate-vis | — | JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling |
-| `src/facade/bridge.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
+| `src/facade/bridge.rs` | src | s | 2 struct · 6 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
 | `src/facade/client.rs` | src | m | 4 struct · 13 fn | NapiHostRootProfile, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
 | `src/facade/client/embedded_engine.rs` | src | m | 6 struct · 13 fn | NapiEngineHeader, NapiEngineOptions, NapiEngineReply, NapiEngineRequest, NativeEngine, NativeEngineConnection | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
 | `src/facade/client/generated/agent_verbs.rs` | src | generated | 1209 fn | — | — |

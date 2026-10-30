@@ -270,6 +270,12 @@ pub(crate) enum GateReasonCode {
     /// deny, never an owner-review row: no approval makes a named record
     /// exist, so it is never retried as Proposed.
     DenyUnresolvedRecordReference,
+    /// FIX 10537: a delegated child's write its own bound allows, which an
+    /// ancestor on its live delegation chain no longer does. The decision's
+    /// receipt names that ancestor
+    /// ([`GateDecision::delegation_narrowing_receipt`]); an owner's review,
+    /// as for [`Self::PendingActorCeiling`], decides it.
+    PendingDelegationChainCeiling,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -319,6 +325,7 @@ impl GateReasonCode {
             Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
             Self::PendingCarryForwardConfidence => "gate.pending.carry_forward_confidence",
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
+            Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
         }
     }
 
@@ -331,7 +338,11 @@ impl GateReasonCode {
                 GateMetricReasonClass::MissingPolicyManifestVersion
             }
             Self::DenyPolicyFailClosed => GateMetricReasonClass::PolicyFailClosed,
-            Self::PendingActorCeiling => GateMetricReasonClass::ActorCeiling,
+            // The chain's narrowing is an actor ceiling met higher up: no new
+            // metric class, so the counter width is unchanged.
+            Self::PendingActorCeiling | Self::PendingDelegationChainCeiling => {
+                GateMetricReasonClass::ActorCeiling
+            }
             Self::PendingSourceTrust => GateMetricReasonClass::SourceTrust,
             Self::PendingCriticalityFloor => GateMetricReasonClass::CriticalityFloor,
             Self::PendingPolicyManifestAuthority => GateMetricReasonClass::PolicyManifestAuthority,
@@ -401,6 +412,7 @@ pub(crate) struct GateDecision {
     policy_row_ref: Option<String>,
     precedence_row_ref: Option<Option<String>>,
     policy_refusal: Option<PolicyRefusal>,
+    delegation_narrowing: Option<super::definition_ceiling::DelegationNarrowing>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -413,6 +425,7 @@ impl GateDecision {
             policy_row_ref: None,
             precedence_row_ref: None,
             policy_refusal: None,
+            delegation_narrowing: None,
         }
     }
 
@@ -424,6 +437,7 @@ impl GateDecision {
             policy_row_ref: None,
             precedence_row_ref: None,
             policy_refusal: None,
+            delegation_narrowing: None,
         }
     }
 
@@ -435,7 +449,45 @@ impl GateDecision {
             policy_row_ref: None,
             precedence_row_ref: None,
             policy_refusal: None,
+            delegation_narrowing: None,
         }
+    }
+
+    /// This decision held for review by the delegation ancestor `narrowing`
+    /// names (FIX 10537): an Allow pends on
+    /// [`GateReasonCode::PendingDelegationChainCeiling`] alone, a Pending
+    /// adds it, and a Deny stands as it is.
+    pub(super) fn held_by_delegation_chain(
+        mut self,
+        narrowing: super::definition_ceiling::DelegationNarrowing,
+    ) -> Self {
+        match self.outcome {
+            GateOutcome::Deny => return self,
+            GateOutcome::Allow => {
+                self.outcome = GateOutcome::Pending;
+                self.reason_codes = vec![GateReasonCode::PendingDelegationChainCeiling];
+            }
+            GateOutcome::Pending => {
+                self.reason_codes
+                    .push(GateReasonCode::PendingDelegationChainCeiling);
+            }
+        }
+        self.delegation_narrowing = Some(narrowing);
+        self
+    }
+
+    /// The receipt token naming the delegation ancestor whose live bound
+    /// held this decision, by its AGENT_DEF row and attempt, when one did
+    /// ([`GateReasonCode::PendingDelegationChainCeiling`]).
+    #[must_use]
+    pub(crate) fn delegation_narrowing_receipt(&self) -> Option<String> {
+        self.delegation_narrowing.map(|narrowing| {
+            format!(
+                "delegation_ancestor_{}_attempt_{}",
+                narrowing.agent.to_hex(),
+                crate::entity_id::bytes_to_hex_lower(narrowing.attempt.as_bytes()),
+            )
+        })
     }
 
     pub(super) fn with_policy_row_ref(mut self, row_ref: Option<&str>) -> Self {

@@ -37,7 +37,6 @@ use crate::claim::{
 };
 
 use crate::temporal::TimeRange;
-use crate::write_envelope::WriteActor;
 
 /// One typed expression-preference write.
 ///
@@ -135,7 +134,7 @@ impl Memory<'_> {
         // recorded in `support`).
         self.verified_actor_class()?;
         let subject = self.resolve_ref(&input.subject_ref)?;
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        let actor = self.write_actor();
         let claim_id = self.vault.store.clock.entity_id()?;
         let written = self.vault.set_expression_preference(
             &actor,
@@ -200,7 +199,7 @@ impl Memory<'_> {
     pub fn retract_expression_preference(&self, claim_ref: &str) -> MemoryResult<()> {
         self.verified_actor_class()?;
         let claim_id = self.resolve_ref(claim_ref)?;
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        let actor = self.write_actor();
         self.vault.retract_expression_preference(
             &actor,
             &claim_id,

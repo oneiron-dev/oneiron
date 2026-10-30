@@ -58,6 +58,7 @@ pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value}
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
     CustodyRecipientPermit, CustodyRequestAuthority, custody_recipient_set,
+    custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
 pub use self::result::{
