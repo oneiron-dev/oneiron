@@ -56,7 +56,9 @@ use crate::world_keys::{
 };
 
 mod checkpoint;
+mod reader;
 mod restore_pads;
+use self::reader::Reader;
 pub use checkpoint::RecoveryCheckpointTrust;
 
 /// The base section's encoding version.
@@ -739,52 +741,4 @@ fn put_u32(out: &mut Vec<u8>, value: usize) -> Result<()> {
 
 fn malformed() -> Error {
     refused("a sealed bundle section is malformed")
-}
-
-/// A forward reader over a section's payload.
-struct Reader<'a> {
-    bytes: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn take(&mut self, len: usize) -> Result<&'a [u8]> {
-        let end = self
-            .at
-            .checked_add(len)
-            .filter(|end| *end <= self.bytes.len())
-            .ok_or_else(malformed)?;
-        let slice = &self.bytes[self.at..end];
-        self.at = end;
-        Ok(slice)
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
-        self.take(N)?.try_into().map_err(|_| malformed())
-    }
-
-    fn u8(&mut self) -> Result<u8> {
-        self.array().map(u8::from_be_bytes)
-    }
-
-    fn u16(&mut self) -> Result<u16> {
-        self.array().map(u16::from_be_bytes)
-    }
-
-    fn u32(&mut self) -> Result<u32> {
-        self.array().map(u32::from_be_bytes)
-    }
-
-    fn u64(&mut self) -> Result<u64> {
-        self.array().map(u64::from_be_bytes)
-    }
-
-    /// Nothing may follow the last field.
-    fn finish(&self) -> Result<()> {
-        if self.at == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(malformed())
-        }
-    }
 }
