@@ -23479,7 +23479,7 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 15,
       "mod": 1,
@@ -23529,7 +23529,7 @@
      "path": "src/critic/review.rs",
      "purpose": "Artifact-independent review fan-out and the persisted calibration feedback loop",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1,
       "re-export": 4,
@@ -23537,7 +23537,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CriticPrediction",
@@ -23558,8 +23558,18 @@
      "path": "src/critic/review/outcomes.rs",
      "purpose": "Anchored review outcomes feed the shared measured-state projector",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/review/outcomes/settled_actor.rs",
+     "purpose": "The actor a settlement no owner decided writes a critique's outcome under (FIX 12188): the review's own…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -23570,6 +23580,26 @@
      "purpose": "Transactional review bundles",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/review/persistence/dissent_rows.rs",
+     "purpose": "A review's dissent rows: the dissent each critique keeps so far, the claim one caller holds while it authors…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/review/persistence/erased_claims.rs",
+     "purpose": "The review claims an erase takes (FIX 12073)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -23604,6 +23634,16 @@
      "surface": {
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/review/team_outcome.rs",
+     "purpose": "The critics of a settled team's work (OF-420, FIX 2970, FIX 12106)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -25133,7 +25173,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/conflicts.rs",
@@ -28163,7 +28203,7 @@
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "const": 8,
+      "const": 9,
       "crate-vis": 3,
       "fn": 11,
       "re-export": 5,
@@ -30419,7 +30459,7 @@
      "path": "src/edit_distance/attribution/stored.rs",
      "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -63732,9 +63772,9 @@
      "path": "src/skill/call.rs",
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -63749,6 +63789,37 @@
       "crate-vis": 4,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/call/frozen.rs",
+     "purpose": "Frozen callable cases (FIX 12093)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/call/frozen/erase.rs",
+     "purpose": "An erase among the frozen callable cases (FIX 12093)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/call/frozen/index.rs",
+     "purpose": "The frozen cases' index (FIX 12180): each case under the rows it was made from, or under its caller's…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -63830,6 +63901,7 @@
      "surface": {
       "enum": 2,
       "fn": 9,
+      "re-export": 2,
       "struct": 8,
       "trait": 1
      }
@@ -63841,7 +63913,8 @@
      "path": "src/skill/helper_eval.rs",
      "purpose": "The helper gate's evidence (FIX 10154, 10155): the shared paired eval measurement of a helper against its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -64245,7 +64318,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 21
      }
     },
@@ -64288,6 +64361,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/row_ids.rs",
+     "purpose": "The row behind each forwarded judgment and discovery proposal (FIX 12088): the row ids a sourced brief names…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -66024,7 +66107,7 @@
      "purpose": "The measurement doors: ask, read, claim, record a case and fail",
      "surface": {
       "crate-vis": 6,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -66137,7 +66220,7 @@
      "path": "src/skill_optimize/gate/admission.rs",
      "purpose": "Admission, its pinned keys, and the record-shape questions both doors ask",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 3
      }
     },
@@ -66295,7 +66378,7 @@
      "path": "src/skill_optimize/gate/project_goal.rs",
      "purpose": "The join between a skill's goal and a project's goal record (ARCH-0053 \"The goal record\")",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -66697,7 +66780,7 @@
      "path": "src/skill_optimize/selection.rs",
      "purpose": "Which skill the job may work on: the tier-filtered, dev-partitioned ranking and the reading behind it",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -66889,7 +66972,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -75665,7 +75748,7 @@
      "path": "src/team/owner_outcome.rs",
      "purpose": "OF-540: the owner's verdict on a team's deliverable settles the team",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -75716,6 +75799,7 @@
       "Coverage",
       "DecidedBy",
       "PatternSkillRef",
+      "TeamCritic",
       "TeamOutcome",
       "TeamReceipt",
       "TeamShape"
@@ -75723,10 +75807,10 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 11,
-      "struct": 5,
+      "fn": 12,
+      "struct": 6,
       "type": 1
      }
     },
@@ -76252,8 +76336,35 @@
      "path": "src/training_pack/custody.rs",
      "purpose": "Training artifacts use the existing versioned blob store, not another file store",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointFileStream",
+      "CheckpointStream"
+     ],
+     "path": "src/training_pack/custody/stream.rs",
+     "purpose": "FIX 12086: the owner's starting checkpoint read from one stream, its files one after another, so no door…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DetectorCorpusRef"
+     ],
+     "path": "src/training_pack/detector_corpus.rs",
+     "purpose": "A question head's corpus (FIX 8237)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -76275,7 +76386,7 @@
      "surface": {
       "crate-vis": 3,
       "fn": 6,
-      "re-export": 4
+      "re-export": 6
      }
     },
     {
@@ -84433,7 +84544,7 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 11,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -85238,14 +85349,14 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 23,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85427,7 +85538,7 @@
      "purpose": "—"
     },
     "training_pack": {
-     "files": 9,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85541,7 +85652,7 @@
    },
    "over_bar": 107,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5775,
+   "source_files": 5785,
    "test_files": 902
   },
   "oneiron-android": {
@@ -101488,7 +101599,17 @@
      "path": "src/ai_host/eval_measurement.rs",
      "purpose": "The Coach's paired eval measurement (FIX 574, OF-578)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/helper.rs",
+     "purpose": "The helper gate's measurement and verdict (FIX 10677, 12069, 12093): each callable helper awaiting its gate…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -102435,7 +102556,7 @@
      "path": "src/api/body_spool.rs",
      "purpose": "An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5)",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -106600,6 +106721,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openapi/owner_rest_paths/routes_coach.rs",
+     "purpose": "The REST shape of `PUT /v1/owner/coach/training-checkpoints` (FIX 12086): a raw byte body, not JSON, with…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openapi/owner_rest_paths/routes_packs.rs",
      "purpose": "The REST shapes of the row-less `/v1/owner` routes under `/packs` (FIX 11611 part D): one [`super::bind`]…",
      "surface": {
@@ -107283,7 +107414,7 @@
      "path": "src/api/owner_routes/proactivity_routes/schema.rs",
      "purpose": "The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611), `POST…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -107297,11 +107428,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/proactivity_routes/training_runs.rs",
      "purpose": "`/v1/owner/coach/training-offers/{prepare,authorize,training}` (OF-577): the owner's setup of a Train…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/proactivity_routes/training_runs/checkpoints.rs",
+     "purpose": "`PUT /v1/owner/coach/training-checkpoints` (FIX 12086): the owner's starting checkpoint into custody…",
      "surface": {
       "crate-vis": 3
      }
@@ -118476,14 +118617,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 104,
+     "files": 105,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 641,
+     "files": 643,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -118982,7 +119123,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1476,
+   "source_files": 1479,
    "test_files": 182
   },
   "oneiron-spawn": {
