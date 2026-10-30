@@ -278,10 +278,9 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
                 ..prior.clone()
             } == *proposed
         }
-        // A confirmed name keeps the facet `settle_source_birth` gave it.
-        crate::registry::ENTITY_TYPE_PERSON
-        | crate::registry::ENTITY_TYPE_ORG
-        | crate::registry::ENTITY_TYPE_PLACE => {
+        // A confirmed name keeps the facet `settle_source_birth` gave it:
+        // every kind with a declared identity key (FIX 11382).
+        kind if !crate::ingest::identity_fields_for_kind(kind).is_empty() => {
             Scope {
                 facets: proposed.facets.clone(),
                 ..prior.clone()

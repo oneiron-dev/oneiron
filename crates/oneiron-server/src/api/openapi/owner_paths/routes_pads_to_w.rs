@@ -251,6 +251,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/secrets/found/re-enter",
+        summary: "Seals the kept value of a key ruled no secret again, where its custody key no longer opens it.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/secrets/lift",
         summary: "The run in progress, the last run's receipt and the open proposals, counted by cause.",

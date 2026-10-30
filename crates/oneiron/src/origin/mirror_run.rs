@@ -4,12 +4,13 @@
 //! A run takes the mirror's own push hold, never the repository's
 //! coordinator: inbound pushes, landings and cutovers never wait on an
 //! outbound child, and the child inherits the hold, so one that outlives a
-//! crashed host keeps the mirror held until it exits. An interval or event
-//! run finds the hold taken and leaves the mirror for the next pass; a
-//! push-now waits for it. Under the hold the mirror's open plan settles
-//! first (`publish::mirror_plan_run`), and a run that continued one reports
-//! that plan alone: the next plan is frozen at a later cadence or event
-//! (`full_auto`: the next wake or tick). Only a mirror with no open plan
+//! crashed host keeps the mirror held until it exits. An exact publish takes
+//! the same hold, so it and a run never reach one mirror at once. An
+//! interval or event run finds the hold taken and leaves the mirror for the
+//! next pass; a push-now waits for it. Under the hold the mirror's open
+//! plan settles first (`publish::mirror_plan_run`), and a run that continued
+//! one reports that plan alone: the next plan is frozen at a later cadence
+//! or event (`full_auto`: the next wake or tick). Only a mirror with no open plan
 //! reads its published refs and deletions, there, under the hold, and
 //! freezes a new one. A `schedule` run plans exactly the selection the
 //! scheduled mirror always pushed. A `full_auto` run plans its green selection
@@ -170,13 +171,31 @@ impl Vault {
             target,
             hold: &hold,
         };
+        let run = self.run_mirror_plans(&scope, trigger);
+        // Under the hold still: a run waiting on it reads these names as its
+        // deletion basis, so they are on the row before it drops (FIX 7216).
+        if let Ok(Some(done)) = &run {
+            self.record_mirror_pushed(repo_id, &target.url, &done.names);
+        }
+        run
+    }
+
+    /// The plans of one run, under the mirror's hold: the open one settles
+    /// first; only a mirror with none freezes a new one (module docs).
+    fn run_mirror_plans(
+        &self,
+        scope: &MirrorRunScope<'_, '_>,
+        trigger: MirrorTrigger,
+    ) -> Result<Option<WholeRefsRun>> {
+        let (wire, handle, repo_id, target) =
+            (scope.wire, scope.handle, scope.repo_id, scope.target);
         let automatic = target.sync_strategy.pushes_whole_refs();
         // An open plan settles first, and a run that continued one reports
         // that plan alone: the next plan waits for a later cadence or event.
-        match self.continue_mirror_plan(&scope) {
-            Ok(Some(summary)) => return self.finish_mirror_run(&scope, &summary).map(Some),
+        match self.continue_mirror_plan(scope) {
+            Ok(Some(summary)) => return self.finish_mirror_run(scope, &summary).map(Some),
             Ok(None) => {}
-            Err(error) => return Err(self.hold_mirror_run(&scope, &error)),
+            Err(error) => return Err(self.hold_mirror_run(scope, &error)),
         }
         if !automatic {
             return Ok(None);
@@ -187,7 +206,7 @@ impl Vault {
             return Ok(None);
         };
         let selection = if target.sync_strategy == OriginMirrorSyncStrategy::FullAuto {
-            self.full_auto_due(&scope, refs, deletions, trigger)?
+            self.full_auto_due(scope, refs, deletions, trigger)?
         } else {
             Some(MirrorSelection {
                 vector: refs,
@@ -200,21 +219,45 @@ impl Vault {
             MirrorTrigger::Interval | MirrorTrigger::Event => None,
         };
         let started = match selection {
-            Some(selection) => match self.start_mirror_plan(&scope, &selection, requested_by) {
+            Some(selection) => match self.start_mirror_plan(scope, &selection, requested_by) {
                 Ok(started) => started,
-                Err(error) => return Err(self.hold_mirror_run(&scope, &error)),
+                Err(error) => return Err(self.hold_mirror_run(scope, &error)),
             },
             None => None,
         };
         match started {
-            Some(summary) => self.finish_mirror_run(&scope, &summary).map(Some),
+            Some(summary) => self.finish_mirror_run(scope, &summary).map(Some),
             None => Ok(None),
+        }
+    }
+
+    /// Writes the names the mirror now holds from this vault onto its row,
+    /// under the run's hold. A row the owner re-pointed or cleared meanwhile
+    /// keeps the owner's. A write that fails only warns: the next run reads
+    /// the names the row holds.
+    fn record_mirror_pushed(&self, repo_id: EntityId, url: &str, names: &[String]) {
+        let written = (|| -> Result<()> {
+            let mut txn = self.store.env.write_txn()?;
+            let Some(mut row) = TARGETS.get(&self.store, &txn, &repo_id)? else {
+                return Ok(());
+            };
+            if row.url != url || row.pushed.as_slice() == names {
+                return Ok(());
+            }
+            row.pushed = names.to_vec();
+            TARGETS.put(&self.store, &mut txn, &repo_id, &row)?;
+            txn.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = written {
+            tracing::warn!(kind = ?error.kind(), "mirror pushed names were not recorded");
         }
     }
 }
 
 /// The directory whose lock is one mirror's push hold, made when missing.
-fn mirror_hold_dir(handle: &GitWireRepo) -> Result<PathBuf> {
+/// An exact publish takes the same hold (`publish::dispatch`).
+pub(super) fn mirror_hold_dir(handle: &GitWireRepo) -> Result<PathBuf> {
     let dir = handle.common_dir().join(ORIGIN_MIRROR_HOLD_DIR);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
