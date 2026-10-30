@@ -24,7 +24,9 @@ use crate::error::Error;
 use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentLedgerError, read_intent_for_attempt_in_txn,
 };
-use crate::secret_custody::{open_connector_resume_in_txn, seal_connector_resume_in_txn};
+use crate::secret_custody::{
+    RunSecretHolder, open_connector_resume_in_txn, seal_connector_resume_in_txn,
+};
 use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call::PENDING_CALLS;
@@ -67,6 +69,9 @@ pub struct OpenedConnectorResume {
     pub credential: Option<EntityId>,
     /// The secret grant the call redeems at each send, as its row keeps it.
     pub grant: Option<SecretGrantRef>,
+    /// The run whose seat found that record, when the call's use was its
+    /// own run's: the run's door presents it again (FIX 8334).
+    pub run: Option<RunSecretHolder>,
     /// The original send as the ledger keeps it, for a Retry: what each
     /// answer re-sends, its grant checked again first (FIX 8226). `None`
     /// for a stream, or when the ledger does not read it.
@@ -180,6 +185,10 @@ impl Vault {
                 state,
                 credential: row.credential,
                 grant: row.grant,
+                run: row
+                    .secret_use
+                    .as_ref()
+                    .and_then(|secret_use| secret_use.run),
                 original,
             });
         }

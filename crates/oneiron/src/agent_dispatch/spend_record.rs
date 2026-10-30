@@ -77,8 +77,9 @@ pub struct SpendPayer {
     /// The PERSON whose funds the tree spends.
     pub party: EntityId,
     /// The actor that took the payer's yes: the payer's own PERSON, or an
-    /// actor anchored to it. Checked against the stored binding, never a label.
-    pub granted_by: EntityId,
+    /// actor anchored to it. Checked against the stored binding, never a label;
+    /// `None` once the actor that took the yes was erased.
+    pub granted_by: Option<EntityId>,
     /// When the payer accepted the cap, in host milliseconds.
     pub at_ms: u64,
 }

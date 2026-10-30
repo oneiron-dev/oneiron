@@ -59,6 +59,6 @@ pub fn guest_document_host_only<T, I>(
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{verb} requires the serving host's guest document signer"),
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }

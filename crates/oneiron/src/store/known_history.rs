@@ -331,6 +331,33 @@ impl Store {
         Ok(Some(*blake3::keyed_hash(&subkey, input).as_bytes()))
     }
 
+    /// The vault-keyed MAC of a safeguard model's stated reason (FIX
+    /// 10532): `rationale` hashed under a subkey derived from the index's
+    /// master, so a guess at a short reason cannot be checked against a
+    /// receipt without the vault's key. `txn` is the writer or a snapshot
+    /// taken under the custody read guard ([`Store::custody_snapshot`]).
+    /// `None` while the index keys no value: no master exists. Neither the
+    /// master nor the subkey leaves this function.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under a committed reference, and storage
+    /// faults.
+    pub(crate) fn policy_rationale_mac_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        rationale: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
+        const CONTEXT: &str = "oneiron/policy-rationale-mac/v1";
+        let Some(at) = INDEX.get(self, txn, &())? else {
+            return Ok(None);
+        };
+        let custody = self.core.key_custody.bind_in_txn(self, txn)?;
+        let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
+        let subkey = crate::world_keys::derive_guarded(CONTEXT, &[&master[..]]);
+        Ok(Some(*blake3::keyed_hash(&subkey, rationale).as_bytes()))
+    }
+
     /// The ids of the history `txn` commits to, for a stream's sweep
     /// (KS-3); `txn` is a snapshot taken under the custody read guard
     /// ([`Store::custody_snapshot`]). `None` while the index keys no value.

@@ -445,8 +445,12 @@ impl LiveAdmission for LiveStepAdmission {
     }
 }
 
-impl LlmBackend for CodeModeBackend {
-    fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+impl CodeModeBackend {
+    fn generate_on<'a>(
+        &'a self,
+        request: LlmRequest,
+        sources: Option<Vec<EntityId>>,
+    ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let pinned = self.planned.as_ref().is_some_and(|planned| planned.exact);
             // CUA E5: the role the run's browser planner state picks, and
@@ -461,7 +465,8 @@ impl LlmBackend for CodeModeBackend {
                 )?;
             let run = self
                 .models
-                .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone());
+                .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone())
+                .sourced(sources);
             let answered = if seat_bound {
                 call.ladder.generate_exact(&run, call.request, None).await
             } else if let Some(planned) = &self.planned {
@@ -481,6 +486,21 @@ impl LlmBackend for CodeModeBackend {
             }
             answered
         })
+    }
+}
+
+impl LlmBackend for CodeModeBackend {
+    fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+        self.generate_on(request, None)
+    }
+
+    fn generate_sourced<'a>(
+        &'a self,
+        request: LlmRequest,
+        _: &'a BudgetLease,
+        sources: Option<Vec<EntityId>>,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_on(request, sources)
     }
 
     fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {

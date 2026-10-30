@@ -145,7 +145,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::RECEIPT_FAMILY_INDEX_VERSION,
     &side_table::GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE,
     &side_table::DELETION_ROW_FENCE_BACKFILLED,
-    &side_table::TASK_CONSULT_PARTY_BACKFILLED,
     &side_table::ORIGIN_CAS_BACKFILL,
     &side_table::SCOPE_STAMP_SWEEP_DONE,
     &side_table::SCOPE_POLICY_SWEEP_DONE,

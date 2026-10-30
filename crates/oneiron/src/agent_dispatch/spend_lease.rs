@@ -184,7 +184,7 @@ impl AgentDispatcher<'_> {
             return Err(invalid("only the payer may raise its accepted root cap"));
         }
         if let Some(payer) = &mut scope.payer {
-            payer.granted_by = actor;
+            payer.granted_by = Some(actor);
             payer.at_ms = shown.at_ms;
         }
         let additional = maximum.units - scope.cap_units;
@@ -733,8 +733,11 @@ pub(crate) fn payer_binds_in_txn(
         return Ok(false);
     }
     let at = vault.store.clock.now_recorded_at();
+    let Some(grantor) = payer.granted_by else {
+        return Ok(false);
+    };
     Ok(
-        crate::workspace_roster::person_of_actor_in_txn(vault, txn, payer.granted_by, at)?
+        crate::workspace_roster::person_of_actor_in_txn(vault, txn, grantor, at)?
             == Some(payer.party),
     )
 }
