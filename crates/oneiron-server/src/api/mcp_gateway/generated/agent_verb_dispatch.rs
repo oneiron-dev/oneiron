@@ -518,6 +518,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.federation.connect.disconnect" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.connect.export" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.connect.rejoin" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.world_privacy.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.world_privacy.receive" => a.spec.clone().ok_or_else(invalid),
         "vault.trusted_contacts.name" => a.spec.clone().ok_or_else(invalid),
         "vault.trusted_contacts.list" => a.spec.clone().ok_or_else(invalid),
         "vault.trusted_contacts.consent" => a.spec.clone().ok_or_else(invalid),
@@ -2658,6 +2660,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.federation.connect.rejoin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.world_privacy.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.world_privacy.receive" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.trusted_contacts.name" => {
@@ -11894,6 +11902,52 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_connect_rejoin(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.world_privacy.export" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.federation.connect.world_privacy.export",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_model::ForeignWorldPrivacyExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_world_privacy_export(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.world_privacy.receive" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.federation.connect.world_privacy.receive",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_model::ForeignWorldPrivacyDelivery =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_world_privacy_receive(
                     server, auth, input,
                 ),
             )

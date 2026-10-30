@@ -268,6 +268,19 @@ impl HostSlipIssuer {
             &self.signing.sign(&body.transcript()?).to_bytes(),
         ))
     }
+
+    /// Signs one carried world-settings leg's transcript (FIX 4702): an
+    /// agent's ask on a world a connected vault owns, or this vault's
+    /// holders' answer to one. The peer verifies it under the key its log
+    /// pinned for the pact, as it verifies a Connect window.
+    pub fn sign_foreign_world_privacy(
+        &self,
+        body: &crate::policy_model::ForeignWorldPrivacyCarry,
+    ) -> Result<String> {
+        Ok(crate::entity_id::bytes_to_hex_lower(
+            &self.signing.sign(&body.transcript()?).to_bytes(),
+        ))
+    }
 }
 
 impl HostSlipIssuer {

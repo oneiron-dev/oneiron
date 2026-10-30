@@ -376,6 +376,8 @@ both bindings and their export-census tests in one change.
 - `vault.federation.connect.disconnect`
 - `vault.federation.connect.export`
 - `vault.federation.connect.rejoin`
+- `vault.federation.connect.world_privacy.export`
+- `vault.federation.connect.world_privacy.receive`
 - `vault.trusted_contacts.name`
 - `vault.trusted_contacts.list`
 - `vault.trusted_contacts.consent`

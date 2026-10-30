@@ -2712,6 +2712,9 @@ class Oneiron:
         def rejoin(self, spec):
             """The owner admits a peer host signed update through guest admission into the retained foreign-world vault."""
             return json.loads(_translate(lambda: self._client.vault_federation_connect_rejoin(json.dumps(spec))))
+        @property
+        def world_privacy(self) -> "Oneiron._VaultFederationConnectWorldPrivacyVerbs":
+            return Oneiron._VaultFederationConnectWorldPrivacyVerbs(self._client)
     class _VaultFederationConnectGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2727,6 +2730,15 @@ class Oneiron:
         def accept(self, spec):
             """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
             return json.loads(_translate(lambda: self._client.vault_federation_connect_rescope_accept(json.dumps(spec))))
+    class _VaultFederationConnectWorldPrivacyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def export(self, spec):
+            """The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_world_privacy_export(json.dumps(spec))))
+        def receive(self, spec):
+            """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_world_privacy_receive(json.dumps(spec))))
     class _VaultTrustedContactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

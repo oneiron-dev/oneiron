@@ -101,6 +101,38 @@ pub struct WorldPrivacyRequest {
     /// alone had lapsed (FIX 7548). Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_omitted: Option<String>,
+    /// For an agent's ask on a world shared from a connected vault (FIX
+    /// 4702): the owning vault, whose holders decide. Its `holders` are this
+    /// vault's owners, who carry it there over the pact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<ForeignWorldPrivacyLink>,
+    /// For an ask a connected vault's agent sent here (FIX 4702): that vault,
+    /// and its request, which this one's answer settles there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked_from: Option<ForeignWorldPrivacyLink>,
+}
+
+/// The other end of a world-settings request carried over a Connect pact
+/// (FIX 4702).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignWorldPrivacyLink {
+    /// The pact it rides, as 64 hex.
+    pub pact: String,
+    /// The other vault, as 64 hex.
+    pub vault: String,
+    /// The world as its owning vault names it, as hex.
+    pub world: String,
+    /// The asking vault's request, as hex: set on the owning vault's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    /// The agent that asked there, as hex: set on the owning vault's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The owning vault's answer, as its holders settled it: set on the
+    /// asking vault's once the answer came back, even after a cancel here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<WorldPrivacyRequestStatus>,
 }
 
 impl WorldPrivacyRequest {
@@ -162,7 +194,16 @@ pub(super) struct NewRequest {
     pub(super) needs: Vec<EntityId>,
     pub(super) yes: Vec<EntityId>,
     pub(super) grant_omitted: Option<&'static str>,
+    pub(super) owned_by: Option<ForeignWorldPrivacyLink>,
+    pub(super) asked_from: Option<ForeignWorldPrivacyLink>,
 }
+
+/// The notice this vault's owners get for an agent's ask on a world a
+/// connected vault owns (FIX 4702): they carry it there.
+const CARRY_NOTICE: &str = "an agent asks to change the settings of a world shared from a \
+                            connected vault; its holders there decide: export the ask \
+                            (vault.federation.connect.world_privacy.export) and carry it to \
+                            that vault";
 
 impl Vault {
     /// Opens one request in the caller's writer and tells every holder at
@@ -194,9 +235,12 @@ impl Vault {
             status: WorldPrivacyRequestStatus::Pending,
             at,
             grant_omitted: new.grant_omitted.map(str::to_owned),
+            owned_by: new.owned_by,
+            asked_from: new.asked_from,
         };
         REQUESTS.put(&self.store, txn, &id, &request)?;
         let (kind, detail) = match new.kind {
+            _ if request.owned_by.is_some() => (NotificationKind::Ask, CARRY_NOTICE),
             WorldPrivacyRequestKind::Proposal => (
                 NotificationKind::WorldPrivacyProposed,
                 "an agent proposes stricter settings for this world; any one holder accepts it, \
@@ -227,6 +271,27 @@ impl Vault {
         id: EntityId,
     ) -> Result<Option<WorldPrivacyRequest>> {
         REQUESTS.get(&self.store, txn, &id)
+    }
+
+    /// The request a connected vault's ask opened here, by the pact and
+    /// vault it came over and its request there (FIX 4702), in the caller's
+    /// snapshot.
+    pub(super) fn foreign_ask_filed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pact: &str,
+        vault: &str,
+        ask: &str,
+    ) -> Result<Option<WorldPrivacyRequest>> {
+        Ok(REQUESTS
+            .scan(&self.store, txn)?
+            .into_iter()
+            .map(|(_, request)| request)
+            .find(|request| {
+                request.asked_from.as_ref().is_some_and(|from| {
+                    from.pact == pact && from.vault == vault && from.request.as_deref() == Some(ask)
+                })
+            }))
     }
 
     /// Writes `request` back in the caller's writer.
@@ -392,9 +457,14 @@ fn widen_ask(
     id: EntityId,
     principal: EntityId,
 ) -> Result<HumanDecisionRequest> {
-    let who = match &request.agent {
-        Some(agent) => format!("Agent {agent}"),
-        None => format!("Holder {}", request.author),
+    let who = match (&request.asked_from, &request.agent) {
+        (Some(from), _) => format!(
+            "Agent {} of connected vault {}",
+            from.agent.as_deref().unwrap_or("(unnamed)"),
+            from.vault
+        ),
+        (None, Some(agent)) => format!("Agent {agent}"),
+        (None, None) => format!("Holder {}", request.author),
     };
     let settings = serde_json::to_string(&request.settings)
         .map_err(|_| Error::InvariantViolation("world privacy settings encode"))?;
