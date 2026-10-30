@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
+
+if TYPE_CHECKING:
+    from .facade_types import LegalHoldNotice
 
 from ._native import NativeClient as _NativeClient
 
@@ -56,6 +59,7 @@ class OneironError(RuntimeError):
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
+        legal_hold: LegalHoldNotice | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -70,6 +74,7 @@ class OneironError(RuntimeError):
         self.resets_at = tuple(resets_at) if resets_at is not None else None
         # The refusal's stable reason codes, as its producer named them (FIX 7398).
         self.reason_codes = tuple(reason_codes) if reason_codes is not None else None
+        self.legal_hold = legal_hold
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -109,6 +114,8 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             if isinstance(reason_codes, list) and all(isinstance(entry, str) for entry in reason_codes)
             else None
         )
+        legal_hold = payload.get("legal_hold")
+        legal_hold = legal_hold if isinstance(legal_hold, dict) else None
         return OneironError(
             payload["code"],
             payload["message"],
@@ -118,6 +125,7 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             retry_after,
             resets_at,
             reason_codes,
+            legal_hold,
         )
     return OneironError(
         "INTERNAL_SERVER_ERROR",
@@ -654,6 +662,9 @@ class Oneiron:
         @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs":
             return Oneiron._VaultMeshVerbs(self._client)
+        @property
+        def outbox(self) -> "Oneiron._VaultOutboxVerbs":
+            return Oneiron._VaultOutboxVerbs(self._client)
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs":
             return Oneiron._VaultInspectionVerbs(self._client)
@@ -2448,6 +2459,21 @@ class Oneiron:
         def dial(self, spec):
             """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
             return json.loads(_translate(lambda: self._client.vault_mesh_dial(json.dumps(spec))))
+    class _VaultOutboxVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def diverged(self) -> "Oneiron._VaultOutboxDivergedVerbs":
+            return Oneiron._VaultOutboxDivergedVerbs(self._client)
+    class _VaultOutboxDivergedVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_list(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_answer(json.dumps(spec))))
     class _VaultInspectionVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

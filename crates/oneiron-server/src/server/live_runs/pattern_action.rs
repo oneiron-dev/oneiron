@@ -116,10 +116,11 @@ impl PatternLaunchRunner for ActionPatternRunner {
         asked: &SpawnNeed,
         prompt: &str,
         plan: &TeamPlan,
+        caller: &WriteActor,
     ) -> Result<PatternLaunchSpec> {
         let Some(scope) = &self.spend else {
             let line = self.provider.host_meter().map(|guard| (guard, None));
-            return self.agent_runner(line)?.run(skill, asked, prompt, plan);
+            return self.agent_runner(line)?.run(skill, asked, prompt, plan, caller);
         };
         // The open's own error can name the payer the scope bills, who may
         // not be the caller: the host log keeps it, the refusal names the
@@ -144,7 +145,7 @@ impl PatternLaunchRunner for ActionPatternRunner {
             // The start makes one model call, the capture: its look is
             // taken here, just before it.
             live.book_and_revise();
-            agent.run(skill, asked, prompt, plan)
+            agent.run(skill, asked, prompt, plan, caller)
         });
         live.book_rest()?;
         started

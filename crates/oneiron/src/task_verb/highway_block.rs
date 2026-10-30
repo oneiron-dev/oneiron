@@ -41,7 +41,9 @@ use super::highway_report::{
     DONE_MET_OPTION, DONE_UNMET_OPTION, fail_final_in, fail_unmet_in, land_done_in, requeue,
     short_digest,
 };
-use super::settlement_anchor::{SETTLEMENT_ANCHOR_ASK, anchor_settlement_in_txn, owner_answered};
+use super::settlement_anchor::{
+    SETTLEMENT_ANCHOR_ASK, anchor_kept_review_in_txn, anchor_settlement_in_txn, owner_answered,
+};
 use super::terminal_state::TaskExecutionState;
 use super::wire_decode::{task_body_optional, task_verb_body_in};
 use super::wire_encode::canonical_bytes;
@@ -540,6 +542,9 @@ pub(super) fn continue_blocked_task_in(
                 continuation.attempt,
             )?;
         }
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement, on that row when the ask kept one.
+        anchor_kept_review_in_txn(vault, txn, task_ref, continuation.attempt)?;
     }
     Ok(())
 }
