@@ -253,6 +253,7 @@ pub struct SlideUnitRefused {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
     pub offer: Option<PptxCommentTarget>,
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// One typed question over an artifact's units (ARCH-0076 §2): rows of a
@@ -825,6 +826,7 @@ impl Memory<'_> {
                     target: unit.target,
                     reason: unit.reason,
                     offer: unit.offer,
+                    judged_live: unit.judged_live,
                 })
                 .collect(),
         })
@@ -981,6 +983,7 @@ impl Memory<'_> {
                         "row": item.row,
                     }),
                     reason: "unreadable_file".into(),
+                    judged_live: None,
                 }));
                 run
             }

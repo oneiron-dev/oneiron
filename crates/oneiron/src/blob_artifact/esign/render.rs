@@ -16,6 +16,9 @@ pub use presentation::{
     FieldControl, FieldLayout, FieldMark, FieldPresentation, PageGeometry, layout_field,
     present_field,
 };
+mod admitted;
+pub use admitted::InspectionMemory;
+pub use lopdf::DecodeAdmissionError;
 mod evidence;
 mod fields;
 mod preflight;
@@ -203,7 +206,7 @@ pub fn prepare_esign_pdf_within(
         return Err(PdfPreparationError::MalformedPdf);
     }
     let bound = StreamBound::of(stream_decode_bytes);
-    let source = preflight::load(original, bound)?;
+    let source = preflight::load(original, bound, &admitted::Stage::UNADMITTED)?;
     reject_signatures(&source)?;
     let catalog = source.catalog()?;
     if [b"OCProperties".as_slice(), b"AlternatePresentations"]
@@ -380,7 +383,28 @@ pub fn inspect_pdf_pages_within(
     bytes: &[u8],
     stream_decode_bytes: u64,
 ) -> Result<Vec<PageGeometry>> {
-    let source = preflight::load(bytes, StreamBound::of(stream_decode_bytes))?;
+    inspect_in(bytes, stream_decode_bytes, &admitted::Stage::UNADMITTED)
+}
+/// [`inspect_pdf_pages_within`] with its parse's memory admitted by its host
+/// before it is allocated (FIX 8065): lopdf's object tables, stream copies
+/// and decodes, and the preflight's xref tables, decodes and revision
+/// snapshots, each asked of `memory` first; a finished stage gives its
+/// memory back ([`InspectionMemory::release`]). A refused admission ends the
+/// inspection as a malformed PDF; the host reads its own refusal.
+pub fn inspect_pdf_pages_admitted(
+    bytes: &[u8],
+    stream_decode_bytes: u64,
+    memory: std::sync::Arc<dyn InspectionMemory>,
+) -> Result<Vec<PageGeometry>> {
+    inspect_in(bytes, stream_decode_bytes, &admitted::Stage::on(memory))
+}
+/// The inspection of `bytes` on `stage`, which outlives the parsed document.
+fn inspect_in(
+    bytes: &[u8],
+    stream_decode_bytes: u64,
+    stage: &admitted::Stage,
+) -> Result<Vec<PageGeometry>> {
+    let source = preflight::load(bytes, StreamBound::of(stream_decode_bytes), stage)?;
     reject_signatures(&source)?;
     let mut input = Vec::new();
     pages(

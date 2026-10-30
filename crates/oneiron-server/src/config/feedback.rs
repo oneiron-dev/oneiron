@@ -1,10 +1,11 @@
 //! The `[feedback]` section: where the owner's feedback goes (OF-420). Unset,
 //! `/v1/owner/feedback` has nowhere to send and says so. The destination's
-//! credential never sits in the file: `serve` reads it from
-//! `ONEIRON_FEEDBACK_TOKEN`. Its `[feedback.inbox]` table opens this vault's
-//! own keyless inbox (ARCH-0056 #open-inbox), off unless enabled. Its
-//! `[feedback.triage]` table binds the GitHub repositories the Coach's
-//! feedback sweep reads; none by default.
+//! credential never sits in the file: `key_secret` names the vault secret
+//! holding the bearer, read at the custody door when serve starts, else a
+//! plain serve reads `ONEIRON_FEEDBACK_TOKEN`. Its `[feedback.inbox]` table
+//! opens this vault's own keyless inbox (ARCH-0056 #open-inbox), off unless
+//! enabled. Its `[feedback.triage]` table binds the GitHub repositories the
+//! Coach's feedback sweep reads; none by default.
 
 use std::collections::BTreeSet;
 
@@ -20,6 +21,9 @@ pub struct FeedbackConfig {
     pub destination: Option<FeedbackDestination>,
     /// The exact HTTPS endpoint the owner's approval names.
     pub endpoint: Option<String>,
+    /// The vault secret holding the private endpoint's bearer, read at the
+    /// custody door when serve starts; wins over `ONEIRON_FEEDBACK_TOKEN`.
+    pub key_secret: Option<String>,
     /// `[feedback.inbox]`: the open inbox this server keeps.
     pub inbox: FeedbackInboxConfig,
     /// `[feedback.triage]`: the repositories the feedback sweep reads.
@@ -30,6 +34,11 @@ pub struct FeedbackConfig {
 /// on by default in the cloud (ARCH-0056 r6), off on self-host. Every send
 /// still asks the owner first.
 pub const CLOUD_FEEDBACK_ENDPOINT: &str = "https://oneiron.dev/feedback";
+
+/// The custody effector the feedback bearer secret is bound to: the door
+/// hands the key to a feedback send and to nothing else. The owner binds it
+/// with `POST /v1/owner/secrets/bind`, effector `feedback:send`.
+const FEEDBACK_BEARER_EFFECTOR: &str = "feedback:send";
 
 /// The `[feedback.inbox]` table. On, anyone may leave this vault a note at
 /// `/v1/feedback` with no key and no moderation; the counts below are its
@@ -73,6 +82,7 @@ impl FeedbackConfig {
         Self {
             destination: Some(FeedbackDestination::Collector),
             endpoint: Some(CLOUD_FEEDBACK_ENDPOINT.to_owned()),
+            key_secret: None,
             inbox: FeedbackInboxConfig::default(),
             triage: FeedbackTriageConfig::default(),
         }
@@ -86,12 +96,26 @@ impl FeedbackConfig {
         })
     }
 
+    /// The bearer serve sends with: the vault secret `key_secret` names,
+    /// read at the custody door bound to `feedback:send`; `None` when none
+    /// is named, or when the secret does not resolve (said once).
+    pub(crate) fn bearer_from_secret(
+        &self,
+        vault: &oneiron::Vault,
+    ) -> Option<zeroize::Zeroizing<String>> {
+        let name = self.key_secret.as_deref()?;
+        read_bearer_secret(vault, name, FEEDBACK_BEARER_EFFECTOR, "feedback.key_secret")
+    }
+
     pub(super) fn apply_override(&mut self, over: FeedbackConfigOverride) {
         if let Some(value) = over.destination {
             self.destination = Some(value);
         }
         if let Some(value) = over.endpoint {
             self.endpoint = Some(value);
+        }
+        if let Some(value) = over.key_secret {
+            self.key_secret = Some(value);
         }
         if let Some(inbox) = over.inbox {
             if let Some(value) = inbox.enabled {
@@ -117,6 +141,15 @@ impl FeedbackConfig {
         if self.inbox.notes_per_sender == 0 || self.inbox.notes_per_hour == 0 {
             anyhow::bail!("feedback.inbox.notes_per_sender and notes_per_hour must be at least 1");
         }
+        if let Some(secret) = &self.key_secret
+            && (secret.is_empty()
+                || secret.len() > 256
+                || !secret.bytes().all(|b| b.is_ascii_graphic()))
+        {
+            anyhow::bail!(
+                "feedback.key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
+            );
+        }
         let mut bound = BTreeSet::new();
         for endpoint in &self.triage.github_sources {
             let Some(source) = github_issue_source(endpoint) else {
@@ -141,6 +174,45 @@ impl FeedbackConfig {
             _ => anyhow::bail!("set feedback.destination and feedback.endpoint together"),
         }
     }
+}
+
+/// Reads the vault secret `name` at the custody door bound to `effector`,
+/// for a private endpoint's bearer (FIX 5013). The key is copied out and
+/// wiped on drop, so the send never runs inside the door's transaction. A
+/// secret that does not resolve is said once and reads as none, as a
+/// missing bearer does today; its value is never logged.
+pub(super) fn read_bearer_secret(
+    vault: &oneiron::Vault,
+    name: &str,
+    effector: &'static str,
+    field: &'static str,
+) -> Option<zeroize::Zeroizing<String>> {
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    if let Err(error) = vault.inject_secret_at_door(name, effector, &mut |value: &[u8]| {
+        // Sized once, so no reallocation leaves an unwiped copy.
+        bytes.reserve_exact(value.len());
+        bytes.extend_from_slice(value);
+        Ok(())
+    }) {
+        tracing::warn!(
+            %error,
+            secret = name,
+            "{field} names a vault secret the custody door did not release; the endpoint sends with no bearer"
+        );
+        return None;
+    }
+    let bearer = std::str::from_utf8(&bytes)
+        .ok()
+        .map(str::trim)
+        .unwrap_or_default();
+    if bearer.is_empty() {
+        tracing::warn!(
+            secret = name,
+            "{field} names a vault secret holding no bearer text; the endpoint sends with none"
+        );
+        return None;
+    }
+    Some(zeroize::Zeroizing::new(bearer.to_owned()))
 }
 
 /// The name the feedback sweep gives the repository a bound issues endpoint
@@ -183,6 +255,7 @@ fn github_name(part: &str) -> bool {
 pub(super) struct FeedbackConfigOverride {
     pub(super) destination: Option<FeedbackDestination>,
     pub(super) endpoint: Option<String>,
+    pub(super) key_secret: Option<String>,
     pub(super) inbox: Option<FeedbackInboxOverride>,
     pub(super) triage: Option<FeedbackTriageOverride>,
 }
@@ -218,6 +291,8 @@ pub(super) fn lookup_feedback_override(
     let over = FeedbackConfigOverride {
         destination,
         endpoint: lookup("ONEIRON_FEEDBACK_ENDPOINT"),
+        // File-only, like `[linear]`'s secrets: no environment names one.
+        key_secret: None,
         inbox: lookup_bool(lookup, "ONEIRON_FEEDBACK_INBOX")?.map(|enabled| {
             FeedbackInboxOverride {
                 enabled: Some(enabled),
@@ -236,6 +311,7 @@ impl std::fmt::Debug for FeedbackConfig {
         f.debug_struct("FeedbackConfig")
             .field("destination", &self.destination)
             .field("endpoint_host", &endpoint_host(self.endpoint.as_deref()))
+            .field("key_secret", &self.key_secret)
             .field("inbox", &self.inbox)
             .field("triage", &self.triage)
             .finish()
@@ -255,6 +331,7 @@ impl std::fmt::Debug for FeedbackConfigOverride {
         f.debug_struct("FeedbackConfigOverride")
             .field("destination", &self.destination)
             .field("endpoint_host", &endpoint_host(self.endpoint.as_deref()))
+            .field("key_secret", &self.key_secret)
             .field("inbox", &self.inbox)
             .field(
                 "triage_github_source_hosts",
