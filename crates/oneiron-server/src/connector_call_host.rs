@@ -36,6 +36,8 @@
 //! in place of the route's own secret, through the same door for the same
 //! effector; the door rechecks the record's binding at each send. A call under
 //! a secret grant (FIX 4313) redeems the grant at its door at each send.
+//! Every door reads the call's durable issuer binding again before the
+//! credential leaves, and a row an issuer change holds sends nothing (FIX 9303).
 //! Whatever selected it, everything the connector says is cleared of the
 //! value a send presented inside its door, with those bytes (`presenting`):
 //! a `self.use` send declares elicitation as any other does, and its
@@ -79,7 +81,7 @@ mod sent;
 mod stream_pump;
 use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
-use reply_read::{Reply, StreamEvent, open_reply, read_reply};
+use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
@@ -151,6 +153,8 @@ pub struct ServedConnectorCallHost {
     resume: Option<RoundResume>,
     /// The remote task the last send's connector accepted it as (FIX 7960).
     remote_task: Option<RemoteTaskHandle>,
+    /// The hold the last send met at its door, until taken (FIX 9303).
+    held: Option<&'static str>,
 }
 
 impl ServedConnectorCallHost {
@@ -201,6 +205,7 @@ impl ServedConnectorCallHost {
             presentation: None,
             resume: None,
             remote_task: None,
+            held: None,
         })
     }
 
@@ -237,8 +242,11 @@ impl ServedConnectorCallHost {
         let Some(presenting) = presenting else {
             return Sent::not_sent(OutboundFailureKind::Rejected, None);
         };
+        // The door reads the call's issuer binding again (FIX 9303).
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
         // A grant the send refuses answers as its typed refusal, not TransportNotStarted (FIX 6673).
-        presenting.send(&self.vault, &exchange, presented)
+        presenting.send(&self.vault, &exchange, row, presented)
     }
 
     /// The elicitation this send declares, or `None`: a call the engine
@@ -312,6 +320,7 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.awaiting = sent.awaiting;
         self.resume = sent.resume;
         self.remote_task = sent.remote_task;
+        self.held = sent.held;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
@@ -360,6 +369,10 @@ impl ConnectorCallHost for ServedConnectorCallHost {
 
     fn take_sent_presentation(&mut self) -> Option<SentPresentation> {
         self.presentation.take()
+    }
+
+    fn take_send_hold(&mut self) -> Option<&'static str> {
+        self.held.take()
     }
 
     fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
@@ -487,29 +500,6 @@ fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Ke
         questions,
         result.get(wire::REQUEST_STATE).map(KeptWire::keep),
     ))
-}
-
-/// A `tools/call` answer as the tool's reply: its result, or the JSON-RPC
-/// error it answered with; `None` when it carries neither.
-fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
-    if let Some(error) = message.get("error") {
-        return Some(UntrustedToolResult {
-            content: Value::Array(Vec::new()),
-            structured_content: None,
-            is_error: true,
-            rpc_error: Some(error.clone()),
-        });
-    }
-    let result = message.get("result")?;
-    Some(UntrustedToolResult {
-        content: result
-            .get("content")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new())),
-        structured_content: result.get("structuredContent").cloned(),
-        is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
-        rpc_error: None,
-    })
 }
 
 /// What a send that declares elicitation keeps a question with.

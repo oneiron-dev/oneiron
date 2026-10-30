@@ -97,18 +97,30 @@ impl ServedConnectorCallHost {
 
 impl Presenting {
     /// Runs `exchange` with this credential, inside its door, and clears
-    /// what came back there. `presented` is what the door released.
+    /// what came back there. `presented` is what the door released. `row`
+    /// is the call's governing key and tool: inside the door, the last point
+    /// before the credential leaves, their durable issuer binding is read
+    /// again, and while an issuer change the owner has not accepted holds
+    /// the row, nothing is presented or sent (FIX 9303).
     pub(super) fn send(
         self,
         vault: &Vault,
         exchange: &Exchange<'_>,
+        row: Option<(&EntityId, &str)>,
         presented: &mut Option<SentPresentation>,
     ) -> Sent {
         let Some(door) = self.door else {
             return exchange.run(None, None);
         };
         let mut sent = None;
+        let mut held = None;
         let mut present = |value: &[u8]| -> oneiron::Result<()> {
+            if let Some((key_ref, tool)) = row {
+                held = vault.connector_issuer_hold(key_ref, tool)?;
+                if held.is_some() {
+                    return Ok(());
+                }
+            }
             let header = authorization_header(value)?;
             let value = SentValue::new(value, &self.text);
             sent = Some(exchange.run(Some(header), Some(&value)).cleared(&value));
@@ -144,6 +156,11 @@ impl Presenting {
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
             Door::Unresolved => Ok(None),
         };
+        // A held row presented nothing to the connector: the send answers
+        // with its hold (FIX 9303).
+        if let Some(reason) = held {
+            return Sent::held(reason);
+        }
         // The record a door that presented its value resolved (FIX 5455),
         // and the generation it released.
         *presented = door.ok().flatten();

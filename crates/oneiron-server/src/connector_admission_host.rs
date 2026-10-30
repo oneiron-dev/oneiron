@@ -73,7 +73,10 @@ pub(crate) fn client() -> oneiron::Result<Client> {
 
 /// Runs `work` with the connector's credential as an `Authorization`
 /// header, inside the credential door, or with none when the key names no
-/// custody record. The header never leaves `work`.
+/// custody record. The header never leaves `work`. Inside the door, the
+/// connector's durable issuer bindings are read again: while one meets an
+/// issuer change the owner has not accepted, `work` never runs and the
+/// hold reason refuses it (FIX 9303).
 pub(crate) fn with_credential<T>(
     vault: &Vault,
     secret_ref: Option<&str>,
@@ -86,13 +89,21 @@ pub(crate) fn with_credential<T>(
     let effector = format!("connector:{connector}");
     let mut work = Some(work);
     let mut done = None;
+    let mut held = None;
     let _receipt = vault.inject_secret_at_door(secret_ref, &effector, &mut |value: &[u8]| {
+        held = vault.connector_issuer_hold_for_connector(connector)?;
+        if held.is_some() {
+            return Ok(());
+        }
         let header = authorization_header(value)?;
         if let Some(work) = work.take() {
             done = Some(work(Some(&header)));
         }
         Ok(())
     })?;
+    if let Some(reason) = held {
+        return Err(refused(reason));
+    }
     done.ok_or_else(|| refused("the connector credential door did not open"))
 }
 
