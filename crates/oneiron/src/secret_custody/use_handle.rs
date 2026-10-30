@@ -40,6 +40,7 @@ mod bind;
 mod lease;
 mod output;
 mod receipt;
+mod seal_key;
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
@@ -70,6 +71,7 @@ pub use self::output::{
 use self::output::{clear_text, handle_text};
 pub(crate) use self::receipt::SecretUseContext;
 use self::receipt::{UsePhase, Used};
+pub use self::seal_key::{SECRET_USE_SEAL_EFFECTOR, SECRET_USE_SEAL_SIGN};
 
 /// The owner door that adds a binding to a secret, named by every refusal of
 /// a handle that has none for the operation's effector.

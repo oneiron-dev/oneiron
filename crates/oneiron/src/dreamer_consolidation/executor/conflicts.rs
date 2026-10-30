@@ -90,6 +90,14 @@ impl ConsolidationExecutor<'_> {
                     "fast_path",
                 );
                 candidate.answers.extend(answer);
+                // FIX 12084: a fast-path/bound-correction head resolved its
+                // conflict; the tournament gate reads it as contested.
+                if matches!(
+                    self.strategy,
+                    crate::dreamer_runner::DreamerClaimAuthoringStrategy::Tournament
+                ) {
+                    candidate.contested = true;
+                }
                 dropped.extend(conflict.candidate_indexes.iter().copied());
                 merged.push(candidate);
                 continue;
@@ -269,6 +277,13 @@ impl ConsolidationExecutor<'_> {
                         answers.resolution.as_deref().unwrap_or("merge"),
                     );
                     output.answers.extend(answer);
+                    // FIX 12084: a merged head resolved its conflict.
+                    if matches!(
+                        self.strategy,
+                        crate::dreamer_runner::DreamerClaimAuthoringStrategy::Tournament
+                    ) {
+                        output.contested = true;
+                    }
                     merged.push(output);
                 }
                 MergeResolution::Escalate => {

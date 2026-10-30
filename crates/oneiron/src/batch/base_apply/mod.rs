@@ -186,9 +186,43 @@ struct BatchApplyState {
     clippy::too_many_arguments,
     reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
 )]
+pub(super) fn apply_ops_with_origin(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<()> {
+    apply_ops_with_authority_beside(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        origin,
+        None,
+        None,
+    )
+}
+
+/// [`apply_ops_with_origin`] for a batch that carries other authority rows
+/// (`authority_beside`, FIX 11764): each replicated AUTHORITY_LOG put is
+/// judged beside them, so history that arrives in two or more rows together
+/// lands. A replicated MESSAGE put meets the witness check with
+/// `own_device`, the lane the sync ingest door gave its row, which counts
+/// only for that row and its exact bytes (FIX 9600).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
+)]
 // One transaction applies every op and then its whole-batch validators in order.
 #[allow(clippy::too_many_lines)]
-pub(super) fn apply_ops_with_origin(
+pub(super) fn apply_ops_with_authority_beside(
     store: &Store,
     config: &crate::config::VaultConfig,
     analyzer: &crate::analyzer::MultilingualAnalyzer,
@@ -197,6 +231,8 @@ pub(super) fn apply_ops_with_origin(
     text_index_trusted: bool,
     mut gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
+    authority_beside: Option<crate::authority::RowsBeside<'_>>,
+    own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
@@ -389,6 +425,8 @@ pub(super) fn apply_ops_with_origin(
                     put_options,
                     origin,
                     text_index_trusted,
+                    authority_beside,
+                    own_device,
                 )?;
             }
             BatchOp::ClaimCandidate {

@@ -129,7 +129,7 @@ fn exposure_in(
                 space,
                 private: false,
                 ..
-            } => relationships.extend(space),
+            } => relationships.extend(space.into_iter().flatten()),
             _ => return Ok(None),
         }
     }

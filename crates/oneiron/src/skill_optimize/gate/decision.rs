@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::error::ArtifactError;
+use crate::limit_ask::EngineLimit;
 use crate::skill_optimize::labels::JUDGE_SKILL_ID;
 
 mod commit;
@@ -339,10 +340,13 @@ fn rule_on_proposal(
         )?
     };
 
-    // The scored set has done its work; what the row keeps of it is the bounded
-    // display list, and the basis keeps the rest.
-    let truncated = inputs.held_out.len() > SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE;
-    let display = bounded_receipts(inputs.held_out);
+    // The scored set has done its work; the row keeps it whole, and the
+    // longest it ever grows is measured, never cut (FIX 5099).
+    let _ = vault.measure_limit(
+        EngineLimit::MaintenanceRowItems,
+        u64::try_from(inputs.held_out.len()).unwrap_or(u64::MAX),
+    );
+    let display = inputs.held_out;
     let basis = inputs.basis;
     let target = inputs.target;
 
@@ -390,7 +394,7 @@ fn rule_on_proposal(
             held_out_receipts: display,
             held_out_count: basis.evidence_count,
             held_out_digest: basis.evidence_digest.clone(),
-            held_out_truncated: truncated,
+            held_out_truncated: false,
             proposal_digest: basis.proposal_digest.clone(),
             target_digest: basis.target_digest.clone(),
             proposal_tier: basis.proposal_tier,

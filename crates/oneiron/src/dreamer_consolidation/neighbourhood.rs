@@ -149,8 +149,9 @@ struct KnownClaim {
     version: ScopeResource,
     predicate: String,
     value: String,
-    /// The relationship the head holds within, when it names one (FIX 7575).
-    rel: Option<EntityId>,
+    /// The relationships the head holds within, when it names a set (FIX
+    /// 7575).
+    rel: crate::claim::RelationshipScope,
 }
 
 impl Neighbourhood {
@@ -618,7 +619,7 @@ fn listable(
         version,
         predicate: prior.body.predicate.clone(),
         value: rmpv_to_json(&prior.body.value).to_string(),
-        rel: prior.body.rel,
+        rel: prior.body.rel.clone(),
     })
 }
 

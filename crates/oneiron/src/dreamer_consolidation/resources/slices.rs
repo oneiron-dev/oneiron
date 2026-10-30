@@ -127,8 +127,8 @@ impl BranchResources<'_> {
                 // The relationships a candidate may hold within: the bound
                 // one, or on an unbound branch each one the chunk's words
                 // are scoped to (FIX 10357).
-                let rels: Vec<EntityId> = match scope.relationship {
-                    Some(bound) => vec![bound],
+                let rels: Vec<EntityId> = match &scope.relationship {
+                    Some(bound) => bound.iter().copied().collect(),
                     None => self.word_relationships(&ids)?.into_iter().collect(),
                 };
                 for page in &pages {

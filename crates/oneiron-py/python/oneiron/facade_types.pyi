@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4393 declarations.
-Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1213 facade rows, 4401 declarations.
+Inputs: 1141 of 1213 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1047 of 1213 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5693,6 +5693,7 @@ class SkillTradeoffAsk(TypedDict):
     question: SkillTradeoffQuestion
     jev: NotRequired[JevTradeoffVerdict | None]
     rung: int
+    judge_rubric_digest: NotRequired[str | None]
 class SkillOptimizeTradeoffAskView(TypedDict):
     question_digest: str
     ask: SkillTradeoffAsk
@@ -5700,6 +5701,11 @@ class SkillOptimizeTradeoffAskView(TypedDict):
 class SkillOptimizeTradeoffPickRequest(TypedDict):
     proposal: EntityId
     question_digest: str
+    choice: TradeoffChoice
+class SkillOptimizeTradeoffResolveRequest(TypedDict):
+    proposal: EntityId
+    pending: EntityId
+    evidence: str
     choice: TradeoffChoice
 class SkillGovernanceSetRequest(TypedDict):
     entity: EntityId
@@ -6941,7 +6947,7 @@ ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResour
 class ScopeScope(TypedDict):
     world: str | None
     facet: str | None
-    relationship: str | None
+    relationship: list[str] | None
     project: str | None
     readable: list[ScopeResource]
     writable: list[ScopeResource]
@@ -9425,7 +9431,11 @@ class CustodyRegisterCheckUnchecked(TypedDict):
     reason: CustodyUncheckedReason
     refs: list[str]
 CustodyRegisterCheck = CustodyRegisterCheckChecked | CustodyRegisterCheckUnchecked
-BundleHomeWarning = Literal["home_does_not_keep_sealed_bundles", "home_profile_unknown"]
+class BundleHomeWarningAwaitingReaderBody(TypedDict):
+    worlds: list[EntityId]
+class BundleHomeWarningAwaitingReader(TypedDict):
+    awaiting_reader: BundleHomeWarningAwaitingReaderBody
+BundleHomeWarning = Literal["home_does_not_keep_sealed_bundles", "home_profile_unknown"] | BundleHomeWarningAwaitingReader
 OwnerWorkCancelState = Literal["cancelled", "already_enacted", "already_refused"]
 class OwnerWorkCancelNote(TypedDict):
     entries: list[str]
@@ -9724,6 +9734,7 @@ class CourtesyDeleteSendRequest(TypedDict):
     signed: NotRequired[str | None]
 class CourtesyDeleteSent(TypedDict):
     request: str
+    pages: list[str]
     pact: str
     recipient: str
     status: str
@@ -11998,7 +12009,7 @@ class ClaimInput(TypedDict):
     confidence: float
     source: str
     world_ref: NotRequired[str | None]
-    relationship_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[list[str] | None]
     scope: NotRequired[Any | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
@@ -14214,6 +14225,7 @@ class SlideJudgment(TypedDict):
     presence: NotRequired[TypedDecision | None]
     location: NotRequired[SlideLocation | None]
     band_mode: BandMode
+    ceiling: DecisionRung
     renderer: str
     frontier: list[int]
     media: NotRequired[list[DecisionMedia]]
@@ -16068,6 +16080,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
+    executor: NotRequired[str | None]
     artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
@@ -16099,6 +16112,12 @@ class AmendmentJudgmentView(TypedDict):
     d_norm: float
     engine_ver: str
     at: int
+    rejected: bool
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    judge: NotRequired[str | None]
+    judge_model: NotRequired[str | None]
+    on_judge_model: bool
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
     artifact_ref: NotRequired[EntityId | None]
@@ -17053,6 +17072,7 @@ class VoiceTargetReceipt(TypedDict):
     vendor_voice_id: str
     cloned_at: int
     revision: str
+    awaiting_verification: bool
 class VoiceTargetEvictRequest(TypedDict):
     voice_id: str
     target: str
@@ -20282,6 +20302,36 @@ class ConsolidationLineageView(TypedDict):
     latest_job_ref: NotRequired[str | None]
     steps: list[ConsolidationStepRef]
     next_step: NotRequired[str | None]
+class DreamerCandidateDecisionsRequest(TypedDict):
+    job_ref: str
+class KeptRole(TypedDict):
+    rank: RoleRank
+    project: NotRequired[str | None]
+class KeptRoute(TypedDict):
+    role: KeptRole
+    ceiling: RoleRank
+    act: AskAct
+class KeptAnswer(TypedDict):
+    answer: DecisionAnswer
+    answered_at: int
+    role: KeptRole
+    kind: HolderKind
+    changed: bool
+    reason: NotRequired[str | None]
+    rule: NotRequired[HostRuleRef | None]
+class KeptAsk(TypedDict):
+    seq: int
+    to: KeptRoute
+    answer: NotRequired[KeptAnswer | None]
+class KeptDecision(TypedDict):
+    decision: TypedDecision
+    ask: NotRequired[KeptAsk | None]
+class DreamerDecidedCandidateView(TypedDict):
+    job_ref: str
+    position: int
+    subject: str
+    corrects: str | None
+    decisions: list[KeptDecision]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]
@@ -20362,7 +20412,7 @@ class ConsolidationRootBucket(TypedDict):
     predicate_root: str
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
-    relationship: NotRequired[str | None]
+    relationship: NotRequired[list[str] | None]
     project: str
 class ConsolidationReference(TypedDict):
     source_id: str

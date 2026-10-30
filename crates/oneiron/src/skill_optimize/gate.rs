@@ -113,8 +113,7 @@ use sha2::{Digest, Sha256};
 use super::{
     GOAL_ID_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     PROVENANCE_OPTIMIZE_OF_KEY, PROVENANCE_OPTIMIZE_OF_VERSION_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
-    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SkillGoalId, invalid, proven_cycle, tier_verdict_in_txn,
-    validate_goal_birth_in_txn,
+    SkillGoalId, invalid, proven_cycle, tier_verdict_in_txn, validate_goal_birth_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -218,7 +217,9 @@ pub(crate) use ledger::{
 pub(crate) use preflight::{
     SkillEditTrialBasis, skill_edit_preflight_passed_in_txn, skill_edit_trial_basis_in_txn,
 };
-pub(crate) use project_goal::{project_axes, project_goal_revision_proposals_in_txn};
+pub(crate) use project_goal::{
+    project_axes, project_goal_revision_proposals_in_txn, project_rules_for_record,
+};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;
@@ -229,9 +230,8 @@ pub(super) use decision::{clear_pre_score_race_hook, set_pre_score_race_hook};
 // The seam between the children: a helper one child hands another is
 // re-imported here, so every mover resolves it exactly as it did inline.
 use admission::{
-    bounded_receipts, open_pending_tradeoff_in_txn, provenance_str,
-    record_tradeoff_resolution_in_txn, require_open_optimizer_proposal, target_is_current,
-    target_of,
+    open_pending_tradeoff_in_txn, provenance_str, record_tradeoff_resolution_in_txn,
+    require_open_optimizer_proposal, target_is_current, target_of,
 };
 use basis::{
     ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,

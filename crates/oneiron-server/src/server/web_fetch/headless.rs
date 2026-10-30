@@ -24,6 +24,7 @@
 //! a start that stops, by the phase it stopped at, and a guest whose driver
 //! attached. What the page does after that moves nothing.
 
+mod body;
 mod handler;
 mod relay;
 

@@ -39,12 +39,12 @@ const LINEAGE_ORIGIN: SideTable<AttemptId, AttemptId, Named> =
 /// Where one extraction's people are minted: the parent extraction it
 /// belongs to and the exposure axes its sources are admitted under. The
 /// project is each anchor source's own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::dreamer_consolidation) struct MintNamespace {
     extraction: AttemptId,
     world: Option<EntityId>,
     facet: Option<EntityId>,
-    relationship: Option<EntityId>,
+    relationship: crate::claim::RelationshipScope,
 }
 
 impl MintNamespace {
@@ -56,7 +56,7 @@ impl MintNamespace {
         parent: Option<AttemptId>,
         world: Option<EntityId>,
         facet: Option<EntityId>,
-        relationship: Option<EntityId>,
+        relationship: crate::claim::RelationshipScope,
     ) -> Self {
         Self {
             extraction: parent.unwrap_or(attempt),
@@ -69,9 +69,12 @@ impl MintNamespace {
     /// The namespace's bytes, as a request's label binding names them.
     pub(in crate::dreamer_consolidation) fn identity(&self) -> Vec<u8> {
         let mut bytes = self.extraction.as_bytes().to_vec();
-        for axis in [self.world, self.facet, self.relationship] {
+        for axis in [self.world, self.facet] {
             bytes.extend(optional(axis));
         }
+        bytes.extend(crate::claim::relationship_scope_transcript(
+            self.relationship.as_ref(),
+        ));
         bytes
     }
 }
@@ -236,7 +239,7 @@ fn bind_one(
     let (world, facet, relationship, project) = (
         optional(namespace.world),
         optional(namespace.facet),
-        optional(namespace.relationship),
+        crate::claim::relationship_scope_transcript(namespace.relationship.as_ref()),
         optional(shown.project),
     );
     let parts: [&[u8]; 8] = [

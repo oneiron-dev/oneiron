@@ -12,7 +12,7 @@ pub(super) struct ClaimWrite<'a> {
     pub(super) source: crate::claim::ClaimSource,
     pub(super) value: rmpv::Value,
     pub(super) world: Option<EntityId>,
-    pub(super) relationship: Option<EntityId>,
+    pub(super) relationship: crate::claim::RelationshipScope,
     pub(super) scope_rmpv: Option<rmpv::Value>,
     pub(super) now: u64,
     pub(super) occurred_at: u64,
@@ -102,8 +102,12 @@ impl Memory<'_> {
         };
         let relationship = input
             .relationship_ref
-            .as_deref()
-            .map(|r| self.resolve_ref(r))
+            .as_ref()
+            .map(|refs| {
+                refs.iter()
+                    .map(|r| self.resolve_ref(r))
+                    .collect::<MemoryResult<std::collections::BTreeSet<EntityId>>>()
+            })
             .transpose()?;
         let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
         let now = self.vault.store.clock.now_recorded_at();
@@ -113,7 +117,7 @@ impl Memory<'_> {
             subject,
             input,
             world,
-            relationship,
+            relationship: relationship.clone(),
         };
         // OF-023: a want derived from behaviour is minted beside the stated
         // one, never over it. Only the replacing doors (commit, upsert) take

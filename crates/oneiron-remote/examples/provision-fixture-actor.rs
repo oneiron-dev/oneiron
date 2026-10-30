@@ -48,6 +48,7 @@ fn main() -> std::process::ExitCode {
     let options = oneiron_remote::OpenOptions {
         dimensions: Some(1024),
         device_class: None,
+        hold_checkpoint_root_signer: false,
     };
     let client =
         match oneiron_remote::OneironClient::open(Some(std::path::Path::new(&path)), &options) {

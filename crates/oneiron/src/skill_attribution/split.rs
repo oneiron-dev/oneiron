@@ -5,11 +5,11 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::limit_ask::EngineLimit;
 use crate::learning::TypeRef;
 use crate::learning_setting::{
     ATTRIBUTION_UNCLEAR_FLOOR, setting_value, setting_value_in_scope_sourced_in_txn,
 };
+use crate::limit_ask::EngineLimit;
 
 use super::judge::{Attributed, AttributionDecisions, AttributionRules, JudgeTrace};
 use super::types::{

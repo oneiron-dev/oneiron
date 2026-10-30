@@ -50,10 +50,12 @@ impl ListingPage<'_> {
             out.push_str(&entity_line(label, entity.label.as_deref()));
             for claim in claims {
                 let label = labels.assign(LabelKind::Claim, claim.id);
-                let rel = claim
-                    .rel
-                    .map(|rel| labels.assign(LabelKind::Relationship, rel));
-                out.push_str(&claim_line(label, claim, rel));
+                let rel: Option<Vec<CallLabel>> = claim.rel.as_ref().map(|ids| {
+                    ids.iter()
+                        .map(|rel| labels.assign(LabelKind::Relationship, *rel))
+                        .collect()
+                });
+                out.push_str(&claim_line(label, claim, rel.as_deref()));
             }
         }
         out
@@ -67,11 +69,16 @@ fn entity_line(label: CallLabel, name: Option<&str>) -> String {
     }
 }
 
-fn claim_line(label: CallLabel, claim: &KnownClaim, rel: Option<CallLabel>) -> String {
+fn claim_line(label: CallLabel, claim: &KnownClaim, rel: Option<&[CallLabel]>) -> String {
     match rel {
         Some(rel) => format!(
-            "  claim {label} {} = {} [{rel}]\n",
-            claim.predicate, claim.value
+            "  claim {label} {} = {} [{}]\n",
+            claim.predicate,
+            claim.value,
+            rel.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         None => format!("  claim {label} {} = {}\n", claim.predicate, claim.value),
     }
@@ -96,8 +103,17 @@ pub(super) fn claim_line_bytes(claim: &KnownClaim) -> usize {
         claim.value
     )
     .len();
-    match claim.rel {
-        Some(rel) => line + format!(" [{}]", rel.to_hex()).len(),
+    match &claim.rel {
+        Some(ids) => {
+            line + format!(
+                " [{}]",
+                ids.iter()
+                    .map(EntityId::to_hex)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+            .len()
+        }
         None => line,
     }
 }
