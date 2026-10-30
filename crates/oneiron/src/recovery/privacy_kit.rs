@@ -19,7 +19,7 @@ mod store;
 mod tests;
 
 pub use piece::{KitId, KitPiece, PieceExport, RecoveryCode};
-pub(crate) use store::{KitPieceStore, join_kept_piece};
+pub(crate) use store::{KitPiecePair, KitPieceStore, join_kept_piece};
 
 const SALT_CONTEXT: &str = "oneiron/kit/v2/passphrase-salt";
 const TAG_CONTEXT: &str = "oneiron/kit/v2/tag";

@@ -5,9 +5,11 @@
 //! A piece's slot bytes (body and check, 50 bytes) span two 32-byte slots: the head
 //! holds the first 32, the tail the rest and zeros. Each kit kind has its own pair, so
 //! the data-key kit and the recovery-root kit each keep one piece here, and issuing
-//! one replaces only its own. The two writes are not one platform operation: a pair
-//! torn between two pieces fails the piece's check and reads as corrupt, never as a
-//! piece.
+//! one replaces only its own. Each kind also has a pending pair (FIX 11977): a world
+//! kit's draw keeps its piece there, and its confirm moves it to the current pair, so
+//! a drawn kit the owner never confirms leaves the current kit's piece in place. The
+//! two writes are not one platform operation: a pair torn between two pieces fails
+//! the piece's check and reads as corrupt, never as a piece.
 
 use std::sync::Arc;
 
@@ -19,6 +21,15 @@ use super::{KitPiece, KitSecretKind};
 
 /// One keystore slot's size.
 const SLOT: usize = 32;
+
+/// Which of a kit kind's two slot pairs (FIX 11977).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KitPiecePair {
+    /// The piece of the kit in force.
+    Current,
+    /// The piece of a kit drawn and not yet confirmed.
+    Pending,
+}
 
 /// This install's kit-piece slots for one vault.
 pub(crate) struct KitPieceStore {
@@ -42,11 +53,11 @@ impl KitPieceStore {
         }
     }
 
-    /// Keeps `piece` as this machine's piece of its kit kind, replacing the piece
-    /// an earlier kit of that kind kept. A tail that does not write after its head
-    /// did empties the pair: half a piece is no piece.
-    pub(crate) fn put(&self, piece: &KitPiece) -> oneiron_keystore::Result<()> {
-        let [head, tail] = self.slots(piece.kind());
+    /// Keeps `piece` in `pair` of its kit kind, replacing the piece an earlier kit
+    /// of that kind kept there. A tail that does not write after its head did
+    /// empties the pair: half a piece is no piece.
+    pub(crate) fn put(&self, piece: &KitPiece, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
+        let [head, tail] = self.slots(piece.kind(), pair);
         let bytes = piece.slot_bytes();
         let mut head_bytes = Zeroizing::new([0u8; SLOT]);
         head_bytes.copy_from_slice(&bytes[..SLOT]);
@@ -54,17 +65,21 @@ impl KitPieceStore {
         tail_bytes[..SLOT_LEN - SLOT].copy_from_slice(&bytes[SLOT..]);
         self.write(&head, &head_bytes)?;
         if let Err(error) = self.write(&tail, &tail_bytes) {
-            let _ = self.delete(piece.kind());
+            let _ = self.delete(piece.kind(), pair);
             return Err(error);
         }
         Ok(())
     }
 
-    /// This machine's piece of a kit of `kind`; `None` when both its slots are
-    /// empty. One half alone, a tail with bytes past the piece, and bytes that are
-    /// not a piece of `kind` are `Corrupt`.
-    pub(crate) fn get(&self, kind: KitSecretKind) -> oneiron_keystore::Result<Option<KitPiece>> {
-        let [head, tail] = self.slots(kind);
+    /// This machine's piece of a kit of `kind` in `pair`; `None` when both its
+    /// slots are empty. One half alone, a tail with bytes past the piece, and
+    /// bytes that are not a piece of `kind` are `Corrupt`.
+    pub(crate) fn get(
+        &self,
+        kind: KitSecretKind,
+        pair: KitPiecePair,
+    ) -> oneiron_keystore::Result<Option<KitPiece>> {
+        let [head, tail] = self.slots(kind, pair);
         let (head, tail) = match (self.keystore.get(&head)?, self.keystore.get(&tail)?) {
             (None, None) => return Ok(None),
             (Some(head), Some(tail)) => (head, tail),
@@ -86,20 +101,36 @@ impl KitPieceStore {
         }
     }
 
-    /// Empties both slots of a kit of `kind`. Empty slots are not an error.
-    pub(crate) fn delete(&self, kind: KitSecretKind) -> oneiron_keystore::Result<()> {
-        let [head, tail] = self.slots(kind);
+    /// Empties both slots of `pair` of a kit of `kind`. Empty slots are not an
+    /// error.
+    pub(crate) fn delete(
+        &self,
+        kind: KitSecretKind,
+        pair: KitPiecePair,
+    ) -> oneiron_keystore::Result<()> {
+        let [head, tail] = self.slots(kind, pair);
         self.keystore.delete(&head)?;
         self.keystore.delete(&tail)
     }
 
-    /// The head and tail slots of a kit of `kind`.
-    fn slots(&self, kind: KitSecretKind) -> [KeystoreSlot; 2] {
-        let parts = match kind {
-            KitSecretKind::VaultKey => [KitPieceSlot::VaultKeyHead, KitPieceSlot::VaultKeyTail],
-            KitSecretKind::RecoveryRoot => [
+    /// The head and tail slots of `pair` of a kit of `kind`.
+    fn slots(&self, kind: KitSecretKind, pair: KitPiecePair) -> [KeystoreSlot; 2] {
+        let parts = match (kind, pair) {
+            (KitSecretKind::VaultKey, KitPiecePair::Current) => [
+                KitPieceSlot::VaultKeyHead,
+                KitPieceSlot::VaultKeyTail,
+            ],
+            (KitSecretKind::RecoveryRoot, KitPiecePair::Current) => [
                 KitPieceSlot::RecoveryRootHead,
                 KitPieceSlot::RecoveryRootTail,
+            ],
+            (KitSecretKind::VaultKey, KitPiecePair::Pending) => [
+                KitPieceSlot::VaultKeyPendingHead,
+                KitPieceSlot::VaultKeyPendingTail,
+            ],
+            (KitSecretKind::RecoveryRoot, KitPiecePair::Pending) => [
+                KitPieceSlot::RecoveryRootPendingHead,
+                KitPieceSlot::RecoveryRootPendingTail,
             ],
         };
         parts.map(|part| KeystoreSlot {

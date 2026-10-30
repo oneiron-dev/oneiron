@@ -328,6 +328,9 @@ impl Vault {
                 escrow,
             })
         })?;
+        // A kit the answer made current: its piece leaves the pending key
+        // slots (FIX 11977).
+        self.settle_pending_kit_piece();
         let mirror_pending = match transition.finish() {
             Ok(()) => false,
             Err(error) => {

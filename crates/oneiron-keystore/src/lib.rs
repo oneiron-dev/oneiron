@@ -84,7 +84,8 @@ pub enum SlotKind {
     /// One of the slots that keep this machine's own piece of a vault's
     /// recovery kit (FIX 2063). A piece is longer than one slot, so it spans
     /// a head and a tail slot, and each kit kind has its own pair: issuing
-    /// one kind of kit replaces only that kind's piece.
+    /// one kind of kit replaces only that kind's piece. Each kind also has a
+    /// pending pair, the piece of a kit drawn and not yet confirmed (FIX 11977).
     KitPiece(KitPieceSlot),
 }
 
@@ -105,8 +106,8 @@ impl SlotKind {
     }
 }
 
-/// Which slot of this machine's kit pieces: the kit kind, then the piece's
-/// first 32 bytes (head) or the rest (tail).
+/// Which slot of this machine's kit pieces: the kit kind, the current or the
+/// pending pair, then the piece's first 32 bytes (head) or the rest (tail).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KitPieceSlot {
     /// The data-key kit's piece, its first 32 bytes.
@@ -117,6 +118,17 @@ pub enum KitPieceSlot {
     RecoveryRootHead,
     /// The recovery-root kit's piece, its remaining bytes.
     RecoveryRootTail,
+    /// The data-key kit's pending pair, its first 32 bytes (FIX 11977). A
+    /// data-key kit has no confirm, so its issue fills the current pair.
+    VaultKeyPendingHead,
+    /// The data-key kit's pending pair, its remaining bytes.
+    VaultKeyPendingTail,
+    /// The piece of a recovery-root kit drawn and not yet confirmed, its
+    /// first 32 bytes (FIX 11977).
+    RecoveryRootPendingHead,
+    /// The piece of a recovery-root kit drawn and not yet confirmed, its
+    /// remaining bytes.
+    RecoveryRootPendingTail,
 }
 
 impl KitPieceSlot {
@@ -128,6 +140,10 @@ impl KitPieceSlot {
             Self::VaultKeyTail => "kit-piece-vault-key-tail",
             Self::RecoveryRootHead => "kit-piece-recovery-root-head",
             Self::RecoveryRootTail => "kit-piece-recovery-root-tail",
+            Self::VaultKeyPendingHead => "kit-piece-vault-key-pending-head",
+            Self::VaultKeyPendingTail => "kit-piece-vault-key-pending-tail",
+            Self::RecoveryRootPendingHead => "kit-piece-recovery-root-pending-head",
+            Self::RecoveryRootPendingTail => "kit-piece-recovery-root-pending-tail",
         }
     }
 }
