@@ -300,10 +300,6 @@ struct TournamentLineageCursor {
     pub under_run: bool,
     pub seen: Vec<AttemptId>,
     pub steps: u64,
-    /// Always zero: this door takes no clock, and resume validation is
-    /// positional — the queue no longer showing the position restarts the
-    /// walk — never temporal.
-    pub updated_at: u64,
 }
 
 /// Whether a persisted tournament-lineage cursor still names the walk it was
@@ -447,7 +443,6 @@ pub(crate) fn tournament_start_check(
                 under_run,
                 seen: chain,
                 steps: carried + hops,
-                updated_at: 0,
             },
         )
     })?;

@@ -149,8 +149,7 @@ impl DreamerWakeDriver<'_> {
             let report = match report {
                 Ok(report) => report,
                 Err(error) => {
-                    self.claim_authoring_fallback_stash =
-                        aggregate.claim_authoring_fallback.clone();
+                    self.claim_authoring_fallback_stash = aggregate.claim_authoring_fallback;
                     return Err(error);
                 }
             };
