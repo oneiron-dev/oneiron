@@ -2,7 +2,8 @@
 //! read (OF-418 L4). Every tray row is read, page after page to the last, in the caller's one
 //! snapshot, with the live claim body behind it read through this module's own reader. A row
 //! whose body is gone is returned with no body, never dropped, so the reader shows it; so is a
-//! sequence row the tray does not answer for, its own index corruption (FIX 7378). Nothing
+//! sequence row the tray does not answer for, its own index corruption (FIX 7378), and so are a
+//! sequence value that is no claim id and a tray row that does not decode (FIX 7601). Nothing
 //! here writes, orders, drops or decides a bundle member.
 
 use super::*;
@@ -29,10 +30,11 @@ pub(crate) struct PendingHealRef {
 impl Vault {
     /// Every pending-consent row at `txn` whose live claim's predicate is one of
     /// `predicates`, and every row whose live claim body cannot be read, in tray sequence
-    /// order. A sequence row the tray does not answer for (its tray row is gone, or names
-    /// another claim id) is its own row with no body, under a key-only WARN, never a failed
-    /// read (FIX 7378). The tray is paged to its high-water mark at `txn`, to the last row.
-    /// Only a store failure fails the read.
+    /// order. A sequence row the tray does not answer for (its tray row is gone, names
+    /// another claim id or does not decode, or its value is no claim id) is its own row with
+    /// no body, under a key-only WARN, never a failed read (FIX 7378, FIX 7601). The tray is
+    /// paged to its high-water mark at `txn`, to the last row. Only a store failure fails the
+    /// read.
     pub(crate) fn pending_heal_refs_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -53,14 +55,20 @@ impl Vault {
             };
             cursor = Some(*last);
             for (sequence, claim, slot) in page {
-                let record = match slot {
-                    PendingGateConsentSlot::Held(record) => record,
-                    PendingGateConsentSlot::Corrupt => {
+                let answered = match slot {
+                    PendingGateConsentSlot::Held(record) => Ok(record),
+                    PendingGateConsentSlot::Corrupt => Err("tray_row_unanswered"),
+                    PendingGateConsentSlot::ClaimIdUndecodable => Err("sequence_claim_undecodable"),
+                    PendingGateConsentSlot::RowUndecodable => Err("tray_row_undecodable"),
+                };
+                let record = match answered {
+                    Ok(record) => record,
+                    Err(fault) => {
                         tracing::warn!(
                             target: "oneiron::gate",
                             sequence,
                             claim = %claim.to_hex(),
-                            fault = "tray_row_unanswered",
+                            fault,
                             "a pending-consent sequence row the tray does not answer for is listed with no body"
                         );
                         refs.push(PendingHealRef {
