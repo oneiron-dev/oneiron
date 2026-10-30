@@ -10,7 +10,7 @@ use super::codec::{
     next_evidence_sequence_in_txn, validate_evidence,
 };
 use super::judge::{AttributionDecisions, verdict_subject};
-use super::split::{classify_split, unclear_floor_sourced};
+use super::split::{classify_split, measure_split_notes, unclear_floor_sourced};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
     SkillEditProposal,
@@ -119,6 +119,7 @@ pub fn run_attribution_projector_with_decisions(
         let Some((split, revision)) = classify_split(decisions, &request, &[])? else {
             continue;
         };
+        measure_split_notes(vault, &split);
         // One region, so one label holds the whole outcome.
         let Some(verdict) = split.sole() else {
             continue;
