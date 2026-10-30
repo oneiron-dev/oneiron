@@ -7,7 +7,8 @@
 //! are the authority log and MACHINE rows, a held record (a world key pad whose
 //! world or sealed claim is held, too) with the side rows its bodies stand on,
 //! a held partition's gate decisions, and the side rows the host still talks
-//! to its home with and reopens this environment by.
+//! to its home with and reopens this environment by. A kept entity is indexed
+//! again in each text, phonetic or vector index the purge clears (FIX 2415).
 //! Nothing else is written: no tombstone, deletion marker, audit row, Loro op,
 //! outbox row, receipt or release row.
 
@@ -16,15 +17,27 @@ use std::collections::HashSet;
 use heed::{RoTxn, RwTxn};
 
 use super::KeepReason;
+use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, StoreError};
 use crate::overlay_db::OverlayDb;
 use crate::ports::EntityStoreStaging;
 use crate::registry;
-use crate::side_table::{self, SideDb, SideTableDecl};
+use crate::side_table::{self, Named, SideDb, SideTable, SideTableDecl};
 use crate::store::Store;
 use crate::store::gate_decision::HeldGateRows;
+
+/// The text each document was indexed with. Key: id16.
+const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
+    SideTable::new(&side_table::INDEX_SOURCE_TEXT);
+/// The phonetic codes each entity was indexed with. Key: id16.
+const INDEX_SOURCE_PHONETIC: SideTable<EntityId, Vec<String>, Named> =
+    SideTable::new(&side_table::BATCH_PHONETIC_INDEX_SOURCE);
+/// Who computed each stored vector. Key: id16.
+const EMBEDDING_DEVICE: SideTable<EntityId, EmbeddingProvenance, Named> =
+    SideTable::new(&side_table::EMBEDDING_DEVICE);
 
 /// Entity kinds a leave keeps whole. Every other row goes, whatever its kind:
 /// WORLD, PERSON, AGENT_DEF, grants, policy manifests, bound actors, pending
@@ -214,7 +227,7 @@ impl LeftEnvPurge {
 }
 
 /// Empties a left shared vault's dedicated environment in the caller's write
-/// transaction, run on the base [`Store`] only.
+/// transaction, run on `vault`'s base [`Store`] only.
 ///
 /// Precondition: the leave has ended the shared lane for good and discarded
 /// its outbox, and no observer, window manager or worker can refill this
@@ -228,19 +241,24 @@ impl LeftEnvPurge {
 /// [`LEAVE_KEPT_FAMILIES`] or under no declared prefix. A kept record's bodies
 /// keep the digest-keyed rows they stand on, and a held gate partition keeps
 /// its decisions and their rows ([`HeldGateRows`]); both are planned before
-/// the first deletion. Text, phonetic, vector, PPR, job and queue databases
-/// are cleared whole, and the HNSW graph shape goes while its compatibility
-/// pins stay.
+/// the first deletion. PPR, job and queue databases are cleared whole. The
+/// text, phonetic and vector indexes are cleared whole while they hold a row
+/// of an entity that goes, the HNSW graph shape with the vectors while its
+/// compatibility pins stay, and each kept entity is then indexed in them
+/// again through the fns a put indexes with (FIX 2415).
 ///
-/// One call deletes at most `max_rows` rows across its filtered walks; the
-/// whole clears run in the first call. Loop, a transaction each, until
-/// `complete`: each call re-reads the kept set and walks again.
+/// One call deletes at most `max_rows` rows across its filtered walks, the
+/// embedding-device rows of the vectors that go among them (FIX 2415); the
+/// other whole clears run in the first call, and the vector clear in the
+/// first call those device rows leave budget for. Loop, a transaction each,
+/// until `complete`: each call re-reads the kept set and walks again.
 #[allow(dead_code, reason = "L03's OF-158 leave calls this")]
 pub(crate) fn purge_left_shared_env_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut RwTxn<'_>,
     max_rows: usize,
 ) -> Result<LeftEnvPurge> {
+    let store = &vault.store;
     let mut report = LeftEnvPurge::default();
     let mut budget = Budget {
         left: max_rows,
@@ -249,7 +267,9 @@ pub(crate) fn purge_left_shared_env_in_txn(
     let (kept, doomed) = census(store, txn, &mut budget, &mut report)?;
     let held = Held::plan(store, txn, &kept)?;
     remove_entities(store, txn, &doomed, &mut report)?;
-    let graph = clear_whole(store, txn, &mut report)?;
+    let cleared = clear_whole(store, txn, &kept, &mut budget, &mut report)?;
+    let graph = cleared.vectors.is_some();
+    reindex_kept(vault, txn, &kept, cleared)?;
     report.index_rows = sweep_indexes(store, txn, &kept, &mut budget)?;
     for db in [&store.edges_out, &store.edges_in] {
         report.edges += sweep(db, txn, &mut budget, |key, _| !kept.holds_edge(key))?;
@@ -322,15 +342,18 @@ impl Held {
     }
 }
 
-/// The kept entities, by their raw bytes and by their lowercase hex.
+/// The kept entities, in census order, by their raw bytes and by their
+/// lowercase hex.
 #[derive(Default)]
 struct Kept {
+    ids: Vec<EntityId>,
     raw: HashSet<Vec<u8>>,
     hex: HashSet<Vec<u8>>,
 }
 
 impl Kept {
     fn insert(&mut self, id: &EntityId) {
+        self.ids.push(*id);
         self.raw.insert(id.as_bytes().to_vec());
         self.hex.insert(id.to_hex().into_bytes());
     }
@@ -466,39 +489,228 @@ fn remove_entities(
     Ok(())
 }
 
+/// What [`clear_whole`] cleared, for [`reindex_kept`].
+struct Cleared {
+    /// The vector graph was cleared: each kept entity's vector, read before
+    /// the clear, goes back.
+    vectors: Option<Vec<KeptVector>>,
+    /// The text index was cleared.
+    text: bool,
+    /// The phonetic index was cleared.
+    phonetic: bool,
+}
+
+/// A kept entity's vector row and who computed it, as stored before the
+/// graph's clear dropped them.
+struct KeptVector {
+    id: EntityId,
+    row: Vec<u8>,
+    provenance: Option<EmbeddingProvenance>,
+}
+
 /// Clears the derived and queue databases whole, counting those that held
-/// rows, and returns whether the vector graph held any. The graph goes
-/// through the engine's own clear: vectors, neighbours, count, entry point
-/// and one-way exceptions, while every canonical `hnsw_meta` key of the
-/// checkpoint's storage tiers stays.
-fn clear_whole(store: &Store, txn: &mut RwTxn<'_>, report: &mut LeftEnvPurge) -> Result<bool> {
-    let vectors = !store.vectors.is_empty(txn)?;
-    let neighbors = !store.hnsw_neighbors.is_empty(txn)?;
-    if vectors || neighbors {
+/// rows. The text, phonetic and vector indexes are cleared only while they
+/// hold a row of an entity that goes ([`holds_doomed`]), so a later call does
+/// not clear again what [`reindex_kept`] put back. The graph goes through the
+/// engine's own clear: vectors, neighbours, embedding devices, count, entry
+/// point and one-way exceptions, while every canonical `hnsw_meta` key of the
+/// checkpoint's storage tiers stays. The device rows of the vectors that go
+/// are deleted first, against the budget (FIX 2415), and the graph is cleared
+/// only once none is left, so the clear drops no device row but a kept
+/// vector's, which goes back with it.
+fn clear_whole(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    kept: &Kept,
+    budget: &mut Budget,
+    report: &mut LeftEnvPurge,
+) -> Result<Cleared> {
+    report.side_rows += sweep_embedding_devices(store, txn, kept, budget)?;
+    let graph = [&store.vectors, &store.hnsw_neighbors];
+    let vectors = if !budget.spent && holds_doomed(&store.vectors, &graph, txn, kept)? {
+        let vectors = kept_vectors_in(store, txn, kept)?;
+        for db in graph {
+            report.cleared_dbs += usize::from(!db.is_empty(txn)?);
+        }
         crate::hnsw::clear_hnsw_graph_in_txn(store, txn)?;
-        report.cleared_dbs += usize::from(vectors) + usize::from(neighbors);
-    }
-    for db in [
+        Some(vectors)
+    } else {
+        None
+    };
+    let text_rows = [
         &store.text_postings,
         &store.text_meta,
         &store.text_forward,
         &store.text_bm25_field_stats,
         &store.text_doc_field_lengths,
-        &store.phonetic_index,
-        &store.phonetic_forward,
+    ];
+    let text = holds_doomed(&store.text_forward, &text_rows, txn, kept)?;
+    let phonetic_rows = [&store.phonetic_index, &store.phonetic_forward];
+    let phonetic = holds_doomed(&store.phonetic_forward, &phonetic_rows, txn, kept)?;
+    let mut whole = vec![
         &store.ppr_cache,
         &store.ppr_cache_deps,
         &store.attempt_records,
         &store.attempt_ready,
         &store.attempt_dedupe,
         &store.sync_queue,
-    ] {
+    ];
+    if text {
+        whole.extend(text_rows);
+    }
+    if phonetic {
+        whole.extend(phonetic_rows);
+    }
+    for db in whole {
         if !db.is_empty(txn)? {
             db.clear(txn)?;
             report.cleared_dbs += 1;
         }
     }
-    Ok(vectors || neighbors)
+    Ok(Cleared {
+        vectors,
+        text,
+        phonetic,
+    })
+}
+
+/// Whether an index whose per-entity rows `forward` holds, keyed by entity
+/// id, holds a row of an entity the leave does not keep, or holds none while
+/// one of `rows` still holds rows: the index then holds what goes.
+fn holds_doomed(
+    forward: &OverlayDb,
+    rows: &[&OverlayDb],
+    txn: &RoTxn<'_>,
+    kept: &Kept,
+) -> Result<bool> {
+    let mut empty = true;
+    for row in forward.iter(txn)? {
+        let (key, _) = row?;
+        if !kept.is(&key[..]) {
+            return Ok(true);
+        }
+        empty = false;
+    }
+    if empty {
+        for db in rows {
+            if !db.is_empty(txn)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Deletes the embedding-device rows of every vector a leave drops, up to
+/// the budget (FIX 2415): the rows whose key names no kept entity.
+fn sweep_embedding_devices(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    kept: &Kept,
+    budget: &mut Budget,
+) -> Result<usize> {
+    if budget.spent {
+        return Ok(0);
+    }
+    let mut keys = Vec::new();
+    for row in store
+        .vault_meta
+        .prefix_iter(txn, side_table::EMBEDDING_DEVICE.prefix)?
+    {
+        let (key, _) = row?;
+        if kept.named_in(&key) {
+            continue;
+        }
+        if !budget.take() {
+            break;
+        }
+        keys.push(key.to_vec());
+    }
+    for key in &keys {
+        store.vault_meta.delete(txn, key)?;
+    }
+    Ok(keys.len())
+}
+
+/// Each kept entity's vector row, with who computed it, read before the
+/// graph's clear drops them.
+fn kept_vectors_in(store: &Store, txn: &RoTxn<'_>, kept: &Kept) -> Result<Vec<KeptVector>> {
+    let mut vectors = Vec::new();
+    for id in &kept.ids {
+        let Some(row) = store.vectors.get(txn, id.as_bytes())? else {
+            continue;
+        };
+        vectors.push(KeptVector {
+            id: *id,
+            row: row.into_owned(),
+            provenance: EMBEDDING_DEVICE.get(store, txn, id)?,
+        });
+    }
+    Ok(vectors)
+}
+
+/// Indexes each kept entity again in what [`clear_whole`] cleared, through
+/// the fns a put indexes with (FIX 2415): its text from the fields the put
+/// kept beside the index, its phonetic codes likewise, and its vector row,
+/// device and graph node. A kept document whose text passes today's ceiling,
+/// or a vector the vault's dimensions no longer read, stays out and is
+/// logged, as a checkpoint restore leaves it.
+fn reindex_kept(vault: &Vault, txn: &mut RwTxn<'_>, kept: &Kept, cleared: Cleared) -> Result<()> {
+    let store = &vault.store;
+    if cleared.text {
+        for id in &kept.ids {
+            let Some(fields) = INDEX_SOURCE_TEXT.get(store, txn, id)? else {
+                continue;
+            };
+            match crate::bm25::index_text(store, txn, &vault.analyzer, id, &fields) {
+                Ok(()) => {}
+                Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => tracing::warn!(
+                    entity = %id.to_hex(),
+                    "a kept document past the text ceiling stays out of search after a leave"
+                ),
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    if cleared.phonetic {
+        for id in &kept.ids {
+            if let Some(codes) = INDEX_SOURCE_PHONETIC.get(store, txn, id)? {
+                crate::batch::apply_phonetic(store, txn, *id, &codes)?;
+            }
+        }
+    }
+    let Some(vectors) = cleared.vectors else {
+        return Ok(());
+    };
+    let mut pending_rebuild = false;
+    for kept_vector in vectors {
+        let Ok(vector) = crate::store::decode_vector_row(&kept_vector.row, vault.config.dimensions)
+        else {
+            tracing::warn!(
+                entity = %kept_vector.id.to_hex(),
+                "a kept vector that does not read stays out of the graph after a leave"
+            );
+            continue;
+        };
+        store
+            .vectors
+            .put(txn, kept_vector.id.as_bytes(), &kept_vector.row)?;
+        crate::embed::record_embedding_device_in_txn(
+            store,
+            txn,
+            &kept_vector.id,
+            kept_vector.provenance.as_ref(),
+        )?;
+        crate::hnsw::hnsw_insert_batched(
+            store,
+            &vault.config,
+            txn,
+            &kept_vector.id,
+            &vector,
+            &mut pending_rebuild,
+        )?;
+    }
+    crate::hnsw::run_pending_legacy_rebuild(store, &vault.config, txn, pending_rebuild)
 }
 
 /// The type, time and short-id indexes: a row stays when its key names a kept
@@ -553,7 +765,7 @@ fn sweep_side_tables(
             }
         }
     }
-    report.side_rows = keys.len();
+    report.side_rows += keys.len();
     for (key, value) in keys {
         if store.vault_meta.delete(txn, &key)? {
             ledger_values.extend(value);
