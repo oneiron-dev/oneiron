@@ -20977,6 +20977,8 @@ class OutboundScheduleRequest(TypedDict):
     job_ref: NotRequired[str | None]
     occurred_at: NotRequired[int | None]
     mention: NotRequired[MentionProvenance | None]
+    selection: NotRequired[ChannelSelectionRequest | None]
+    counterparty_class: NotRequired[str | None]
 class SummaryPathBranch(TypedDict):
     branch: str
 class SummaryPathBranchSpanBody(TypedDict):
