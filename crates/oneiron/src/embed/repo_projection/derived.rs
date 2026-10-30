@@ -209,9 +209,11 @@ pub(crate) fn finalize_repo_derived_index_copies_in_txn(
 }
 
 /// An erase of `id`, a cache cleanup only: its own copy goes, and each
-/// ready copy derived from it is pending again. No source or text is
-/// deleted for a cache, and a restored copy is served only under its
-/// current proof.
+/// ready copy derived from it is pending again, directly or through what
+/// derives from it (FIX 10889: a caption of an ASSET derived from `id`),
+/// read by its `DerivedFrom` edges before the erase takes them. No source
+/// or text is deleted for a cache, and a restored copy is served only
+/// under its current proof.
 ///
 /// # Errors
 /// A store failure.
@@ -221,14 +223,20 @@ pub(crate) fn retire_repo_derived_index_copies_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     delete_in_txn(store, wtxn, RepoDerivedOwner::Text(*id))?;
+    let dependents = repo_derived_dependents_in(store, wtxn, &BTreeSet::from([*id]))?;
     for (owner, row) in storage::copies_in(store, wtxn)? {
-        if let RepoDerivedCopyState::Ready(ready) = &row.state
-            && ready.sources.contains(id.as_bytes())
-        {
+        let reached = ready_reached(&row.state, id)
+            || matches!(&owner, RepoDerivedOwner::Text(text) if dependents.contains(text));
+        if reached && matches!(row.state, RepoDerivedCopyState::Ready(_)) {
             put_pending_in_txn(store, wtxn, owner, None)?;
         }
     }
     Ok(())
+}
+
+/// Whether a copy in `state` is ready with `id` among its direct sources.
+fn ready_reached(state: &RepoDerivedCopyState, id: &EntityId) -> bool {
+    matches!(state, RepoDerivedCopyState::Ready(ready) if ready.sources.contains(id.as_bytes()))
 }
 
 /// Text `entity`'s copy made pending (unless it is ready under its current
