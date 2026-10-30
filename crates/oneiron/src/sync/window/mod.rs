@@ -63,7 +63,7 @@ pub use self::egress::{
 #[cfg(test)]
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
-pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun};
+pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_mirror};
 pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,
@@ -241,7 +241,7 @@ impl LoadedWindow {
     /// write — every pruned op is provably inside the snapshot (merged
     /// before export), and a crash can never observe pruned rows without
     /// the snapshot that covers them. Rows persisted after the merge keep
-    /// their higher `{seq:08x}` keys and survive; `m:u_seq:w:{key}` is
+    /// their higher `{seq:016x}` keys and survive; `m:u_seq:w:{key}` is
     /// never reset, so future sequence numbers cannot collide with rows
     /// that escaped the prune.
     ///
@@ -352,7 +352,7 @@ pub(crate) fn write_window_svf_in_txn(
 /// [`merge_persisted_state_into_doc`] for the SAME doc the persisted
 /// snapshot was exported from: those rows were import-merged into the doc
 /// BEFORE the export, so the snapshot provably contains their ops. Rows
-/// persisted after the merge's read transaction carry higher `{seq:08x}`
+/// persisted after the merge's read transaction carry higher `{seq:016x}`
 /// keys, are absent from the list, and survive — their ops may not be in
 /// the snapshot (e.g. a transient delete-path doc persisting in parallel).
 /// `m:u_seq:w:{key}` is deliberately NOT touched: the high-water mark
@@ -381,7 +381,7 @@ pub(crate) fn prune_subsumed_window_updates_in_txn(
     }
     for update_key in subsumed_update_keys {
         let seq_hex = &update_key[prefix.len()..];
-        let seq = u32::from_str_radix(seq_hex, 16).map_err(|_| {
+        let seq = u64::from_str_radix(seq_hex, 16).map_err(|_| {
             Error::sync_protocol(SyncProtocolValidation::ScopedPrune {
                 scope: SyncProtocolPruneScope::WindowUpdateRows,
                 prefix: prefix.clone(),
@@ -493,7 +493,7 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     let address = WindowAddress::new(key.as_str());
-    // Lazy prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
+    // Lazy prefix iterator (B-tree range seek); `{seq:016x}` keys sort in order.
     let mut applied = 0u32;
     for entry in vault
         .store

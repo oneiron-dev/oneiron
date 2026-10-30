@@ -10,6 +10,11 @@ use crate::gate::RetrievalFilter;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReadScope {
+    /// Admitted entity types; absent means every registered type. On the
+    /// wire each is its registry kind (`CLAIM`, `MESSAGE`, ...), one spelling
+    /// for every binding (FIX 10762).
+    #[serde(default, with = "type_kinds")]
+    #[schemars(with = "Option<Vec<String>>")]
     pub entity_types: Option<BTreeSet<u8>>,
     pub max_sensitivity_band: u8,
     pub include_stale: bool,
@@ -47,7 +52,71 @@ pub struct ScopedReadReceipt {
     pub replan_hint: Vec<String>,
 }
 
+/// The wire spelling of a scope's entity types (FIX 10762): each type byte
+/// as its registry kind, and a byte the static registry does not name (a
+/// pack's own type) as its decimal number, so no receipt fails to spell.
+/// Read back the same way.
+mod type_kinds {
+    use std::collections::BTreeSet;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::registry::{ENTITY_TYPE_REGISTRY, entity_type_registry_entry};
+
+    pub(super) fn kind(entity_type: u8) -> String {
+        entity_type_registry_entry(entity_type)
+            .map_or_else(|| entity_type.to_string(), |entry| entry.kind.to_owned())
+    }
+
+    fn type_byte(kind: &str) -> Option<u8> {
+        ENTITY_TYPE_REGISTRY
+            .iter()
+            .find(|entry| entry.kind == kind)
+            .map(|entry| entry.type_byte)
+            .or_else(|| kind.parse().ok())
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        types: &Option<BTreeSet<u8>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        types
+            .as_ref()
+            .map(|types| types.iter().copied().map(kind).collect::<Vec<_>>())
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<BTreeSet<u8>>, D::Error> {
+        Option::<Vec<String>>::deserialize(deserializer)?
+            .map(|kinds| {
+                kinds
+                    .iter()
+                    .map(|kind| {
+                        type_byte(kind).ok_or_else(|| {
+                            <D::Error as serde::de::Error>::custom(format!(
+                                "unknown entity kind {kind}"
+                            ))
+                        })
+                    })
+                    .collect()
+            })
+            .transpose()
+    }
+}
+
 impl ReadScope {
+    /// The admitted entity types as the wire spells them (FIX 10762): each
+    /// registry kind, or a pack type's decimal byte; `None` admits every
+    /// registered type.
+    #[must_use]
+    pub fn entity_kinds(&self) -> Option<Vec<String>> {
+        self.entity_types
+            .as_ref()
+            .map(|types| types.iter().copied().map(type_kinds::kind).collect())
+    }
+
     /// Reuse the already-applied scalar/type intersection for a later read.
     #[must_use]
     pub fn as_filter(&self) -> RetrievalFilter {

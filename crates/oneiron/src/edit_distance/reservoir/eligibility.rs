@@ -32,7 +32,8 @@ use crate::authority::AuthorityView;
 use crate::claim::ScopedRead;
 use crate::consent::AuthenticatedOwner;
 use crate::disclosure::{DisclosureTier, RoomParty, bound_room_party_in, disclosure_tier};
-use crate::edit_distance::PROPOSAL_ARTIFACT;
+use crate::edit_distance::text_ref::retained_proposal_in_txn;
+use crate::edit_distance::{PROPOSAL_ARTIFACT, ProposalArtifactRef, RetainedProposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -149,6 +150,30 @@ pub(super) fn admitted_pairs_in(
         *excluded.entry(code.to_owned()).or_default() += 1;
     }
     Ok((admitted, excluded))
+}
+
+/// FIX 11351, 11355: the proposal retained under `artifact` as the owner's
+/// own read through `reader` may show it, in the snapshot `rtxn`. It is
+/// judged as a corpus pair is: its artifact row and its input source must
+/// each pass `reader`'s governed read and not be a Tier-A withhold. An
+/// ordinary read is no run, so no source needs a consent tick. `None` when
+/// nothing is retained there or either row is withheld, and so is a row
+/// that refuses or does not decode. Only storage, I/O and the owner's proof
+/// fail the read.
+pub(crate) fn owner_readable_proposal_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    reader: &ScopedRead<'_>,
+    artifact: EntityId,
+) -> Result<Option<RetainedProposal>> {
+    let policy = reader.live_policy_manifest_in(rtxn)?;
+    let readable = |id: &EntityId| reader.is_entity_readable_with_policy_in(rtxn, &policy, id);
+    match refusal_in(vault, rtxn, &readable, None, artifact) {
+        Ok(None) => {}
+        Err(error) if fails_export(&error) => return Err(error),
+        Ok(Some(_)) | Err(_) => return Ok(None),
+    }
+    retained_proposal_in_txn(vault, rtxn, ProposalArtifactRef::new(artifact))
 }
 
 /// Whether `error` fails the whole export: storage, I/O or the owner's
