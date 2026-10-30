@@ -24,15 +24,15 @@ use super::super::edge::{
 /// this part imports first, then each part in [`Self::parts`] after it.
 #[cfg(feature = "sync")]
 pub(crate) struct AdmittedUpdate {
-    key: WindowKey,
+    pub(super) key: WindowKey,
     pub(super) bytes: Vec<u8>,
-    rows: u64,
-    early: EarlyStamps,
-    births: Vec<(EntityId, Vec<u8>)>,
-    peer_rows: Vec<(EntityId, [u8; 32])>,
-    delivered: BTreeMap<EntityId, [u8; 32]>,
-    born_with: Vec<super::super::born_with::CarriedText>,
-    lane: Option<String>,
+    pub(super) rows: u64,
+    pub(super) early: EarlyStamps,
+    pub(super) births: Vec<(EntityId, Vec<u8>)>,
+    pub(super) peer_rows: Vec<(EntityId, [u8; 32])>,
+    pub(super) delivered: BTreeMap<EntityId, [u8; 32]>,
+    pub(super) born_with: Vec<super::super::born_with::CarriedText>,
+    pub(super) lane: Option<String>,
     pub(super) routed: Vec<AdmittedUpdate>,
 }
 
