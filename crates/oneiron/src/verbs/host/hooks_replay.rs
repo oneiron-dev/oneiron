@@ -152,15 +152,14 @@ pub fn replay_hooks_as_owner(
 }
 
 /// [`replay_hooks_as_owner`], beside the rows its entries stand on
-/// ([`crate::Vault::hooks_replay_listing`]); `None` once an entry asked a
-/// verdict.
+/// ([`crate::Vault::hooks_replay_listing`]).
 pub fn replay_hooks_as_owner_listing(
     vault: &crate::Vault,
     _owner: &crate::consent::AuthenticatedOwner,
     runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
     verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
     input: &HooksReplayRequest,
-) -> MemoryResult<(HooksReplayPage, Option<Vec<crate::EntityId>>)> {
+) -> MemoryResult<(HooksReplayPage, Vec<crate::EntityId>)> {
     let asked = input.limit()?;
     let limit = asked.min(HOOKS_REPLAY_PAGE_MAX);
     let binding = crate::EntityId::from_hex(input.binding.trim())

@@ -154,9 +154,8 @@ fn owner_row(
                 owner,
                 decode(input)?,
             ))?;
-            match (listed.as_mut(), rows) {
-                (Some(listed), Some(mut rows)) => listed.append(&mut rows),
-                _ => *listed = None,
+            if let Some(listed) = listed.as_mut() {
+                listed.extend(rows);
             }
             encode(replayed)
         }
