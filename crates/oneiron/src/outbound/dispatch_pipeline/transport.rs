@@ -71,6 +71,13 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         else {
             return invalid_frozen_call();
         };
+        // FIX 8791: the sink's own profile-read hold waits for the seat's
+        // daily reset, named on the request's clock.
+        let linkedin_sandbox_policy = self
+            .request
+            .linkedin_sandbox_policy
+            .clone()
+            .map(|policy| policy.with_caps_reset_after(self.request.occurred_at));
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
@@ -85,7 +92,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             verb_contract: self.verb_contract,
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),
-            linkedin_sandbox_policy: self.request.linkedin_sandbox_policy.as_ref(),
+            linkedin_sandbox_policy: linkedin_sandbox_policy.as_ref(),
             hygiene_headers,
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
