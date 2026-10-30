@@ -101,7 +101,7 @@ impl Vault {
         self.resolve_inbox_group_bound_at(group_key, verb, None, now, Some((actor, target)))
     }
 
-    fn resolve_inbox_group_bound_at(
+    pub(super) fn resolve_inbox_group_bound_at(
         &self,
         group_key: &str,
         verb: InboxBulkVerb,
@@ -533,7 +533,7 @@ fn accept_member_with_amendment_in_txn(
         }
         None => (None, Vec::new()),
     };
-    vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
+    vault.complete_deferred_claim_in_txn(wtxn, id, false, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,
         wtxn,

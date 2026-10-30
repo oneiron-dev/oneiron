@@ -166,21 +166,28 @@ struct KeySpec {
     text: Option<String>,
 }
 
-/// One act's target, resolved once: its row as read now, its DOM node, and
-/// how it rebound when the handle named no longer stood.
+/// One act's target, resolved once: its row as read now, its DOM node on
+/// its own frame session (FIX 11576), and how it rebound when the handle
+/// named no longer stood.
 pub(crate) struct Target {
     pub(crate) row: Row,
     node: Value,
+    session: String,
     rebound: Option<Rebound>,
 }
 
 /// An image the driver holds: its content ref, its PNG bytes, what of the
-/// page it shows, and, for a screenshot, its capture.
+/// page it shows, and, for a screenshot, its capture. The charge for the
+/// bytes where they prove a past-threshold reply, given back once the
+/// image ages out (FIX 11578).
 struct Held {
     image: String,
     png: Vec<u8>,
     frame: Frame,
     capture: Option<Capture>,
+    // Dropped for the charge it gives back; never read (FIX 11578).
+    #[allow(dead_code)]
+    held: Option<crate::cdp::Held>,
 }
 
 /// What a held image shows: a viewport rectangle in CSS pixels, on the page
@@ -220,8 +227,14 @@ impl Frame {
 
 impl CdpDriver {
     fn page(&self, method: &str, params: Value) -> Result<Value, BrowserError> {
+        self.call_in(&self.session, method, params)
+    }
+
+    /// One call on `session` (FIX 11576), a target's own frame session
+    /// where its row came from one, as `page` calls on the front tab's.
+    fn call_in(&self, session: &str, method: &str, params: Value) -> Result<Value, BrowserError> {
         self.pipe
-            .call(Some(&self.session), method, params, Instant::now() + CALL)
+            .call(Some(session), method, params, Instant::now() + CALL)
     }
 
     /// The front tab's accessibility nodes as they are now. A loaded page
@@ -441,11 +454,13 @@ impl CdpDriver {
             .ok_or_else(|| BrowserError::Protocol("image is not a PNG".to_owned()))?;
         let image = format!("blake3:{}", blake3::hash(&png).to_hex());
         let bytes = png.len() as u64;
+        let held = self.pipe.charge_media(png.len());
         self.media.push_back(Held {
             image: image.clone(),
             png,
             frame,
             capture,
+            held,
         });
         if self.media.len() > MEDIA {
             self.media.pop_front();
@@ -489,7 +504,20 @@ impl CdpDriver {
     }
 
     fn call_on(&self, node: &Value, function: &str, args: Value) -> Result<Value, BrowserError> {
-        let result = self.page(
+        self.call_on_in(&self.session, node, function, args)
+    }
+
+    /// `node`'s `function` on `session` (FIX 11576), as `call_on` calls it
+    /// on the front tab's session.
+    fn call_on_in(
+        &self,
+        session: &str,
+        node: &Value,
+        function: &str,
+        args: Value,
+    ) -> Result<Value, BrowserError> {
+        let result = self.call_in(
+            session,
             "Runtime.callFunctionOn",
             json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
         )?;

@@ -294,8 +294,8 @@ pub(super) struct StoredLaunch {
     shipped_policy_rows: Vec<String>,
     /// The requester a held ask was admitted under (FIX 11691): the agent
     /// dispatches its release queues keep it, as the asker's own surface
-    /// would have. `None` for a wave, and for an ask no credential caller
-    /// made.
+    /// would have. `None` for a wave no credential caller applied (FIX 11811),
+    /// and for an ask no credential caller made.
     requester: Option<crate::agent_dispatch::QueuedRequester>,
 }
 
@@ -578,6 +578,8 @@ pub(super) struct WaveLaunchInput<'a> {
     pub(super) statement: FanoutStatement,
     pub(super) gate: &'a WaveLaunchGate,
     pub(super) now: u64,
+    /// The credential caller whose request applied the wave, if one did.
+    pub(super) requester: Option<crate::agent_dispatch::QueuedRequester>,
 }
 
 /// What a gated wave apply's writer decided.
@@ -643,7 +645,7 @@ pub(super) fn admit_wave_launch_in(
         denied: false,
         choice_receipt_ref: None,
         shipped_policy_rows: gate.governed.shipped_rows.clone(),
-        requester: None,
+        requester: input.requester.clone(),
     };
     let admission = admit_fanout_with_history(
         &plan,

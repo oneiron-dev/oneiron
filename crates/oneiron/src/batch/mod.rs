@@ -57,8 +57,11 @@ pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
 
-pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
-use self::base_apply::apply_ops_with_origin;
+pub(crate) use self::authority_log::{
+    validate_replicated_authority_log_beside_for_local_vault,
+    validate_replicated_authority_log_for_local_vault,
+};
+use self::base_apply::{apply_ops_with_authority_beside, apply_ops_with_origin};
 pub(crate) use self::base_apply::{
     apply_session_bundle_claim_puts, apply_session_bundle_claim_puts_with_transitions,
 };
