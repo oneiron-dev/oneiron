@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1211 facade rows, 4402 generated types.
+// UniFFI census: 1211 facade rows, 4404 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -32790,6 +32790,67 @@ pub struct PolicySignature {
     pub sig: String,
 }
 
+/// `oneiron::llm::decision::slides_policy::SlideReviewPrecedence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SlideReviewPrecedence {
+    #[serde(rename = "nested_narrowing")]
+    NestedNarrowing,
+    #[serde(rename = "holder_override_capped_at_vault")]
+    HolderOverrideCappedAtVault,
+}
+
+/// `oneiron::llm::decision::slides_policy::SlideReviewPolicyRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "scope")]
+#[serde(deny_unknown_fields)]
+pub enum SlideReviewPolicyRow {
+    #[serde(rename = "precedence")]
+    Precedence {
+        #[serde(rename = "value")]
+        value: SlideReviewPrecedence,
+    },
+    #[serde(rename = "vault")]
+    Vault {
+        #[serde(rename = "batch_size")]
+        batch_size: u64,
+        #[serde(rename = "max_units")]
+        max_units: u64,
+        #[serde(rename = "max_text_bytes")]
+        max_text_bytes: u64,
+        #[serde(rename = "max_image_bytes")]
+        max_image_bytes: u64,
+    },
+    #[serde(rename = "route")]
+    Route {
+        #[serde(rename = "first")]
+        first: DecisionRung,
+        #[serde(rename = "ceiling")]
+        ceiling: DecisionRung,
+    },
+    #[serde(rename = "holder")]
+    Holder {
+        #[serde(rename = "holder")]
+        holder: String,
+        #[serde(rename = "batch_size")]
+        batch_size: u64,
+        #[serde(rename = "max_units")]
+        max_units: u64,
+        #[serde(rename = "max_text_bytes")]
+        max_text_bytes: u64,
+        #[serde(rename = "max_image_bytes")]
+        max_image_bytes: u64,
+    },
+    #[serde(rename = "holder_route")]
+    HolderRoute {
+        #[serde(rename = "holder")]
+        holder: String,
+        #[serde(rename = "first")]
+        first: DecisionRung,
+        #[serde(rename = "ceiling")]
+        ceiling: DecisionRung,
+    },
+}
+
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -32828,6 +32889,12 @@ pub struct PolicyManifest {
         skip_serializing_if = "Option::is_none"
     )]
     pub auto_checker: Option<String>,
+    #[serde(
+        rename = "slide_review_policy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub slide_review_policy: Option<Vec<SlideReviewPolicyRow>>,
 }
 
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifestView`.
@@ -45363,7 +45430,7 @@ pub enum ArtifactAskUnits {
         #[serde(rename = "author")]
         author: String,
         #[serde(rename = "labels")]
-        labels: crate::WireJson,
+        labels: SlideReviewLabels,
     },
     #[serde(rename = "folder_items")]
     FolderItems {
