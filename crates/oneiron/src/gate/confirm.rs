@@ -4,11 +4,10 @@ use sha2::Sha256;
 
 use crate::authority::{CRITICAL_WRITE_CONFIRM_DOMAIN, CriticalWriteConfirmDisposition};
 
-use crate::batch::{BatchOp, EntityMetadataHeader, apply_session_bundle_claim_puts};
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, encode_claim_body};
+use crate::batch::EntityMetadataHeader;
+use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -16,6 +15,12 @@ use crate::vault::Vault;
 use super::ceiling::PolicyCriticality;
 use super::decision::GateReasonCode;
 use super::input::{GateContentKind, GateEvaluatorInput};
+
+mod status_grant;
+
+pub(super) use self::status_grant::{
+    PreauthorizedClaimStatusGrant, put_preauthorized_claim_status_in_txn,
+};
 
 pub const CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS: u64 = 300;
 // A public listing uses one expiry pass plus one listing pass: at most 512 rows total.
@@ -67,86 +72,6 @@ pub(crate) fn critical_confirm_has_no_deadline(row: &PendingGateConsentRecord) -
         row.reason_codes.as_slice(),
         [reason] if reason == GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM
             || reason == GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED
-    )
-}
-
-/// A private, single-use authority for a settlement status rewrite.
-///
-/// Its fields are deliberately not caller supplied at the materialization door:
-/// only the verified timeout/sweep and authority-fold paths below can construct it.
-#[derive(Clone, Copy)]
-pub(super) enum PreauthorizedClaimStatusGrant {
-    TimeoutDemotion,
-    FoldDecline,
-    FoldClear,
-}
-
-#[cfg(test)]
-impl PreauthorizedClaimStatusGrant {
-    // Test-only access verifies the materialization door's row/header binding.
-    pub(super) fn test_timeout_demotion() -> Self {
-        Self::TimeoutDemotion
-    }
-}
-
-pub(super) fn put_preauthorized_claim_status_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    expected: &ClaimBody,
-    grant: PreauthorizedClaimStatusGrant,
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<()> {
-    let current = vault
-        .get_claim_in_txn(&*wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    let raw = vault
-        .store
-        .port_entity_record(&*wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    if raw.entity_type != ENTITY_TYPE_CLAIM
-        || raw.occurred.start != occurred.start
-        || raw.occurred.end != occurred.end
-        || raw.learned_at != learned_at
-        || current != *expected
-    {
-        return Err(Error::InvariantViolation(
-            "preauthorized claim status update does not bind current claim row",
-        ));
-    }
-    let mut updated = current;
-    match grant {
-        PreauthorizedClaimStatusGrant::TimeoutDemotion => {
-            updated.approval = ClaimApprovalStatus::Proposed;
-        }
-        PreauthorizedClaimStatusGrant::FoldClear => {
-            updated.approval = ClaimApprovalStatus::Auto;
-        }
-        PreauthorizedClaimStatusGrant::FoldDecline => {
-            updated.lifecycle = ClaimLifecycleStatus::Retracted;
-        }
-    }
-    let data = encode_claim_body(&updated)?;
-    crate::claim::validate_claim_body_bytes(&data, false)?;
-    apply_session_bundle_claim_puts(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        wtxn,
-        vec![BatchOp::Put {
-            id: *id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred,
-            learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }],
-        vault
-            .text_index_trusted
-            .load(std::sync::atomic::Ordering::Acquire),
     )
 }
 
@@ -540,39 +465,36 @@ impl Vault {
                 let Ok(binding) = critical_write_confirm_binding(&row) else {
                     continue;
                 };
-                if binding.expires_at > now
-                    || self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?
-                {
+                if binding.expires_at > now {
                     continue;
                 }
-                let Some(body) = self.get_claim_in_txn(&*wtxn, &binding.claim_id)? else {
-                    continue;
-                };
-                if body.approval != ClaimApprovalStatus::Auto {
-                    continue;
-                }
-                let raw = self
+                // Each demotion runs in a savepoint: one that fails drops only
+                // its own rows, and the walk passes it over so the cursor still
+                // moves on (FIX 12025). A store failure fails the page.
+                let claim_id = binding.claim_id;
+                let landed = self
                     .store
-                    .port_entity_record(&*wtxn, &binding.claim_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                put_preauthorized_claim_status_in_txn(
-                    self,
-                    wtxn,
-                    &binding.claim_id,
-                    &body,
-                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
-                    TimeRange {
-                        start: raw.occurred.start,
-                        end: raw.occurred.end,
-                    },
-                    raw.learned_at,
-                )?;
-                let mut timed_out = row;
-                timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
-                self.store
-                    .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
-                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
-                demoted += 1;
+                    .env
+                    .nested_write_txn(wtxn)
+                    .map_err(Error::from)
+                    .and_then(|mut savepoint| {
+                        let landed =
+                            self.demote_expired_confirm_in_txn(&mut savepoint, row, claim_id)?;
+                        savepoint.commit()?;
+                        Ok(landed)
+                    });
+                match landed {
+                    Ok(true) => demoted += 1,
+                    Ok(false) => {}
+                    Err(error @ (Error::Storage(_) | Error::Io(_) | Error::MapFull)) => {
+                        return Err(error);
+                    }
+                    Err(error) => tracing::warn!(
+                        claim = %claim_id.to_hex(),
+                        kind = ?error.kind(),
+                        "a timeout demotion did not land: the expiry walk passes it over"
+                    ),
+                }
             }
             Ok(ConfirmExpiryPage {
                 demoted,
@@ -580,6 +502,45 @@ impl Vault {
                 ended: complete,
             })
         })
+    }
+
+    /// The timeout demotion of an expired confirm's `row` whose claim still
+    /// stands `Auto` with no deferred write: `true` once it demoted.
+    fn demote_expired_confirm_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        mut row: PendingGateConsentRecord,
+        claim_id: EntityId,
+    ) -> Result<bool> {
+        if self.has_deferred_claim_in_txn(wtxn, &claim_id)? {
+            return Ok(false);
+        }
+        let Some(body) = self.get_claim_in_txn(&*wtxn, &claim_id)? else {
+            return Ok(false);
+        };
+        if body.approval != ClaimApprovalStatus::Auto {
+            return Ok(false);
+        }
+        let raw = self
+            .store
+            .port_entity_record(&*wtxn, &claim_id)?
+            .ok_or(Error::EntityNotFound)?;
+        put_preauthorized_claim_status_in_txn(
+            self,
+            wtxn,
+            &claim_id,
+            &body,
+            PreauthorizedClaimStatusGrant::TimeoutDemotion,
+            TimeRange {
+                start: raw.occurred.start,
+                end: raw.occurred.end,
+            },
+            raw.learned_at,
+        )?;
+        row.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
+        self.store.put_pending_gate_consent_in_txn(wtxn, &row)?;
+        crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, claim_id)?;
+        Ok(true)
     }
 }
 

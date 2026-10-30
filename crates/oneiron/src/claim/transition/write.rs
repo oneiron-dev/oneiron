@@ -192,7 +192,10 @@ pub(crate) fn stage_machine_claim_transition(
         | ClaimTransitionKind::SupersedeClose
         | ClaimTransitionKind::Decay
         | ClaimTransitionKind::Weaken
-        | ClaimTransitionKind::Stale => machine_history_for_restriction(store, txn, &fold, target)?,
+        | ClaimTransitionKind::Stale
+        | ClaimTransitionKind::ConfirmLapse => {
+            machine_history_for_restriction(store, txn, &fold, target)?
+        }
     };
     let prior_tips: Vec<_> = if before.frontier.is_empty() {
         vec![rows.birth.digest]
