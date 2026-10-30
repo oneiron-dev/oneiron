@@ -50965,6 +50965,8 @@ pub enum RetryableLlmError {
         #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    #[serde(rename = "WorldRouteNotAdmitted")]
+    WorldRouteNotAdmitted,
     #[serde(rename = "ServerError")]
     ServerError,
     #[serde(rename = "Timeout")]
