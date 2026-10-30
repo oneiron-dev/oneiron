@@ -201,6 +201,9 @@ pub(super) fn commit_outcome_from_engine(
                 message: refusal.message,
                 suggestions: refusal.suggestions,
                 field: refusal.field,
+                legal_hold: refusal
+                    .legal_hold
+                    .map(|notice| super::legal_hold::legal_hold_from_engine(*notice)),
             }),
             receipt_ref,
         },

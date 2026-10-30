@@ -674,6 +674,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.ingress.get`
 - `vault.code.origin.register`
 - `vault.code.origin.mirror.get`
+- `vault.code.origin.mirror.plan`
 - `vault.code.origin.mirror.set`
 - `vault.code.origin.mirror.strategy`
 - `vault.code.origin.mirror.clear`

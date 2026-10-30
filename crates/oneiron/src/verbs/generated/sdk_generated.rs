@@ -3661,6 +3661,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.origin.mirror.plan",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginMirrorPlanRequest,
+                >(),
+            ),
+            (
                 "vault.code.origin.mirror.set",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginMirrorSetRequest,
@@ -7446,6 +7452,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.import",
     "vault.code.origin.register",
     "vault.code.origin.mirror.get",
+    "vault.code.origin.mirror.plan",
     "vault.code.origin.mirror.set",
     "vault.code.origin.mirror.strategy",
     "vault.code.origin.mirror.clear",
@@ -9289,6 +9296,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.origin.mirror.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginMirrorView,
+        >(),
+        "vault.code.origin.mirror.plan" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginMirrorPlanView,
         >(),
         "vault.code.origin.mirror.set" => crate::code_run::vault_read::request_schema::<
             crate::origin::mirror::OriginMirrorTarget,
@@ -15078,6 +15088,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.origin.mirror.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.plan" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21096,6 +21113,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.origin.mirror.get" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
         }
+        "vault.code.origin.mirror.plan" => {
+            let _input: crate::origin::publish::OriginMirrorPlanRequest = decode(value.clone())?;
+        }
         "vault.code.origin.mirror.set" => {
             let _input: crate::memory::origin_doors::OriginMirrorSetRequest =
                 decode(value.clone())?;
@@ -24397,6 +24417,9 @@ pub fn invoke(
         "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
         "vault.code.origin.mirror.get" => {
             encode(vault_code_origin_mirror_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.plan" => {
+            encode(vault_code_origin_mirror_plan(memory, decode(value)?)?)
         }
         "vault.code.origin.mirror.set" => {
             encode(vault_code_origin_mirror_set(memory, decode(value)?)?)
@@ -31178,6 +31201,15 @@ pub fn vault_code_origin_mirror_get(
 ) -> MemoryResult<crate::memory::origin_doors::OriginMirrorView> {
     memory.origin_mirror_get_as(
         &memory.embedded_owner("vault.code.origin.mirror.get")?,
+        input,
+    )
+}
+pub fn vault_code_origin_mirror_plan(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginMirrorPlanRequest,
+) -> MemoryResult<crate::origin::publish::OriginMirrorPlanView> {
+    memory.origin_mirror_plan_as(
+        &memory.embedded_owner("vault.code.origin.mirror.plan")?,
         input,
     )
 }

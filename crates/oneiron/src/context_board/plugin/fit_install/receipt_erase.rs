@@ -35,6 +35,7 @@ pub(crate) fn erase_section_fit_receipts_in_txn(
     };
     for receipt in receipts {
         let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, wtxn, &receipt)?;
+        crate::batch::stage_cascade_tombstone_in_txn(store, wtxn, &receipt)?;
         crate::ppr::invalidate_ppr_for_delete(store, wtxn, &receipt, &neighbors)?;
         if graph {
             crate::ppr::increment_graph_version(store, wtxn)?;

@@ -702,6 +702,7 @@ vaultCodeImportsGet(input: unknown): unknown
 vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
+vaultCodeOriginMirrorPlan(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
 vaultCodeOriginMirrorStrategy(input: unknown): unknown
 vaultCodeOriginMirrorClear(input: unknown): unknown

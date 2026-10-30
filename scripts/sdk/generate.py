@@ -464,7 +464,7 @@ def native_boundary(row, language):
     else:
         name = names[args[0]['name']]
         if language == 'napi':
-            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None, resets_at: Vec::new(), reason_codes: Vec::new() }}))?;'
+            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None, resets_at: Vec::new(), reason_codes: Vec::new(), legal_hold: None }}))?;'
         else:
             setup = f'let input: serde_json::Value = decode({name}, "{row["name"]}")?;'
         call = f'self.inner.agent_verb("{row["name"]}", input)'
@@ -1197,7 +1197,7 @@ export type FacadeHookStop =
   | { status: "hidden"; hook: string };
 /** The server's refusal envelope, `{error, narrowing?}`, as `api/facade.rs` writes it. */
 export interface FacadeErrorEnvelope {
-  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; retryAfter?: number; resetsAt?: number[]; reasonCodes?: string[]; [field: string]: unknown };
+  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; retryAfter?: number; resetsAt?: number[]; reasonCodes?: string[]; legal_hold?: Facade.LegalHoldNotice; [field: string]: unknown };
   narrowing?: unknown;
 }
 /**
