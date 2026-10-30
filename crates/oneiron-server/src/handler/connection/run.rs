@@ -131,6 +131,7 @@ pub(super) async fn handle_connection(
         conn_id,
     );
     let mut app_tick = tokio::time::interval(Duration::from_millis(25));
+    let mut asset_body_tick = tokio::time::interval(super::super::asset_bodies::ASSET_BODY_POLL);
     // Verb RPCs answer off this loop, which serves the socket meanwhile; their
     // answers queue on `direct_tx`. A call still running when the loop ends
     // runs to its end below.
@@ -168,6 +169,7 @@ pub(super) async fn handle_connection(
             }
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
             _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
+            _ = asset_body_tick.tick(), if direct_rx.is_empty() => ConnEvent::AssetBodies,
         };
 
         let next_message = match event {
@@ -180,6 +182,10 @@ pub(super) async fn handle_connection(
             ConnEvent::Answered(Err(error)) => {
                 tracing::warn!(conn_id, %error, "verb RPC ended without an answer — closing");
                 break;
+            }
+            ConnEvent::AssetBodies => {
+                super::super::asset_bodies::poll(&server, &mut conn_state, &direct_tx);
+                continue;
             }
             ConnEvent::AppDelivery => {
                 if conn_state.bound_auth.is_some() {

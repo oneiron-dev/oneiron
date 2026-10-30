@@ -51,6 +51,9 @@ impl SyncClient {
                 super::note_session::accept_bind_reply(payload)?;
                 self.note_session_bound = true;
             }
+            transport::TAG_ASSET_BODY_WANT..=transport::TAG_ASSET_BODY_RECEIPT => {
+                responses.extend(self.handle_asset_body_frame(tag, payload)?);
+            }
             transport::TAG_DOCUMENT => {
                 responses.extend(self.handle_document_frame(transport::decode_document(payload)?)?);
             }

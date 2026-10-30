@@ -165,6 +165,9 @@ impl<T> PaginatedResponse<T> {
 pub(crate) enum SyncMessage {
     /// V9 binary chunk request outside CRDT history.
     LfsChunks(Vec<u8>),
+    /// A by-reference ASSET body frame (tags 23-26, FIX 5489): its tag and
+    /// the bytes after it.
+    AssetBody { tag: u8, payload: Vec<u8> },
     /// Kept raw until the version/binding gate has run, including malformed JSON.
     Rpc(Vec<u8>),
     /// A separate id space from RPC requests and WindowSync.
@@ -220,6 +223,11 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
     }
     match tag {
         TAG_LFS_CHUNK_SYNC => Ok(SyncMessage::LfsChunks(payload.to_vec())),
+        oneiron::sync::transport::TAG_ASSET_BODY_WANT
+            ..=oneiron::sync::transport::TAG_ASSET_BODY_RECEIPT => Ok(SyncMessage::AssetBody {
+            tag,
+            payload: payload.to_vec(),
+        }),
         TAG_DOCUMENT => {
             let doc = decode_document(payload)
                 .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
