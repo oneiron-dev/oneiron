@@ -83,18 +83,23 @@ struct TextCopy {
     copy: String,
     /// The spans `copy` overwrites; `None` for the sealed-file placeholder.
     places: Option<KeyPlaces>,
+    /// The marked blob it stands for: what a landed edit's mark is carried
+    /// from (FIX 10732).
+    blob: [u8; 32],
     /// The stamp fingerprint: source, marks, actual copy bytes, kind, rules.
     stamp: [u8; 32],
 }
 
 impl TextCopy {
     /// The sealed-file placeholder under `key`, for a document whose own
-    /// copy is unread this pass (FIX 10793): never its stored text.
-    fn sealed(key: EntityId) -> Self {
+    /// copy of the marked blob `blob` is unread this pass (FIX 10793): never
+    /// its stored text.
+    fn sealed(key: EntityId, blob: [u8; 32]) -> Self {
         Self {
             key,
             copy: String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned(),
             places: None,
+            blob,
             stamp: super::UNREAD_STAMP,
         }
     }
@@ -108,8 +113,9 @@ impl TextCopy {
 /// The marked blob the document `id` names, and the bytes its copy is made
 /// from: a marked snapshot ASSET's text; a known copy id's source blob, as
 /// stored here (FIX 10795; none held: the placeholder); any other document
-/// whose whole text is a marked blob (FIX 10796). `None` for an unmarked
-/// document.
+/// whose whole text is a marked blob (FIX 10796). A source whose bytes are
+/// now another marked blob (a landed edit's carried mark, FIX 10732) is that
+/// blob. `None` for an unmarked document.
 ///
 /// # Errors
 /// A failed copy id derivation.
@@ -123,7 +129,7 @@ fn text_bound_in_txn(
     if let Some(hash) = marks.source_of(id) {
         return Ok(Some(TextBound {
             key: copy_id(id)?,
-            hash,
+            hash: carried(marks, hash, text.as_bytes()),
             bytes: text.as_bytes().to_vec(),
             own: true,
         }));
@@ -139,10 +145,12 @@ fn text_bound_in_txn(
             .ok()
             .flatten()
             .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
-            .filter(|body| blake3::hash(body).as_bytes() == &hash);
+            .filter(|body| carried(marks, hash, body) == *blake3::hash(body).as_bytes());
         return Ok(Some(TextBound {
             key: *id,
-            hash,
+            hash: stored
+                .as_deref()
+                .map_or(hash, |body| carried(marks, hash, body)),
             bytes: stored.unwrap_or_default(),
             own: false,
         }));
@@ -154,6 +162,18 @@ fn text_bound_in_txn(
         bytes: text.as_bytes().to_vec(),
         own: true,
     }))
+}
+
+/// The marked blob a source bound to `hash` stands for when its bytes are
+/// `bytes`: those bytes' own blob when a mark covers them (a landed edit's
+/// carried mark, FIX 10732), else `hash`.
+fn carried(marks: &RepoIndexMarks, hash: [u8; 32], bytes: &[u8]) -> [u8; 32] {
+    let own = *blake3::hash(bytes).as_bytes();
+    if own != hash && marks.is_marked(&own) {
+        own
+    } else {
+        hash
+    }
 }
 
 /// What [`text_bound_in_txn`] found.
@@ -183,7 +203,7 @@ fn text_copy_in_txn(
     let Some(bound) = text_bound_in_txn(vault, txn, marks, id, text)? else {
         return Ok(None);
     };
-    let key = bound.key;
+    let (key, blob) = (bound.key, bound.hash);
     match project_text_in_txn(vault, txn, marks, bound) {
         Ok(copy) => Ok(copy),
         Err(error) => {
@@ -191,7 +211,7 @@ fn text_copy_in_txn(
                 %error,
                 "sync: a marked document's copy is unreadable; it leaves sealed"
             );
-            Ok(Some(TextCopy::sealed(key)))
+            Ok(Some(TextCopy::sealed(key, blob)))
         }
     }
 }
@@ -235,6 +255,7 @@ fn project_text_in_txn(
         key,
         copy,
         places,
+        blob: hash,
         stamp: fingerprint,
     }))
 }
@@ -348,8 +369,8 @@ pub(crate) fn document_copy_in_txn(
 /// A peer's update `bytes` of the copy lineage of `source`'s document,
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
-/// text through the visible diff and the canonical writer, its keys marked
-/// beside it (FIX 10732). A ruled hold persists nothing.
+/// text through the visible diff and the canonical writer, carrying the
+/// copy's mark (FIX 10732). A ruled hold persists nothing.
 ///
 /// # Errors
 /// `admit`'s refusal, an update that does not import whole on the lineage,
@@ -435,9 +456,15 @@ where
                 &update,
                 Some(&submitted),
             )?;
-            // FIX 10732: the landed text's keys are marked as the receive door
-            // marks a blob, in this writer.
-            super::remark::remark_landed_in_txn(vault, txn, source, text.as_bytes())?;
+            // FIX 10732: the landed text carries the copy's mark, in this
+            // writer, so it is never committed unmarked (L04 05:5x).
+            crate::origin::secret_marks::carry_repo_secret_marks_in_txn(
+                vault,
+                txn,
+                &copy.blob,
+                text.as_bytes(),
+                source,
+            )?;
         }
         save_lineage(vault, txn, id, &lineage)?;
         Ok(())
