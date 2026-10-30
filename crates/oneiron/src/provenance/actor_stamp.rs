@@ -98,13 +98,7 @@ pub(crate) fn actor_stamp_in_txn(
     body.valid_from = Some(at);
     // Observed: a token is this vault's own fact, as a peer binding is.
     body.source = Some(ClaimSource::Observed);
-    vault.put_reserved_claim_in_txn(
-        wtxn,
-        &token,
-        &body,
-        TimeRange { start: at, end: at },
-        at,
-    )?;
+    vault.put_reserved_claim_in_txn(wtxn, &token, &body, TimeRange { start: at, end: at }, at)?;
     ACTOR_STAMP_TOKEN.put(&vault.store, wtxn, &actor.entity_ref(), &token)?;
     Ok(stamp(token))
 }
@@ -171,9 +165,8 @@ fn stamped_actor(body: &ClaimBody) -> Option<WriteActor> {
         || body.source != Some(ClaimSource::Observed)
         || body.lifecycle == ClaimLifecycleStatus::Retracted
         || crate::claim::claim_generated_origin(body)
-        || crate::claim::claim_evidence_taint(body).is_some_and(|taint| {
-            matches!(taint, ClaimSource::Imported | ClaimSource::ToolOutput)
-        })
+        || crate::claim::claim_evidence_taint(body)
+            .is_some_and(|taint| matches!(taint, ClaimSource::Imported | ClaimSource::ToolOutput))
     {
         return None;
     }

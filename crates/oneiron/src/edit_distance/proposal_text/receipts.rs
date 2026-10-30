@@ -122,17 +122,15 @@ impl ProposalTextArtifact {
                             }
                             // The token resolves to an actor of the stamp's
                             // class, or the receipt names no one (FIX 10930).
-                            let actor = match crate::provenance::resolve_actor_stamp(
-                                vault,
-                                &stamp.token,
-                            ) {
-                                Ok(Some(actor)) if actor.actor_class() == stamp.class => actor,
-                                Ok(_) => return None,
-                                Err(error) => {
-                                    authority_error = Some(error);
-                                    return None;
-                                }
-                            };
+                            let actor =
+                                match crate::provenance::resolve_actor_stamp(vault, &stamp.token) {
+                                    Ok(Some(actor)) if actor.actor_class() == stamp.class => actor,
+                                    Ok(_) => return None,
+                                    Err(error) => {
+                                        authority_error = Some(error);
+                                        return None;
+                                    }
+                                };
                             match crate::edit_distance::peer_actor_stamp_is_honored(
                                 vault,
                                 meta.id.peer,

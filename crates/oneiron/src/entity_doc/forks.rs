@@ -500,7 +500,9 @@ pub(super) fn open_proposal_in_txn(
             for (edit, op) in req.edits.iter().enumerate() {
                 let text = admitted_prose_in_txn(vault, txn, req.entity, op, &lifted, &mut plan)?;
                 let stored = &text.stored;
-                let place = apply(&mut fork, req.entity, op, stamp, stored, at, sources, &lifted)?;
+                let place = apply(
+                    &mut fork, req.entity, op, stamp, stored, at, sources, &lifted,
+                )?;
                 if let Some(place) = place {
                     let slot = format!("/requests/{index}/edits/{edit}/text");
                     let said = LandedProse::anchored(req.actor, slot, &fork, place, &text, &lifted);
