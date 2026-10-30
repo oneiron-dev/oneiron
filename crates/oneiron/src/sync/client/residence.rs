@@ -8,15 +8,18 @@ mod checkpoint_roots;
 pub(crate) mod custody;
 pub(crate) mod home_handoff;
 mod index;
+mod items;
 mod kit_fetch;
 mod machine_history;
 mod pad_custody;
 mod promoted_pads;
 mod rpc;
 mod search;
-mod items;
 mod search_client;
 mod windows;
+pub(crate) use self::search_client::search_resident;
+use self::windows::PromotionReply;
+pub(crate) use self::windows::retry_refused_retains;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::{
     PadAdmissionReport, SealedBundleRelay, SealedBundleRelayObservation,
@@ -27,9 +30,6 @@ pub(crate) use checkpoint_roots::exchange_checkpoint_roots;
 pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;
-use self::windows::PromotionReply;
-pub(crate) use self::windows::retry_refused_retains;
-pub(crate) use self::search_client::search_resident;
 
 use serde::Deserialize;
 
@@ -103,5 +103,4 @@ pub(super) fn import_promotion_snapshot(doc: &loro::LoroDoc, snapshot: &[u8]) ->
         && doc.import(snapshot).is_ok()
 }
 
-impl SyncClient {
-}
+impl SyncClient {}

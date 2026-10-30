@@ -368,7 +368,9 @@ impl SyncClient {
         Ok(evidence)
     }
 
-    pub(in crate::sync::client) fn drain_staged_world_updates(&mut self) -> std::result::Result<(), TransportError> {
+    pub(in crate::sync::client) fn drain_staged_world_updates(
+        &mut self,
+    ) -> std::result::Result<(), TransportError> {
         let mut healed = Vec::new();
         loop {
             if self.staged_world_updates.is_empty() {

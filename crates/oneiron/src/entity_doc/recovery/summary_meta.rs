@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use loro::LoroDoc;
 
-use super::invalid;
 use super::super::document::{map_get_bytes, map_insert_bytes};
+use super::invalid;
 use crate::Result;
 
 /// The meta keys a summary document keeps its typed values under.
@@ -32,7 +32,8 @@ pub(super) fn write(doc: &LoroDoc, summary: &BTreeMap<String, Vec<u8>>) -> Resul
         match summary.get(key) {
             Some(bytes) => map_insert_bytes(&meta, key, bytes)?,
             None if map_get_bytes(&meta, key).is_some() => {
-                meta.delete(key).map_err(|_| invalid("summary meta removal"))?;
+                meta.delete(key)
+                    .map_err(|_| invalid("summary meta removal"))?;
             }
             None => {}
         }
