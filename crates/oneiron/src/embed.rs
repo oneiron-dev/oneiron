@@ -744,7 +744,7 @@ impl PendingEmbeddingReconciler {
                     }
                 }
                 let Some((route, lease_duration_ms)) =
-                    self.rung_route(&input, device_local, &mut batch)
+                    self.rung_route(wtxn, &input, device_local, &mut batch)?
                 else {
                     continue;
                 };
