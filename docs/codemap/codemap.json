@@ -4539,6 +4539,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/revocation_notice.rs",
+     "purpose": "The credential revocation notice (FIX 10381): content-free, per open vault, bumped after each commit that…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -30696,7 +30707,7 @@
      "purpose": "ED-09 (ONE-1765, ARCH-0056 §10–11): the SFT/DPO reservoir — every amendment the decider made, projected into…",
      "surface": {
       "const": 10,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "re-export": 2,
       "struct": 3
@@ -30714,7 +30725,7 @@
      "path": "src/edit_distance/reservoir/eligibility.rs",
      "purpose": "FIX 9796, 10194: which scoped pairs a corpus carries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 1,
       "struct": 2
@@ -39920,7 +39931,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -40183,8 +40194,8 @@
      "path": "src/lens/guest.rs",
      "purpose": "Sandboxed, read-only lens authoring",
      "surface": {
-      "const": 2,
-      "fn": 4,
+      "const": 3,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -40427,7 +40438,7 @@
      "path": "src/lens/proposal.rs",
      "purpose": "Pack lens proposals (OF-250): one frozen compiled tree bound to an installed pack's skill, with its authored…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 12,
       "enum": 1,
       "fn": 2,
@@ -44898,6 +44909,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ExportTransferPiece",
+      "ExportTransferReadRequest",
+      "ExportTransferReleaseRequest",
+      "ExportTransferReleased"
+     ],
+     "path": "src/memory/export_transfer_read.rs",
+     "purpose": "The transfer verbs over a kept whole-vault export (FIX 11176)",
+     "surface": {
+      "const": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExpressionPreferenceInput",
       "ExpressionPreferenceReceipt",
       "ExpressionPreferenceView"
@@ -45369,7 +45396,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 27,
-      "re-export": 62
+      "re-export": 63
      }
     },
     {
@@ -56158,7 +56185,7 @@
       "const": 6,
       "crate-vis": 94,
       "enum": 1,
-      "fn": 12,
+      "fn": 15,
       "struct": 6
      }
     },
@@ -75739,14 +75766,16 @@
      "kind": "src",
      "notable": [
       "ActAnswer",
-      "DetailsOnDevice"
+      "DetailsOnDevice",
+      "NarrowedQuestion",
+      "NarrowedQuestions"
      ],
      "path": "src/verbs/act_answer.rs",
      "purpose": "What an act answers its caller (FIX 3414)",
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 1
+      "struct": 3
      }
     },
     {
@@ -76392,7 +76421,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1236
+      "fn": 1238
      }
     },
     {
@@ -77519,7 +77548,9 @@
      "notable": [],
      "path": "src/verbs/skill_attribution/artifact_view.rs",
      "purpose": "The public artifact view, its texts read through the retained document",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -82070,7 +82101,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 232,
+     "files": 233,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82854,7 +82885,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 293,
+     "files": 294,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83549,7 +83580,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5596,
+   "source_files": 5598,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88577,7 +88608,8 @@
      "path": "src/claim/receipt.rs",
      "purpose": "Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed",
      "surface": {
-      "fn": 4,
+      "crate-vis": 3,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -95833,7 +95865,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1204
+      "fn": 1206
      }
     },
     {
@@ -97296,7 +97328,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1205
+      "fn": 1207
      }
     },
     {
@@ -97389,6 +97421,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/remote/custody_submit.rs",
+     "purpose": "An owner's sealed custody change past the facade's request ceiling (FIX 11454)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/remote/export_transfer.rs",
      "purpose": "A kept whole-vault export's transfer routes (FIX 3676): `GET` and `DELETE…",
      "surface": {
@@ -97442,7 +97484,7 @@
      "path": "src/remote/response.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -97585,7 +97627,7 @@
      "purpose": "Own-server raw LLM transport over the SDK's single authenticated HTTP client"
     },
     "remote": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -97594,7 +97636,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 20,
+   "source_files": 21,
    "test_files": 8
   },
   "oneiron-retrieval": {
@@ -101231,7 +101273,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -101591,7 +101633,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -101841,7 +101883,17 @@
      "path": "src/api/facade/export_transfer.rs",
      "purpose": "Whole-vault exports kept on the server for their caller to read (FIX 3676)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/export_transfer/mcp_read.rs",
+     "purpose": "The transfer verbs over a kept export, and MCP's kept export (FIX 11176)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -102091,7 +102143,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 160
+      "crate-vis": 161
      }
     },
     {
@@ -102141,7 +102193,7 @@
      "path": "src/api/facade/host_doors/media.rs",
      "purpose": "The `ai.*` media doors past text: options, image, speech, transcription, embedding and video",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -102761,7 +102813,7 @@
      "path": "src/api/facade/secret_body.rs",
      "purpose": "The wiping body path for the custody rows that carry a secret's value in plaintext over the HTTP facade (FIX…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -109320,7 +109372,7 @@
      "path": "src/files_intake/reader.rs",
      "purpose": "The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -112242,7 +112294,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/media/calls.rs",
@@ -112289,7 +112341,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -112325,13 +112377,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/media/run_line.rs",
      "purpose": "A program's media jobs on its run's line (FIX 780, FIX 6083)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -115908,7 +115960,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 630,
+     "files": 631,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116407,7 +116459,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1449,
+   "source_files": 1450,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -118050,6 +118102,10 @@
       "ExportCheck",
       "ExportDiaryRead",
       "ExportTransfer",
+      "ExportTransferPiece",
+      "ExportTransferReadRequest",
+      "ExportTransferReleaseRequest",
+      "ExportTransferReleased",
       "ExternalImportDoor",
       "ExternalImportLookup",
       "ExternalImportPhase",
@@ -118920,6 +118976,8 @@
       "MutationIntent",
       "NameOnlyReason",
       "NarrowConnect",
+      "NarrowedQuestion",
+      "NarrowedQuestions",
       "NativeOutputRequest",
       "NearCopyFlag",
       "NeighborhoodGraphAtom",
@@ -120955,7 +121013,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1067,
-      "struct": 3275
+      "struct": 3281
      }
     },
     {
