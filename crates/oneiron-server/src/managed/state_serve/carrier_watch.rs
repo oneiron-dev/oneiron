@@ -12,17 +12,21 @@
 //! at the look that finds it answered or gone ([`diverged_ask`], FIX 11074).
 //!
 //! An escrow recipient the carrier delivers after the engine started is
-//! sealed to and spooled at the next look, as a start seals those present
-//! then, with no restart; a capsule a spool did not hand over, at a start
-//! or a look, goes at a later look. A look is a cadence, not a deadline:
-//! one question to the companion is in flight at a time, and one that does
-//! not come back leaves the last answer standing.
+//! sealed to at the next look, as a start seals those present then, with
+//! no restart, whether or not the engine has an escrow outbox (FIX 11078).
+//! Where it has one, the capsule is spooled too, and a capsule a spool did
+//! not hand over, at a start or a look, goes at a later look; with none, it
+//! stays in the vault unspooled, as a start's does. A cold restore's check
+//! reads the same files ([`carrier_recipient`]). A look is a cadence, not a
+//! deadline: one question to the companion is in flight at a time, and one
+//! that does not come back leaves the last answer standing.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron_vault_contract::restore::EscrowRole;
 use oneiron_vault_contract::vm_outbox::VM_GUEST_OUTBOX_DIR;
 use tokio::task::JoinHandle;
 
@@ -37,12 +41,16 @@ mod diverged_ask;
 /// recipients its carrier holds: the cadence of a look, not a deadline.
 const LOOK_EVERY: Duration = Duration::from_secs(5);
 
-/// The escrow recipients a VM's carrier delivers, by role, as the companion
-/// lays them out under its outbox's `recipients/`.
-const CARRIER_RECIPIENTS: [(&str, &str); 2] = [
-    ("managed", "managed.pub"),
-    ("break-glass", "break-glass.pub"),
-];
+/// The file a VM's carrier delivers `role`'s escrow recipient in, as the
+/// companion lays the recipients out under its outbox's `recipients/`:
+/// read as it stands at each look, and by a cold restore's check.
+pub(in crate::managed) fn carrier_recipient(role: EscrowRole) -> PathBuf {
+    let file = match role {
+        EscrowRole::Managed => "managed.pub",
+        EscrowRole::BreakGlass => "break-glass.pub",
+    };
+    Path::new(VM_GUEST_OUTBOX_DIR).join("recipients").join(file)
+}
 
 /// How the outbox companion stands, as the engine last heard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,8 +81,8 @@ struct Recipients {
     unspooled_said: bool,
 }
 
-/// Looks at the companion and, where the engine has an escrow outbox, at
-/// the carrier's recipients, every [`LOOK_EVERY`] until `shutdown`.
+/// Looks at the companion and at the carrier's recipients every
+/// [`LOOK_EVERY`] until `shutdown`.
 pub(super) fn spawn(
     state: Arc<ManagedState>,
     vault: Arc<oneiron::Vault>,
@@ -90,15 +98,13 @@ pub(super) fn spawn(
         loop {
             asking = Some(look_at_companion(&state, asking).await);
             asks = Some(look_at_diverged(&state, &vault, asks).await);
-            if managed.escrow_outbox.is_some() {
-                let (state, vault, managed) =
-                    (Arc::clone(&state), Arc::clone(&vault), Arc::clone(&managed));
-                let looked = tokio::task::spawn_blocking(move || {
-                    seal_carrier_recipients(&state, &vault, &managed, &mut recipients);
-                    recipients
-                });
-                recipients = looked.await.unwrap_or_default();
-            }
+            let (state, vault, managed) =
+                (Arc::clone(&state), Arc::clone(&vault), Arc::clone(&managed));
+            let looked = tokio::task::spawn_blocking(move || {
+                seal_carrier_recipients(&state, &vault, &managed, &mut recipients);
+                recipients
+            });
+            recipients = looked.await.unwrap_or_default();
             tokio::select! {
                 () = &mut stopped => return,
                 () = tokio::time::sleep(LOOK_EVERY) => {}
@@ -158,34 +164,35 @@ fn note_companion(state: &ManagedState, revision: Option<u32>) {
 }
 
 /// Seals the vault's data key to each recipient the carrier holds that the
-/// watch has not sealed to, and spools each capsule the outbox does not hold
-/// yet, as a start does (FIX 6684): one sealed now, or one an earlier spool
-/// did not hand over, which goes again as the same report and is never
-/// sealed again. It writes under a background admission, held through each
-/// report and its mark, so a vault frozen for reap seals and spools nothing
-/// until it thaws. A recipient that does not seal, and a spool that does
-/// not go through, is said once and tried again at each look.
+/// watch has not sealed to, with or without an escrow outbox (FIX 11078),
+/// and, where the engine has one, spools each capsule it does not hold yet,
+/// as a start does (FIX 6684): one sealed now, or one an earlier spool did
+/// not hand over, which goes again as the same report and is never sealed
+/// again. With no outbox a capsule stays unspooled in the vault, as a
+/// start leaves it. It writes under a background admission, held through
+/// each report and its mark, so a vault frozen for reap seals and spools
+/// nothing until it thaws. A recipient that does not seal, and a spool that
+/// does not go through, is said once and tried again at each look.
 fn seal_carrier_recipients(
     state: &ManagedState,
     vault: &oneiron::Vault,
     managed: &ManagedArgs,
     recipients: &mut Recipients,
 ) {
-    let Some(outbox) = managed.escrow_outbox.as_deref() else {
-        return;
-    };
-    let dir = Path::new(VM_GUEST_OUTBOX_DIR).join("recipients");
     let mut fresh = Vec::new();
-    for (role, file) in CARRIER_RECIPIENTS {
-        let Ok(bytes) = std::fs::read(dir.join(file)) else {
+    for role in [EscrowRole::Managed, EscrowRole::BreakGlass] {
+        let Ok(bytes) = std::fs::read(carrier_recipient(role)) else {
             continue;
         };
+        let role = role.label_prefix();
         let fingerprint = blake3::hash(&bytes);
         if recipients.sealed.get(role) != Some(&fingerprint) {
             fresh.push((role, fingerprint, bytes));
         }
     }
-    if fresh.is_empty() && !escrow_unspooled(vault) {
+    let outbox = managed.escrow_outbox.as_deref();
+    let unspooled = outbox.is_some() && escrow_unspooled(vault);
+    if fresh.is_empty() && !unspooled {
         return;
     }
     let Some(admitted) = state.admit_background(WriteKind::BackgroundOther) else {
@@ -194,16 +201,18 @@ fn seal_carrier_recipients(
     if !fresh.is_empty() {
         seal_fresh(vault, fresh, recipients);
     }
-    match spool_escrow_capsules(vault, managed, outbox, &mut BTreeSet::new()) {
-        Ok(()) => recipients.unspooled_said = false,
-        Err(error) => {
-            if !std::mem::replace(&mut recipients.unspooled_said, true) {
-                tracing::warn!(
-                    reason = "vm_escrow_capsule_unspooled",
-                    error = %format!("{error:#}"),
-                    "an escrow capsule is not spooled yet; the next look spools it, and the \
-                     vault serves on"
-                );
+    if let Some(outbox) = outbox {
+        match spool_escrow_capsules(vault, managed, outbox, &mut BTreeSet::new()) {
+            Ok(()) => recipients.unspooled_said = false,
+            Err(error) => {
+                if !std::mem::replace(&mut recipients.unspooled_said, true) {
+                    tracing::warn!(
+                        reason = "vm_escrow_capsule_unspooled",
+                        error = %format!("{error:#}"),
+                        "an escrow capsule is not spooled yet; the next look spools it, and \
+                         the vault serves on"
+                    );
+                }
             }
         }
     }
