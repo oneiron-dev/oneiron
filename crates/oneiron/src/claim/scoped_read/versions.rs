@@ -307,8 +307,12 @@ impl<'v> ScopedRead<'v> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
         // guards the doors that find a row (search, recall, packs, graph
-        // edges), and each runs it before it reads the row here.
-        if !self.is_entity_readable_held_in(txn, policy, id, filter, authority)? {
+        // edges), and each runs it before it reads the row here. The bytes
+        // judged are kept: a revision read that returns them is admitted.
+        let Some(judged) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
+            return Ok(None);
+        };
+        if !self.is_entity_raw_readable_held_in(txn, policy, id, &judged, filter, authority)? {
             return Ok(None);
         }
         let raw = match self.session_view {
@@ -336,6 +340,11 @@ impl<'v> ScopedRead<'v> {
             });
         let admitted = if stable_text_scope {
             self.text_sources_readable_in(txn, policy, id, authority)?
+        } else if raw == judged {
+            // The very bytes judged above, under the same txn, policy,
+            // filter and authority: the judge would repeat its answer
+            // (L02 04:25).
+            true
         } else {
             self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
         };
