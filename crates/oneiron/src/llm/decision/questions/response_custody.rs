@@ -3,11 +3,14 @@
 //! An answer row, its outcome labels and its closed window copy the bound
 //! `judgment.answer` claim FIX 9918 erases them with: the claim's erase
 //! deletes every one of those rows live, at both delete doors. A checkpoint
-//! carries each as a row-held response owned by the answer claim alone, so
-//! the claim's erase retires every image's copy too; a retired copy leaves
-//! nothing, as the live row goes. The question's own rows (its versions,
+//! carries each as a row-held response owned by the answer claim, its unit
+//! and its receipt's principal, so the erase of any of the three retires
+//! every image's copy too; a retired copy leaves nothing, as the live row
+//! goes. A label or a closed window keeps its claim owner alone: it names
+//! no unit or principal of its own. The question's own rows (its versions,
 //! head, backfills and ask-history mark) hold no answer copy and travel as
-//! they are. Erasing by unit or by principal is the FIX's open second half.
+//! they are. Erasing by unit or by principal is the FIX's second half, in
+//! the erase scrub beside this one.
 
 use super::store::{AnswerKey, LabelKey, QUESTION_ANSWER, QUESTION_LABEL};
 use super::windows::{QUESTION_WINDOW, WindowKey};
@@ -62,9 +65,28 @@ pub(crate) fn typed_question_carriage(key: &[u8], value: &[u8]) -> ResponseScan 
     })
 }
 
-/// Who owns the typed-question row `key`'s copies: the answer claim it
-/// copies, by its key alone, as FIX 9918's eraser deletes it by; none for
-/// any other row of the table, or one whose key does not decode.
-pub(crate) fn typed_question_owners(key: &[u8]) -> Vec<EntityId> {
+/// Who owns the typed-question row `key`'s copies: an answer row's, its
+/// claim, its answer's unit and its receipt's principal, as the erasers
+/// delete it by; a label's or a closed window's, its claim alone, by its
+/// key; none for any other row of the table, or one whose key does not
+/// decode. An answer row that does not decode keeps its claim owner, as
+/// its opaque carriage does.
+pub(crate) fn typed_question_owners(key: &[u8], value: &[u8]) -> Vec<EntityId> {
+    let Some(rest) = key.strip_prefix(side_table::TYPED_QUESTION.prefix) else {
+        return Vec::new();
+    };
+    if let Some(answer) = AnswerKey::decode_key(rest) {
+        let mut owners = vec![answer.claim];
+        if let Ok(record) = QUESTION_ANSWER.decode_value(value) {
+            if record.unit != answer.claim {
+                owners.push(record.unit);
+            }
+            let principal = record.decision.receipt.principal;
+            if principal != answer.claim && principal != record.unit {
+                owners.push(principal);
+            }
+        }
+        return owners;
+    }
     copy_claim(key).into_iter().collect()
 }

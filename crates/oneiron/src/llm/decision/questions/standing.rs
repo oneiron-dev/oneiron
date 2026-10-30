@@ -20,10 +20,10 @@ use rmpv::Value;
 
 /// One backfill identity: question id + `backfill` family + version, unit and frontier.
 #[derive(Clone, Copy)]
-struct BackfillKey {
-    question: EntityId,
+pub(super) struct BackfillKey {
+    pub(super) question: EntityId,
     version: u32,
-    unit: EntityId,
+    pub(super) unit: EntityId,
     frontier: [u8; 32],
 }
 impl SideKey for BackfillKey {
@@ -45,7 +45,7 @@ impl SideKey for BackfillKey {
         })
     }
 }
-const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
+pub(super) const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
     SideTable::new(&side_table::TYPED_QUESTION);
 
 /// The host obtains `source_frontier` before asking a provider. Admission
