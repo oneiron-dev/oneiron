@@ -5,16 +5,18 @@
 //! host-issued reference name, and `emit-atom(json)` accepts a closed LensAtom.
 //! Handles must already be bound in the render frame. No WASI is linked.
 //!
-//! A run is paced, not rationed (FIX 9898): every host call is a yield that
-//! refills one step of fuel, so a lens that keeps reading and emitting runs
-//! to its end, and only a loop that never calls the host runs dry. No call
-//! count, output total or read total ends a run. The guest's memory stays
+//! A run is paced, not rationed (FIX 9898/11279): the store holds
+//! effectively unbounded fuel and yields every [`LENS_GUEST_STEP_FUEL`]
+//! units of fuel, so a lens that keeps reading and emitting runs to its
+//! end, and a long computation between two host calls yields and resumes
+//! with its state and owed atoms instead of trapping. No call count,
+//! output total or read total ends a run. The guest's memory stays
 //! bounded: it isolates untrusted code ([`LensGuestPolicy`]).
 
 use std::collections::BTreeMap;
 
 use wasmtime::component::{Component, InstancePre, Linker};
-use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 
 use super::instrument::display_body;
 use super::{
@@ -34,9 +36,9 @@ pub const LENS_GUEST_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 /// The largest lens component compiled by default (FIX 11257): a default the
 /// owner raises through [`LensGuestPolicy`], never a fixed refusal.
 pub const LENS_GUEST_COMPONENT_BYTES: usize = 1024 * 1024;
-/// The fuel one step of guest work gets: what a run may spend between two
-/// host calls, refilled at each (FIX 9898). It paces a run; it never ends one
-/// that keeps yielding to the host.
+/// The fuel a run spends between two async yields (FIX 9898/11279): the
+/// pacing quantum of `fuel_async_yield_interval`. It paces a run; it never
+/// ends one.
 pub const LENS_GUEST_STEP_FUEL: u64 = 2_000_000;
 
 /// How a lens guest runs: the one hook a ruling on its memory, its step or
@@ -46,7 +48,7 @@ pub const LENS_GUEST_STEP_FUEL: u64 = 2_000_000;
 pub struct LensGuestPolicy {
     /// The linear memory one guest instance may grow to, in bytes.
     pub memory_bytes: usize,
-    /// The fuel each step between two host calls gets.
+    /// The fuel between two async yields: the pacing quantum.
     pub step_fuel: u64,
     /// The largest component compiled, in bytes (FIX 11257).
     pub component_bytes: usize,
@@ -67,7 +69,6 @@ struct GuestState {
     // The guest sees only the host-bound handle, never a caller-supplied ID.
     bindings: BTreeMap<String, (String, String)>,
     atoms: Vec<LensAtom>,
-    step_fuel: u64,
     limits: StoreLimits,
 }
 
@@ -110,7 +111,6 @@ impl LensExecutionRuntime {
         {
             let mut root = linker.root();
             root.func_wrap("scoped-read", |mut cx, (handle,): (String,)| {
-                next_step(&mut cx)?;
                 let state = cx.data_mut();
                 let (text, _) = state.bindings.get(&handle).ok_or_else(|| {
                     wasmtime::Error::msg("lens handle is not scoped and host-bound")
@@ -119,7 +119,6 @@ impl LensExecutionRuntime {
             })
             .map_err(|_| failure("lens scoped-read link failed"))?;
             root.func_wrap("resolve-backing-ref", |mut cx, (handle,): (String,)| {
-                next_step(&mut cx)?;
                 let state = cx.data_mut();
                 let (_, token) = state
                     .bindings
@@ -129,7 +128,6 @@ impl LensExecutionRuntime {
             })
             .map_err(|_| failure("lens backing-ref link failed"))?;
             root.func_wrap("emit-atom", |mut cx, (json,): (String,)| {
-                next_step(&mut cx)?;
                 if json.len() > MAX_MESSAGE_BYTES {
                     return Err(wasmtime::Error::msg("lens atom message exceeds its frame"));
                 }
@@ -167,7 +165,15 @@ impl LensExecutionRuntime {
         self.boundary.imports()
     }
 
-    pub fn run(&self, frame: &LensRenderFrame, read: &ScopedRead<'_>) -> Result<InstrumentView> {
+    /// Runs the lens to its end: a long computation yields every
+    /// [`LensGuestPolicy::step_fuel`] units of fuel and resumes with its
+    /// state and owed atoms (FIX 11279). The caller cancels by dropping the
+    /// returned future; there is no timeout or deadline.
+    pub async fn run(
+        &self,
+        frame: &LensRenderFrame,
+        read: &ScopedRead<'_>,
+    ) -> Result<InstrumentView> {
         if !matches!(
             frame.world_scope(),
             crate::pipeline::WorldScope::WorldSet(_) | crate::pipeline::WorldScope::CodebaseSet(_)
@@ -204,7 +210,6 @@ impl LensExecutionRuntime {
             GuestState {
                 bindings,
                 atoms: Vec::new(),
-                step_fuel: self.policy.step_fuel,
                 limits: StoreLimitsBuilder::new()
                     .memory_size(self.policy.memory_bytes)
                     .memories(1)
@@ -217,16 +222,21 @@ impl LensExecutionRuntime {
         );
         store.limiter(|state| &mut state.limits);
         store
-            .set_fuel(self.policy.step_fuel)
+            .set_fuel(u64::MAX)
+            .map_err(|_| failure("lens fuel setup failed"))?;
+        store
+            .fuel_async_yield_interval(Some(self.policy.step_fuel))
             .map_err(|_| failure("lens fuel setup failed"))?;
         let instance = self
             .instance
-            .instantiate(&mut store)
+            .instantiate_async(&mut store)
+            .await
             .map_err(|_| failure("lens component instantiation failed"))?;
         let run = instance
             .get_typed_func::<(), ()>(&mut store, "run")
             .map_err(|_| failure("lens run export missing"))?;
-        run.call(&mut store, ())
+        run.call_async(&mut store, ())
+            .await
             .map_err(|_| failure("lens component execution refused"))?;
         let atoms = InstrumentAtoms::new(std::mem::take(&mut store.data_mut().atoms))?;
         let mut view = render_instrument(&atoms, frame, read)?;
@@ -238,13 +248,6 @@ impl LensExecutionRuntime {
         }
         Ok(view)
     }
-}
-
-/// A host call is a yield: the guest's next step starts with a full step of
-/// fuel, however much the step before it spent (FIX 9898).
-fn next_step(cx: &mut StoreContextMut<'_, GuestState>) -> wasmtime::Result<()> {
-    let step_fuel = cx.data().step_fuel;
-    cx.set_fuel(step_fuel)
 }
 
 fn failure(reason: &'static str) -> Error {
