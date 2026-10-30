@@ -58,7 +58,7 @@ pub(crate) fn record_explicit_ruling_in_txn(
     if remember {
         // The remembered row activates at once, so its holder answers the
         // same door a learned row's acceptance does, in this writer.
-        super::policy::standing_policy_holder_in_txn(vault, &*txn, owner)?;
+        let actor = super::policy::standing_policy_holder_in_txn(vault, &*txn, owner)?;
         let key = ScopeTriggerKey {
             scope_digest: scope_key(&scope),
             trigger: receipt.trigger,
@@ -82,6 +82,8 @@ pub(crate) fn record_explicit_ruling_in_txn(
             cited_receipts: vec![escalation_receipt_id(&id)],
             proposed_at: at,
             accepted_at: Some(at),
+            accepted_by: Some(actor.to_hex()),
+            decision_ref: Some(owner.decision_id().to_hex()),
             superseded,
         };
         STANDING_POLICY.put(&vault.store, txn, &key, &policy)?;

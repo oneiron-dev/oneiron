@@ -217,6 +217,7 @@ pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static
         IntentEscalationReason::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
         IntentEscalationReason::ActorErased => "actor_erased",
         IntentEscalationReason::RecipientErased => "recipient_erased",
+        IntentEscalationReason::OwnerErased => "owner_erased",
         IntentEscalationReason::RemoteTaskFailed => "remote_task_failed",
     }
 }

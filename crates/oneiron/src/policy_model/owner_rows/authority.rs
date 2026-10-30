@@ -281,6 +281,22 @@ pub(crate) fn is_live_vault_owner_in_txn(
     Ok(owners_in_txn(vault, txn)?.contains(actor))
 }
 
+/// The vault's one recorded Owner, its PERSON's liveness not read: the
+/// embedded owner of a personal vault, or the single Owner-role member a
+/// conferring grant names in a shared one. `None` when a shared vault records
+/// several owners. A reader whose live-owner census faulted keeps its owner
+/// default with this (FIX 9325).
+pub(crate) fn sole_recorded_owner_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<EntityId>> {
+    Ok(match shared_members_in_txn(vault, txn, false)? {
+        None => Some(crate::vault::embedded_owner_actor_id()?),
+        Some(members) if members.owners.len() == 1 => members.owners.into_iter().next(),
+        Some(_) => None,
+    })
+}
+
 /// [`is_live_vault_owner_in_txn`] for a reader that holds a `Store` and the
 /// posture its vault opened with, and no `Vault` (FIX 7461): every live owner
 /// [`owners_for_store_in_txn`] counts, co-owners included.

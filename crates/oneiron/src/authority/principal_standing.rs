@@ -401,10 +401,18 @@ fn grant_pact_standing_lapsed_for_store_in_txn(
     scope: FederationGrantScope,
     member: EntityId,
 ) -> bool {
-    match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
-        Ok(Some(_)) => {}
+    let creation = match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
+        Ok(Some(creation)) => creation,
         Ok(None) => return false,
         Err(error) => return lapse_on_check_error(id, FederationGrantKind::Access, &error),
+    };
+    // A Grant under another vault's scope (a residence one) is no pact Grant
+    // of this shared vault: never lapsed, its reader's own rule judges it
+    // (FIX 7894, Engine 10-22 01:1x). No shipped door mints one.
+    if let FederationGrantScope::Vault { vault_id } = scope
+        && vault_id != creation.vault_id
+    {
+        return false;
     }
     match crate::federation::authenticated_grant_membership_for_store_in_txn(
         store, posture, txn, scope, member, id,

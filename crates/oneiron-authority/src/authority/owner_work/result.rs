@@ -8,6 +8,12 @@
 //! refs and a closed reason only, never a value, a name or a digest of
 //! plaintext. It rides the outcome's `reason` slot, nil for every other
 //! enacted result, so each result without one encodes as it always has.
+//!
+//! An export secret's holder answers with the sealed copy it committed
+//! ([`OwnerWorkOutcome::Sealed`], FIX 4624(b)): the copy's BLAKE3, length
+//! and envelope count, in the same `reason` slot, so the signed result binds
+//! the bytes any server relays to the owner. Never a byte of the copy: it is
+//! kept by the holder under the request's entry, not in the log.
 
 use rmpv::Value;
 
@@ -19,6 +25,7 @@ use super::*;
 const RESULT_KEYS: [&str; 4] = [OP_KEY_KIND, "request", "executor", "outcome"];
 const OUTCOME_KEYS: [&str; 2] = [OP_KEY_KIND, "reason"];
 const REGISTER_CHECK_KEYS: [&str; 3] = [OP_KEY_KIND, "reason", "refs"];
+const SEALED_OUTPUT_KEYS: [&str; 3] = ["digest", "bytes", "envelopes"];
 
 /// Why an executor refused a request. Closed and value-free: each reason
 /// names a fact the executor read in its own transaction.
@@ -238,6 +245,22 @@ impl CustodyRegisterCheck {
     }
 }
 
+/// The sealed copy an export secret's holder committed (FIX 4624(b)), as its
+/// signed result binds it: its BLAKE3, its length and how many envelopes it
+/// holds. The holder keeps the copy under the request's entry; this names
+/// it and never carries it.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct SealedWorkOutput {
+    /// BLAKE3 of the sealed copy's bytes.
+    pub digest: [u8; 32],
+    pub bytes: u64,
+    /// The envelopes it holds: one, or one per chunk of a value larger than
+    /// one envelope seals.
+    pub envelopes: u32,
+}
+
 /// What the executor did with a request: its one terminal state. `Clone`,
 /// not `Copy`: an enacted register carries its holder's manifest judgment.
 #[derive(
@@ -255,6 +278,13 @@ pub enum OwnerWorkOutcome {
     Refused {
         reason: OwnerWorkRefusal,
     },
+    /// An export secret's holder sealed the value to the owner's recipient
+    /// and committed the sealed copy under the request's entry (FIX
+    /// 4624(b)): enacted, with the copy it names. It says the copy is held
+    /// there, never that the owner fetched or opened it.
+    Sealed {
+        output: SealedWorkOutput,
+    },
 }
 
 impl OwnerWorkOutcome {
@@ -271,6 +301,7 @@ impl OwnerWorkOutcome {
         match self {
             Self::Enacted { .. } => "enacted",
             Self::Refused { reason } => reason.as_str(),
+            Self::Sealed { .. } => "sealed",
         }
     }
 
@@ -279,7 +310,16 @@ impl OwnerWorkOutcome {
     pub fn register_check(&self) -> Option<&CustodyRegisterCheck> {
         match self {
             Self::Enacted { detail } => detail.as_ref(),
-            Self::Refused { .. } => None,
+            Self::Refused { .. } | Self::Sealed { .. } => None,
+        }
+    }
+
+    /// The sealed copy an export secret's holder committed.
+    #[must_use]
+    pub fn sealed_output(&self) -> Option<&SealedWorkOutput> {
+        match self {
+            Self::Sealed { output } => Some(output),
+            Self::Enacted { .. } | Self::Refused { .. } => None,
         }
     }
 }
@@ -306,6 +346,12 @@ impl OwnerWorkResult {
         if let Some(check) = self.outcome.register_check() {
             check.validate()?;
         }
+        // A sealed copy has bytes, at least one envelope and a digest.
+        if let Some(output) = self.outcome.sealed_output()
+            && (output.digest == [0; 32] || output.bytes == 0 || output.envelopes == 0)
+        {
+            return Err(invalid_authority());
+        }
         Ok(())
     }
 
@@ -321,7 +367,8 @@ impl OwnerWorkResult {
 
 /// Canonical field order: kind, request, executor, outcome; the outcome's
 /// own map is kind, then reason: a refusal's reason, or once enacted the
-/// holder's manifest judgment, nil when there is none. A judgment's map is
+/// holder's manifest judgment, nil when there is none, or once sealed the
+/// sealed copy's map (digest, bytes, then envelopes). A judgment's map is
 /// kind, reason (nil once checked), then refs (the checked one alone once
 /// checked).
 pub(in crate::authority) fn owner_work_result_value(result: &OwnerWorkResult) -> Value {
@@ -331,6 +378,7 @@ pub(in crate::authority) fn owner_work_result_value(result: &OwnerWorkResult) ->
             detail.as_ref().map_or(Value::Nil, register_check_value),
         ),
         OwnerWorkOutcome::Refused { reason } => ("refused", Value::from(reason.as_str())),
+        OwnerWorkOutcome::Sealed { output } => ("sealed", sealed_output_value(output)),
     };
     Value::Map(vec![
         (
@@ -372,6 +420,9 @@ pub(in crate::authority) fn decode_owner_work_result(
                 .and_then(OwnerWorkRefusal::from_name)
                 .ok_or_else(invalid_authority)?,
         },
+        (Some("sealed"), output) => OwnerWorkOutcome::Sealed {
+            output: decode_sealed_output(output)?,
+        },
         _ => return Err(invalid_authority()),
     };
     let result = OwnerWorkResult {
@@ -381,6 +432,31 @@ pub(in crate::authority) fn decode_owner_work_result(
     };
     result.validate()?;
     Ok(AuthorityOp::OwnerWorkResult(result))
+}
+
+/// A sealed copy's map: digest, bytes, then envelopes.
+fn sealed_output_value(output: &SealedWorkOutput) -> Value {
+    Value::Map(vec![
+        (Value::from("digest"), binary_value(output.digest)),
+        (Value::from("bytes"), Value::from(output.bytes)),
+        (Value::from("envelopes"), Value::from(output.envelopes)),
+    ])
+}
+
+/// Strict keys; its shape is the result's ([`OwnerWorkResult::validate`]).
+fn decode_sealed_output(value: &Value) -> Result<SealedWorkOutput> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &SEALED_OUTPUT_KEYS)?;
+    Ok(SealedWorkOutput {
+        digest: decode_hash(required(entries, "digest")?)?,
+        bytes: required(entries, "bytes")?
+            .as_u64()
+            .ok_or_else(invalid_authority)?,
+        envelopes: required(entries, "envelopes")?
+            .as_u64()
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or_else(invalid_authority)?,
+    })
 }
 
 /// A judgment's map: kind, reason, then refs.

@@ -36,6 +36,7 @@ use super::egress::{
 };
 use super::reverse::{is_delegated_channel_identity_carrier, is_unsyncable_secret_custody};
 use crate::Vault;
+use crate::deletion::WithdrawnCutoff;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 
@@ -85,9 +86,10 @@ pub(crate) struct HistoryCheck {
     /// The worlds whose keys this replica destroyed, among those the window's
     /// pads name: such a pad's bytes never ship, live or in history.
     late_pad_worlds: BTreeSet<EntityId>,
-    /// The newest withdrawn generation of each artifact that has one: a body of it or older
-    /// that is not its keyframe never ships, live or in history.
-    withdrawn: BTreeMap<EntityId, u64>,
+    /// The newest withdrawn generation of each artifact that has one, with its replacement: a
+    /// body of it or older that is not that replacement's content-free form never ships, live or
+    /// in history.
+    withdrawn: BTreeMap<EntityId, WithdrawnCutoff>,
 }
 
 impl HistoryCheck {

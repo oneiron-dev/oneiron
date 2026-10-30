@@ -362,6 +362,18 @@ impl OwnerHost {
         let _one_at_a_time = self.one_at_a_time();
         self.enter(PassStage::Policy);
         let (plan, policy) = self.effective_plan(vault)?;
+        // A vault its Owners deleted keeps its backups until the marker's
+        // deadline; from then on its backups go, a legal hold deferring it,
+        // and the schedule takes none (FIX 1931).
+        if let Some(dropped) = backup::prune_deleted_vault_backups(vault, &plan)? {
+            if !dropped.is_empty() {
+                tracing::info!(
+                    dropped = dropped.len(),
+                    "a deleted vault's backups were let go at their retention deadline"
+                );
+            }
+            return Ok(None);
+        }
         if policy.enabled {
             let every_ms = policy
                 .every_hours

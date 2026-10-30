@@ -215,6 +215,26 @@ export_facade! {
     let output = client.vault_shape_apply(&input)?;
     crate::codec::lift_record("vault.shape.apply", &output)
 };
+"vault.shape.plan.card" => fn vault_shape_plan_card(&self, input: ShapePlanRequest) -> ShapePlanCardView = |client| {
+    let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::lower_record("vault.shape.plan.card", input)?;
+    let output = client.vault_shape_plan_card(&input)?;
+    crate::codec::lift_record("vault.shape.plan.card", &output)
+};
+"vault.shape.items.receipt" => fn vault_shape_items_receipt(&self, input: ShapeItemReceiptRequest) -> Option<ShapeItemReceipt> = |client| {
+    let input: oneiron::memory::ShapeItemReceiptRequest = crate::codec::lower_record("vault.shape.items.receipt", input)?;
+    let output = client.vault_shape_items_receipt(&input)?;
+    crate::codec::lift_record("vault.shape.items.receipt", &output)
+};
+"vault.shape.groups" => fn vault_shape_groups(&self) -> Vec<ShapeInboxGroup> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shape.groups")?;
+    let output = client.vault_shape_groups(&input)?;
+    crate::codec::lift_record("vault.shape.groups", &output)
+};
+"vault.shape.groups.resolve" => fn vault_shape_groups_resolve(&self, input: ShapeGroupResolveRequest) -> ShapeApplyReceipt = |client| {
+    let input: oneiron::memory::ShapeGroupResolveRequest = crate::codec::lower_record("vault.shape.groups.resolve", input)?;
+    let output = client.vault_shape_groups_resolve(&input)?;
+    crate::codec::lift_record("vault.shape.groups.resolve", &output)
+};
 "self.message" => fn self_message(&self, input: MessagePersonRequest) -> MessagePersonReceipt = |client| {
     let input: oneiron::memory::MessagePersonRequest = crate::codec::lower_record("self.message", input)?;
     let output = client.self_message(&input)?;
@@ -224,6 +244,11 @@ export_facade! {
     let input: oneiron::memory::GrantAskRequest = crate::codec::lower_record("self.grants.ask", input)?;
     let output = client.self_grants_ask(&input)?;
     crate::codec::lift_record("self.grants.ask", &output)
+};
+"self.grants.asked" => fn self_grants_asked(&self, input: GrantAskedRequest) -> GrantAskedPage = |client| {
+    let input: oneiron::memory::GrantAskedRequest = crate::codec::lower_record("self.grants.asked", input)?;
+    let output = client.self_grants_asked(&input)?;
+    crate::codec::lift_record("self.grants.asked", &output)
 };
 "vault.companions.access_requests.answer" => fn vault_companions_access_requests_answer(&self, input: CompanionAccessRequestAnswerRequest) -> CompanionAccessRequestAnswered = |client| {
     let input: oneiron::task_verb::sdk::CompanionAccessRequestAnswerRequest = crate::codec::lower_record("vault.companions.access_requests.answer", input)?;
@@ -701,10 +726,25 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
+"vault.export.transfer.read" => fn vault_export_transfer_read(&self, input: ExportTransferReadRequest) -> ExportTransferPiece = |client| {
+    let input: oneiron::memory::ExportTransferReadRequest = crate::codec::lower_record("vault.export.transfer.read", input)?;
+    let output = client.vault_export_transfer_read(&input)?;
+    crate::codec::lift_record("vault.export.transfer.read", &output)
+};
+"vault.export.transfer.release" => fn vault_export_transfer_release(&self, input: ExportTransferReleaseRequest) -> ExportTransferReleased = |client| {
+    let input: oneiron::memory::ExportTransferReleaseRequest = crate::codec::lower_record("vault.export.transfer.release", input)?;
+    let output = client.vault_export_transfer_release(&input)?;
+    crate::codec::lift_record("vault.export.transfer.release", &output)
+};
 "self.credential.attenuate" => fn self_credential_attenuate(&self, input: CredentialAttenuationRequest) -> CredentialAttenuated = |client| {
     let input: oneiron::task_verb::sdk::CredentialAttenuationRequest = crate::codec::lower_record("self.credential.attenuate", input)?;
     let output = client.self_credential_attenuate(&input)?;
     crate::codec::lift_record("self.credential.attenuate", &output)
+};
+"self.actor" => fn self_actor(&self) -> SelfActorRefs = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.actor")?;
+    let output = client.self_actor(&input)?;
+    crate::codec::lift_record("self.actor", &output)
 };
 "vault.scope.position" => fn vault_scope_position(&self, input: RecordPositionRequest) -> ScopedReadResultOptionalRecordPosition = |client| {
     let input: oneiron::memory::RecordPositionRequest = crate::codec::lower_record("vault.scope.position", input)?;
@@ -871,6 +911,11 @@ export_facade! {
     let output = client.vault_turn_programs_disarm(&input)?;
     crate::codec::lift_record("vault.turn_programs.disarm", &output)
 };
+"vault.turn_programs.rebind" => fn vault_turn_programs_rebind(&self, input: TurnProgramRebindRequest) -> TurnProgramRebindReceipt = |client| {
+    let input: oneiron::dreamer_runner::TurnProgramRebindRequest = crate::codec::lower_record("vault.turn_programs.rebind", input)?;
+    let output = client.vault_turn_programs_rebind(&input)?;
+    crate::codec::lift_record("vault.turn_programs.rebind", &output)
+};
 "self.saved_query.create" => fn self_saved_query_create(&self, input: SavedQueryCreateRequest) -> SavedQueryRecordView = |client| {
     let input: oneiron::campaign::surface::SavedQueryCreateRequest = crate::codec::lower_record("self.saved_query.create", input)?;
     let output = client.self_saved_query_create(&input)?;
@@ -991,10 +1036,15 @@ export_facade! {
     let output = client.vault_inbox_lens(&input)?;
     crate::codec::lift_record("vault.inbox.lens", &output)
 };
-"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> InboxGroupPage = |client| {
+"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> UnifiedInboxGroupPage = |client| {
     let input: oneiron::agent_inbox_lens::InboxRunGroupsRequest = crate::codec::lower_record("vault.inbox.groups", input)?;
     let output = client.vault_inbox_groups(&input)?;
     crate::codec::lift_record("vault.inbox.groups", &output)
+};
+"vault.inbox.groups.resolve" => fn vault_inbox_groups_resolve(&self, input: InboxGroupResolveRequest) -> InboxGroupResolution = |client| {
+    let input: oneiron::inbox::InboxGroupResolveRequest = crate::codec::lower_record("vault.inbox.groups.resolve", input)?;
+    let output = client.vault_inbox_groups_resolve(&input)?;
+    crate::codec::lift_record("vault.inbox.groups.resolve", &output)
 };
 "vault.weave.digest.render" => fn vault_weave_digest_render(&self) -> Option<WeaveDigestRendered> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.digest.render")?;
@@ -1490,6 +1540,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::MeshDialRequest = crate::codec::lower_record("vault.mesh.dial", input)?;
     let output = client.vault_mesh_dial(&input)?;
     crate::codec::lift_record("vault.mesh.dial", &output)
+};
+"vault.outbox.diverged.list" => fn vault_outbox_diverged_list(&self) -> OutboxDivergedPage = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.outbox.diverged.list")?;
+    let output = client.vault_outbox_diverged_list(&input)?;
+    crate::codec::lift_record("vault.outbox.diverged.list", &output)
+};
+"vault.outbox.diverged.answer" => fn vault_outbox_diverged_answer(&self, input: OutboxDivergedAnswerRequest) -> OutboxDivergedAnswerReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OutboxDivergedAnswerRequest = crate::codec::lower_record("vault.outbox.diverged.answer", input)?;
+    let output = client.vault_outbox_diverged_answer(&input)?;
+    crate::codec::lift_record("vault.outbox.diverged.answer", &output)
 };
 "vault.inspection.resolve" => fn vault_inspection_resolve(&self, input: InspectionResolveRequest) -> InspectionResolved = |client| {
     let input: oneiron::lens::InspectionResolveRequest = crate::codec::lower_record("vault.inspection.resolve", input)?;
@@ -2200,6 +2260,11 @@ export_facade! {
     let input: oneiron::skill_optimize::offer_pilot::OfferPilotRef = crate::codec::lower_record("vault.coach.training_offers.pilots.get", input)?;
     let output = client.vault_coach_training_offers_pilots_get(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.pilots.get", &output)
+};
+"vault.coach.training_offers.sources" => fn vault_coach_training_offers_sources(&self, input: ReservoirSourcesRequest) -> ReservoirSourcePreview = |client| {
+    let input: oneiron::task_verb::sdk::ReservoirSourcesRequest = crate::codec::lower_record("vault.coach.training_offers.sources", input)?;
+    let output = client.vault_coach_training_offers_sources(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.sources", &output)
 };
 "vault.research.bind" => fn vault_research_bind(&self, input: ResearchBindWire) -> ResearchBinding = |client| {
     let input: oneiron::task_verb::sdk::ResearchBindWire = crate::codec::lower_record("vault.research.bind", input)?;
@@ -3275,6 +3340,11 @@ export_facade! {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.get", input)?;
     let output = client.vault_code_origin_mirror_get(&input)?;
     crate::codec::lift_record("vault.code.origin.mirror.get", &output)
+};
+"vault.code.origin.mirror.plan" => fn vault_code_origin_mirror_plan(&self, input: OriginMirrorPlanRequest) -> OriginMirrorPlanView = |client| {
+    let input: oneiron::origin::publish::OriginMirrorPlanRequest = crate::codec::lower_record("vault.code.origin.mirror.plan", input)?;
+    let output = client.vault_code_origin_mirror_plan(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.plan", &output)
 };
 "vault.code.origin.mirror.set" => fn vault_code_origin_mirror_set(&self, input: OriginMirrorSetRequest) -> OriginMirrorTarget = |client| {
     let input: oneiron::memory::origin_doors::OriginMirrorSetRequest = crate::codec::lower_record("vault.code.origin.mirror.set", input)?;
@@ -5765,6 +5835,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::IdentityPairRequest = crate::codec::lower_record("vault.identity.proposals.for_pair", input)?;
     let output = client.vault_identity_proposals_for_pair(&input)?;
     crate::codec::lift_record("vault.identity.proposals.for_pair", &output)
+};
+"vault.custody.members.drain.begin" => fn vault_custody_members_drain_begin(&self, input: CustodyMemberRef) -> CustodyDrainTicketView = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberRef = crate::codec::lower_record("vault.custody.members.drain.begin", input)?;
+    let output = client.vault_custody_members_drain_begin(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.begin", &output)
+};
+"vault.custody.members.drain.commit" => fn vault_custody_members_drain_commit(&self, input: CustodyDrainCommitRequest) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyDrainCommitRequest = crate::codec::lower_record("vault.custody.members.drain.commit", input)?;
+    let output = client.vault_custody_members_drain_commit(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.commit", &output)
+};
+"vault.custody.members.drain.folder" => fn vault_custody_members_drain_folder(&self, input: CustodyMemberRef) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberRef = crate::codec::lower_record("vault.custody.members.drain.folder", input)?;
+    let output = client.vault_custody_members_drain_folder(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.folder", &output)
+};
+"vault.custody.members.reenrol" => fn vault_custody_members_reenrol(&self, input: CustodyMemberReenrolRequest) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberReenrolRequest = crate::codec::lower_record("vault.custody.members.reenrol", input)?;
+    let output = client.vault_custody_members_reenrol(&input)?;
+    crate::codec::lift_record("vault.custody.members.reenrol", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;

@@ -10,6 +10,7 @@
 //! The lens itself is vault data (FIX 9896): a CODE kind=lens row carrying
 //! the tree, born from a `lens/intent` NOTE holding its prompt
 //! ([`super::artifact`]). The proposal, intent and slot rows index them.
+//! Where the lens is read is its declared scope (FIX 2136, [`super::scope`]).
 
 use std::ops::Bound;
 
@@ -17,8 +18,11 @@ use serde::{Deserialize, Serialize};
 
 use super::artifact::{LensArtifacts, lens_tree_in};
 use super::intent::{INTENTS, LensIntentIndex};
+use super::scope::{
+    LensAdmission, LensScope, declared_position, placed_in, proposal_admission_in, tree_admitted_in,
+};
 use super::{GeneratedLens, LensIntentRecord, LensLoadAction, LensVersionStamp, lens_load_action};
-use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::federation::ScopeAxis;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeByTrigger;
@@ -33,8 +37,6 @@ pub(super) const PROPOSALS: SideTable<EntityId, LensProposalRecord, Named> =
 /// The owner's selected revision per pack/skill slot. Key: [`slot_key`].
 pub(super) const SLOTS: SideTable<String, LensSlotRecord, Named> =
     SideTable::new(&side_table::LENS_SLOT);
-/// The largest frozen tree a proposal stores, as canonical JSON.
-pub const LENS_PROPOSAL_MAX_BYTES: usize = 1024 * 1024;
 /// The most rows one `vault.lenses.list` page returns.
 pub const LENS_LIST_MAX_PAGE: usize = 200;
 
@@ -72,18 +74,11 @@ pub struct LensProposeRequest {
     /// row's birth names it; omitted, the birth names no trigger.
     #[serde(default)]
     pub trigger: Option<MadeByTrigger>,
+    /// Where the lens's frozen tree is read (FIX 2136): the world and facet
+    /// it belongs to. Omitted, where this credential is bound to author.
+    #[serde(default)]
+    pub scope: Option<LensScope>,
 }
-
-/// What a narrowed reader's page of `vault.lenses.list` carries (OF-250; a
-/// call, canon silent). A proposal record carries no scope of its own, so a
-/// reader whose credential is narrowed to some worlds or facets sees a
-/// proposal only while its own read admits both records the proposal is bound
-/// to: the slot's SKILL and the source of the pack installed under the slot's
-/// pack name. A proposal whose pack has no installed, live source shows to no
-/// narrowed reader. The frozen tree is never carried to such a reader, even
-/// on `with_compiled`: an admitted SKILL does not make every literal of an
-/// arbitrary compiled tree its reader's to see.
-pub const LENS_LIST_NARROWED_CARRIES_COMPILED: bool = false;
 
 /// `vault.lenses.list`'s input: one page of proposals in lens-id order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -98,7 +93,9 @@ pub struct LensListRequest {
     #[serde(default)]
     pub limit: Option<u32>,
     /// Carry each proposal's frozen tree. A reader narrowed to some worlds
-    /// or facets gets none ([`LENS_LIST_NARROWED_CARRIES_COMPILED`]).
+    /// or facets gets the trees of the proposals whose scope its read
+    /// admits, each whole and only while it reads every row the tree names
+    /// (FIX 2136).
     #[serde(default)]
     pub with_compiled: bool,
 }
@@ -156,6 +153,8 @@ pub(super) struct LensProposalRecord {
     pub(super) prompt_ref: String,
     pub(super) proposed_by: String,
     pub(super) proposed_at: u64,
+    /// Where the lens is read: where its prompt NOTE is placed (FIX 2136).
+    pub(super) scope: LensScope,
 }
 
 impl LensProposalRecord {
@@ -224,6 +223,8 @@ impl Memory<'_> {
     /// the skill one of its skills and still loading, all in the writer that
     /// stores the lens row, its prompt NOTE, the lens row's birth, the
     /// proposal and intent indexes and its receipt together (FIX 9896).
+    /// The same writer places the prompt NOTE at the lens's scope: `scope`
+    /// over where this credential is bound to author (FIX 2136).
     pub fn lenses_propose(&self, input: LensProposeRequest) -> MemoryResult<LensProposalReceipt> {
         let skill_id = input.slot.skill()?;
         let compiled: GeneratedLens = serde_json::from_value(input.compiled).map_err(|error| {
@@ -237,19 +238,24 @@ impl Memory<'_> {
                 "compiled must target this vault's lens atom kit and apps contract",
             ));
         }
+        // The tree is stored whole, whatever its size: its author holds it
+        // and sent it whole (FIX 11257).
         let compiled_json = serde_json::to_string(&compiled)
             .map_err(|_| Error::InvalidConfig("lens tree did not encode".into()))?;
-        if compiled_json.len() > LENS_PROPOSAL_MAX_BYTES {
-            return Err(MemoryError::bad_request(format!(
-                "compiled is at most {LENS_PROPOSAL_MAX_BYTES} bytes"
-            )));
-        }
         let intent = LensIntentRecord::new(input.intent_prompt)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        // An axis the credential's binding leaves open is declared only by an
+        // author whose read is not narrowed; only a declaration asks.
+        let declared = input.scope;
+        let vault_wide = match &declared {
+            Some(_) => !reads_narrowed(self.read_lane(ClaimReadStatus::Recorded)?.actor_key()),
+            None => false,
+        };
+        let position = declared_position(declared.as_ref(), self.birth_position(), vault_wide)?;
         let lens_ref = EntityId::now();
         let prompt_ref = EntityId::now();
         let vault = self.vault();
-        let record = LensProposalRecord {
+        let mut record = LensProposalRecord {
             pack_name: input.slot.pack_name,
             skill_id: skill_id.to_hex(),
             pack_content_hash: input.pack_content_hash,
@@ -257,6 +263,7 @@ impl Memory<'_> {
             prompt_ref: prompt_ref.to_hex(),
             proposed_by: self.actor().to_hex(),
             proposed_at: crate::unix_seconds_now(),
+            scope: LensScope::default(),
         };
         let writer = crate::WriteActor::new(self.actor(), self.actor_class());
         let trigger = input.trigger;
@@ -271,6 +278,8 @@ impl Memory<'_> {
                     "Read the installed pack's content hash and skills, then propose against them.",
                 ));
             }
+            let placement = placed_in(vault, txn, position, declared.as_ref())?;
+            record.scope = LensScope::of(placement);
             LensArtifacts {
                 lens_ref,
                 prompt_ref,
@@ -281,6 +290,7 @@ impl Memory<'_> {
                 prompt: intent.prompt(),
                 compiled_json: &compiled_json,
                 trigger,
+                placement,
                 at: record.proposed_at,
             }
             .stage(vault, writer)?
@@ -297,8 +307,10 @@ impl Memory<'_> {
     ///
     /// A reader narrowed to some worlds or facets (OF-250) pages only the
     /// proposals its own read admits, judged before the page counts them and
-    /// in the page's own snapshot, and gets no frozen trees
-    /// ([`LENS_LIST_NARROWED_CARRIES_COMPILED`]).
+    /// in the page's own snapshot: the whole proposal, its tree and its
+    /// history once its pack is gone, where its read admits the lens's scope,
+    /// else its row alone while it reads the slot's SKILL and live pack
+    /// source (FIX 2136).
     pub fn lenses_list(&self, input: LensListRequest) -> MemoryResult<LensListPage> {
         let limit = input
             .limit
@@ -320,10 +332,10 @@ impl Memory<'_> {
                 after,
                 limit,
                 input.with_compiled,
-                |_, _, _| Ok(true),
+                |_, _, _| Ok(LensAdmission::Whole),
+                |_, _| Ok(true),
             )?);
         }
-        let with_compiled = input.with_compiled && LENS_LIST_NARROWED_CARRIES_COMPILED;
         Ok(read
             .read_projected(&[], None, |txn, _| {
                 vault.lens_proposals_page_in(
@@ -331,10 +343,11 @@ impl Memory<'_> {
                     input.pack_name.as_deref(),
                     after,
                     limit,
-                    with_compiled,
+                    input.with_compiled,
                     |txn, record, skill_id| {
-                        proposal_admitted_in(vault, &read, txn, record, skill_id)
+                        proposal_admission_in(vault, &read, txn, record, skill_id)
                     },
+                    |txn, tree| tree_admitted_in(vault, &read, txn, tree),
                 )
             })?
             .value)
@@ -352,28 +365,12 @@ pub(super) fn reads_narrowed(key: &ScopedReadActorKey) -> bool {
             .is_some_and(|scope| !matches!(scope.facets, ScopeAxis::All))
 }
 
-/// Whether `read` admits, in `txn`, both records a proposal is bound to: the
-/// slot's SKILL and the live source of the pack installed under its pack
-/// name. A pack with no installed, live source admits nothing.
-fn proposal_admitted_in(
-    vault: &Vault,
-    read: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    record: &LensProposalRecord,
-    skill_id: &EntityId,
-) -> Result<bool> {
-    let Some(install) = vault.mounted_pack_in_txn(txn, &record.pack_name)? else {
-        return Ok(false);
-    };
-    let source = EntityId::from_hex(&install.source_id)
-        .map_err(|_| Error::CorruptedIndex("pack install catalog"))?;
-    Ok(read.is_entity_readable_in(txn, skill_id)? && read.is_entity_readable_in(txn, &source)?)
-}
-
 impl Vault {
     /// One page of proposals in `txn`. `admits` judges each proposal the
     /// pack filter keeps before the page counts it, so a withheld proposal
-    /// neither fills a page nor sets its cursor.
+    /// neither fills a page nor sets its cursor; `with_compiled` carries the
+    /// tree of each proposal it admits whole while `tree_admits` admits that
+    /// tree.
     fn lens_proposals_page_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -381,7 +378,12 @@ impl Vault {
         after: Option<EntityId>,
         limit: usize,
         with_compiled: bool,
-        mut admits: impl FnMut(&heed::RoTxn<'_>, &LensProposalRecord, &EntityId) -> Result<bool>,
+        mut admits: impl FnMut(
+            &heed::RoTxn<'_>,
+            &LensProposalRecord,
+            &EntityId,
+        ) -> Result<LensAdmission>,
+        mut tree_admits: impl FnMut(&heed::RoTxn<'_>, &GeneratedLens) -> Result<bool>,
     ) -> Result<LensListPage> {
         let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
         let mut rows = Vec::new();
@@ -394,7 +396,8 @@ impl Vault {
             }
             let skill_id = EntityId::from_hex(&record.skill_id)
                 .map_err(|_| Error::CorruptedIndex("lens proposal record"))?;
-            if !admits(txn, &record, &skill_id)? {
+            let admission = admits(txn, &record, &skill_id)?;
+            if admission == LensAdmission::Withheld {
                 continue;
             }
             if rows.len() == limit {
@@ -412,6 +415,8 @@ impl Vault {
                     .is_some_and(|install| active_at(&install, &record.pack_content_hash));
             let compiled = record.compiled_in(self, txn, &lens_ref)?;
             let stamp = compiled.version_stamp();
+            let carried =
+                with_compiled && admission == LensAdmission::Whole && tree_admits(txn, &compiled)?;
             rows.push(LensListRow {
                 lens_ref: lens_ref.to_hex(),
                 pack_name: record.pack_name,
@@ -428,7 +433,7 @@ impl Vault {
                     LensProposalState::Proposed
                 },
                 mounted,
-                compiled: with_compiled.then_some(compiled),
+                compiled: carried.then_some(compiled),
             });
         }
         Ok(LensListPage { rows, next_after })

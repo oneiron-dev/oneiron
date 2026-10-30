@@ -13,14 +13,18 @@ use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
-/// The most refs one short-id hydrate names.
-pub(crate) const CORE_MAX_HYDRATE_REFS: usize = 256;
+/// The refs one frame of a short-id batch hydrate reads (FIX 11125): a batch
+/// past it is read frame by frame, every ref served.
+pub(crate) const CORE_HYDRATE_FRAME_REFS: usize = 256;
 
 #[cfg(test)]
 pub(crate) use oneiron::core_write::shape::{
     PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE, PLATFORM_ANNOUNCEMENT_VOICE,
 };
 
+/// The most rows one list page returns. A larger read pages past it: a list
+/// clamps to it, and a receipt or consent subscription reads one page after
+/// another (FIX 8859); no count past it is refused.
 pub(crate) const CORE_MAX_LIST_LIMIT: usize = 1000;
 
 /// Generic core entity create request.

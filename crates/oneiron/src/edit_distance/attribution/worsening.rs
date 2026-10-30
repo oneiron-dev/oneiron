@@ -29,7 +29,9 @@ use std::collections::BTreeSet;
 
 use super::cells::learning_scope;
 use super::taxonomy::{AmendmentClass, AmendmentJudgment};
-use super::triage::{TriageSubject, WorseningSignal, escalate_in_txn, packet_in_txn};
+use super::triage::{
+    TriageSubject, WorseningSignal, escalate_in_txn, escalation_held_in_txn, packet_in_txn,
+};
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -139,6 +141,9 @@ pub(super) fn observe_floor_crossing_in_txn(
         let Some(signal) = floor_crossing_in_txn(vault, savepoint, skill)? else {
             return Ok(());
         };
+        if escalation_held_in_txn(vault, savepoint, skill, scope, project, &signal)? {
+            return Ok(());
+        }
         let packet = packet_in_txn(
             vault,
             savepoint,
@@ -196,6 +201,16 @@ fn escalate_cell_in_txn(
         fired.extend(floor_crossing_in_txn(vault, txn, &cell.subject)?);
     }
     for signal in fired {
+        if escalation_held_in_txn(
+            vault,
+            txn,
+            &cell.subject,
+            &judgment.scope,
+            judgment.project,
+            &signal,
+        )? {
+            continue;
+        }
         let packet = packet_in_txn(
             vault,
             txn,

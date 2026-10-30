@@ -18,7 +18,9 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::{ModelId, WriteActor};
 
-use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof, refused};
+use super::host_doors::support::{
+    Listed, MaybeListed, internal, owner_proof, refused, with_calling_origin,
+};
 use super::{FacadeApiError, FacadeCall, facade_actor};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
@@ -105,7 +107,7 @@ async fn skills_call(
         };
     let auth = auth.clone();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<MaybeListed<serde_json::Value>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<MaybeListed<serde_json::Value>> {
         let binding = held.proof();
         let memory = crate::api::credential_memory(server.vault(), Some(&auth), actor, class)
             .at(auth.locality());
@@ -176,7 +178,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
     fn call(
         &self,
         call: &SelfAgentVerbCall,
-        _origin: &HostWriteOrigin,
+        origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Err(error) = self.read_key() {
@@ -186,13 +188,16 @@ impl AgentVerbDoor for SkillCredentialDoor {
         let auth = self.auth.clone();
         let verb = call.verb.as_str();
         let input = call.input.clone();
+        let origin = origin.clone();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        self.runtime.spawn(async move {
+        // The skill's call is its run's (FIX 10748): its handles carry the
+        // run's origin and its writes are witnessed for the run's lease.
+        self.runtime.spawn(with_calling_origin(origin, async move {
             let id = invocation.to_hex();
             let call = FacadeCall::bound(&auth, None, Some(&id), None);
             let answer = super::call_verb(&server, &call, verb, Ok(input)).await;
             let _ = sender.send(answer);
-        });
+        }));
         Ok(match receiver.recv() {
             Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
             Ok(Err(error)) => Err(AgentVerbRefusal {
@@ -267,7 +272,7 @@ pub(crate) async fn vault_skills_pack_receipt(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         sdk::skill_pack_receipt_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -290,7 +295,7 @@ pub(crate) async fn vault_skills_outcomes_project(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         sdk::skill_pack_outcome_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -312,7 +317,7 @@ pub(crate) async fn vault_skills_outcomes_get(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         sdk::skill_pack_credit_as_owner(server.vault(), &owner, &input)
     })
     .await
