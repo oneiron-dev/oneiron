@@ -155,7 +155,7 @@ impl NoteDocument {
         doc.get_text(BODY)
             .insert(0, body)
             .map_err(|_| invalid("NOTE birth insert"))?;
-        stamp_author(&doc, author);
+        stamp_birth(&doc);
         let born = Self { doc, id };
         super::operations::record_birth_authorship(
             &born,
@@ -503,11 +503,13 @@ fn commit_stamped(doc: &LoroDoc, stamp: ActorStamp) {
     commit_naming(doc, &stamp.token.to_hex());
 }
 
-/// The engine stamp of a birth, naming `author`, or no one once erased: a
-/// birth is derived alike on every replica from the stored core, which names
-/// its author, so it names no device's stamp token.
-fn stamp_author(doc: &LoroDoc, author: super::NoteActor) {
-    commit_naming(doc, &author.to_wire());
+/// The engine stamp of a birth: it names no one (FIX 10930). A birth is
+/// derived alike on every replica from the stored core, so it can name no
+/// device's stamp token, and its message is then the same on every replica
+/// whether or not the author was erased there. The author stays in the
+/// birth's authorship record.
+fn stamp_birth(doc: &LoroDoc) {
+    commit_naming(doc, &super::NoteActor::Erased.to_wire());
 }
 
 /// Commits `doc` under the engine stamp naming `named`.
