@@ -307,10 +307,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // a served write, as a voice loop call does: a session in flight keeps a
     // reap from finding the vault quiescent, and a frozen vault opens none.
     // One no call named for a minute releases it until the next call names
-    // it. Bound before anything serves.
-    sync_server
-        .live_voice
-        .admit_with(state.background_admission(WriteKind::OwnerWrite));
+    // it; a deleted vault opens none either (FIX 12053). Bound before
+    // anything serves.
+    sync_server.live_voice.admit_with(state.voice_admission());
 
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
