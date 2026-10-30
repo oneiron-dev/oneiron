@@ -71,23 +71,26 @@ fn range_flag(tree: &XmlTree, owner: usize) -> Option<bool> {
 /// more. The count of labels written.
 ///
 /// The last argument is the part's `(part bytes, package bytes left)` from
-/// `Package::xml_replacement_budget`. The part these edits and the ones
-/// already in `edits` would write is measured first, every removal counted,
-/// and refused with the error its replacement would return, before a
-/// label's bytes are built. Below both bounds the bytes are as they were.
+/// `Package::xml_replacement_budget`. Each label is composed once (FIX
+/// 6159); the part these edits and the ones already in `edits` would write
+/// is measured from the bytes built, every removal counted, and refused with
+/// the error its replacement would return before any edit joins `edits`.
+/// Below both bounds the bytes are as they were.
 pub(super) fn unlink_ranges(
     bytes: &[u8],
     tree: &XmlTree,
     edits: &mut Vec<xml::Splice>,
     (part_bytes, package_left): (usize, usize),
 ) -> Result<u32, LiveError> {
-    let mut planned: Vec<(Range<usize>, usize)> = edits
+    let mut built = Vec::new();
+    let labels = walk::<Vec<u8>>(bytes, tree, &mut |range, value| {
+        built.push((range, value));
+    });
+    let planned: Vec<(Range<usize>, usize)> = edits
         .iter()
+        .chain(&built)
         .map(|(range, value)| (range.clone(), value.len()))
         .collect();
-    walk::<Measured>(bytes, tree, &mut |range, value| {
-        planned.push((range, value.0));
-    });
     let written = spliced_len(bytes.len(), planned)?;
     if written > part_bytes {
         return Err(retained_opc::Error::Edit("edited part size limit").into());
@@ -95,12 +98,11 @@ pub(super) fn unlink_ranges(
     if written > package_left {
         return Err(retained_opc::Error::Edit("edited package size limit").into());
     }
-    Ok(walk::<Vec<u8>>(bytes, tree, &mut |range, value| {
-        edits.push((range, value));
-    }))
+    edits.extend(built);
+    Ok(labels)
 }
 
-/// A splice value as `walk` writes it: built, or only measured.
+/// A splice value as `walk` writes it.
 trait Value: Default {
     /// Markup or bytes already escaped.
     fn put(&mut self, markup: &[u8]);
@@ -132,42 +134,6 @@ impl Value for Vec<u8> {
     fn is_empty(&self) -> bool {
         <[u8]>::is_empty(self)
     }
-}
-
-/// A value's length, counted without building it.
-#[derive(Default)]
-struct Measured(usize);
-
-impl Value for Measured {
-    fn put(&mut self, markup: &[u8]) {
-        self.0 = self.0.saturating_add(markup.len());
-    }
-
-    fn put_text(&mut self, text: &str) {
-        self.0 = self.0.saturating_add(escaped_len(text));
-    }
-
-    fn append(&mut self, other: Self) {
-        self.0 = self.0.saturating_add(other.0);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0 == 0
-    }
-}
-
-/// `escape_text(text).len()` without building it: quick-xml's `escape`
-/// writes `<` and `>` as 4 bytes, `&` and a carriage return (`&#13;`) as 5,
-/// `'` and `"` as 6.
-fn escaped_len(text: &str) -> usize {
-    text.bytes().fold(0usize, |len, byte| {
-        len.saturating_add(match byte {
-            b'<' | b'>' => 4,
-            b'&' | b'\r' => 5,
-            b'\'' | b'"' => 6,
-            _ => 1,
-        })
-    })
 }
 
 /// The length `xml::splice` writes from `len` source bytes and these
