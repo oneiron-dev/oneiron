@@ -262,19 +262,44 @@ fn resolve_process_actor(process: &mut MadeByProcess, stamp: ActorStamp, actor: 
 
 /// The process the birth receipt of `doc` names: the receipt on its causally
 /// earliest opening commit, kept only when it names that commit's stamp
-/// token and is dated at the commit. Its actor is that token, which this
-/// reader does not resolve (FIX 10930). `None` for an opening with no such
-/// receipt, and for a history with no single earliest opening. It reads the
-/// history alone and authenticates no peer stamp.
-pub(crate) fn birth_process(doc: &EntityDoc) -> Option<MadeByProcess> {
-    let (opening, _) = super::earliest_opening(&doc.doc).ok()?;
-    let message = opening.message.as_deref()?;
-    let (_, stamp) = parse_stamp(Some(message))?;
-    let (_, json) = message.split_once(RECEIPT_PREFIX)?;
-    let made_by = serde_json::from_str::<MadeBy>(json).ok()?;
-    (made_by.process.actor == stamp.token
-        && Some(made_by.at) == u64::try_from(opening.timestamp).ok())
-    .then_some(made_by.process)
+/// token and is dated at the commit. The token is resolved here (FIX 10930,
+/// L08-A 20:41): the process names the resolved actor, and an identity that
+/// spelled the token spells the actor. `None` for an opening with no such
+/// receipt, a token nothing here resolves, and a history with no single
+/// earliest opening. It authenticates no peer stamp.
+pub(crate) fn birth_process(
+    vault: &crate::Vault,
+    doc: &EntityDoc,
+) -> Result<Option<MadeByProcess>> {
+    let Ok((opening, _)) = super::earliest_opening(&doc.doc) else {
+        return Ok(None);
+    };
+    let Some(message) = opening.message.as_deref() else {
+        return Ok(None);
+    };
+    let Some((_, stamp)) = parse_stamp(Some(message)) else {
+        return Ok(None);
+    };
+    let Some(made_by) = message
+        .split_once(RECEIPT_PREFIX)
+        .and_then(|(_, json)| serde_json::from_str::<MadeBy>(json).ok())
+    else {
+        return Ok(None);
+    };
+    if made_by.process.actor != stamp.token
+        || Some(made_by.at) != u64::try_from(opening.timestamp).ok()
+    {
+        return Ok(None);
+    }
+    let Some(actor) = crate::provenance::resolve_actor_stamp(vault, &stamp.token)? else {
+        return Ok(None);
+    };
+    let mut process = made_by.process;
+    if process.identity == stamp.token.to_hex() {
+        process.identity = actor.entity_ref().to_hex();
+    }
+    process.actor = actor.entity_ref();
+    Ok(Some(process))
 }
 
 /// A message [`receipted_message`] spells (`<prefix> <open|edit>
