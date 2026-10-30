@@ -153,6 +153,15 @@ pub enum SyncProtocolPruneScope {
     SweepUpdateRows,
 }
 
+/// How a retained federation replay ended before its turn.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FederationReplayEnd {
+    Expired,
+    StaleAuthority,
+}
+
 /// Typed validation context for sync protocol failures.
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +182,9 @@ pub enum SyncProtocolValidation {
     SweepUpdateRowsRace,
     FederatedTombstoneAdmission,
     FederationReplayMismatch,
+    FederationReplayEnded {
+        end: FederationReplayEnd,
+    },
     FederationPeerUnbound,
     SelectorVersionVector,
     TombstoneRemovalDelta,
@@ -217,6 +229,14 @@ impl fmt::Display for SyncProtocolValidation {
                 f.write_str("sweep raced: u:w: row set changed between read and write")
             }
             Self::FederationReplayMismatch => f.write_str("federation replay identity mismatch"),
+            Self::FederationReplayEnded { end } => match end {
+                FederationReplayEnd::Expired => {
+                    f.write_str("federation replay ended: its wait is over")
+                }
+                FederationReplayEnd::StaleAuthority => {
+                    f.write_str("federation replay ended: its grant or pact scope changed")
+                }
+            },
             Self::FederationPeerUnbound => f.write_str("authenticated federation peer required"),
             Self::SelectorVersionVector => {
                 f.write_str("selector sync requires empty version vector resync")

@@ -40,8 +40,8 @@ pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRoot
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
 pub use self::sync::{
-    SyncConfigField, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
-    SyncRollbackError, SyncSelectorValidation,
+    FederationReplayEnd, SyncConfigField, SyncEngineContext, SyncProtocolPruneScope,
+    SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation,
 };
 
 /// Result type used throughout the crate.
