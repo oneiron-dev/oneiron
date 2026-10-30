@@ -1,8 +1,9 @@
-//! What an anchored comment reads of a live DOCX or XLSX body (FIX 2460):
-//! the frontier a version projects, and the anchorable units at a frontier.
-//! Entry: `Vault::office_body_units_in_txn`.
+//! What an anchored comment reads of a live office body (FIX 2460; decks,
+//! FIX 12264): the frontier a version projects, and the anchorable units at
+//! a frontier. Entry: `Vault::office_body_units_in_txn`.
 
 use super::*;
+use oneiron_docedit::live::{LiveDeck, NodeId};
 use oneiron_docedit::xlsx_body::XlsxAxisEdit;
 
 /// One live body's anchorable units at a frontier.
@@ -15,15 +16,71 @@ pub(crate) enum OfficeBodyUnits {
         sheets: Vec<(String, String)>,
         axes: Vec<(String, XlsxAxisEdit)>,
     },
+    /// The deck's slides and shapes by node id.
+    Pptx(DeckUnits),
+}
+
+/// A live deck's slides and shapes at a frontier, each slide followed by
+/// its shapes in tree order, and the version the deck is bound to there.
+pub(crate) struct DeckUnits {
+    /// The landed export the deck is bound to, else the imported version:
+    /// the version whose file holds the ids its bindings name.
+    pub(crate) bound: u64,
+    pub(crate) nodes: Vec<DeckUnit>,
+}
+
+/// One slide or shape of a live deck.
+pub(crate) struct DeckUnit {
+    /// The node's model identity.
+    pub(crate) node: u64,
+    /// Its slide's model identity; its own for a slide.
+    pub(crate) slide: u64,
+    /// Its slide's 1-based position in the deck.
+    pub(crate) position: u64,
+    /// The slide part, native id and creation id it holds in the bound
+    /// version; `None` for a node born in the body since.
+    pub(crate) binding: Option<(String, Option<u32>, Option<String>)>,
+}
+
+impl DeckUnits {
+    fn of(deck: &LiveDeck, bound: u64) -> Self {
+        let slides = deck
+            .nodes
+            .get(&NodeId(0))
+            .map(|root| root.children.clone())
+            .unwrap_or_default();
+        let mut nodes = Vec::new();
+        for (position, slide) in (1_u64..).zip(slides) {
+            for node in std::iter::once(slide).chain(deck.descendants(slide)) {
+                let binding = deck
+                    .nodes
+                    .get(&node)
+                    .and_then(|found| found.binding.as_ref())
+                    .map(|binding| {
+                        (
+                            binding.slide_part.clone(),
+                            binding.native_id,
+                            binding.creation_id.clone(),
+                        )
+                    });
+                nodes.push(DeckUnit {
+                    node: node.0,
+                    slide: slide.0,
+                    position,
+                    binding,
+                });
+            }
+        }
+        Self { bound, nodes }
+    }
 }
 
 impl Vault {
-    /// Every artifact with a live DOCX or XLSX body.
-    pub(crate) fn office_text_bodies_in_txn(&self, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
+    /// Every artifact with a live body.
+    pub(crate) fn office_bodies_in_txn(&self, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
         Ok(SOURCES
             .scan(&self.store, txn)?
             .into_iter()
-            .filter(|(_, source)| source.kind != OfficeBodyKind::Pptx)
             .map(|(artifact, _)| artifact)
             .collect())
     }
@@ -44,7 +101,7 @@ impl Vault {
 
     /// The body frontier whose projection `version` holds: the import's for
     /// the imported version, an export's for the version it landed. `None`
-    /// when the artifact has no DOCX or XLSX body or the body never held it.
+    /// when the artifact has no live body or the body never held it.
     pub(crate) fn office_body_frontier_of_version_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -54,9 +111,6 @@ impl Vault {
         let Some(source) = SOURCES.get(&self.store, txn, artifact)? else {
             return Ok(None);
         };
-        if source.kind == OfficeBodyKind::Pptx {
-            return Ok(None);
-        }
         if version == source.source_version {
             return Ok(Some(self.head_in_txn(txn, artifact)?.import_frontier));
         }
@@ -65,23 +119,20 @@ impl Vault {
             .map(|record| record.frontier))
     }
 
-    /// The head frontier of the artifact's DOCX or XLSX body; `None` for no
-    /// body or a deck.
+    /// The head frontier of the artifact's live body; `None` for no body.
     pub(crate) fn office_body_frontier_in_txn(
         &self,
         txn: &RoTxn<'_>,
         artifact: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         match SOURCES.get(&self.store, txn, artifact)? {
-            Some(source) if source.kind != OfficeBodyKind::Pptx => {
-                Ok(Some(self.head_in_txn(txn, artifact)?.frontier))
-            }
-            _ => Ok(None),
+            Some(_) => Ok(Some(self.head_in_txn(txn, artifact)?.frontier)),
+            None => Ok(None),
         }
     }
 
-    /// The units of the artifact's DOCX or XLSX body at frontier `at`; `None`
-    /// for no body or a deck.
+    /// The units of the artifact's live body at frontier `at`; `None` for no
+    /// body.
     pub(crate) fn office_body_units_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -91,30 +142,35 @@ impl Vault {
         let Some(source) = SOURCES.get(&self.store, txn, artifact)? else {
             return Ok(None);
         };
-        Ok(match source.kind {
+        let (_, doc) = self.loro_body(txn, artifact, source.kind, Some(at))?;
+        Ok(Some(match source.kind {
             OfficeBodyKind::Docx => {
-                let (_, doc) = self.loro_body(txn, artifact, source.kind, Some(at))?;
                 let blocks = docx::read(&doc)?.blocks;
-                Some(OfficeBodyUnits::Docx(
+                OfficeBodyUnits::Docx(
                     blocks
                         .into_iter()
                         .map(|block| (block.id, block.text))
                         .collect(),
-                ))
+                )
             }
             OfficeBodyKind::Xlsx => {
-                let (_, doc) = self.loro_body(txn, artifact, source.kind, Some(at))?;
                 let body = xlsx::read(&doc)?;
-                Some(OfficeBodyUnits::Xlsx {
+                OfficeBodyUnits::Xlsx {
                     sheets: body
                         .sheets
                         .into_iter()
                         .map(|sheet| (sheet.key, sheet.name))
                         .collect(),
                     axes: body.axes,
-                })
+                }
             }
-            OfficeBodyKind::Pptx => None,
-        })
+            OfficeBodyKind::Pptx => {
+                let (deck, landed) = super::pptx::deck_with_binding(&doc)?;
+                OfficeBodyUnits::Pptx(DeckUnits::of(
+                    &deck,
+                    landed.unwrap_or(source.source_version),
+                ))
+            }
+        }))
     }
 }
