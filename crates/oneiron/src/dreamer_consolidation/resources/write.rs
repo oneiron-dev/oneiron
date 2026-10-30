@@ -8,6 +8,7 @@ use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::evidence::{
     ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
 };
+use crate::dreamer_consolidation::stage_log::LandingTally;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::llm::Scope;
@@ -26,6 +27,9 @@ pub struct ScopedConsolidationWrite {
     /// and consult its promotion makes spends it (FIX 8701). `None` outside a
     /// wake pass, where a direct call's own bound applies.
     pub(crate) checker_deadline: Option<std::time::Instant>,
+    /// Where the promotion door tells the sealing partition what it landed
+    /// and refused, for its stage line. `None` outside a wake partition.
+    pub(crate) landing: Option<LandingTally>,
     read_receipt: ScopedReadReceipt,
 }
 
@@ -46,6 +50,13 @@ impl ScopedConsolidationWrite {
     /// to the pass's `deadline` (FIX 8701).
     pub(crate) fn with_checker_deadline(mut self, deadline: std::time::Instant) -> Self {
         self.checker_deadline = Some(deadline);
+        self
+    }
+
+    /// This write, its promotion's landed and refused claims told to
+    /// `landing`.
+    pub(crate) fn with_landing(mut self, landing: LandingTally) -> Self {
+        self.landing = Some(landing);
         self
     }
 }
@@ -220,6 +231,7 @@ impl BranchResources<'_> {
             answers,
             fence: self.write_fence(),
             checker_deadline: None,
+            landing: None,
             read_receipt: self.read_receipt()?,
         })
     }

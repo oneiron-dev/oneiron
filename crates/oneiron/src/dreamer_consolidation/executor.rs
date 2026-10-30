@@ -22,6 +22,7 @@ use super::evidence::{
 };
 use super::resources::BranchResources;
 use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
+use super::stage_log::PartitionStages;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
@@ -146,7 +147,8 @@ impl ConsolidationExecutor<'_> {
     /// `ContradictionLeftStanding`; contradictions never land silently).
     /// A pack whose question went up the role chain and waits holds its set
     /// out of the pass, and the attempt comes back for the answer. Every
-    /// output keeps the decisions that shaped it.
+    /// output keeps the decisions that shaped it. `stages` takes the wall ms
+    /// of the gap upsert.
     pub(super) async fn resolve_conflicts(
         &mut self,
         candidates: Vec<ExtractedCandidate>,
@@ -154,6 +156,7 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
         charges: &mut StepChargeTally,
+        stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
         let assembled =
             super::assembly::assemble_extracted(ctx.vault, resources, candidates, ctx.now_ms)?;
@@ -206,7 +209,10 @@ impl ConsolidationExecutor<'_> {
             return Ok(PartitionRun::Checkpoint);
         }
         if !escalated.is_empty() {
-            resources.upsert_verified_gaps(resources.scope(), escalated, ctx.now_ms)?;
+            let gap_started = std::time::Instant::now();
+            let upserted = resources.upsert_verified_gaps(resources.scope(), escalated, ctx.now_ms);
+            stages.gap_ms = super::stage_log::ms_since(gap_started);
+            upserted?;
         }
 
         let mut surviving: Vec<VerifiedCandidate> = candidates

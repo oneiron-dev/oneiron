@@ -1357,6 +1357,21 @@
       "openapi": true
     },
     {
+      "name": "vault.runners.seats.resume",
+      "description": "The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write.",
+      "input": "crate::dispatch_byoa::RunnerWorkResumeRequest",
+      "output": "crate::dispatch_byoa::RunnerWorkResumeView",
+      "call": "memory.vault().resume_runner_work_as_owner(&memory.embedded_owner(\"vault.runners.seats.resume\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.fanout.resume",
       "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
@@ -8760,6 +8775,19 @@
       "input": "crate::lens::LensProposeRequest",
       "output": "crate::receipt::LensProposalReceipt",
       "call": "memory.lenses_propose(input)?",
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.propose_from_pack",
+      "description": "Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it.",
+      "input": "crate::skill_hub::pack_catalog::PackLensProposeRequest",
+      "output": "crate::receipt::LensProposalReceipt",
+      "call": "memory.lenses_propose_from_pack(input)?",
       "scope": "Write",
       "proposes": true,
       "admission": {
@@ -16627,12 +16655,13 @@
       "call": "memory.esign_create(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16646,12 +16675,12 @@
       "call": "memory.esign_get(&input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16665,12 +16694,13 @@
       "call": "memory.esign_links_issue(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16684,12 +16714,13 @@
       "call": "memory.esign_send_for_signature(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16724,12 +16755,13 @@
       "call": "memory.esign_remind(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16743,12 +16775,13 @@
       "call": "memory.esign_void(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16759,12 +16792,13 @@
       "call": "memory.esign_signing_act(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -16776,12 +16810,13 @@
       "call": "memory.esign_signing_pdf(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -16793,12 +16828,13 @@
       "call": "memory.esign_signing_image(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -16810,12 +16846,12 @@
       "call": "memory.esign_signing_signature(&input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -16830,12 +16866,12 @@
       "call": "memory.esign_seal_get(&input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -19717,7 +19753,7 @@
     {
       "name": "self.leader.advice",
       "input": "crate::code_run::LeaderAdviceInput",
-      "output": "serde_json::Value",
+      "output": "crate::agent_dispatch::LeaderAdvice",
       "scope": "Read",
       "context": "run",
       "effect": "Leader"

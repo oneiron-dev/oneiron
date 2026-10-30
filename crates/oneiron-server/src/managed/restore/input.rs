@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use oneiron_vault_contract::restore::framing::identity_fits;
 use oneiron_vault_contract::restore::{
-    EscrowRole, ManagedRestoreIdentity, ManagedRestoreInput, ManagedRestorePlan,
+    EscrowRole, FreshRecipient, ManagedRestoreIdentity, ManagedRestoreInput, ManagedRestorePlan,
     RESTORE_INPUT_SCHEMA_VERSION,
 };
 
@@ -103,27 +103,44 @@ pub(super) fn check(
         (EscrowRole::Managed, &managed.escrow_recipient),
         (EscrowRole::BreakGlass, &managed.break_glass_recipient),
     ] {
-        let public_key = if let Some(file) = file {
-            std::fs::read(file).map_err(|_| "an escrow recipient file argv names did not read")?
+        let (public_key, from_carrier) = if let Some(file) = file {
+            (
+                std::fs::read(file)
+                    .map_err(|_| "an escrow recipient file argv names did not read")?,
+                false,
+            )
         } else if let Some(file) = vm_carrier_recipient(managed, role) {
             match std::fs::read(file) {
-                Ok(public_key) => public_key,
+                Ok(public_key) => (public_key, true),
                 Err(error) if error.kind() == ErrorKind::NotFound => continue,
-                Err(_) => return Err("an escrow recipient file argv names did not read"),
+                Err(_) => return Err("the carrier's escrow recipient file did not read"),
             }
         } else {
             continue;
         };
-        if !plan
-            .request
-            .fresh
-            .iter()
-            .any(|fresh| fresh.role == role && fresh.public_key == public_key)
-        {
-            return Err("an escrow recipient argv names is not one of the plan's fresh recipients");
+        if !fresh_authorizes(&plan.request.fresh, role, &public_key) {
+            return Err(if from_carrier {
+                "the carrier's escrow recipient is not one of the plan's fresh recipients"
+            } else {
+                "an escrow recipient argv names is not one of the plan's fresh recipients"
+            });
         }
     }
     Ok(())
+}
+
+/// Whether the plan authorizes `public_key` as a fresh escrow recipient of
+/// `role`: one of the plan's fresh recipients of that role, never a
+/// released one or one the plan did not authorize. The carrier watch's
+/// first look runs this same check again before it seals (FIX 11851).
+pub(in crate::managed) fn fresh_authorizes(
+    fresh: &[FreshRecipient],
+    role: EscrowRole,
+    public_key: &[u8],
+) -> bool {
+    fresh
+        .iter()
+        .any(|fresh| fresh.role == role && fresh.public_key.as_slice() == public_key)
 }
 
 /// The file a vault VM's carrier delivers `role`'s escrow recipient in, for

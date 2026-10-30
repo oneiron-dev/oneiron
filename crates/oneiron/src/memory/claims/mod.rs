@@ -373,5 +373,5 @@ mod settle;
 pub use settle::{
     ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision,
     ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason,
-    ClaimSettlementRevert, ClaimSettlementVerdict,
+    ClaimSettlementRevert, ClaimSettlementVerdict, SettleWarning, SettleWarningCode,
 };

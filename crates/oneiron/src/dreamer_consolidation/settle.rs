@@ -157,6 +157,9 @@ pub struct ConflictSettleReceipt {
     /// alternative its Keep landed, when the Gate held that landing for
     /// review (FIX 5753); `None` on every other settlement.
     pub approval_ref: Option<String>,
+    /// The work still owed after the settlement committed, such as the
+    /// approved alternative's pending VAD (FIX 7600); empty when none is.
+    pub warnings: Vec<crate::memory::SettleWarning>,
 }
 
 /// What reverting one settlement did (OF-023, owner ruling 10-18): the marker
@@ -489,7 +492,14 @@ pub(crate) fn apply_settlement_in_txn(
         let kept = vault
             .get_claim_in_txn(txn, &winner)?
             .ok_or(Error::EntityNotFound)?;
-        if !claim_surfaceable(&kept) || !on_subject(&kept) {
+        // A standing member must be settled to win. An alternative that just
+        // landed here may carry its own fresh confirm, which its owner can
+        // answer only once this write commits.
+        if !claim_surfaceable(&kept)
+            || !on_subject(&kept)
+            || (materialized.is_none()
+                && !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &winner)?)
+        {
             return Err(invalid_consolidation(
                 "the kept claim does not stand on the conflict's subject",
             ));

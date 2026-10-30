@@ -67,6 +67,7 @@
 mod acts;
 mod images;
 mod point;
+mod press_holds;
 mod reads;
 mod session;
 mod tree;
@@ -147,6 +148,9 @@ pub struct DesktopSession {
     guest: Box<dyn SessionLease>,
     manifest: SessionManifest,
     policy: SendPolicy,
+    /// The act a press held and the press an owner's answer armed (FIX
+    /// 11499).
+    press_holds: press_holds::PressHolds,
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,

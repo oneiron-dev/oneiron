@@ -283,10 +283,11 @@ impl AgentDispatcher<'_> {
         }
         // The inbox lens actor_ref is the RECEIVER. Classify the sender from
         // the durable identity-stamped event, never from receiver identity.
-        let rows = crate::attempt_queue::AttemptQueue::new(self.vault).list_kind_bounded(
-            crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        )?;
+        let rows = {
+            let txn = self.vault.store.env.read_txn()?;
+            crate::attempt_queue::AttemptQueue::new(self.vault)
+                .kind_rows_in_txn(&txn, crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND)?
+        };
         for row in rows {
             let payload = crate::surface_event::decode_surface_event_attempt_payload(&row.payload)?;
             let event = &payload.event;
@@ -403,13 +404,14 @@ impl AgentDispatcher<'_> {
         residents: &[EntityId],
         now: u64,
     ) -> Result<Vec<(AttemptId, EntityId)>> {
-        let rows = AttemptQueue::new(self.vault).list_kind_bounded(
-            crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        )?;
+        let rows = {
+            let txn = self.vault.store.env.read_txn()?;
+            AttemptQueue::new(self.vault).ready_rows_in_txn(&txn)?
+        };
         let mut ready = Vec::new();
         for row in rows {
-            if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+            if row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+                || !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
                 || row
                     .scheduled_at
                     .or(row.backoff_until)
