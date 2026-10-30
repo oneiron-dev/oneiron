@@ -34,7 +34,9 @@ use super::{
     add_recipients,
 };
 use crate::attempt_queue::AttemptId;
-use crate::edit_distance::attribution::{AmendmentCauseRecord, amendment_causes_in_txn};
+use crate::edit_distance::attribution::{
+    AmendmentCauseRecord, amendment_causes_for_attempt_in_txn,
+};
 use crate::receipt::attempt_pack_receipt_id;
 use crate::skill_attribution::{
     AttributionCauseRecord, AttributionVerdict, attempt_attribution_causes,
@@ -289,7 +291,7 @@ fn finding_sources(vault: &Vault, findings: &[Finding]) -> Result<Vec<Vec<Health
     findings
         .iter()
         .map(|finding| match finding.attempt.as_ref() {
-            Some(attempt) => attempt_sources(vault, &rtxn, attempt),
+            Some(attempt) => attempt_sources(vault, &rtxn, attempt, finding.generation),
             None => Ok(Vec::new()),
         })
         .collect()
@@ -308,7 +310,9 @@ fn read_late(vault: &Vault) -> Result<Late> {
             if read.insert(*attempt)
                 && let Ok(attempt) = AttemptId::from_bytes(attempt.as_bytes())
             {
-                sources.extend(attempt_sources(vault, &rtxn, &attempt)?);
+                // FIX 8259 (pin c): the late path keeps its documented
+                // over-attach; witnessed attempts carry no generation.
+                sources.extend(attempt_sources(vault, &rtxn, &attempt, None)?);
             }
         }
         let mut seen = BTreeSet::new();
@@ -322,14 +326,24 @@ fn read_late(vault: &Vault) -> Result<Late> {
 
 /// The labels on `attempt`'s sealed terminal pack receipt when one is a
 /// current environment label; none for an attempt that sealed no receipt, or
-/// whose labels hold no current environment label.
+/// whose labels hold no current environment label. FIX 8259: when both the
+/// receipt and the finding carry a lease generation and they differ, the
+/// finding read another generation's evidence, so it takes no labels; every
+/// other case keeps today's behavior.
 fn attempt_sources(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: &AttemptId,
+    generation: Option<u32>,
 ) -> Result<Vec<HealthCauseSource>> {
     let receipt = attempt_pack_receipt_id(attempt);
-    if crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &receipt)?.is_none() {
+    let Some(sealed) = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &receipt)?
+    else {
+        return Ok(Vec::new());
+    };
+    if let (Some(want), Some(have)) = (generation, sealed.lease_generation())
+        && want != have
+    {
         return Ok(Vec::new());
     }
     let sources = receipt_sources(vault, txn, &receipt)?;
@@ -380,7 +394,7 @@ fn amendment_sources(
         return Ok(Vec::new());
     };
     let mut sources = Vec::new();
-    for record in amendment_causes_in_txn(vault, txn, &actor, None, 0..=u64::MAX)? {
+    for record in amendment_causes_for_attempt_in_txn(vault, txn, &actor, receipt)? {
         if record.attempt_receipt.as_deref() == Some(receipt) {
             sources.extend(HealthCauseSource::of_amendment(&record, receipt)?);
         }

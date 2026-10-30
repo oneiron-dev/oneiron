@@ -132,12 +132,13 @@ impl JudgeLabelChecker for HostChecker<'_> {
             "case": case,
             "picked": label.chosen,
         });
-        let Some(text) = self.models.generate(
+        let Some(text) = self.models.generate_sourced(
             self.models.coach(),
             vec![
                 message(LlmMessageRole::System, SYSTEM.to_owned()),
                 message(LlmMessageRole::User, data.to_string()),
             ],
+            request.sources.map(<[_]>::to_vec),
         )?
         else {
             return Ok(JudgeLabelFit::Unavailable);

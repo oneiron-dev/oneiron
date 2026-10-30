@@ -204,6 +204,17 @@ fn skill_reliability_with_sources(
     ))
 }
 
+/// The rows [`skill_reliability_prior`] stands on (FIX 7102): the SKILL row,
+/// and for a vetted import the hub alias and the scan verdict that cleared its
+/// bytes. The optimize brief unions them into its source set.
+pub(crate) fn skill_reliability_prior_rows(
+    vault: &Vault,
+    skill: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    skill_provenance_trust_class_sourced_in_txn(vault, &rtxn, skill).map(|(_, rows)| rows)
+}
+
 /// The prior a skill's posterior starts from, before any attributed outcome.
 pub fn skill_reliability_prior(
     vault: &Vault,

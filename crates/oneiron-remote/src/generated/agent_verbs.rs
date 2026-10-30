@@ -295,6 +295,9 @@ impl OneironClient {
                 "vault.runners.seats.top_up" => remote_agent_verb_output::<
                     oneiron::dispatch_byoa::RunnerSeatTopUpReceipt,
                 >(client, verb, &input),
+                "vault.runners.seats.resume" => remote_agent_verb_output::<
+                    oneiron::dispatch_byoa::RunnerWorkResumeView,
+                >(client, verb, &input),
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
@@ -799,6 +802,11 @@ impl OneironClient {
                     Vec<oneiron::task_verb::sdk::SkillOptimizeTradeoffAskView>,
                 >(client, verb, &input),
                 "vault.skills.optimize.tradeoff_asks.pick" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::SkillOptimizeResultView>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.skills.optimize.tradeoff_asks.resolve" => {
                     remote_agent_verb_output::<oneiron::task_verb::sdk::SkillOptimizeResultView>(
                         client, verb, &input,
                     )
@@ -1774,6 +1782,9 @@ impl OneironClient {
                     )
                 }
                 "vault.lenses.propose" => remote_agent_verb_output::<
+                    oneiron::receipt::LensProposalReceipt,
+                >(client, verb, &input),
+                "vault.lenses.propose_from_pack" => remote_agent_verb_output::<
                     oneiron::receipt::LensProposalReceipt,
                 >(client, verb, &input),
                 "vault.lenses.activate" => remote_agent_verb_output::<
@@ -3297,6 +3308,9 @@ impl OneironClient {
                 "vault.consolidation.lineage" => remote_agent_verb_output::<
                     Option<oneiron::dreamer_runner::ConsolidationLineageView>,
                 >(client, verb, &input),
+                "vault.consolidation.candidate_decisions" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::DreamerDecidedCandidateView>,
+                >(client, verb, &input),
                 "vault.consolidation.promote" => remote_agent_verb_output::<
                     oneiron::memory::consolidation::ConsolidationPromotion,
                 >(client, verb, &input),
@@ -4806,6 +4820,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runners.seats.top_up", value)
+    }
+    pub fn vault_runners_seats_resume(
+        &self,
+        input: &oneiron::dispatch_byoa::RunnerWorkResumeRequest,
+    ) -> Result<oneiron::dispatch_byoa::RunnerWorkResumeView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runners.seats.resume", value)
     }
     pub fn vault_fanout_resume(
         &self,
@@ -6917,6 +6943,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skills.optimize.tradeoff_asks.pick", value)
+    }
+    pub fn vault_skills_optimize_tradeoff_asks_resolve(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillOptimizeTradeoffResolveRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillOptimizeResultView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.optimize.tradeoff_asks.resolve", value)
     }
     pub fn vault_skills_governance_get(
         &self,
@@ -10754,6 +10792,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.lenses.propose", value)
+    }
+    pub fn vault_lenses_propose_from_pack(
+        &self,
+        input: &oneiron::skill_hub::pack_catalog::PackLensProposeRequest,
+    ) -> Result<oneiron::receipt::LensProposalReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.propose_from_pack", value)
     }
     pub fn vault_lenses_activate(
         &self,
@@ -16861,6 +16911,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.lineage", value)
+    }
+    pub fn vault_consolidation_candidate_decisions(
+        &self,
+        input: &oneiron::memory::DreamerCandidateDecisionsRequest,
+    ) -> Result<Vec<oneiron::memory::DreamerDecidedCandidateView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.candidate_decisions", value)
     }
     pub fn vault_consolidation_promote(
         &self,

@@ -9,6 +9,10 @@
 //! once, started over when the revision changes, and nothing named until the
 //! last page came.
 
+mod custody;
+
+pub use self::custody::fetch_custody_with_kit;
+
 use std::collections::BTreeSet;
 use std::time::Duration;
 

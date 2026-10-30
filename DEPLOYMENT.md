@@ -350,6 +350,10 @@ community_cache_bytes = 67108864  # bytes one community-cache family holds, read
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
 ```
 
+Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without
+it organs run on their process group and `OrganStatus.isolation` says so. The
+user unit in `deploy/systemd/oneiron.service` sets it.
+
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
 its memory floor per blob, never a cap on the push: a push of any size lands
 while each blob fits and the disk keeps `git_scan_disk_floor_bytes` free. A

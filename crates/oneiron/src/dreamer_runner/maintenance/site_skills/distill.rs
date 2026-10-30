@@ -118,7 +118,7 @@ pub(super) fn distill(
     if origins.is_empty() {
         return Ok((None, diagnostics));
     }
-    let routes = routes_of(inputs.evidence);
+    let routes = routes_of(inputs.evidence, inputs.live);
     let programs = programs_of(inputs.live);
     let traps = traps_of(inputs.evidence, inputs.live, inputs.retired);
     let fingerprint = fingerprint(
@@ -312,7 +312,7 @@ fn origins_of(evidence: &[SolvedRunEvidence]) -> (Vec<String>, Vec<String>) {
 /// shared `/`-boundary prefix, or none (the whole site) when they share
 /// only `/`. A route needs at least two distinct paths: one distinct path
 /// never mines a route.
-fn routes_of(evidence: &[SolvedRunEvidence]) -> Vec<String> {
+fn routes_of(evidence: &[SolvedRunEvidence], live: &[WorkflowRecord]) -> Vec<String> {
     let mut paths = BTreeSet::new();
     for source in evidence {
         for step in &source.draft.proposal.steps {
@@ -326,7 +326,7 @@ fn routes_of(evidence: &[SolvedRunEvidence]) -> Vec<String> {
     if paths.len() < 2 {
         return Vec::new();
     }
-    common_route(&paths.into_iter().collect::<Vec<_>>())
+    common_route(&paths.into_iter().collect::<Vec<_>>(), live)
 }
 
 /// The path of an `open` URL: `/` for none, cut at `?` or `#`. Only
@@ -350,7 +350,7 @@ fn open_path(url: &str) -> Option<String> {
 /// Cutting to a trailing `/` keeps every observed path matched: `/spread`
 /// must never match `/spreadsheets`. The prefix then cuts before its first
 /// id-like segment, so caller literals never file as routes.
-fn common_route(paths: &[String]) -> Vec<String> {
+fn common_route(paths: &[String], live: &[WorkflowRecord]) -> Vec<String> {
     if paths.is_empty() {
         return Vec::new();
     }
@@ -376,7 +376,7 @@ fn common_route(paths: &[String]) -> Vec<String> {
     if prefix.len() <= 1 {
         return Vec::new();
     }
-    sanitize_route_prefix(prefix)
+    sanitize_route_prefix(prefix, live)
 }
 
 /// Floor for a hex-only segment to count as id-like. Mirrors the engine's
@@ -397,13 +397,17 @@ const ROUTE_TOKEN_ANY_LEN: usize = 32;
 /// Cuts a `/`-boundary common prefix before its first id-like segment and
 /// rejoins the kept segments as `/` + kept + `/`. Zero kept segments is
 /// the whole site (`[]`), same as a `/`-only prefix.
-fn sanitize_route_prefix(prefix: &str) -> Vec<String> {
+fn sanitize_route_prefix(prefix: &str, live: &[WorkflowRecord]) -> Vec<String> {
+    let segments: Vec<_> = prefix
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
     let mut kept = Vec::new();
-    for segment in prefix.split('/') {
-        if segment.is_empty() {
-            continue;
-        }
-        if route_segment_hit(segment) {
+    for (at, segment) in segments.iter().copied().enumerate() {
+        if route_segment_hit(segment)
+            || (is_all_alpha(segment)
+                && !segment_recurs_across_scopes(at, segment, &segments, live))
+        {
             break;
         }
         kept.push(segment);
@@ -415,11 +419,51 @@ fn sanitize_route_prefix(prefix: &str) -> Vec<String> {
     }
 }
 
+/// An alphabetic segment files only when the same segment, after the same
+/// prefix, occurs in at least two caller scopes' live programs. A caller's
+/// name therefore cuts the route instead of becoming a global route word.
+fn segment_recurs_across_scopes(
+    at: usize,
+    segment: &str,
+    segments: &[&str],
+    live: &[WorkflowRecord],
+) -> bool {
+    let mut scopes = BTreeSet::new();
+    for record in live {
+        let Some(filed) = record.filed_scope.as_ref() else {
+            continue;
+        };
+        for step in &record.program.steps {
+            if let BatchStep::Open { url } = step
+                && let Some(path) = open_path(url)
+            {
+                let path_segments: Vec<_> = path
+                    .split('/')
+                    .filter(|segment| !segment.is_empty())
+                    .collect();
+                if path_segments.len() > at
+                    && path_segments[..at] == segments[..at]
+                    && path_segments[at] == segment
+                {
+                    scopes.insert(super::scope_digest(&filed.scope));
+                    break;
+                }
+            }
+        }
+    }
+    scopes.len() >= 2
+}
+
+fn is_all_alpha(segment: &str) -> bool {
+    !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
 /// Whether one route-prefix segment is id-like: the route cuts before it.
 /// Pure byte predicates over ASCII shapes; total and panic-free on any
 /// UTF-8. No entropy float, no percent-decoding.
 fn route_segment_hit(segment: &str) -> bool {
     is_all_digits(segment)
+        || is_digit_dash(segment)
         || is_long_hex(segment)
         || is_uuid(segment)
         || is_token_like(segment)
@@ -429,6 +473,14 @@ fn route_segment_hit(segment: &str) -> bool {
 /// Non-empty, all ASCII digits, any length.
 fn is_all_digits(segment: &str) -> bool {
     !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// At least one ASCII digit and only digits/dashes: phone-like and dashed ids.
+fn is_digit_dash(segment: &str) -> bool {
+    segment.bytes().any(|byte| byte.is_ascii_digit())
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'-')
 }
 
 /// Hex-only at or above [`ROUTE_LONG_HEX_MIN_LEN`].

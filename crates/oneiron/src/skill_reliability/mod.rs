@@ -22,6 +22,7 @@ mod projector;
 mod provenance;
 mod read;
 mod resident;
+mod row_ids;
 mod rule_outcome;
 
 pub(crate) use self::amended::{
@@ -50,8 +51,8 @@ pub use self::projector::{
     PREDICATE_SKILL_RELIABILITY, SKILL_OUTCOME_AXIS, project_skill_reliability,
     project_skill_reliability_for, project_skill_reliability_for_executor,
 };
-pub(crate) use self::provenance::skill_reliability_sources;
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
+pub(crate) use self::provenance::{skill_reliability_prior_rows, skill_reliability_sources};
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, read_skill_reliability,
     rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,
@@ -62,6 +63,7 @@ pub(crate) use self::read::{
     selection_posterior_for_query_in_txn, skill_selection_score_from_posterior, validate_executor,
 };
 pub use self::resident::rank_resident_skill_versions;
+pub(crate) use self::row_ids::attributed_outcome_row_ids;
 pub(crate) use self::rule_outcome::{
     RuleOutcomeSource, record_rule_outcome_in_txn, rule_outcome_receipts_in_txn,
     withdraw_rule_outcome_in_txn,
