@@ -165,6 +165,13 @@ side_tables! {
     /// provenance then blake3(ref_name). Key: id16 ":" hash32.
     ORIGIN_CODE_OPERATIONS: VaultMeta b"origin:code_operations:v1:" LegacyCompact
         => crate::origin::erase_code_operations_actor_in_txn;
+    /// Marker (empty): one retained received ref of an object store that the candidate intake
+    /// still reads, unresolved or resolved from a masked copy (FIX 7535). Key: hash32 (the store)
+    /// + id16 (the push provenance) + hash32 (blake3 of the ref name).
+    ORIGIN_CODE_PENDING: VaultMeta b"origin:code_pending:v1:" Raw;
+    /// Marker (empty): a received ref of an object store resolved to a candidate with this
+    /// incoming tip (FIX 7535). Key: hash32 (the store) + string (the tip's hex).
+    ORIGIN_CODE_RESOLVED_TIP: VaultMeta b"origin:code_resolved_tip:v1:" Raw;
     /// Stable Git commit projection (oid hex text) of one finalized engine CodeRevision. Key: string
     /// ":" id16.
     ORIGIN_ENGINE_EXPORT: VaultMeta b"origin:engine_export:v1:" Raw;
