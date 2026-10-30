@@ -104,6 +104,11 @@ pub(crate) fn stage_received_tree_edits(
             ],
         )?;
         if checkout {
+            // A file replacing a directory whose files this bundle removed
+            // can meet that directory left empty: it goes first (FIX 7539).
+            if let Some(directory) = empty_directory_in_tree(root, &path)? {
+                std::fs::remove_dir(directory)?;
+            }
             run_git(
                 root,
                 &[
@@ -116,6 +121,21 @@ pub(crate) fn stage_received_tree_edits(
         }
     }
     Ok(())
+}
+
+/// The empty directory standing at `path` in the working tree at `root`,
+/// reached through no symlink; `None` for anything else, which Git's own
+/// checkout judges.
+fn empty_directory_in_tree(root: &Path, path: &str) -> Result<Option<std::path::PathBuf>> {
+    let mut at = root.to_path_buf();
+    for part in path.split('/') {
+        at.push(part);
+        match std::fs::symlink_metadata(&at) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) | Err(_) => return Ok(None),
+        }
+    }
+    Ok(std::fs::read_dir(&at)?.next().is_none().then_some(at))
 }
 
 /// Writes `content` as a blob of the repository at `root`, exactly: no
