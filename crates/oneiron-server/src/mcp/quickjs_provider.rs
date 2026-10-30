@@ -20,10 +20,11 @@ use oneiron::llm::seat::SeatDecisions;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, ModelId, ModelLocality, Vault,
 };
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::ai_host::browser_planner::BrowserPlannerRuns;
-use crate::models::{InjectedRuns, LoggedReceipts};
+use crate::models::{InjectedRuns, LoggedReceipts, ModelRouter};
 
 /// The first-party component this repository builds and reviews, and the
 /// manifest that pins it.
@@ -75,6 +76,9 @@ pub struct McpQuickJsProvider {
     /// Builds each run's compaction seat; none keeps every window raw.
     compaction: Option<RunCompactionSeat>,
     seat_router: Option<(SeatDecisions, String)>,
+    /// The router whose served set each seat birth admits its pick from
+    /// (FIX 2745); none serves no set, so the birth admits all, as before.
+    served_router: Option<Arc<ModelRouter>>,
     /// The seats a leased agent's planned spawns choose among.
     planner: Option<crate::config::models::PlannerSettings>,
     /// Each run's clock is frozen at its first start, and a resumed run keeps
@@ -199,6 +203,7 @@ impl McpQuickJsProvider {
             config,
             compaction: None,
             seat_router: None,
+            served_router: None,
             planner: None,
             clock_from_first_start: false,
             injected: None,
@@ -306,6 +311,15 @@ impl McpQuickJsProvider {
         self
     }
 
+    /// Each seat birth admits only the models `router` serves now, with
+    /// where each runs (FIX 2745); without it the birth admits all, as
+    /// before. The snapshot is read live per birth, never cached here.
+    #[must_use]
+    pub(crate) fn with_served_router(mut self, router: Arc<ModelRouter>) -> Self {
+        self.served_router = Some(router);
+        self
+    }
+
     /// Install the host's typed seat pick and profile for manifest-backed runs.
     #[must_use]
     pub fn with_model_seat_router(
@@ -368,6 +382,11 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn seat_facet(&self) -> Option<&str> {
         self.seat_router.as_ref().map(|(_, facet)| facet.as_str())
+    }
+    fn seat_served(&self) -> Option<BTreeMap<ModelId, ModelLocality>> {
+        self.served_router
+            .as_ref()
+            .map(|router| router.served_models())
     }
     fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
         self.planner.as_ref()

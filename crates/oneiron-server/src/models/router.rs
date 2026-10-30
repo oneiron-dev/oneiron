@@ -103,6 +103,24 @@ impl ModelRouter {
         route(&self.routes).or_else(|| route(&self.discovered()))
     }
 
+    /// Every model this router serves now, configured or mesh-discovered,
+    /// with where each runs, in id order (FIX 2745): the birth-time snapshot
+    /// a seat birth admits its pick from. A configured route wins over a
+    /// discovered one, as `served` reads them.
+    pub fn served_models(&self) -> BTreeMap<ModelId, ModelLocality> {
+        let mut served: BTreeMap<ModelId, ModelLocality> = self
+            .discovered()
+            .iter()
+            .map(|(model, (locality, _))| (model.clone(), *locality))
+            .collect();
+        served.extend(
+            self.routes
+                .iter()
+                .map(|(model, (locality, _))| (model.clone(), *locality)),
+        );
+        served
+    }
+
     /// Each model the last mesh catalog refresh found, with the machine id
     /// of the owner's node that offers it and the ladder that serves it, in
     /// id order.
