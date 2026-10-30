@@ -667,9 +667,18 @@ pub(crate) fn validate_own_device_witness_message_body(
     if matches!(
         validate_canonical_witness_message_body(body),
         Ok(WitnessMessageBodyAuthor::User)
-    ) && owner_speaks_from(store, txn, machine)?
-    {
-        return Ok(());
+    ) {
+        // A store fault reading the roster or the vault's kind admits nothing
+        // and refuses as the replicated door does, so the row is quarantined
+        // as today rather than failing its window.
+        match owner_speaks_from(store, txn, machine) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "an own machine's user MESSAGE: the owner and roster did not read; refused as a replay"
+            ),
+        }
     }
     validate_replicated_witness_message_body(body)
 }
