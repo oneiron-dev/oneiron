@@ -51,6 +51,7 @@ mod body_anchor;
 mod codec;
 mod comment_parts;
 mod conversation;
+mod deck_anchor;
 mod docx_settle;
 mod model;
 mod pptx_reanchor;
