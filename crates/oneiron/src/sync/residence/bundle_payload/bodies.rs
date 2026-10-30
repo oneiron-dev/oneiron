@@ -23,7 +23,7 @@ use crate::store::ASSET_FILE_PLANE;
 use crate::sync::WindowManager;
 use crate::sync::asset_body::references::{AssetBodyRef, bound_refs};
 use crate::sync::asset_body::served_row;
-use crate::sync::asset_body::session::{AssetBodyPeer, land_carried_body};
+use crate::sync::asset_body::session::{AssetBodyLane, AssetBodyPeer, land_carried_body};
 use crate::sync::loro_support::{import_doc, map_get_bytes};
 use crate::sync::types::WindowKey;
 
@@ -181,6 +181,7 @@ pub(super) fn land(
             let window = |key: &WindowKey| doc.clone().filter(|_| *key == carried.window);
             let windows = || vec![carried.window.clone()];
             let peer = AssetBodyPeer {
+                lane: AssetBodyLane::OwnDevice,
                 vault,
                 materializer: manager.materializer(),
                 window: &window,

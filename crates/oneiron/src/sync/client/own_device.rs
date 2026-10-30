@@ -4,8 +4,8 @@
 //! nothing.
 
 use super::base::SyncClient;
-use crate::EntityId;
 use crate::authority::PeerMachine;
+use crate::{EntityId, Vault};
 
 /// An own-device import's proof: the client that takes the bytes has no
 /// federation peer bound, and the machine at the other end of the connection
@@ -22,6 +22,18 @@ impl OwnDeviceImport {
     pub(in crate::sync) fn machine(&self) -> EntityId {
         self.machine
     }
+
+    /// The proof for bytes `from` sent: the machine a connection with no
+    /// federation peer bound proved when they came in, rechecked now in
+    /// `vault`. `None` for a machine no connection proved, and for one
+    /// removed, poisoned or trusted under other keys since. The caller
+    /// answers for the lane: a federation lane takes no proof.
+    pub(in crate::sync) fn proven(vault: &Vault, from: PeerMachine) -> Option<Self> {
+        let PeerMachine::Proven { machine, .. } = vault.peer_machine_stands(from) else {
+            return None;
+        };
+        Some(Self { machine })
+    }
 }
 
 impl SyncClient {
@@ -33,9 +45,6 @@ impl SyncClient {
         if self.config.federation_peer.is_some() {
             return None;
         }
-        let PeerMachine::Proven { machine, .. } = self.vault.peer_machine_stands(from) else {
-            return None;
-        };
-        Some(OwnDeviceImport { machine })
+        OwnDeviceImport::proven(&self.vault, from)
     }
 }
