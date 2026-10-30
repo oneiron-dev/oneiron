@@ -5,19 +5,19 @@
 //! pinned history-free first, so this machine's change to the row rides at
 //! once (FIX 4872).
 //!
-//! Every erase reads a row the window already holds whole, whatever its
-//! size (FIX 8882): the mirror writes rows past the admission bound, and an
-//! erase that skipped them would leave a deleted room's bytes riding.
+//! Every erase reads a row the window holds, whatever its size (FIX 8882):
+//! a row past the admission bound rides as parts, read joined (FIX 11790),
+//! and an erase that skipped it would leave a deleted room's bytes riding.
 
 use std::collections::BTreeSet;
 
-use loro::{LoroMap, LoroValue, ValueOrContainer};
+use loro::LoroMap;
 
 use super::{encode, refused};
 use crate::Vault;
 use crate::error::Result;
 use crate::recovery::CanonicalRoomFact;
-use crate::sync::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
+use crate::sync::loro_support::map_delete;
 use crate::sync::types::WindowKey;
 use crate::workspace_roster::{RoomSideRow, erased_side_row_here};
 
@@ -40,14 +40,8 @@ pub(super) fn erased_rows(
     txn: &heed::RoTxn<'_>,
     map: &LoroMap,
 ) -> Result<Vec<(String, Option<Vec<u8>>)>> {
-    let mut rows = Vec::new();
-    map.for_each(|map_key, value| {
-        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
-            rows.push((map_key.to_owned(), bytes.to_vec()));
-        }
-    });
     let mut erased = Vec::new();
-    for (map_key, bytes) in rows {
+    for (map_key, bytes) in crate::sync::room_parts::rows(map, |_| true) {
         let Ok(row) = decode_held(&bytes) else {
             continue;
         };
@@ -74,7 +68,7 @@ pub(super) fn settle_erased_copies(
         let rtxn = vault.store.env.read_txn()?;
         let mut forms = Vec::new();
         for map_key in keys.iter().collect::<BTreeSet<_>>() {
-            let Some(bytes) = map_get_bytes(map, map_key) else {
+            let Some(bytes) = crate::sync::room_parts::row_at(map, map_key) else {
                 continue;
             };
             let Ok(row) = decode_held(&bytes) else {
@@ -93,9 +87,12 @@ pub(super) fn settle_erased_copies(
     for (map_key, form) in forms {
         match form {
             None => map_delete(map, map_key)?,
-            Some(bytes) => map_insert_bytes(map, map_key, &bytes)?,
+            Some(bytes) => {
+                crate::sync::room_parts::write_row(map, map_key, &bytes, super::MAX_ROW_BYTES)?;
+            }
         }
     }
+    crate::sync::room_parts::drop_unlisted_parts(map)?;
     Ok(true)
 }
 

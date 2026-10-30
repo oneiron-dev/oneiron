@@ -47,14 +47,14 @@ impl SideKey for WatchKey {
 
 const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_WATCH);
-const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
+pub(super) const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_UNIT_WATCH);
 pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_PENDING);
 /// Key: source + question + root unit.
-const RESTS_ON: SideTable<(EntityId, EntityId, EntityId), (), Raw> =
+pub(super) const RESTS_ON: SideTable<(EntityId, EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_RESTS_ON);
-const ROOT_SOURCES: SideTable<(EntityId, EntityId), Vec<EntityId>, Named> =
+pub(super) const ROOT_SOURCES: SideTable<(EntityId, EntityId), Vec<EntityId>, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_ROOT_SOURCES);
 
 /// Records what `root`'s newest standing answer rests on besides `root`

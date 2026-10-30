@@ -9,7 +9,9 @@
 //! does (CALLS OWNER_CUSTODY_BODY_SPOOL). The sealed input is decoded from
 //! its base64 into a file of its own as the spool is read, never one string
 //! in memory. The body is ciphertext sealed to the holder, and both files
-//! are gone once dropped.
+//! are gone once dropped. It carries no carrier key (FIX 7402): while the
+//! carrier wire is on, the engine's recorder seals the input under a key it
+//! mints, and the relayed input names that key's reference for the holder.
 
 use std::sync::Arc;
 

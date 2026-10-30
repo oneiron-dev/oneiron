@@ -16,9 +16,7 @@ use crate::code_sandbox::{
     SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
 };
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
-use crate::{
-    ClaimApprovalStatus, ClaimSource, EntityId, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteEnvelope, WriteProvenance};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -346,7 +344,7 @@ impl Memory<'_> {
                     SandboxProposalWrite::ClaimCandidate(claim) => {
                         let provenance = WriteProvenance::new(rmpv::Value::from(run_id.to_hex()))?;
                         let envelope = WriteEnvelope::new(
-                            WriteActor::new(self.actor, self.actor_class),
+                            self.write_actor(),
                             ClaimSource::Generated,
                             provenance,
                             ClaimApprovalStatus::Proposed,
@@ -382,7 +380,9 @@ impl Memory<'_> {
                                 confidence: body.confidence,
                                 source: "generated".to_owned(),
                                 world_ref: body.world.map(|id| id.to_hex()),
-                                relationship_ref: body.rel.map(|id| id.to_hex()),
+                                relationship_ref: body
+                                    .rel
+                                    .map(|ids| ids.iter().map(|id| id.to_hex()).collect()),
                                 scope: body
                                     .scope
                                     .map(crate::batch::export::served_messagepack_json),

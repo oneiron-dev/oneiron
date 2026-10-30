@@ -129,7 +129,9 @@ mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 mod claim_vad_owed;
-pub(crate) use claim_vad_owed::{owe_claim_vad_in_txn, settle_claim_vad_in_txn};
+pub(crate) use claim_vad_owed::{
+    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+};
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
@@ -184,8 +186,8 @@ pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use asset_body::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
-    asset_body_file_of_row, asset_file_in_txn, file_put_body_in_txn, short_content_hash_in_txn,
-    stage_asset_body_in_txn,
+    CheckedAssetBody, asset_body_file_of_row, asset_file_in_txn, asset_file_of_raw_in_txn,
+    file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
 };
 #[cfg(unix)]
 #[allow(

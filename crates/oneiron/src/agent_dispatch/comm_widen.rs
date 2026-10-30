@@ -252,6 +252,15 @@ pub(crate) fn comm_widen_in(
     COMM_WIDEN.get(&vault.store, txn, &child)
 }
 
+/// Every attempt that holds a comm widening, read in `txn`, so a reader of
+/// the waiting asks reads those rows, not the whole ledger (FIX 11318).
+pub(crate) fn comm_widen_children_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AttemptId>> {
+    COMM_WIDEN.scan_keys(&vault.store, txn, &[])
+}
+
 /// Stores `child`'s comm widening in `txn`.
 pub(crate) fn put_comm_widen_in(
     vault: &Vault,

@@ -54,9 +54,9 @@ pub use self::decision_asks::{
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,
-    FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, append_context_receipt_fields,
-    append_pack_attribution_fields, append_pack_manifest_fields, append_task_type_fields,
-    append_team_receipt_fields, memories_state_ref,
+    FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, FIELD_LEASE_GENERATION,
+    append_context_receipt_fields, append_pack_attribution_fields, append_pack_manifest_fields,
+    append_task_type_fields, append_team_receipt_fields, memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
@@ -80,9 +80,9 @@ pub use self::pack_attribution::{
     SkillContribution, UsedProvenanceEdge,
 };
 pub(crate) use self::pack_attribution::{
-    attempt_pack_attribution_in_txn, finalize_attempt_pack_judge_in_txn,
-    has_attempt_pack_attribution_in_txn, put_attempt_pack_attribution_in_txn, reference,
-    take_attempt_pack_attribution_in_txn,
+    attempt_pack_attribution_in_txn, erase_attempt_attribution_scope_in_txn,
+    finalize_attempt_pack_judge_in_txn, has_attempt_pack_attribution_in_txn,
+    put_attempt_pack_attribution_in_txn, reference, take_attempt_pack_attribution_in_txn,
 };
 pub use self::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,

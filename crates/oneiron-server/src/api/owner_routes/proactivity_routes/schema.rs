@@ -1,8 +1,9 @@
 //! The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611),
 //! `POST /v1/owner/proactivity/action-mode`, the two
 //! `POST /v1/owner/representation/*` writes, `POST /v1/owner/stewardship`,
-//! `POST /v1/owner/self-heal/findings/label` (FIX 11611 part D) and
-//! `POST /v1/owner/proactivity/digest/assemble` (FIX 11654).
+//! `POST /v1/owner/self-heal/findings/label` (FIX 11611 part D),
+//! `POST /v1/owner/proactivity/digest/assemble` (FIX 11654) and
+//! `PUT /v1/owner/coach/training-checkpoints` (FIX 12086).
 //! [`super`] is already past the file-size bar, so their schema fns live
 //! here, beside the route files' own.
 
@@ -10,11 +11,15 @@ use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::identity::IdentitySettled;
 use oneiron::dreamer_runner::maintenance::stewardship::StewardshipRules;
 use oneiron::self_heal::distillation::ReviewedFinding;
+use oneiron::training_pack::PinnedCheckpoint;
 
+use super::training_runs::checkpoints::CheckpointManifest;
 use super::{
     AnswerIdentityAsk, ApproveRepresentation, ApprovedView, DeclineRepresentation, DigestView,
     LabelFinding, SetActionMode, SetStewardship,
 };
+
+pub(crate) use super::training_runs::checkpoints::CHECKPOINT_HEADER;
 
 /// The OpenAPI schema of `POST /v1/owner/identity/asks/answer`'s body
 /// (FIX 11611): [`AnswerIdentityAsk`].
@@ -92,4 +97,16 @@ pub(crate) fn reviewed_finding_schema() -> serde_json::Value {
 /// answer (FIX 11611): the digest, or `null` when nothing is due.
 pub(crate) fn digest_assembled_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<Option<DigestView>>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/coach/training-checkpoints`'s
+/// manifest header (FIX 12086): [`CheckpointManifest`].
+pub(crate) fn checkpoint_manifest_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CheckpointManifest>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/coach/training-checkpoints`'s
+/// answer (FIX 12086): [`PinnedCheckpoint`].
+pub(crate) fn pinned_checkpoint_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PinnedCheckpoint>()
 }

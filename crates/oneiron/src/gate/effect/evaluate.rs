@@ -143,12 +143,14 @@ pub(crate) fn evaluate_external_effect_policy(
     // slot is proven here and spent only with an admitting Allow; a held,
     // denied or observed send spends nothing, and an exact replay finds its
     // own slot. A native-mail cold send keeps its own OF-399 graduation.
-    let envelope_reservation = if mail_cold {
+    // FIX 7948: a full window gives the send its place in the envelope's
+    // line instead; a grant that refuses keeps the press.
+    let envelope_admission = if mail_cold {
         None
     } else {
         native_mail_cold_composed_effect(&hydrated_effect)
             .map(|composed| {
-                channel_identity_envelope_reservation_in_txn(
+                channel_identity_envelope_admission_in_txn(
                     store,
                     &*wtxn,
                     &hydrated_effect,
@@ -158,6 +160,15 @@ pub(crate) fn evaluate_external_effect_policy(
             })
             .transpose()?
             .flatten()
+    };
+    let (envelope_reservation, mut envelope_wait) = match envelope_admission {
+        Some(crate::outbound_grant::ChannelIdentityGrantAdmission::Reserved(reservation)) => {
+            (Some(*reservation), None)
+        }
+        Some(crate::outbound_grant::ChannelIdentityGrantAdmission::WindowWait(place)) => {
+            (None, Some(place))
+        }
+        Some(crate::outbound_grant::ChannelIdentityGrantAdmission::Denied) | None => (None, None),
     };
     if envelope_reservation.is_some()
         && let Some(bound) = requirement.as_ref()
@@ -246,13 +257,33 @@ pub(crate) fn evaluate_external_effect_policy(
             .transpose()?
             .flatten()
     };
-    let consent = if mail_once || mail_retry_authorized || code_wait.is_some() {
-        composed.as_ref().map(|effect| {
-            ConsentGateContext::evaluate(effect, approve_once.as_ref(), &consent_grants)
-        })
-    } else {
-        external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants)
+    let consent_under = |grants: &[crate::consent::StandingConsentGrant]| {
+        if mail_once || mail_retry_authorized || code_wait.is_some() {
+            composed
+                .as_ref()
+                .map(|effect| ConsentGateContext::evaluate(effect, approve_once.as_ref(), grants))
+        } else {
+            external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), grants)
+        }
     };
+    let mut consent = consent_under(&consent_grants);
+    // FIX 7948: a full window holds the send in its envelope's line only when
+    // that envelope is all that would cover it; a press or another grant
+    // releases it as before. Its grant does cover it, so the Gate judges the
+    // send as covered, and the chokepoint keeps its place instead of
+    // admitting it.
+    envelope_wait = envelope_wait.filter(|_| {
+        consent
+            .as_ref()
+            .is_some_and(|context| context.decision != crate::consent::ConsentDecision::Auto)
+    });
+    if envelope_wait.is_some()
+        && let Some(requirement) = external_effect_action_requirement(&hydrated_effect)
+        && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
+    {
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+        consent = consent_under(&consent_grants);
+    }
     let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
     // Resolve by audited identity, regardless of the caller's actor-class spelling.
     input.foreign_agent_ceiling = hydrated_effect
@@ -283,7 +314,7 @@ pub(crate) fn evaluate_external_effect_policy(
         effect.counterparty_send_override = counterparty_send_override;
         effect.counterparty_contact_revoked = counterparty_contact_revoked;
     }
-    let mut decision = policy.evaluate_gate(&input);
+    let mut decision = policy.evaluate_gate_with_delegation_chain(store, &*wtxn, &input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
     let created_at = mutation_recorded_at;
@@ -553,6 +584,7 @@ pub(crate) fn evaluate_external_effect_policy(
         approval_context,
         matched_grant,
         envelope_reservation,
+        envelope_wait,
         budget_target,
         scoped_capability: scoped_mcp_capability,
     })

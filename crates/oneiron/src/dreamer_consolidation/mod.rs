@@ -80,6 +80,7 @@ mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
 mod sieve_ports;
+pub(crate) mod stage_log;
 pub(crate) mod step_charge;
 pub mod strength;
 mod support;
@@ -106,8 +107,8 @@ pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
-    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_moved_in_txn,
-    person_of_about_input,
+    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_dropped_in_txn,
+    mark_person_about_moved_in_txn, person_of_about_input,
 };
 pub use provenance::*;
 pub(crate) use provenance::{

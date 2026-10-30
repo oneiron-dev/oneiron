@@ -26,7 +26,23 @@ impl Memory<'_> {
     /// Ingests the uploaded text as the bound caller, retaining source labels
     /// without treating them as verified speaker identities. Session close,
     /// ordered turns and the SessionEnd wake share the existing landing txn.
+    ///
+    /// When the caller's own local session is open, the answer names it and
+    /// the verified upload is retained: it lands once that session closes,
+    /// through the host's drain of retained uploads, until its deadline.
     pub fn calendar_transcript_ingest(
+        &self,
+        input: &TranscriptFileDropInput,
+    ) -> MemoryResult<TranscriptIngestOutcome> {
+        let outcome = self.calendar_transcript_ingest_once(input)?;
+        if matches!(outcome, TranscriptIngestOutcome::RetryOpenSession { .. }) {
+            self.queue_pending_transcript(input, self.vault().now_recorded_at())?;
+        }
+        Ok(outcome)
+    }
+
+    /// One landing of `input` as the bound caller, with nothing retained.
+    pub(super) fn calendar_transcript_ingest_once(
         &self,
         input: &TranscriptFileDropInput,
     ) -> MemoryResult<TranscriptIngestOutcome> {
@@ -66,8 +82,11 @@ impl Memory<'_> {
         let outcome = match parsed {
             TranscriptParse::NoteFallback { text } => {
                 // NOTE authorship uses the caller's own gate, never the host
-                // import MACHINE's system-class policy.
-                let receipt = self.author_take(TakeTarget::Subject(source), text)?;
+                // import MACHINE's system-class policy; the NOTE is born in
+                // its source's world.
+                let world = super::source_world(vault, source)?;
+                let receipt =
+                    self.author_take_in_world(TakeTarget::Subject(source), text, world)?;
                 TranscriptIngestOutcome::NoteFallback {
                     note_ref: EntityId::from_hex(&receipt.id_hex)?,
                 }
@@ -147,7 +166,7 @@ impl Memory<'_> {
                         // The engine observed a verified upload and closed SESSION. Neither
                         // the basis nor its timestamp is accepted from the caller.
                         let envelope = crate::WriteEnvelope::new(
-                            crate::WriteActor::new(self.actor(), self.actor_class()),
+                            self.write_actor(),
                             crate::claim::ClaimSource::Observed,
                             crate::WriteProvenance::new(rmpv::Value::from(
                                 "vault.calendar.transcript.ingest",

@@ -3,27 +3,38 @@
 //! the offer's seat and base on a trainer connector this host names, then
 //! authorizes that exact spec with the answer or after it; the host trains
 //! it, and when it cannot, the run says why. Nothing here binds a model.
+//!
+//! `/v1/owner/coach/training-runs/{prepare,authorize}` (FIX 8237): the
+//! owner's own doors with no offer. `prepare` takes a detector question's
+//! plan and the owner's adjudicated rows in custody; `authorize` is the
+//! owner's yes on any prepared run at the spec they saw.
+//!
+//! `PUT /v1/owner/coach/training-checkpoints` (FIX 12086, `checkpoints`):
+//! the owner's starting checkpoint into custody, its files streamed.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::extract::State;
 use axum::response::Json;
-use axum::routing::post;
+use axum::routing::{post, put};
 use oneiron::edit_distance::reservoir::ReservoirScope;
 use oneiron::skill_optimize::{OfferTrainingHandoff, TrainingChoice};
 use oneiron::training_pack::{
-    TrainingAuthorization, TrainingDeclarationPin, TrainingHold, TrainingPackDraft, TrainingPlan,
-    TrainingRun, TrainingState,
+    DetectorCorpusRef, TrainingAuthorization, TrainingDeclarationPin, TrainingHold,
+    TrainingPackDraft, TrainingPlan, TrainingRun, TrainingState,
 };
 use serde::{Deserialize, Serialize};
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::super::{ByteBody, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::schema::{CHECKPOINT_HEADER, checkpoint_manifest_schema, pinned_checkpoint_schema};
 use super::{hex_id, now_secs};
 use crate::ai_host::training_pack::{trainer_binding, training_declaration};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
+
+pub(super) mod checkpoints;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
@@ -56,6 +67,56 @@ pub(super) fn owner_table() -> OwnerTable {
                 shape: None,
             },
             post(training),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/prepare",
+                summary: "The owner's run for one detector question's head, on their adjudicated target rows in custody and a trainer connector this host names; nothing runs.",
+                row: None,
+                shape: None,
+            },
+            post(prepare_question),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/authorize",
+                summary: "The owner's own yes on a prepared run at the exact spec they saw; the host's Coach queues it.",
+                row: None,
+                shape: None,
+            },
+            post(authorize_run),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/coach/training-checkpoints",
+                summary: "The owner's starting checkpoint into custody: the body is its files' raw bytes back to back, in the order the x-oneiron-checkpoint header's JSON manifest names them, spooled to disk as it arrives; the answer is the pinned checkpoint a training draft names.",
+                row: None,
+                shape: Some(
+                    RestShape::bytes(
+                        ByteBody {
+                            description: "The checkpoint's files as raw bytes, back to back, in the manifest's order.",
+                            header: CHECKPOINT_HEADER,
+                            header_description: "The checkpoint's manifest as JSON: its model, and each file's name, kind, source, BLAKE3 (64 hex) and length in body order.",
+                            header_schema: checkpoint_manifest_schema,
+                        },
+                        pinned_checkpoint_schema,
+                    )
+                    .refusing(&[
+                        (
+                            "400",
+                            "The manifest header is missing or malformed, a file name or source is refused, the body ended before its files or ran past them, or a file's BLAKE3 differs from the manifest's: nothing was kept.",
+                        ),
+                        (
+                            "409",
+                            "The vault's disk has no room for the body past the free-space reserve uploads keep (`disk_capacity`): nothing was kept.",
+                        ),
+                    ]),
+                ),
+            },
+            put(checkpoints::keep_checkpoint),
         ),
     ]
 }
@@ -261,4 +322,72 @@ async fn training(
     })
     .await?;
     Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareQuestionRun {
+    /// The owner's question plan, sealed held-out cohort, compute choice
+    /// and quantity for this run.
+    draft: TrainingPackDraft,
+    /// The owner's adjudicated per-target rows, one pinned version in
+    /// custody.
+    corpus: DetectorCorpusRef,
+    /// The trainer connector's name on this host; there is no default.
+    connector: String,
+}
+
+/// `POST /v1/owner/coach/training-runs/prepare`: the owner's run for one
+/// detector question's head. The ingress splits the owner's rows by source
+/// family and pins the spec with its split and consent receipts; nothing
+/// runs.
+async fn prepare_question(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<PrepareQuestionRun>,
+) -> OwnerReply<PreparedTrainingRun> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let prepared = blocking(move || -> OwnerResult<PreparedTrainingRun> {
+        let binding = trainer_binding(&server, &request.connector)
+            .ok_or_else(|| OwnerError::NotFound("trainer connector", request.connector.clone()))?;
+        let run = server.vault().prepare_question_training_pack(
+            &owner,
+            &request.draft,
+            &request.corpus,
+            &binding,
+        )?;
+        Ok(PreparedTrainingRun {
+            spec: hex_id(&run.spec_blake3),
+            run,
+        })
+    })
+    .await?;
+    Ok(Json(prepared))
+}
+
+/// `POST /v1/owner/coach/training-runs/authorize`: the owner's own yes on a
+/// prepared run at the exact spec they saw, under the declaration this host
+/// admits it with. The host's Coach queues it at once; the same yes again
+/// returns the run as it stands.
+async fn authorize_run(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<TrainingChoiceRequest>,
+) -> OwnerReply<TrainingRunStatus> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let run = blocking(move || -> OwnerResult<TrainingRunStatus> {
+        let choice = training_choice(&server, &request.run, &request.spec)?;
+        let run = server.vault().authorize_training_pack(
+            &owner,
+            &choice.run,
+            &choice.spec_blake3,
+            choice.declaration,
+            now_secs(),
+        )?;
+        Ok(status(run))
+    })
+    .await?;
+    Ok(Json(run))
 }

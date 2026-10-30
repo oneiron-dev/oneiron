@@ -45,6 +45,9 @@ impl Vault {
 
     /// [`Self::publish_code_run_output`] with the occurrence's complete
     /// input rows, or `None` when any constituent is unknown (FIX 7104).
+    /// With no `owner` the same transaction records the bytes' own
+    /// occurrence as derived from each of them, so an erase or withdrawal of
+    /// one withholds every read of the bytes alone (FIX 10447).
     pub(crate) fn publish_code_run_output_sourced(
         &self,
         path: String,
@@ -63,6 +66,9 @@ impl Vault {
         )?;
         let mut wtxn = self.store.env.write_txn()?;
         self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, owner)?;
+        if owner.is_none() {
+            self.record_unowned_output_sources_in_txn(&mut wtxn, &finished.output)?;
+        }
         wtxn.commit()?;
         Ok(finished.output)
     }

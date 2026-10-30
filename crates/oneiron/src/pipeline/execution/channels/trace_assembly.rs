@@ -2,10 +2,11 @@
 
 use crate::bm25::Bm25Config;
 use crate::entity_id::EntityId;
+use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::trace::{
-    RetrievalTraceForkEvidence, retrieval_trace_candidate_set, retrieval_trace_fork_hash,
-    retrieval_trace_stage_record, retrieval_trace_top_scores,
+    RetrievalReplayIdentity, RetrievalTraceForkEvidence, retrieval_trace_candidate_set,
+    retrieval_trace_fork_hash, retrieval_trace_stage_record, retrieval_trace_top_scores,
 };
 use crate::pipeline::types::{ResolvedWorldAuthority, ScoredEntity};
 use crate::store::{
@@ -16,6 +17,12 @@ use std::collections::HashMap;
 
 /// Every face the trace records, plus the fork-hash inputs.
 pub(super) struct TraceInputs<'a> {
+    pub(super) rtxn: &'a heed::RoTxn<'a>,
+    pub(super) replay_identity: &'a RetrievalReplayIdentity,
+    pub(super) hyde_expansion: Option<&'a crate::query_expansion::HydeExpansion>,
+    pub(super) extra_text_queries: &'a [String],
+    pub(super) widen_channel_limits: bool,
+    pub(super) skip_ret01_abstain: bool,
     pub(super) derivation_owner: Option<crate::federation::derivation::DerivationOwner>,
     /// The run's final scores, after budget and truncation.
     pub(super) scores: &'a [ScoredEntity],
@@ -40,7 +47,10 @@ pub(super) struct TraceInputs<'a> {
 }
 
 impl PipelineBuilder<'_> {
-    pub(super) fn assemble_retrieval_trace(&self, inputs: TraceInputs<'_>) -> RetrievalTrace {
+    pub(super) fn assemble_retrieval_trace(
+        &self,
+        inputs: TraceInputs<'_>,
+    ) -> Result<RetrievalTrace> {
         let final_scores = retrieval_trace_top_scores(inputs.scores, inputs.trace_candidate_limit);
         let blended_scores = inputs.blended_trace_scores.unwrap_or_default();
         let candidate_set = retrieval_trace_candidate_set(
@@ -49,6 +59,20 @@ impl PipelineBuilder<'_> {
             &blended_scores,
             &final_scores,
         );
+        let mut candidate_revisions = Vec::with_capacity(candidate_set.len());
+        for id_bytes in &candidate_set {
+            let id = EntityId::from_bytes_unchecked(*id_bytes);
+            let revision =
+                match self
+                    .vault
+                    .indexed_revision_from_in_txn(&self.read, inputs.rtxn, &id)
+                {
+                    Ok(revision) => revision,
+                    Err(crate::Error::EntityNotFound) => None,
+                    Err(error) => return Err(error),
+                };
+            candidate_revisions.push((*id_bytes, revision));
+        }
         let fork_hash = retrieval_trace_fork_hash(
             self,
             inputs.bm25_config,
@@ -58,7 +82,13 @@ impl PipelineBuilder<'_> {
             inputs.rerank_query,
             RetrievalTraceForkEvidence {
                 candidate_set: &candidate_set,
+                candidate_revisions: &candidate_revisions,
                 world_authority: inputs.world_authority,
+                replay_identity: inputs.replay_identity,
+                hyde_expansion: inputs.hyde_expansion,
+                extra_text_queries: inputs.extra_text_queries,
+                widen_channel_limits: inputs.widen_channel_limits,
+                skip_ret01_abstain: inputs.skip_ret01_abstain,
             },
         );
         // Keyed before every fold: a telemetry reader holds every input but
@@ -84,10 +114,10 @@ impl PipelineBuilder<'_> {
         } else {
             fork_hash
         };
-        RetrievalTrace {
+        Ok(RetrievalTrace {
             fork_hash,
             per_channel: inputs.trace_channels,
-            // The fused stage is the pre-blend RRF order, so it
+            // The fused stage is the live fused relevance sum, so it
             // carries no applied multiplier to attribute: an empty
             // map makes every one of its rows record `None`.
             fused: retrieval_trace_stage_record(
@@ -130,6 +160,6 @@ impl PipelineBuilder<'_> {
             ),
             fusion_list_length: u32::try_from(crate::fusion::FUSION_LIST_LENGTH)
                 .unwrap_or(u32::MAX),
-        }
+        })
     }
 }

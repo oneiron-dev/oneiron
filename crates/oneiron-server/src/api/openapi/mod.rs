@@ -26,7 +26,7 @@ pub(crate) use self::endpoints_merge::{
     SKILL_PACK_LAYER_BOUNDARY, SKILL_PACK_LOAD_HINT, SKILL_PACK_MIME_TYPE, SKILL_PACK_NAME,
     SKILL_PACK_RESOLUTION, openapi_json, skills_pack,
 };
-pub(super) use self::owner_paths::{CHANGED, OwnerRoute, RestShape};
+pub(super) use self::owner_paths::{ByteBody, CHANGED, OwnerRoute, RestShape};
 use self::security::{add_security_scheme, set_schema_property_description};
 // Only the test suite names the assembled document bare (`api/tests` calls
 // `openapi_document()`); the non-test build reaches it through the handlers.

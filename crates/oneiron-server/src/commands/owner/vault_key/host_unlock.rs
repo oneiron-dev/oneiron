@@ -3,9 +3,11 @@
 //! `vault_key` whole).
 
 use std::path::Path;
+use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::CheckpointKey;
-use oneiron::world_keys::{HybridSecretKey, VaultKeyUnlock};
+use oneiron::world_keys::{HybridSecretKey, RecoveryRootSeed, VaultKeyUnlock};
+use oneiron_keystore::DeviceKeystore;
 use zeroize::Zeroizing;
 
 use super::{
@@ -13,6 +15,7 @@ use super::{
     secret32,
 };
 use crate::cli::{RestoreArgs, SecretSourceArgs, UnlockMethod};
+use crate::config::ServeConfig;
 
 /// What unlocks a backup's vault key, or a sealed vault's pages, on this
 /// host, its secret read once and wiped on drop.
@@ -26,6 +29,9 @@ pub(crate) enum HostUnlock {
     Escrow {
         label: String,
         secret: HybridSecretKey,
+        /// The world kit's seed when the kit gave the secret: its owner
+        /// anchor signs a custody fetch from the residence home (FIX 5846).
+        kit_seed: Option<RecoveryRootSeed>,
     },
     /// A registry's escrow capsule, presented in place of a wrap, and its
     /// recipient's released secret.
@@ -206,7 +212,11 @@ impl HostUnlock {
                     None => secret32(&read_secret(secret, "the escrow seed")?, "an escrow seed")?,
                 };
                 let secret = oneiron::world_keys::escrow_recipient(&seed)?;
-                Self::Escrow { label, secret }
+                Self::Escrow {
+                    label,
+                    secret,
+                    kit_seed: None,
+                }
             }
             UnlockMethod::Kit => anyhow::bail!(
                 "--unlock kit opens with the kit's pieces (--piece) and the vault id it is bound \
@@ -234,7 +244,7 @@ impl HostUnlock {
             Self::Device => None,
             Self::Password(password) => Some(VaultKeyUnlock::Password(password)),
             Self::Passkey { credential, prf } => Some(VaultKeyUnlock::Passkey { credential, prf }),
-            Self::Escrow { label, secret } => Some(VaultKeyUnlock::Escrow { label, secret }),
+            Self::Escrow { label, secret, .. } => Some(VaultKeyUnlock::Escrow { label, secret }),
             Self::EscrowCapsule {
                 label,
                 capsule,
@@ -253,7 +263,33 @@ impl HostUnlock {
                 vault_id: *vault_id,
                 pieces,
                 passphrase: passphrase.as_ref(),
+                keystore: None,
             }),
+        }
+    }
+
+    /// This install's keystore when this secret is a data-key kit, so a
+    /// sealed vault's pages unlock with the piece of the kit it keeps beside
+    /// the pieces given (FIX 11976). `None` for every other secret, and for a
+    /// keystore that is off or does not open: the kit then unlocks with the
+    /// pieces given alone.
+    pub(super) fn kit_keystore(
+        &self,
+        config: &ServeConfig,
+        vault_path: &Path,
+    ) -> Option<Arc<dyn DeviceKeystore>> {
+        if !matches!(self, Self::VaultKeyKit { .. }) {
+            return None;
+        }
+        match config.keystore.open(vault_path) {
+            Ok(keystore) => keystore,
+            Err(error) => {
+                tracing::warn!(
+                    reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
+                    "the keystore did not open; the kit unlocks with the pieces given"
+                );
+                None
+            }
         }
     }
 
@@ -265,7 +301,7 @@ impl HostUnlock {
             Self::Passkey { credential, prf } => {
                 vault.unlock_vault_key_with_passkey(credential, prf)
             }
-            Self::Escrow { label, secret } => vault.unlock_vault_key_with_escrow(label, secret),
+            Self::Escrow { label, secret, .. } => vault.unlock_vault_key_with_escrow(label, secret),
             // The restored vault need not carry the capsule's wrap.
             Self::EscrowCapsule {
                 label,

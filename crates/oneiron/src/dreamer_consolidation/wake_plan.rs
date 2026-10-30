@@ -48,7 +48,6 @@ impl PreparedConsolidationAttempt {
     pub(crate) fn branch(&self) -> &super::branch::QueuedBranch {
         &self.branch
     }
-    #[cfg(test)]
     pub(crate) fn turn_ids(&self) -> &[EntityId] {
         &self.turn_ids
     }
@@ -156,6 +155,8 @@ pub struct PreparedWake {
     /// The receipt of the one scoped read behind `sources`; `None` when the
     /// wake read nothing. Every branch opened on this wake folds it.
     read_receipt: Option<ScopedReadReceipt>,
+    /// Wall ms the preparation took, for each partition's stage line.
+    prepared_ms: u64,
 }
 
 impl PreparedWake {
@@ -209,10 +210,13 @@ impl PreparedWake {
         only_attempt: Option<AttemptId>,
         preempt: Option<&PreparationPreempt<'_>>,
     ) -> Result<Self> {
-        let (wake, owed) = Self::read_matching(vault, scope, caller_scope, only_attempt, preempt)?;
+        let started = std::time::Instant::now();
+        let (mut wake, owed) =
+            Self::read_matching(vault, scope, caller_scope, only_attempt, preempt)?;
         // The read transaction has closed: each retry's overflow is owed in
         // its own commit, before any branch of this wake runs.
         chunks::owe(vault, scope, owed);
+        wake.prepared_ms = super::stage_log::ms_since(started);
         Ok(wake)
     }
 
@@ -377,9 +381,15 @@ impl PreparedWake {
                 left,
                 preparations,
                 read_receipt: Some(read_receipt),
+                prepared_ms: 0,
             },
             owed,
         ))
+    }
+
+    /// Wall ms this wake's frozen preparation took.
+    pub(crate) fn prepared_ms(&self) -> u64 {
+        self.prepared_ms
     }
 
     /// Only work known at the wake's single revision may execute on it.
@@ -465,7 +475,7 @@ fn neighbourhood_in(
     let axes = project.map(|project| Scope {
         world: plan.branch.world_ref,
         facet: plan.branch.facet_ref,
-        relationship: bound.and_then(|scope| scope.relationship),
+        relationship: bound.and_then(|scope| scope.relationship.clone()),
         project: Some(project),
         ..Scope::default()
     });

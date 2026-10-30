@@ -204,10 +204,11 @@ impl GitRefPublication {
                 }
             }
             (Some(next), None) => format!("update {name} {}\n", next.as_str()),
-            (None, Some(expected)) if !expected.is_empty() => {
-                format!("delete {name} {expected}\n")
-            }
-            (None, _) => format!("delete {name}\n"),
+            // An absent ref kept absent is a verify in the same transaction,
+            // never an unconditional delete (FIX 8786).
+            (None, Some(expected)) if expected.is_empty() => format!("verify {name} \"\"\n"),
+            (None, Some(expected)) => format!("delete {name} {expected}\n"),
+            (None, None) => format!("delete {name}\n"),
         }
     }
 }

@@ -25,7 +25,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/wire-health",
-                summary: "Every check this server keeps (`checks`), and the shared connection pool's live pressure (`connection_pool_pressure`, FIX 7656): `{\"state\": \"clear\"}` while no socket waits for the pool, else `{\"state\": \"active\", \"check\": ...}`, a check of kind `inspect_connection_pool_pressure` naming the episode, the `[limits]` row and its bound, the credentials holding the most open request bodies, the pool's connections and the remedy. It observes only: it pauses, revokes and refuses nothing, and does not promise that a revocation releases an already-open body.",
+                summary: "Every check this server keeps (`checks`), and the shared connection pool's live pressure (`connection_pool_pressure`, FIX 7656): `{\"state\": \"clear\"}` while no socket waits for the pool, else `{\"state\": \"active\", \"check\": ...}`, a check of kind `inspect_connection_pool_pressure` naming the episode, the `[limits]` row and its bound, the credentials holding the most open request bodies, the pool's connections and the remedy. The mesh listener's sync streams keep their own check of the same shape (`mesh_pool`, FIX 7737), raised while a mesh stream waits for a place under the connection floor. It observes only: it pauses, revokes and refuses nothing, and does not promise that a revocation releases an already-open body.",
                 row: None,
                 shape: None,
             },

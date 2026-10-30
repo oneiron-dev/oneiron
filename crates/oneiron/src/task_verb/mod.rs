@@ -81,6 +81,7 @@ pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
+mod presence_jobs;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
@@ -89,6 +90,7 @@ mod proposal_create;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
 mod refusal;
 mod report_journal;
 pub(crate) use report_journal::{

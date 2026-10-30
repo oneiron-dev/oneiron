@@ -22,7 +22,9 @@ pub fn comment_patch(
     let limits = &Codec { limits, resources };
     let archive = Archive::read(base, limits)?;
     let mut inspection = inspect_parts(&archive.parts, limits)?;
-    resolve_positions(base, &archive.parts, &mut inspection, limits);
+    // A resource refusal is the comment error (FIX 10587), never kept positions.
+    resolve_positions(base, &archive.parts, &mut inspection, limits)
+        .map_err(PptxError::Resource)?;
     let mut parts = archive.parts.clone();
     let mut allowed = BTreeSet::new();
     let mut minted = Vec::new();
@@ -216,7 +218,8 @@ pub fn comment_patch(
     // chose it, and its target, resolved again over them, chooses it again.
     if !written.is_empty() {
         let mut after = inspect_parts(&actual.parts, limits)?;
-        resolve_positions(&new_bytes, &actual.parts, &mut after, limits);
+        resolve_positions(&new_bytes, &actual.parts, &mut after, limits)
+            .map_err(PptxError::Resource)?;
         for (part, comment, target, outcome) in &written {
             let xml = Xml::parse_with_limits(actual.text(part)?, limits)?;
             let node = find_thread(&xml, comment)?;

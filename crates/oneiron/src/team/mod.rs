@@ -52,8 +52,8 @@ pub use pattern::{
 };
 pub use payoff::{PatternCardEntry, PayoffRow, PlannerCard, payoff_table, planner_card};
 pub use receipt::{
-    Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape, record_team_receipt,
-    settle_team_outcome, team_receipt, team_receipts,
+    Coverage, DecidedBy, PatternSkillRef, TeamCritic, TeamOutcome, TeamReceipt, TeamShape,
+    record_team_receipt, settle_team_outcome, team_receipt, team_receipts,
 };
 pub(crate) use receipt::{ReceiptScan, team_receipts_in_txn};
 pub use run::{

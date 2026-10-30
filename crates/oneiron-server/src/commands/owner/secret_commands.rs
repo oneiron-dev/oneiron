@@ -294,7 +294,7 @@ fn sign_with_anchor(
     args: crate::cli::SecretAnchorSignArgs,
     kit: &[u8],
 ) -> anyhow::Result<secrets::AnchorSigned> {
-    use oneiron::recovery::{KitPassphrase, KitPiece, KitSecretKind, restore_kit};
+    use oneiron::recovery::{KitPassphrase, KitPiece, KitSecretKind};
     let recipients = secrets::custody_plan(None, args.recipients)?.recipients;
     let text = std::str::from_utf8(kit)
         .map_err(|_| anyhow::anyhow!("the recovery kit on stdin is not UTF-8"))?;
@@ -323,13 +323,14 @@ fn sign_with_anchor(
         anyhow::anyhow!("this vault has no authority root yet, so no recovery kit opens for it")
     })?;
     let held: Vec<&KitPiece> = pieces.iter().collect();
-    let restored = restore_kit(
-        vault_id,
-        KitSecretKind::RecoveryRoot,
-        &held,
-        passphrase.as_ref(),
-    )
-    .map_err(|error| anyhow::anyhow!("the recovery kit did not open: {error}"))?;
+    let restored = vault
+        .restore_kit_here(
+            vault_id,
+            KitSecretKind::RecoveryRoot,
+            &held,
+            passphrase.as_ref(),
+        )
+        .map_err(|error| anyhow::anyhow!("the recovery kit did not open: {error}"))?;
     let seed = oneiron::world_keys::RecoveryRootSeed::from_restored_kit(restored)?;
     Ok(secrets::sign_with_anchor(
         &vault,

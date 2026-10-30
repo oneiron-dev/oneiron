@@ -213,6 +213,7 @@ impl Memory<'_> {
             next_after,
             effective_limit: page,
             limit_clamped,
+            undecodable: self.vault.undecodable_send_receipts_for_kinds(kinds)?,
         })
     }
 

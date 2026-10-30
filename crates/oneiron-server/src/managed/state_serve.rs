@@ -54,6 +54,9 @@ mod carrier_watch;
 mod control;
 /// Supervised boot, serve and shutdown: [`serve_managed`].
 mod coordinator;
+/// The vault's deletion marker, as `Ping` reports it and the deletion gate
+/// reads it (FIX 11710).
+mod deletion;
 /// The backup before an idle reap (`prepare_idle_reap`).
 mod idle_backup;
 /// The managed routers and the reap freeze gate in front of them.
@@ -538,11 +541,16 @@ impl ManagedState {
     /// Fail-closed on both halves: an upgrade that was refused after this gate
     /// (401, no such route) still counts for the settle window, and a clock
     /// that steps backwards reads as live rather than as settled.
+    ///
+    /// This vault's own device sync, dialing its home, is live too until its
+    /// run and refresh have paused at the freeze (FIX 5127).
     pub fn live_sync_writer(&self) -> bool {
         // Crate-internal on purpose: the receiver count is the only liveness
         // signal a session leaves outside its own task, and adding a second
         // registry to `SyncServer` would put the same fact in two places.
-        if self.server.broadcast_tx.receiver_count() > 0 {
+        if self.server.broadcast_tx.receiver_count() > 0
+            || self.admission.in_flight().device_sync > 0
+        {
             return true;
         }
         let admitted = self.last_sync_upgrade.load(Ordering::SeqCst);

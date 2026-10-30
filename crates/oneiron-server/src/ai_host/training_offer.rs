@@ -29,10 +29,11 @@ use oneiron::skill_optimize::offer_pilot::{
     training_destination as destination,
 };
 use oneiron::skill_optimize::{
-    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
-    OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers, union_source_rows,
+    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCheckOutcome, OfferCost,
+    OfferEvidence, OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer,
+    TrainingOfferDraft, model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role,
+    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
+    union_source_rows,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
@@ -384,9 +385,10 @@ impl Brief {
             .rev()
             .find(|cohort| cohort.retired_at.is_none());
         // The cohort's cases and labels, as the ledger keeps their rows
-        // (FIX 5760); a lineage read that fails leaves them unknown.
+        // (FIX 5760); a lineage read that fails stops the draft instead of
+        // erasing its rows to unknown (FIX 11913).
         if let Some(cohort) = &cohort {
-            let read = vault.eval_cohort_source_rows(&cohort.id).ok().flatten();
+            let read = vault.eval_cohort_source_rows(&cohort.id)?;
             sources.set(read.as_deref());
         }
         // Names and the rubric revision ride whole (Rule 5).

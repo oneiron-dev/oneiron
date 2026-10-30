@@ -27,6 +27,13 @@ export type OpenOptions = {
    * `"phone"`. Never read off the operating system.
    */
   deviceClass?: "computer" | "phone"
+  /**
+   * Holds this install's host root as the vault's checkpoint signer for the
+   * handle's life (FIX 5343): the device sync's steady pass attests with it
+   * the images its home writes. Only {@link Oneiron.openWithHostRoot} reads
+   * it; omitted is `false`. A secret that went unused is never held.
+   */
+  holdCheckpointRootSigner?: boolean
 }
 
 /**
@@ -245,6 +252,8 @@ export type ClaimInput = {
   /** One of `user_stated`, `observed`, `inferred`, `imported`, `tool_output`, `generated`. */
   source: string
   worldRef?: string
+  /** RELATIONSHIP refs: omitted means all relationships, `[]` the explicit empty set. */
+  relationshipRef?: string[]
   scope?: unknown
   /** Unix seconds. */
   validFrom?: number
@@ -624,6 +633,7 @@ class ClaimInput(TypedDict):
     confidence: float
     source: str
     world_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[list[str] | None]
     scope: NotRequired[dict[str, Any] | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
@@ -984,6 +994,7 @@ class Oneiron:
         *,
         dimensions: int | None = None,
         device_class: Literal["computer", "phone"] | None = None,
+        hold_checkpoint_root_signer: bool | None = None,
     ) -> HostRootOpened:
         """open, then this install's machine profile from the vault's host root secret's exact bytes (FIX 5342)."""
     @classmethod
@@ -1097,6 +1108,8 @@ class Oneiron:
             """Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason."""
         def message_stream_partial(self, spec: Facade.MessageStreamRequest) -> Facade.MessageStreamPartial:
             """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
+        @property
+        def message_streams(self) -> "Oneiron._VaultMessageStreamsVerbs": ...
         @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
@@ -1534,6 +1547,11 @@ class Oneiron:
             """The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."""
         def top_up(self, spec: Facade.RunnerSeatCreditTopUpRequest) -> Facade.RunnerSeatTopUpReceipt:
             """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
+        def resume(self, spec: Facade.RunnerWorkResumeRequest) -> Facade.RunnerWorkResumeView:
+            """The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."""
+    class _VaultMessageStreamsVerbs:
+        def refused(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.StreamRecoveryRefusal]:
+            """Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -1953,6 +1971,8 @@ class Oneiron:
             """Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence."""
         def pick(self, spec: Facade.SkillOptimizeTradeoffPickRequest) -> Facade.SkillOptimizeResultView:
             """Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."""
+        def resolve(self, spec: Facade.SkillOptimizeTradeoffResolveRequest) -> Facade.SkillOptimizeResultView:
+            """The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."""
     class _VaultSkillsGovernanceVerbs:
         def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
             """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
@@ -2858,6 +2878,8 @@ class Oneiron:
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."""
+        def propose_from_pack(self, spec: Facade.PackLensProposeRequest) -> Facade.LensProposalReceipt:
+            """Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it."""
         def activate(self, spec: Facade.LensActivateRequest) -> Facade.LensActivationReceipt:
             """The owner selects a proposed lens revision for its pack slot."""
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:
@@ -3175,7 +3197,7 @@ class Oneiron:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
         def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
             """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
-        def get(self, spec: Facade.CheckoutGetInput) -> Facade.CheckoutLeaseView:
+        def get(self, spec: Facade.CheckoutGetInput) -> Facade.ScopedReadResult[Facade.CheckoutLeaseView | None]:
             """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
         def renew(self, spec: Facade.CheckoutRenewInput) -> Facade.CheckoutLeaseView:
             """Renew the caller's still-live checkout under its exact holder and epoch fence."""
@@ -3214,7 +3236,7 @@ class Oneiron:
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
     class _VaultCodeMergeQueueVerbs:
         def enqueue(self, spec: Facade.MergeQueueEnqueueRequest) -> Facade.MergeQueueBatchView:
-            """Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
+            """Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
         def stage(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueBatchView:
             """Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."""
         def observe(self, spec: Facade.MergeQueueObserveRequest) -> Facade.MergeQueueObservation:
@@ -3825,6 +3847,8 @@ class Oneiron:
         def home(self) -> "Oneiron._VaultConsolidationHomeVerbs": ...
         def lineage(self, spec: Facade.ConsolidationLineageRequest) -> Facade.ConsolidationLineageView | None:
             """The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."""
+        def candidate_decisions(self, spec: Facade.DreamerCandidateDecisionsRequest) -> list[Facade.DreamerDecidedCandidateView]:
+            """The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value."""
         def promote(self, spec: Facade.ConsolidationPromoteRequest) -> Facade.ConsolidationPromotion:
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
         def pin(self, spec: Facade.ConsolidationPinRequest) -> Facade.ConsolidationRootAccounting:

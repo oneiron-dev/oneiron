@@ -6,14 +6,18 @@
 //!
 //! The key and its chain are files the host names ([`SealConfig`]): on a
 //! self-hosted server `ONEIRON_SEAL_KEY` (PKCS#8, PEM or DER) and
-//! `ONEIRON_SEAL_CHAIN` (PEM, the signer first). `ONEIRON_SEAL_TRUST` names
-//! the trust anchors (PEM; the chain's last certificate when unset),
+//! `ONEIRON_SEAL_CHAIN` (PEM, the signer first). Or the key sits in secret
+//! custody: `ONEIRON_SEAL_KEY_HANDLE` names its record's handle in place of
+//! the key file, and the custody door lends it to each signature, recorded
+//! as a use (FIX 1297). `ONEIRON_SEAL_TRUST` names the trust anchors (PEM;
+//! the chain's last certificate when unset),
 //! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal; B-B without one),
 //! and `ONEIRON_SEAL_URL` the signing page the evidence names (the sign page
 //! at the host's public origin when unset). A managed vault reads no
 //! environment, so its supervisor passes the same settings per vault as
-//! `--seal-key-file`, `--seal-chain-file`, `--seal-trust-file`,
-//! `--seal-tsa-url`, `--seal-signing-url` and `--seal-organ` (FIX 3487).
+//! `--seal-key-file` (or `--seal-key-handle`), `--seal-chain-file`,
+//! `--seal-trust-file`, `--seal-tsa-url`, `--seal-signing-url` and
+//! `--seal-organ` (FIX 3487).
 //! The seal organ is the build an installed pack carries for this platform,
 //! written under `ONEIRON_ORGAN_DIR`, or the program `ONEIRON_SEAL_ORGAN`
 //! (`--seal-organ`) names. A pack build follows the packs: when the
@@ -32,8 +36,8 @@ use std::time::{Duration, Instant};
 use oneiron::blob_artifact::esign::{EsignSealRun, SealProfile};
 use oneiron::skill_hub::pack_catalog::{PackInstallReceipt, host_platform};
 use oneiron_organ_host::seal::{
-    FileSealKeys, HostedSealer, SEAL_ORGAN, SealKeys, SealSettings, SealTsa, pem_certificates,
-    seal_spec, seal_spec_from_pack,
+    CustodySealKeys, FileSealKeys, HostedSealer, SEAL_ORGAN, SealKeys, SealSettings, SealTsa,
+    pem_certificates, seal_spec, seal_spec_from_pack,
 };
 use oneiron_organ_host::{FetchGrant, FetchOrigin, OrganSpec, OrganTier};
 
@@ -43,6 +47,7 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 /// Each setting's environment variable and its managed flag.
 type SettingName = (&'static str, &'static str);
 const KEY: SettingName = ("ONEIRON_SEAL_KEY", "--seal-key-file");
+const KEY_HANDLE: SettingName = ("ONEIRON_SEAL_KEY_HANDLE", "--seal-key-handle");
 const CHAIN: SettingName = ("ONEIRON_SEAL_CHAIN", "--seal-chain-file");
 const TRUST: SettingName = ("ONEIRON_SEAL_TRUST", "--seal-trust-file");
 const TSA: SettingName = ("ONEIRON_SEAL_TSA", "--seal-tsa-url");
@@ -55,6 +60,9 @@ const ORGAN: SettingName = ("ONEIRON_SEAL_ORGAN", "--seal-organ");
 pub(crate) struct SealConfig {
     /// The seal key (PKCS#8, PEM or DER).
     pub(crate) key: Option<PathBuf>,
+    /// The seal key in secret custody, by its record's handle, in place of
+    /// `key` (FIX 1297).
+    pub(crate) key_handle: Option<String>,
     /// Its certificate chain (PEM, the signer first).
     pub(crate) chain: Option<PathBuf>,
     /// The trust anchors (PEM); the chain's last certificate when unset.
@@ -71,10 +79,11 @@ pub(crate) struct SealConfig {
 
 impl SealConfig {
     /// The `ONEIRON_SEAL_*` environment.
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let text = |(name, _): SettingName| std::env::var(name).ok().filter(|v| !v.is_empty());
         Self {
             key: env_path(KEY),
+            key_handle: text(KEY_HANDLE),
             chain: env_path(CHAIN),
             trust: env_path(TRUST),
             tsa: text(TSA),
@@ -184,14 +193,7 @@ fn tick(
     if seal.organ.is_none() {
         follow_seal_pack(server, installs);
     }
-    let (Some(key), Some(chain)) = (&seal.key, &seal.chain) else {
-        return Err(format!(
-            "no seal certificate configured: set {} and {}",
-            seal.name(KEY),
-            seal.name(CHAIN)
-        ));
-    };
-    let keys = FileSealKeys::load(key, chain).map_err(|err| format!("the seal key: {err}"))?;
+    let keys = seal_keys(server, seal)?;
     let tsa = seal.tsa.clone();
     if host.status(SEAL_ORGAN).is_none() {
         host.install(install(server, seal, fetch_grant(seal, tsa.as_deref())?)?);
@@ -239,11 +241,53 @@ fn tick(
         None => SealProfile::BaselineB,
     };
     let url = signing_url(server, seal)?;
-    let sealer = HostedSealer::new(host, &server.vault, &keys, settings);
+    let sealer = HostedSealer::new(host, &server.vault, &*keys, settings);
     server
         .vault
         .run_esign_seals(&sealer, profile, &url, LEASE_OWNER, PER_TICK)
         .map_err(|err| format!("the seal queue: {err}"))
+}
+
+/// A seal key named twice: a configuration error, which seals wait on.
+#[derive(Debug, thiserror::Error)]
+enum SealKeyConfigError {
+    /// A key file and a custody handle both name the seal key (FIX 1297).
+    #[error("both {file} and {handle} name the seal key: set one")]
+    NamedTwice {
+        file: &'static str,
+        handle: &'static str,
+    },
+}
+
+/// The seal key `seal` names, with its chain: a key file, or a key in
+/// secret custody by its handle (FIX 1297). Without a key or a chain, seals
+/// wait.
+fn seal_keys<'a>(
+    server: &'a SyncServer,
+    seal: &SealConfig,
+) -> Result<Box<dyn SealKeys + 'a>, String> {
+    if seal.key.is_some() && seal.key_handle.is_some() {
+        let twice = SealKeyConfigError::NamedTwice {
+            file: seal.name(KEY),
+            handle: seal.name(KEY_HANDLE),
+        };
+        return Err(twice.to_string());
+    }
+    let loaded = match (&seal.key, &seal.key_handle, &seal.chain) {
+        (Some(key), _, Some(chain)) => {
+            FileSealKeys::load(key, chain).map(|keys| Box::new(keys) as Box<dyn SealKeys + 'a>)
+        }
+        (_, Some(handle), Some(chain)) => CustodySealKeys::load(&server.vault, handle, chain)
+            .map(|keys| Box::new(keys) as Box<dyn SealKeys + 'a>),
+        _ => {
+            return Err(format!(
+                "no seal certificate configured: set {} and {}",
+                seal.name(KEY),
+                seal.name(CHAIN)
+            ));
+        }
+    };
+    loaded.map_err(|err| format!("the seal key: {err}"))
 }
 
 /// The signing page the evidence names: the configured one, else the sign

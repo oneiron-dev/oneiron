@@ -89,6 +89,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.budgets.resident_shares.set", post(facade_route))
         .route("/vault.runners.seats.quotas", post(facade_route))
         .route("/vault.runners.seats.top_up", post(facade_route))
+        .route("/vault.runners.seats.resume", post(facade_route))
         .route("/vault.fanout.resume", post(facade_route))
         .route("/vault.fanout.resume_as", post(facade_route))
         .route("/vault.fanout.ack", post(facade_route))
@@ -102,6 +103,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.finalize_stream", post(facade_route))
         .route("/vault.cancel_stream", post(facade_route))
         .route("/vault.message_stream_partial", post(facade_route))
+        .route("/vault.message_streams.refused", post(facade_route))
         .route("/vault.messages.durability", post(facade_route))
         .route("/vault.witness", post(facade_route))
         .route("/vault.claims.upsert", post(facade_route))
@@ -259,6 +261,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.optimize.tradeoff_asks", post(facade_route))
         .route(
             "/vault.skills.optimize.tradeoff_asks.pick",
+            post(facade_route),
+        )
+        .route(
+            "/vault.skills.optimize.tradeoff_asks.resolve",
             post(facade_route),
         )
         .route("/vault.skills.governance.get", post(facade_route))
@@ -637,6 +643,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.lenses.propose", post(facade_route))
+        .route("/vault.lenses.propose_from_pack", post(facade_route))
         .route("/vault.lenses.activate", post(facade_route))
         .route("/vault.lenses.deactivate", post(facade_route))
         .route("/vault.lenses.list", post(facade_route))
@@ -1155,6 +1162,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consolidation.home.get", post(facade_route))
         .route("/vault.consolidation.home.pick", post(facade_route))
         .route("/vault.consolidation.lineage", post(facade_route))
+        .route(
+            "/vault.consolidation.candidate_decisions",
+            post(facade_route),
+        )
         .route("/vault.consolidation.promote", post(facade_route))
         .route("/vault.consolidation.pin", post(facade_route))
         .route("/vault.consolidation.frontier", post(facade_route))

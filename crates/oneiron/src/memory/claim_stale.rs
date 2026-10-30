@@ -31,8 +31,10 @@ const FILTERED_LIST_READ_CHUNK: usize = 256;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFilterInput {
-    /// Restrict to these entity type bytes.
-    #[serde(default)]
+    /// Restrict to these entity types, each as its registry kind
+    /// (`CLAIM`, `MESSAGE`, ...), the spelling a read receipt's scope uses.
+    #[serde(default, with = "oneiron_contracts::serialize::type_kinds")]
+    #[schemars(with = "Option<Vec<String>>")]
     pub entity_types: Option<BTreeSet<u8>>,
     /// Sensitivity ceiling, in 0..=3.
     #[serde(default)]
@@ -182,7 +184,7 @@ impl Memory<'_> {
                 require_claim_self_grant_in_txn(
                     self.vault,
                     wtxn,
-                    crate::WriteActor::new(self.actor, self.actor_class),
+                    self.write_actor(),
                     id,
                     &body,
                     "memory.claim.demote",

@@ -39,6 +39,10 @@ pub struct ParagraphJudgment {
     pub labels: SlideReviewLabels,
     pub frontier: [u8; 32],
     pub judged_version: Option<u64>,
+    /// The document's live body when it was asked: an edit to it never
+    /// exported withdraws the paragraphs it changed (FIX 2115).
+    #[serde(default)]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// One typed ask over paragraphs, by their stable block ids.
@@ -73,13 +77,24 @@ impl Vault {
         {
             return Err(invalid("invalid paragraph ask selection"));
         }
+        // A document with a live body is read there at its head, pinned with
+        // it; each paragraph's kind, lock and quoted text are the version's,
+        // where its comment lands (FIX 11981).
+        let live = self.live_head_blocks(artifact)?;
+        let judged_live = live.as_ref().map(|(pin, _)| pin.clone());
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Docx)?;
         let limits = {
             let rtxn = self.store.env.read_txn()?;
             self.docx_archive_limits_in_txn(&rtxn, Some(ask.principal))?
         };
-        let blocks =
-            read_docx_blocks(&bytes, limits).map_err(|_| invalid("paragraph ask document"))?;
+        // The DOCX read runs in the host's memory (FIX 10651); a resource
+        // refusal is the engine's error, never an invalid document (FIX 10587).
+        let resources = crate::office_body::document_resources();
+        let blocks = resources
+            .docx(|| read_docx_blocks(&bytes, limits))
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "paragraph ask document")
+            })?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let sources = [EvidenceVersion {
             id: *artifact,
@@ -99,6 +114,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_block".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -110,24 +126,41 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "read_only_block".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
-            if block.text.trim().is_empty() {
+            let text = match &live {
+                None => block.text.as_str(),
+                Some((_, live)) => match live.iter().find(|live| live.id == *id) {
+                    Some(live) => live.text.as_str(),
+                    None => {
+                        refused.push(UnitRefusal {
+                            unit,
+                            reason: "missing_block".into(),
+                            judged_live: judged_live.clone(),
+                        });
+                        continue;
+                    }
+                },
+            };
+            if text.trim().is_empty() {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: None,
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
             let state = json!({
                 "unit": { "block": id, "kind": block.kind, "role": block.role },
-                "text": block.text,
+                "text": text,
             });
             let Some(decision) = ask.decide(&state, &sources, &[])? else {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "evidence_budget".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -137,6 +170,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
@@ -165,6 +199,7 @@ impl Vault {
                 labels: request.labels.clone(),
                 frontier,
                 judged_version: Some(version),
+                judged_live: judged_live.clone(),
             });
         }
         if judgments.is_empty() {
@@ -217,7 +252,14 @@ pub(crate) fn carry_paragraph_judgments(
     run_ref: &str,
     limits: oneiron_docedit::ArchiveLimits,
 ) -> Result<EditProposal> {
-    let blocks = read_docx_blocks(head, limits).map_err(|_| invalid("paragraph carry document"))?;
+    // The DOCX read runs in the host's memory (FIX 10651); a resource
+    // refusal is the engine's error, never an invalid document (FIX 10587).
+    let resources = crate::office_body::document_resources();
+    let blocks = resources
+        .docx(|| read_docx_blocks(head, limits))
+        .map_err(|error| {
+            crate::office_body::document_error(error.resource(), "paragraph carry document")
+        })?;
     let author = carried
         .first()
         .map(|row| row.author.clone())

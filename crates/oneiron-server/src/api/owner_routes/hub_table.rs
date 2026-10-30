@@ -39,7 +39,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/status",
-                summary: "The kits this vault issued, the current one, and each private world's no-kit state here.",
+                summary: "Where the data lives, the embedder as this server serves it, where feedback goes, the bytes this process's sync links moved, and how its browser stands.",
                 row: None,
                 shape: None,
             },
@@ -421,6 +421,16 @@ pub(super) fn owner_table() -> OwnerTable {
                 shape: None,
             },
             get(pack_drift_repairs),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/booking/quarantine/{claim_ref}/restore",
+                summary: "Book a quarantined confirm's kept submission with an ordinary hold and confirm (FIX 7851) and close its pending consent; a taken slot answers slot_taken with alternatives.",
+                row: None,
+                shape: None,
+            },
+            post(crate::api::restore_quarantined_booking),
         ),
         (
             OwnerRoute {

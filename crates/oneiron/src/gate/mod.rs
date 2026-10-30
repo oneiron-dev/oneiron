@@ -29,12 +29,14 @@ pub(crate) fn owner_policy_manifest_as_stored(data: Vec<u8>) -> crate::error::Re
     default_manifest::with_default_owner_policy_notifications(data)
 }
 mod definition_ceiling;
+mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;
 mod doors;
 mod dreamer_grant;
 mod dreamer_precommit;
+mod dreamer_retry_policy;
 pub(crate) mod edit_distance_thresholds;
 mod effect;
 pub(crate) mod fanout_policy;
@@ -153,6 +155,7 @@ pub(crate) use self::doors::{
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_claim_policy_for_write_with_record_with_reader,
     check_claim_policy_for_write_with_record_with_reader_carrying_refusal,
+    check_claim_policy_for_write_with_record_with_reader_reference_probe,
     check_edge_provenance_claim_policy, check_reserved_claim_policy,
     check_unattributed_claim_lineage, claim_consent_binding_parts, claim_source_trust_admits_auto,
     external_effect_decision_on, receipt_carried_reference_refusal,
@@ -174,10 +177,11 @@ use self::dreamer_precommit::{
 };
 pub(crate) use self::effect::live_grant_covering_effect_in_txn;
 pub(crate) use self::effect::{
-    ApprovalContext, ApprovalTarget, CampaignLegFacts, ChannelIdentityLifecycleFacts,
-    ExternalEffectGovernance, LinearMirrorFacts, OutboundSendFacts, PairAdmission,
-    ScopedMcpCallFacts, check_external_effect_policy, check_external_effect_policy_pair,
-    code_wait_approval_digest, counterparty_send_override_in_txn, evaluate_external_effect_policy,
+    ApprovalContext, ApprovalTarget, BrowserSendTarget, CampaignLegFacts,
+    ChannelIdentityLifecycleFacts, ExternalEffectGovernance, LinearMirrorFacts, OutboundSendFacts,
+    PairAdmission, ScopedMcpCallFacts, check_external_effect_policy,
+    check_external_effect_policy_pair, code_wait_approval_digest,
+    counterparty_send_override_in_txn, evaluate_external_effect_policy,
     external_effect_approval_digest, hydrate_external_effect_contact,
     native_mail_cold_approval_digest, record_external_effect_policy,
     record_held_external_effect_policy,
@@ -234,7 +238,7 @@ pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
     WitnessMessageEnvelope, check_witness_message_ceiling,
     check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
-    validate_replicated_witness_message_body,
+    validate_own_device_witness_message_body, validate_replicated_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

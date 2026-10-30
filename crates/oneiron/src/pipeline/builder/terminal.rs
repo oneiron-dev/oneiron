@@ -30,7 +30,7 @@ impl PipelineBuilder<'_> {
             .claims_for_subject_in_txn(&txn, affected_person)?;
         let mut records = Vec::new();
         for claim_id in claim_ids {
-            let Some(body) = self.vault.get_claim_in_txn(&txn, &claim_id)? else {
+            let Some(body) = self.vault.get_claim_for_effect_in_txn(&txn, &claim_id)? else {
                 continue;
             };
             if body.predicate != COPING_OUTCOME_PREDICATE || !claim_surfaceable(&body) {

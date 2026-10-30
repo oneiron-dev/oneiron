@@ -510,6 +510,10 @@ pub enum EngineLimit {
     /// The vault policy's admission quota asks first when it is lower. Past
     /// it the row asks and the whole manifest is admitted.
     ConnectorManifestEntries,
+    /// Held-out receipts one shared-skill merge scores its base over
+    /// (FIX 5218). Past it the row asks whether everything is okay and
+    /// the merge scores over every receipt.
+    SharedMergeEvidenceRows,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
@@ -682,6 +686,22 @@ pub trait LimitAsk: Send + Sync {
     /// `row`, set to `bound`, measured `measured`. The work is served either
     /// way.
     fn crossed(&self, row: EngineLimit, bound: u64, measured: u64);
+
+    /// [`Self::crossed`] for work `owner` ran: the vault owner or co-owner
+    /// whose credential the host admitted for it (FIX 5702), so in a
+    /// co-owned vault the question names whose work crossed the row. The
+    /// work is served either way, and the answer is the same; a port that
+    /// keeps no owner asks as [`Self::crossed`] does.
+    fn crossed_for_owner(
+        &self,
+        row: EngineLimit,
+        bound: u64,
+        measured: u64,
+        owner: crate::entity_id::EntityId,
+    ) {
+        let _ = owner;
+        self.crossed(row, bound, measured);
+    }
 }
 
 /// One open vault's engine rows: what they are set to, fixed when it opened,
@@ -741,6 +761,29 @@ impl LimitWatch {
             .clone();
         if let Some(ask) = ask {
             ask.crossed(row, bound, measured);
+        }
+    }
+
+    /// [`Self::crossed`] for work `owner` ran, when the host knows which
+    /// owner's credential admitted it ([`LimitAsk::crossed_for_owner`], FIX
+    /// 5702); with none, exactly [`Self::crossed`].
+    pub fn crossed_for(
+        &self,
+        row: EngineLimit,
+        bound: u64,
+        measured: u64,
+        owner: Option<crate::entity_id::EntityId>,
+    ) {
+        let Some(owner) = owner else {
+            return self.crossed(row, bound, measured);
+        };
+        let ask = self
+            .ask
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(ask) = ask {
+            ask.crossed_for_owner(row, bound, measured, owner);
         }
     }
 }

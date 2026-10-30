@@ -3,7 +3,9 @@
 //! when a member's origin retires the agreed version while the end that
 //! does not originate it holds a copy the carrier never agreed on
 //! (FIX 6686, FIX 11074). The kept copy is never removed by the carrier: only
-//! its owner's answer removes it ([`super::super::diverged`]).
+//! its owner's answer removes it ([`super::super::diverged`]). One he kept
+//! that did not move aside then moves aside once it blocks its origin's put
+//! (FIX 11986).
 
 use super::{Plan, Taken};
 use crate::managed::vm_outbox::Carrier;
@@ -19,9 +21,11 @@ impl Carrier {
     /// the transfer does not name and the carrier never agreed on. A
     /// retirement by the member's origin is no such refusal: its plan turns
     /// to [`Plan::Keep`], so it is taken for the agreed version and this
-    /// end's copy is kept, and it holds back none of its set.
+    /// end's copy is kept, and it holds back none of its set. A copy the
+    /// owner kept that did not move aside moves aside before a put it
+    /// blocks ([`Carrier::move_kept_copy`]).
     pub(super) fn check_local(
-        &self,
+        &mut self,
         root: &File,
         taken: &mut [Taken],
     ) -> Vec<Option<VmOutboxOutcome>> {
@@ -58,6 +62,11 @@ impl Carrier {
                 if retired_at_origin {
                     item.plan = Plan::Keep(held);
                     return None;
+                }
+                if transfer.operation == VmOutboxOperation::Put
+                    && let Some(outcome) = self.move_kept_copy(root, transfer, &record, &held)
+                {
+                    return outcome;
                 }
                 Some(VmOutboxOutcome::refused(
                     VmOutboxRefusal::ExpectedDigestMismatch,

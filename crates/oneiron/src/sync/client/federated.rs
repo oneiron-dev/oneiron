@@ -1,6 +1,7 @@
 //! Federated admission and staged vault-import confirmation.
 
 use super::base::SyncClient;
+use crate::authority::PeerMachine;
 use crate::batch::export::{
     StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
 };
@@ -16,7 +17,9 @@ use crate::sync::selector::{
     revalidate_admitted_federated_claims, staged_births,
 };
 use crate::sync::transport;
-use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
+use crate::sync::transport::{
+    MAX_DECODED_PAYLOAD_BYTES, MAX_WINDOW_PAD_PAYLOAD_BYTES, TransportError, window_sub_tags,
+};
 use crate::sync::types::WindowKey;
 
 /// Trust is selected by the authenticated import context, never by claim bytes.
@@ -39,10 +42,27 @@ impl SyncClient {
         if let ImportTier::Federated(role) = tier {
             return self.import_federated_window_update(window_key, update, role);
         }
-        if update.len() > MAX_DECODED_PAYLOAD_BYTES {
+        // A tier its caller names proves no connection: the bytes take no
+        // own-device lane (FIX 11709).
+        self.import_own_device_window_update(window_key, update, PeerMachine::Unknown)
+    }
+
+    /// The own-device import of raw window bytes `from` sent: the machine this
+    /// client's connection proved when they came in. Their MESSAGE rows take
+    /// the own-device lane while `from` stands here as one of the owner's own
+    /// machines and no federation peer is bound (FIX 11709).
+    pub(super) fn import_own_device_window_update(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        from: PeerMachine,
+    ) -> std::result::Result<(), TransportError> {
+        // An update joined from its envelope's parts may pass one frame; the
+        // envelope's payload length bounds it (FIX 8247).
+        if update.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES {
             return Err(TransportError::FrameTooLarge {
                 size: update.len(),
-                max: MAX_DECODED_PAYLOAD_BYTES,
+                max: MAX_WINDOW_PAD_PAYLOAD_BYTES,
             });
         }
         let window = self.ensure_window(window_key)?;
@@ -53,22 +73,35 @@ impl SyncClient {
             ));
         }
         if window.key.world().is_some() {
+            // Every unresolved world update waits staged while their bytes
+            // together stay within the memory bound, however many there are
+            // (FIX 8863); the drain imports each once its edges resolve.
             self.staged_world_updates
-                .push((window.key.clone(), update.to_vec()));
+                .push((window.key.clone(), update.to_vec(), from));
             let pending_bytes: usize = self
                 .staged_world_updates
                 .iter()
-                .map(|(_, bytes)| bytes.len())
+                .map(|(_, bytes, _)| bytes.len())
                 .sum();
-            if self.staged_world_updates.len() > 64 || pending_bytes > MAX_DECODED_PAYLOAD_BYTES {
+            // An update joined from its envelope's parts may pass the bound
+            // alone (FIX 8247): it waits while nothing else does, and beside
+            // others they share the bound.
+            if pending_bytes > MAX_DECODED_PAYLOAD_BYTES && self.staged_world_updates.len() > 1 {
                 self.staged_world_updates.pop();
                 return Err(TransportError::InvalidPayload(
-                    "too many unresolved world updates",
+                    "unresolved world updates past the memory bound",
                 ));
             }
             return self.drain_staged_world_updates();
         }
-        self.import_accepted_window_update(window_key, &window, update)?;
+        let own_device = self.own_device_import(from);
+        self.import_accepted_window_update_with_evidence(
+            window_key,
+            &window,
+            update,
+            &std::collections::HashMap::new(),
+            own_device.as_ref(),
+        )?;
         self.drain_staged_world_updates()
     }
 
@@ -215,11 +248,15 @@ impl SyncClient {
             .map(|part| (part.key().as_str(), part.bytes()))
             .collect::<Vec<_>>();
         // The rows it brings: an erase of any scrubs the retained bytes (FIX
-        // 7998).
-        let carried = admitted
-            .parts()
-            .flat_map(|part| part.delivered().keys().copied())
-            .collect::<Vec<_>>();
+        // 7998). The raw payload is what is retained, so the rows it brings
+        // that the admitted parts omit are named too (FIX 11184).
+        let mut carried = crate::sync::ingest::payload_rows(&key, update);
+        carried.extend(
+            admitted
+                .parts()
+                .flat_map(|part| part.delivered().keys().copied()),
+        );
+        let carried = carried.into_iter().collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,
             &peer,
@@ -564,6 +601,11 @@ pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportEr
 }
 
 fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
+    // A fault reading this vault's own admission state is this device's,
+    // never the peer's refused update (FIX 5926).
+    if transport::is_window_admission_read_fault(e) {
+        return true;
+    }
     matches!(
         e,
         crate::error::Error::Storage(_)

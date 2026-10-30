@@ -189,9 +189,10 @@ fn judgment_for(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentJudgm
 /// names now instead of recounting — a re-settled or re-anchored TASK
 /// converges, a receipt re-judged onto another executor or scope carries its
 /// count across heads (FIX 11707), and a receipt whose judgment holds counts
-/// nothing either way. A row folded before the head was kept reads the
-/// now-named head as before and adopts it on its first refold write. A
-/// refold that fails lands nothing and never fails the settlement it rides.
+/// nothing either way. Outcome and head are stamped together wherever a
+/// fold counted, so a row that has counted nothing yet has neither
+/// (FIX 11916). A refold that fails lands nothing and never fails the
+/// settlement it rides.
 pub(crate) fn refold_task_outcomes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -233,9 +234,11 @@ fn refold_task_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, task: EntityId) 
         } else {
             None
         };
-        // A row folded before the head was kept skips exactly as before when
-        // the outcome stands (FIX 11707 ruling 1): with no stored head to
-        // compare, the now-named head is not even derived.
+        // Nothing counted yet and still nothing stands counted: with no head
+        // to compare, the now-named head is not even derived. Outcome and
+        // head are stamped together wherever a fold counted, so outcome
+        // `Some` implies head `Some` — `counted == outcome` on a `None`-head
+        // row means both are `None`, never two equal `Some`s (FIX 11916).
         if counted == member.outcome && member.head.is_none() {
             continue;
         }
@@ -251,32 +254,33 @@ fn refold_task_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, task: EntityId) 
         let Some(mut aggregate) = AGGREGATE.get(&vault.store, &*txn, &key)? else {
             continue;
         };
+        // One decrement path off the stored head only (FIX 11916): a `None`
+        // head has no decrement — its outcome is `None` by the invariant.
         if let Some(old_head) = member.head.as_ref()
-            && old_head != &now
+            && let Some(old) = member.outcome.as_ref()
         {
-            // Re-judged onto another head: the old head's token moves to the
-            // new head. An old head with no row is a no-op decrement
-            // (ruling 3); the new-head increment below still lands.
-            let old_key = old_head.key();
-            if let Some(old) = &member.outcome
-                && let Some(mut old_aggregate) = AGGREGATE.get(&vault.store, &*txn, &old_key)?
-                && let Some(count) = old_aggregate.outcomes.get_mut(old)
-            {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    old_aggregate.outcomes.remove(old);
+            if old_head == &now {
+                // The same head the fold counted on: the already-loaded
+                // aggregate takes the decrement, no second get/put.
+                if let Some(count) = aggregate.outcomes.get_mut(old) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        aggregate.outcomes.remove(old);
+                    }
                 }
-                AGGREGATE.put(&vault.store, txn, &old_key, &old_aggregate)?;
-            }
-        } else {
-            // The same head the fold counted on — or no stored head, which
-            // reads the now-named head exactly as before (rulings 2 and 4).
-            if let Some(old) = &member.outcome
-                && let Some(count) = aggregate.outcomes.get_mut(old)
-            {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    aggregate.outcomes.remove(old);
+            } else {
+                // Re-judged onto another head: the old head's token moves to
+                // the new head. An old head with no row is a no-op decrement
+                // (ruling 3); the new-head increment below still lands.
+                let old_key = old_head.key();
+                if let Some(mut old_aggregate) = AGGREGATE.get(&vault.store, &*txn, &old_key)?
+                    && let Some(count) = old_aggregate.outcomes.get_mut(old)
+                {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        old_aggregate.outcomes.remove(old);
+                    }
+                    AGGREGATE.put(&vault.store, txn, &old_key, &old_aggregate)?;
                 }
             }
         }
@@ -285,9 +289,9 @@ fn refold_task_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, task: EntityId) 
         }
         AGGREGATE.put(&vault.store, txn, &key, &aggregate)?;
         member.outcome = counted;
-        // The refold adopts the now-named head: a pre-upgrade row gains it on
-        // its first refold write, and a moved count re-anchors (ruling 2). A
-        // same-head row writes back the head it already named.
+        // A row counting for the first time stamps the now-named head; a
+        // moved count re-anchors. A same-head row writes back the head it
+        // already named.
         member.head = Some(now);
         MEMBER.put(&vault.store, txn, &receipt_id, &member)?;
     }
