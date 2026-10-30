@@ -6396,7 +6396,10 @@ impl AgentVerb {
                 | Self::VaultProductivityTree
                 | Self::VaultEsignCreate
                 | Self::VaultEsignGet
+                | Self::VaultEsignSendForSignature
                 | Self::VaultEsignNoticesDispatch
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultEsignSealGet
                 | Self::VaultClaimsSeed
                 | Self::VaultSummariesRead
@@ -7366,9 +7369,6 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignLinksIssue
-                | Self::VaultEsignSendForSignature
-                | Self::VaultEsignRemind
-                | Self::VaultEsignVoid
                 | Self::VaultEsignSigningAct
                 | Self::VaultEsignSigningPdf
                 | Self::VaultEsignSigningImage

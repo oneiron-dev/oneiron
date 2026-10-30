@@ -16655,12 +16655,13 @@
       "call": "memory.esign_send_for_signature(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16695,12 +16696,13 @@
       "call": "memory.esign_remind(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
@@ -16714,12 +16716,13 @@
       "call": "memory.esign_void(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false
     },
     {
