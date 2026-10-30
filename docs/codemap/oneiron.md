@@ -492,7 +492,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/autoreason_campaign/archive.rs` | src | m | 7 struct · 1 enum · 1 trait · 20 fn · 2 re-export · 5 crate-vis | ArchiveCell, ArchiveCellJudge, ArchiveCellJudgment, ArchiveEntry, ArchiveOutputRef, ArchiveOutputScore, ArchiveQualityMetric, CampaignArchivePin +1 | OF-545: a rebuildable output archive, joined from placement and scoring receipts |
 | `src/autoreason_campaign/archive/axes.rs` | src | s | 3 struct · 1 enum · 1 trait · 1 fn · 3 crate-vis | ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor, CoachArchiveAxesRecipe | Coach-owned, per-task archive descriptors |
 | `src/autoreason_campaign/archive/records.rs` | src | m | 9 struct · 1 enum · 8 crate-vis | CampaignArchiveAdmission, CampaignArchiveBest, CampaignArchiveCoverage, CampaignArchiveInstall, CampaignArchiveOutput, CampaignArchivePlacement, CampaignArchiveRecord, CampaignArchiveReproposal +2 | Retained descriptor and source receipts for the public campaign archive |
-| `src/autoreason_campaign/authoring.rs` | src | m | 4 struct · 2 enum · 8 fn · 1 crate-vis | AuthoringCampaign, AuthoringFinalization, ClaimAuthoringChoice, ClaimAuthoringSkillPin, TournamentStop, TournamentTeam | The claim-authoring tournament as a strategy skill on an OF-351 campaign (OF-366) |
+| `src/autoreason_campaign/authoring.rs` | src | m | 5 struct · 2 enum · 8 fn · 1 crate-vis | AuthoringCampaign, AuthoringFinalization, AuthoringWinner, ClaimAuthoringChoice, ClaimAuthoringSkillPin, TournamentStop, TournamentTeam | The claim-authoring tournament as a strategy skill on an OF-351 campaign (OF-366) |
 | `src/autoreason_campaign/beam_promotion.rs` | src | s | 3 struct · 4 fn · 4 crate-vis | AuthoringStrategyPin, PromotionReceipt, SealedRefereeMeasurement | One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee |
 | `src/autoreason_campaign/config.rs` | src | m | 8 struct · 4 enum · 6 fn · 2 crate-vis | CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignBudgetLine, CampaignConfig, CampaignCorpusFilter, CampaignCriticTier, CampaignDatasetRef +4 | Fixed OF-366 campaign configuration; the general schema is `super::general` |
 | `src/autoreason_campaign/coverage.rs` | src | m | 3 struct · 9 fn · 2 crate-vis | CoverageFloorComparison, CoverageFloorScorer, CoverageReplay | Coverage is a goal-record floor, not a skill quality-diversity archive |
@@ -1862,10 +1862,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/critic.rs` | src | m | 7 struct · 2 enum · 15 fn · 3 const · 1 mod · 3 re-export · 5 crate-vis | CriticLens, CritiqueArtifact, CritiqueArtifactStore, CritiqueProvenance, CritiqueSeverity, CritiqueTriage, CritiqueTriageScores, CritiqueVerdict +1 | Multi-critic review node primitives |
 | `src/critic/findings.rs` | src | s | 1 struct · 3 crate-vis | MergedFinding | Deterministic duplicate consolidation; calibration never counts repeated critic output twice |
 | `src/critic/reliability.rs` | src | s | 1 struct · 1 enum · 4 fn · 2 crate-vis | CriticReliability, ReliabilityOutcomeSource | Read-only critic weights from the shared measured-state projector |
-| `src/critic/review.rs` | src | s | 4 struct · 1 enum · 1 fn · 4 re-export · 2 crate-vis | CriticReviewInput, ReviewArtifactKind, ReviewCritic, ReviewRequest, ReviewResult | Artifact-independent review fan-out and the persisted calibration feedback loop |
+| `src/critic/review.rs` | src | s | 4 struct · 1 enum · 1 fn · 4 re-export · 3 crate-vis | CriticReviewInput, ReviewArtifactKind, ReviewCritic, ReviewRequest, ReviewResult | Artifact-independent review fan-out and the persisted calibration feedback loop |
 | `src/critic/review/dissent.rs` | src | s | 2 struct · 3 fn · 1 crate-vis | CriticPrediction, ReviewDissent | Testable overruled predictions: attributed opinions and bound standing questions, never critique claims |
-| `src/critic/review/outcomes.rs` | src | s | 2 fn · 1 crate-vis | — | Anchored review outcomes feed the shared measured-state projector |
-| `src/critic/review/persistence.rs` | src | m | 15 crate-vis | — | Transactional review bundles |
+| `src/critic/review/outcomes.rs` | src | m | 2 fn · 2 crate-vis | — | Anchored review outcomes feed the shared measured-state projector |
+| `src/critic/review/persistence.rs` | src | m | 17 crate-vis | — | Transactional review bundles |
 | `src/critic/review/questions.rs` | src | m | 4 struct · 1 trait · 1 const · 2 crate-vis | ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording | A review's typed questions: each lens asks its verdict, severity, scope and (when the lens has one) hard… |
 | `src/critic/review/submit.rs` | src | s | 3 struct · 1 fn | CriticBinding, CriticReviewOutcome, CriticReviewSubmit | One critic review through a host's door (`vault.critic.review`): what the caller binds and what the review… |
 | `src/critic/review/tests.rs` | test | s | 5 crate-vis | — | — |
@@ -1973,7 +1973,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dispatch_byoa/work_resume.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 crate-vis | ResumeRunnerWork, RunnerWorkResume | An explicit resume of a bound runner work a spend parked (FIX 7450): the owner's Stop, InternalModels, or a… |
 | `src/dispatch_byoa/work_usage.rs` | src | s | 2 crate-vis | — | The provider usage a bound work's ended attempt reports (FIX 7452), read from that attempt's own capture and… |
 | `src/distance.rs` | src | s | 1 crate-vis | — | Cosine distance kernels, defined in `oneiron-retrieval` |
-| `src/dreamer_consolidation/assembly.rs` | src | s | 3 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
+| `src/dreamer_consolidation/assembly.rs` | src | s | 4 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
 | `src/dreamer_consolidation/attempt_reads.rs` | src | s | 2 crate-vis | — | The rows a Dreamer attempt's inputs were read from, as its own readers report them on its read set (FIX… |
 | `src/dreamer_consolidation/branch.rs` | src | s | 2 struct · 1 trait · 16 crate-vis | BranchTurn, ConsolidationBranchPlan, ConversationPart | One consolidation branch (FIX 7524): a nightly thing's turns across every conversation it appears in… |
 | `src/dreamer_consolidation/branch_scope.rs` | src | s | 4 fn · 7 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
@@ -2174,8 +2174,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/home.rs` | src | m | 4 fn · 6 crate-vis | — | The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a; FIX 4898): which node of the vault runs its… |
 | `src/dreamer_runner/lease_fence.rs` | src | s | 3 crate-vis | — | The lease a wake pass ran an admitted try under, and the park fenced on it (FIX 6057): a held program… |
 | `src/dreamer_runner/maintenance/action_mode.rs` | src | m | 4 struct · 1 enum · 3 fn · 2 const · 4 crate-vis | ActionModeCeiling, ActionModeEffect, ActionModePolicy, ActionModeProjection, ActionModeRule | Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's… |
-| `src/dreamer_runner/maintenance/agent_health.rs` | src | s | 1 const · 13 re-export · 9 crate-vis | — | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
-| `src/dreamer_runner/maintenance/agent_health/apply.rs` | src | m | 3 struct · 1 enum · 2 fn | AgentHealthApplicationState, AgentHealthCoachApplication, ConcernApplyOutcome, ConcernApplyRequest | The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849) |
+| `src/dreamer_runner/maintenance/agent_health.rs` | src | s | 1 const · 13 re-export · 10 crate-vis | — | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
+| `src/dreamer_runner/maintenance/agent_health/apply.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 crate-vis | AgentHealthApplicationState, AgentHealthCoachApplication, ConcernApplyOutcome, ConcernApplyRequest | The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849) |
 | `src/dreamer_runner/maintenance/agent_health/ask.rs` | src | m | 4 struct · 2 enum · 1 trait · 2 fn · 1 const · 1 crate-vis | AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute, AgentHealthPadRead, CoachHealthBrief, CoachHealthHost | Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach` move, and a `coach.agent_health_ask`… |
 | `src/dreamer_runner/maintenance/agent_health/brief.rs` | src | s | 2 struct · 3 crate-vis | HealthBriefPin, HealthObservedBrief | The typed brief one agent-health review observed (OF-568 L7, agent-mind §3.5: "the evidence: the brief… |
 | `src/dreamer_runner/maintenance/agent_health/call_evidence.rs` | src | s | 10 crate-vis | — | The call receipts the agent-health review reads, by the attempt each names (OF-568 L4) |
@@ -2192,7 +2192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/agent_health/moves.rs` | src | m | 3 struct · 3 enum · 2 fn · 1 crate-vis | ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt, ConcernMoveRequest | A card's moves (agent-mind §3.5: "moves, each a proposal that the leader or owner takes"): `ask_coach`… |
 | `src/dreamer_runner/maintenance/agent_health/outcomes.rs` | src | m | 1 struct · 1 fn · 1 const · 2 crate-vis | HealthReviewReceipt | Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: "Score the reviewer"; "Health flags never move… |
 | `src/dreamer_runner/maintenance/agent_health/pipeline.rs` | src | m | 3 crate-vis | — | One review: detect, emit each finding as a DIAGNOSTIC, route and merge |
-| `src/dreamer_runner/maintenance/agent_health/policy.rs` | src | s | 7 crate-vis | — | The reviewer's policy (FIX 8075, agent-mind §3.8: "The recipe is a skill"): the in-force… |
+| `src/dreamer_runner/maintenance/agent_health/policy.rs` | src | s | 8 crate-vis | — | The reviewer's policy (FIX 8075, agent-mind §3.8: "The recipe is a skill"): the in-force… |
 | `src/dreamer_runner/maintenance/agent_health/rollups.rs` | src | m | 6 struct · 2 enum · 3 fn | HealthTrendRollup, HealthTrendRollups, TrendMargin, TrendRatio, TrendSignalTally, TrendSource, TrendSpendTally, TrendStratum | The daily trend pass's rollups (OF-568 L3; agent-mind §3, "Daily |
 | `src/dreamer_runner/maintenance/agent_health/rollups/spend.rs` | src | s | 2 crate-vis | — | Each rollup member's launch spend scope, read for the trend pass |
 | `src/dreamer_runner/maintenance/agent_health/run_loop.rs` | src | s | 2 crate-vis | — | `loop` over an agent run's own calls |
@@ -2235,7 +2235,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/curator.rs` | src | m | 2 struct · 1 enum · 2 fn · 7 crate-vis | CuratorQuestions, CuratorRubric, CuratorTrigger | Curator grading data and minimum-force findings |
 | `src/dreamer_runner/maintenance/curator/approved.rs` | src | s | 1 fn · 1 crate-vis | — | A curator rung the owner approved (FIX 3223) |
 | `src/dreamer_runner/maintenance/detectors.rs` | src | s | 1 crate-vis | — | The Coach's nightly detector pass (ARCH-0066 §4, OF-298): the tier-1 sweep over Gate receipts plus the… |
-| `src/dreamer_runner/maintenance/digest.rs` | src | m | 9 struct · 11 fn · 7 const · 5 re-export · 3 crate-vis | DigestCleanup, DigestNoteTombstones, DigestOffer, DigestProposal, ProactivityCadence, ProactivityDigest, ProactivityPolicyProposal, ProactivityPolicyRequest +1 | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
+| `src/dreamer_runner/maintenance/digest.rs` | src | m | 9 struct · 11 fn · 8 const · 5 re-export · 3 crate-vis | DigestCleanup, DigestNoteTombstones, DigestOffer, DigestProposal, ProactivityCadence, ProactivityDigest, ProactivityPolicyProposal, ProactivityPolicyRequest +1 | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
 | `src/dreamer_runner/maintenance/digest/after_notice.rs` | src | s | 2 struct · 2 const · 3 crate-vis | DigestApplied, DigestAppliedItem | The applied-maintenance after-notice a regular digest carries (FIX 3226, OF-023): the Dreamer's maintenance… |
 | `src/dreamer_runner/maintenance/digest/assembly.rs` | src | m | 1 crate-vis | — | Assembles one digest in one write: select, mark seen, store, notify |
 | `src/dreamer_runner/maintenance/digest/pending.rs` | src | s | 4 crate-vis | — | What a digest may carry that no digest carried yet, by its seen state |
@@ -5070,7 +5070,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill/lifecycle.rs` | src | s | 2 enum · 6 fn · 1 crate-vis | SkillGovernanceTier, SkillLifecycle | SKILL lifecycle machine and governance-tier axis |
 | `src/skill/loaded_revision.rs` | src | s | 4 crate-vis | — | The exact SKILL revision an attempt's pack loaded (FIX 10110) |
 | `src/skill/mod.rs` | src | s | 1 mod · 8 re-export · 10 crate-vis | — | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
-| `src/skill/pack_load.rs` | src | m | 1 struct · 8 fn · 5 crate-vis | LoadedSkillPack | Attempt-bound pack reads stamp their actual revision in the same transaction |
+| `src/skill/pack_load.rs` | src | m | 1 struct · 8 fn · 1 re-export · 5 crate-vis | LoadedSkillPack | Attempt-bound pack reads stamp their actual revision in the same transaction |
+| `src/skill/pack_load/measured.rs` | src | s | 1 enum · 1 fn | MeasuredSkillPack | The pack load of a paired eval measurement's skill arm (FIX 10677) |
 | `src/skill/record.rs` | src | s | 2 struct · 7 fn · 5 const · 18 crate-vis | SkillDependency, SkillRecord | SKILL record types with pinned wire keys and size bounds |
 | `src/skill/resident.rs` | src | m | 11 crate-vis | — | Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base |
 | `src/skill/role.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SkillCallContract, SkillRole | Skill roles and the executable call contract |
@@ -5087,6 +5088,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/contribution_targets.rs` | src | s | 1 struct · 1 enum · 3 fn · 8 crate-vis | CheckedEdge, ContributionTarget | What a contribution check measures (FIX 2870, OF-542; ARCH-0037 #lineage-credit): a loaded skill, checked… |
 | `src/skill_attribution/credit_join.rs` | src | m | 1 struct · 1 fn · 14 crate-vis | CreditAdjustmentReceipt | The one reconciler of an anchored outcome's late credit (FIX 3241, FIX 10108, OF-540) |
 | `src/skill_attribution/decay_fit.rs` | src | s | 1 crate-vis | — | The `credit_decay` fit (FIX 2870, OF-542; ARCH-0037 #lineage-credit, ARCH-0053) |
+| `src/skill_attribution/decision_receipts.rs` | src | s | 1 fn · 2 crate-vis | — | The decision receipts behind each attempt-lane judgment (FIX 11512): the judgment row is immutable by… |
 | `src/skill_attribution/derivation_witness.rs` | src | m | 13 crate-vis | — | FIX 3103 (OF-540, OF-397): the derivation witnesses of leased runs, one event stream that does not wait for… |
 | `src/skill_attribution/health_review.rs` | src | s | 1 crate-vis | — | The reviewer-outcome bridge (FIX 8075, agent-mind §3.8: "Card outcomes give it a reliability like any skill… |
 | `src/skill_attribution/host.rs` | src | m | 2 fn · 2 crate-vis | — | OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed |
@@ -5094,7 +5096,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/judge_binding.rs` | src | s | 1 crate-vis | — | The judge a run's pack attribution names (FIX 1877, OF-540): the model whose answer to the run's "Done means… |
 | `src/skill_attribution/judge_supersession.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | DisplacedJudgeReceipt | Judge-revision provenance for routed receipts, and non-destructive displacement |
 | `src/skill_attribution/late_credit.rs` | src | m | 2 struct · 2 fn · 7 crate-vis | LateCreditReceipt, LateCreditShare | Late credit over the run's recorded, actually-used derived-from edges |
-| `src/skill_attribution/mod.rs` | src | s | 20 re-export · 23 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `src/skill_attribution/mod.rs` | src | s | 21 re-export · 24 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `src/skill_attribution/pack_learning.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | AnchoredPackOutcome | The manifest-to-learning bridge |
 | `src/skill_attribution/positive.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 crate-vis | PositiveFinding, PositiveSkillProposal | The positive lane (OF-379): a win that taught the skill something |
 | `src/skill_attribution/projector.rs` | src | m | 6 fn · 5 crate-vis | — | Evidence door and ordered idempotent projection from evidence to judgments and edit proposals |
@@ -5235,21 +5237,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/eval_set/sufficiency.rs` | src | m | 4 struct · 2 enum · 5 fn · 2 crate-vis | EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason, WaitingDecision | The sufficiency card and the sparse owner-label ask (ARCH-0053; NOT-WORSE = A, EVAL-COLDSTART = C) |
 | `src/skill_optimize/exploration_trial.rs` | src | m | 9 crate-vis | — | Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it… |
 | `src/skill_optimize/exploration_trial/overrun_ask.rs` | src | s | 4 crate-vis | — | Overrun asks: the board's yes or no on one run past the goal's exploration slice |
-| `src/skill_optimize/exploration_trial/routing.rs` | src | m | 4 crate-vis | — | Load-door routing: the version an attempt loads, and the slice charge it reserves |
+| `src/skill_optimize/exploration_trial/routing.rs` | src | m | 5 crate-vis | — | Load-door routing: the version an attempt loads, and the slice charge it reserves |
 | `src/skill_optimize/gate.rs` | src | m | 5 const · 12 re-export · 14 crate-vis | — | SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →… |
 | `src/skill_optimize/gate/admission.rs` | src | L | 3 fn · 12 crate-vis | — | Admission, its pinned keys, and the record-shape questions both doors ask |
-| `src/skill_optimize/gate/basis.rs` | src | m | 2 struct · 1 trait · 11 fn · 1 static · 11 crate-vis | HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle | What a ruling rests on before the gate decides: the held-out split, the identity a verdict binds itself to… |
+| `src/skill_optimize/gate/basis.rs` | src | m | 2 struct · 1 trait · 12 fn · 1 static · 12 crate-vis | HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle | What a ruling rests on before the gate decides: the held-out split, the identity a verdict binds itself to… |
 | `src/skill_optimize/gate/decision.rs` | src | m | 3 fn · 9 crate-vis | — | The gate itself: the entry points, and the transaction that rules |
 | `src/skill_optimize/gate/decision/commit.rs` | src | s | 2 crate-vis | — | Committing skill-edit decisions and answered-proposal closure |
 | `src/skill_optimize/gate/deferred_approval.rs` | src | s | 2 crate-vis | — | An approved tradeoff that cannot admit yet (FIX 8848) |
 | `src/skill_optimize/gate/goal_axis.rs` | src | m | 3 struct · 1 enum · 2 fn · 9 crate-vis | GoalAxisKind, GoalAxisScore, GoalAxisSpec, SkillEditGoal | Goal-axis replay scores |
-| `src/skill_optimize/gate/judge_binding.rs` | src | s | 2 crate-vis | — | The judge a kept score was measured by (FIX 8846) |
+| `src/skill_optimize/gate/judge_binding.rs` | src | s | 3 crate-vis | — | The judge a kept score was measured by (FIX 8846) |
 | `src/skill_optimize/gate/ledger.rs` | src | m | 5 fn · 7 crate-vis | — | The verdict ledger, and the `Gate` receipts projected from it |
 | `src/skill_optimize/gate/ledger/codec.rs` | src | s | 1 crate-vis | — | Stored skill-edit verdict decoding and displacement markers |
 | `src/skill_optimize/gate/live.rs` | src | m | 4 fn · 4 crate-vis | — | Live goal-axis measurement of a proposal (ARCH-0053: "Primary axes are measured online." "Offline axes run… |
 | `src/skill_optimize/gate/measurement.rs` | src | m | 7 struct · 1 enum · 6 crate-vis | AnchorLabelScore, AuditPair, BlindPreference, HonestyReplay, HonestyReplayObservation, JudgeMeasurements, PreferredResponse, WorldAxisScore | Receipt-only DecoEvo measurements, per-axis world-outcome calibration, and the judge against the human picks… |
 | `src/skill_optimize/gate/preflight.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | SkillEditPreflight | A proposal's offline floors, judged on the held-out set before any live run is routed to it (ARCH-0053… |
 | `src/skill_optimize/gate/project_goal.rs` | src | m | 1 struct · 1 enum · 5 fn · 10 crate-vis | ProjectGoalRevisionProposal, TradeoffRole | The join between a skill's goal and a project's goal record (ARCH-0053 "The goal record") |
+| `src/skill_optimize/gate/rule_policy.rs` | src | s | 1 crate-vis | — | The instructions the gate compares for a rule skill (FIX 10878): its description, then the dial seeds the… |
 | `src/skill_optimize/gate/tradeoff.rs` | src | m | 5 struct · 8 fn · 1 re-export · 6 crate-vis | JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion, TradeoffRule | The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`] |
 | `src/skill_optimize/gate/tradeoff/ladder.rs` | src | m | 3 fn · 5 crate-vis | — | Tradeoff ladder planning, application and authenticated settlement |
 | `src/skill_optimize/gate/tradeoff_capacity.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | TradeoffCapacityCrossing | Tradeoff rule counts against the resolved policy limits (FIX 8771, 8847) |
@@ -5266,7 +5269,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/labels/rubric.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 3 crate-vis | JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade | Judge rubric pins, label rechecks and human regrades |
 | `src/skill_optimize/mod.rs` | src | m | 2 mod · 19 re-export · 18 crate-vis | — | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
 | `src/skill_optimize/offer.rs` | src | m | 9 fn · 1 const · 1 re-export · 4 crate-vis | — | The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner… |
-| `src/skill_optimize/offer/snapshot.rs` | src | m | 10 struct · 4 enum · 1 fn · 7 crate-vis | ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck, OfferCheckInput, OfferCost, OfferEvidence +6 | The training offer's snapshot shapes (OF-577): what the Coach drafts, the immutable offer the owner is… |
+| `src/skill_optimize/offer/snapshot.rs` | src | m | 10 struct · 5 enum · 1 fn · 7 crate-vis | ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck, OfferCheckInput, OfferCheckOutcome, OfferCost +7 | The training offer's snapshot shapes (OF-577): what the Coach drafts, the immutable offer the owner is… |
 | `src/skill_optimize/offer_doors.rs` | src | s | 8 struct · 8 fn | OfferAnswerRequest, OfferListRequest, OfferPassRef, OfferPassRequest, OfferPassResult, OfferRef, OfferUndoReceipt, OfferView | Typed owner doors for the production Coach offer pass and its evidence |
 | `src/skill_optimize/offer_pilot.rs` | src | m | 9 struct · 14 fn · 2 crate-vis | OfferCandidateQuery, OfferCandidateRecord, OfferCandidateSetup, OfferPilot, OfferPilotComplete, OfferPilotMeasurement, OfferPilotPrepare, OfferPilotPrepared +1 | Per-seat candidate pins and externally measured pilot evidence for OF-577 |
 | `src/skill_optimize/offer_switch.rs` | src | m | 2 struct · 2 enum · 5 fn · 5 crate-vis | OfferSwitchReceipt, OfferSwitchUndo, SwitchApplication, SwitchOwner | An approved training offer's stock switch (OF-577; ARCH-0053 #training-offers: a switch binds now, with undo) |
@@ -5286,13 +5289,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_reliability/equivalent.rs` | src | s | 1 crate-vis | — | The stored subjects one derived read folds together (FIX 7815): an entity and every shell merged into it… |
 | `src/skill_reliability/floor.rs` | src | s | 4 fn · 4 const · 3 crate-vis | — | The reliability floor dial and the quarantine proposal a floor crossing mints |
 | `src/skill_reliability/ledger.rs` | src | m | 3 fn · 25 crate-vis | — | The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it |
-| `src/skill_reliability/mod.rs` | src | s | 7 re-export · 9 crate-vis | — | Bayesian skill retrieval over the shared learning.reliability projection |
+| `src/skill_reliability/mod.rs` | src | s | 7 re-export · 10 crate-vis | — | Bayesian skill retrieval over the shared learning.reliability projection |
 | `src/skill_reliability/posterior.rs` | src | s | 1 struct · 1 enum · 6 fn · 1 const · 6 crate-vis | ProvenanceTrustClass, SkillReliabilityPosterior | The Beta(α, β) posterior over a skill’s success rate and the provenance classes its prior is keyed by |
 | `src/skill_reliability/priors.rs` | src | s | 3 crate-vis | — | Weighted starting points for skill cells |
 | `src/skill_reliability/projector.rs` | src | m | 3 fn · 5 const · 3 crate-vis | — | Project attributed skill outcomes into the shared learning.reliability cells |
 | `src/skill_reliability/provenance.rs` | src | s | 2 fn · 2 crate-vis | — | Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the… |
 | `src/skill_reliability/read.rs` | src | m | 2 struct · 9 fn · 12 crate-vis | ExecutorReliability, SkillReliabilityQuery | Skill reliability reads use learning cells, never SkillRecord confidence |
 | `src/skill_reliability/resident.rs` | src | s | 1 fn | — | Per-resident version bandit over independently attributed fork receipts |
+| `src/skill_reliability/row_ids.rs` | src | s | 1 crate-vis | — | The attempt row behind each attributed outcome (FIX 7288): the row ids a sourced held-out read names beside… |
 | `src/skill_reliability/rule_outcome.rs` | src | s | 4 crate-vis | — | Outcomes of a rule skill (FIX 8075): a closed-form recipe with no model and no pack receipt behind its work… |
 | `src/skill_reliability/tests.rs` | test | L | — | — | — |
 | `src/skill_reliability/tests/resident.rs` | test | s | — | — | — |
