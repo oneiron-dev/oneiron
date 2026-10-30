@@ -133,7 +133,10 @@ fn birth_message_in_txn(
     let text = value
         .as_str()
         .ok_or(Error::CorruptedIndex("message text"))?;
-    let doc = EntityDoc::open(*entity, text, actor, at)?;
+    // A MESSAGE its writing door already stamped keeps that birth on its
+    // document's birth commit (FIX 10929).
+    let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, entity)?;
+    let doc = EntityDoc::open_born(*entity, text, actor, at, born.as_ref().map(|b| &b.made_by))?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
     fields.push((
         rmpv::Value::from("entity_doc_ref"),
