@@ -61,7 +61,9 @@ impl BranchResources<'_> {
         }
         // The material the wake's admitted `host.wake` hooks added leads
         // every slice's input (FIX 10665): context for the call, never a
-        // turn, so no label names it and nothing cites it.
+        // turn, so no label names it and nothing cites it. The material does
+        // not say which hook added it, so a slice that carries any is
+        // low-trust, kept off a thing agent's clean loan.
         let mut material = String::new();
         for text in self
             .prepared_wake
@@ -134,9 +136,12 @@ impl BranchResources<'_> {
                             facts.text.as_deref().unwrap_or_default(),
                         ));
                     }
-                    // A slice is low-trust by what it reads: its own TURNs and
-                    // the prior heads its page shows (FIX 9017).
-                    let slice_low_trust = chunk.iter().any(|(_, facts)| facts.imported)
+                    // A slice is low-trust by what it reads: its own TURNs,
+                    // the prior heads its page shows (FIX 9017), and any host
+                    // material, which a hub publisher's or an agent's hook may
+                    // fill from rows it reads (FIX 10665).
+                    let slice_low_trust = !material.is_empty()
+                        || chunk.iter().any(|(_, facts)| facts.imported)
                         || self
                             .priors
                             .iter()
