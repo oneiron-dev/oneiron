@@ -35,7 +35,8 @@ use crate::asks::{AskStep, CallAsks};
 use crate::budget::{Lease, Room};
 use crate::clock::{Clock, WaitClock};
 use crate::error::HostError;
-use crate::sandbox::{self, OrganIsolation};
+use crate::isolation::OrganIsolation;
+use crate::sandbox;
 use crate::spec::{HostConfig, OrganSpec, OrganTier};
 
 mod frames;

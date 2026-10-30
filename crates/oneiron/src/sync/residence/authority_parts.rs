@@ -193,7 +193,10 @@ fn reserve_charged(stage: &mut AuthorityAppendStage, more: usize) -> bool {
     }
     let total = usize::try_from(stage.total).unwrap_or(usize::MAX);
     let room = want.max(room.saturating_mul(2)).min(total.max(want));
-    let charge = stage.charge.get_mut().unwrap_or_else(PoisonError::into_inner);
+    let charge = stage
+        .charge
+        .get_mut()
+        .unwrap_or_else(PoisonError::into_inner);
     if !charge.resize(room) {
         return false;
     }
