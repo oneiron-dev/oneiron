@@ -250,6 +250,34 @@ impl crate::Vault {
         Ok(KnownValues::load_in_writer(&self.store, txn)?.map(Arc::new))
     }
 
+    /// The body instances ASSET bodies of the lengths `lens` may be filed
+    /// under, minted now, before the writer that stages them opens (KS-2A,
+    /// FIX 6021): one for each body past [`ASSET_INLINE_BODY_BYTES`], which
+    /// [`Self::stage_asset_body`] takes in turn inside that writer. `None`
+    /// while the file plane is off, when every body stays in its row, and
+    /// when no body is past the bound. One the writer leaves unnamed (a body
+    /// the stager keeps in its row) is debris.
+    ///
+    /// # Errors
+    ///
+    /// Custody's errors.
+    pub(crate) fn asset_body_mint(
+        &self,
+        lens: impl IntoIterator<Item = u64>,
+    ) -> Result<Option<crate::store::BodyMint>> {
+        if !ASSET_FILE_PLANE {
+            return Ok(None);
+        }
+        let count = lens
+            .into_iter()
+            .filter(|len| *len > ASSET_INLINE_BODY_BYTES)
+            .count();
+        if count == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.store.body_mint()?.reserve(count)?))
+    }
+
     /// Streams `reader` into one staged ASSET body, before the transaction
     /// that puts it (FIX 3677): a body past [`ASSET_INLINE_BODY_BYTES`]
     /// spills to a temp file in the body directory as it streams, sealed as
@@ -261,10 +289,11 @@ impl crate::Vault {
     /// (FIX 5395). Nothing is refused for its size (Rule 5).
     ///
     /// A file is one vault instance (KS-2A), minted from `mint` before the
-    /// writer that puts it opens: a stager inside a writer passes none, and
-    /// its long body is read back whole for its row, which a checkpoint
-    /// seals under an instance of its own. A spill no instance backs is a
-    /// temp under a key held in memory, never published.
+    /// writer that puts it opens: a stager inside a writer passes the
+    /// instances reserved before it opened ([`Self::asset_body_mint`]), or
+    /// none, and then its long body is read back whole for its row, which a
+    /// checkpoint seals under an instance of its own. A spill no instance
+    /// backs is a temp under a key held in memory, never published.
     ///
     /// # Errors
     ///

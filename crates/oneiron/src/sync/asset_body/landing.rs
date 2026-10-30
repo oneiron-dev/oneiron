@@ -51,6 +51,9 @@ pub(super) fn land(
     let key = body.key();
     let _import = crate::sync::manager::import_scope();
     let mut unborn = false;
+    // KS-2A (FIX 12120): a body file is one vault instance, minted before
+    // the writer that stages it opens.
+    let mint = spool.body_mint(vault)?;
     // The staged body outlives the commit: its pin keeps a published file
     // from the collector until the row naming it is durable.
     let (landed, carrier, _staged, change) = vault.with_write_txn_grouped(|wtxn| {
@@ -65,7 +68,7 @@ pub(super) fn land(
         let previous_revision =
             revision_for_mode_in_txn(&vault.store, wtxn, &body.id, ReadMode::Live)?;
         let known = vault.asset_stream_known_in_txn(wtxn)?;
-        let staged = spool.stage(vault, body.mime.as_deref(), known)?;
+        let staged = spool.stage(vault, body.mime.as_deref(), known, mint.as_ref())?;
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let steps = {
             let lease_vault_id = peer.materializer.lease_vault_id();
