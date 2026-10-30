@@ -271,7 +271,7 @@ fn keep_overruled_dissent(vault: &Vault, at: u64) -> Result<()> {
                 Ok(true) => {}
                 Ok(false) => continue,
                 Err(error) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         kind = ?error.kind(),
                         "a critique's outcome did not read; its dissent waits"
                     );
