@@ -83,8 +83,14 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             self.docx_archive_limits_in_txn(&rtxn, Some(ask.principal))?
         };
-        let blocks =
-            read_docx_blocks(&bytes, limits).map_err(|_| invalid("paragraph ask document"))?;
+        // The DOCX read runs in the host's memory (FIX 10651); a resource
+        // refusal is the engine's error, never an invalid document (FIX 10587).
+        let resources = crate::office_body::document_resources();
+        let blocks = resources
+            .docx(|| read_docx_blocks(&bytes, limits))
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "paragraph ask document")
+            })?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let sources = [EvidenceVersion {
             id: *artifact,
@@ -223,7 +229,14 @@ pub(crate) fn carry_paragraph_judgments(
     run_ref: &str,
     limits: oneiron_docedit::ArchiveLimits,
 ) -> Result<EditProposal> {
-    let blocks = read_docx_blocks(head, limits).map_err(|_| invalid("paragraph carry document"))?;
+    // The DOCX read runs in the host's memory (FIX 10651); a resource
+    // refusal is the engine's error, never an invalid document (FIX 10587).
+    let resources = crate::office_body::document_resources();
+    let blocks = resources
+        .docx(|| read_docx_blocks(head, limits))
+        .map_err(|error| {
+            crate::office_body::document_error(error.resource(), "paragraph carry document")
+        })?;
     let author = carried
         .first()
         .map(|row| row.author.clone())

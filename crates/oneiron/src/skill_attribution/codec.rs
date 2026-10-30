@@ -9,6 +9,7 @@ use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::SkillRecord;
 
@@ -154,6 +155,8 @@ const KEY_SUBJECT: &str = "subject";
 
 const KEY_EVIDENCE_RECEIPTS: &str = "evidence_receipts";
 
+const KEY_ROW_ID: &str = "row_id";
+
 const fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
 }
@@ -181,16 +184,9 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
         if reason.trim().is_empty() {
             return Err(invalid("attribution deviation needs a stated reason"));
         }
-        let txn = vault.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
-        let limits = policy
-            .attribution_limits()
-            .ok_or(invalid("attribution deviation policy is malformed"))?;
-        if (reason.len() as u64) > limits.reason_bytes_for(&actor) {
-            return Err(invalid(
-                "attribution deviation exceeds policy reason budget",
-            ));
-        }
+        // The reason is kept whole and measured against the engine's text
+        // row (OF-520): past it the vault's port asks (FIX 5465).
+        let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, reason.len() as u64);
     }
     ground_attempt_receipt(vault, &evidence.receipt_ref, &actor, evidence.skill)
 }
@@ -475,6 +471,10 @@ fn encode_judgment(judgment: &AttributionJudgment) -> Value {
         ),
         (Value::from(KEY_SEQUENCE), Value::from(judgment.sequence)),
         (
+            Value::from(KEY_ROW_ID),
+            Value::Binary(judgment.row_id.as_bytes().to_vec()),
+        ),
+        (
             Value::from(KEY_VERDICT),
             Value::from(judgment.verdict.as_str()),
         ),
@@ -497,6 +497,7 @@ fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value)?;
     let mut sequence = None;
+    let mut row_id = None;
     let mut verdict = None;
     let mut subject = None;
     let mut evidence_receipts = None;
@@ -505,6 +506,7 @@ fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
         match expect_key(key)? {
             KEY_SCHEMA_VERSION => require_schema_version(value)?,
             KEY_SEQUENCE => sequence = value.as_u64(),
+            KEY_ROW_ID => row_id = Some(decode_entity(value)?),
             KEY_VERDICT => verdict = value.as_str().and_then(AttributionVerdict::parse),
             KEY_SUBJECT => subject = Some(decode_optional_entity(value)?),
             KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
@@ -514,6 +516,7 @@ fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
     }
     Ok(AttributionJudgment {
         sequence: sequence.ok_or(invalid("attribution judgment missing sequence"))?,
+        row_id: row_id.ok_or(invalid("attribution judgment missing row id"))?,
         verdict: verdict.ok_or(invalid("attribution judgment missing verdict"))?,
         subject: subject.ok_or(invalid("attribution judgment missing subject"))?,
         evidence_receipts: evidence_receipts
@@ -548,6 +551,10 @@ fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
             Value::from(proposal.judgment_sequence),
         ),
         (
+            Value::from(KEY_ROW_ID),
+            Value::Binary(proposal.row_id.as_bytes().to_vec()),
+        ),
+        (
             Value::from(KEY_SUBJECT),
             Value::Binary(proposal.skill.as_bytes().to_vec()),
         ),
@@ -569,6 +576,7 @@ fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value)?;
     let mut judgment_sequence = None;
+    let mut row_id = None;
     let mut skill = None;
     let mut evidence_receipts = None;
     let mut at = None;
@@ -576,6 +584,7 @@ fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
         match expect_key(key)? {
             KEY_SCHEMA_VERSION => require_schema_version(value)?,
             KEY_SEQUENCE => judgment_sequence = value.as_u64(),
+            KEY_ROW_ID => row_id = Some(decode_entity(value)?),
             KEY_SUBJECT => skill = Some(decode_entity(value)?),
             KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
             KEY_AT => at = value.as_u64(),
@@ -585,6 +594,7 @@ fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
     Ok(SkillEditProposal {
         judgment_sequence: judgment_sequence
             .ok_or(invalid("skill edit proposal missing judgment sequence"))?,
+        row_id: row_id.ok_or(invalid("skill edit proposal missing row id"))?,
         skill: skill.ok_or(invalid("skill edit proposal missing skill"))?,
         evidence_receipts: evidence_receipts
             .ok_or(invalid("skill edit proposal missing evidence"))?,

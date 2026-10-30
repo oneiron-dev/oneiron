@@ -71,7 +71,7 @@ pub(super) fn root_row_key(root: &AuthorityKey) -> Vec<u8> {
 
 /// Whether `transcript` is a checkpoint statement: a key binding's or an
 /// attestation's. The host root signs nothing else as a checkpoint.
-pub(super) fn checkpoint_statement_domain(transcript: &[u8]) -> bool {
+pub(crate) fn checkpoint_statement_domain(transcript: &[u8]) -> bool {
     [KEY_BINDING_DOMAIN, ATTESTATION_DOMAIN]
         .iter()
         .any(|domain| transcript.starts_with(domain))

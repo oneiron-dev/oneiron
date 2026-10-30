@@ -17,11 +17,12 @@ use crate::{
 use heed::RoTxn;
 use std::collections::BTreeSet;
 
-/// The currency of a first-party installed-pack row whose catalog cost names
-/// none: the published pack's existing contract, which quotes its list
-/// prices in US dollars (Engine ruling on FIX 9534). It is read for that
-/// pack's rows alone and is no guess for any other source; a pack row whose
-/// cost says `"currency": null` stays unknown.
+/// The currency of a legacy pre-9534 stored copy of a first-party
+/// installed-pack row whose catalog cost names no currency key: the
+/// published pack's existing contract, which quotes its list prices in US
+/// dollars (Engine ruling on FIX 9534, narrowed by FIX 11778). It is read
+/// for those stored copies alone: pack bytes and new rows never read it,
+/// and a row whose cost says `"currency": null` stays unknown.
 const PACK_LIST_PRICE_CURRENCY: &str = "USD";
 
 /// The model pack's install receipt, read for the source it names.
@@ -29,7 +30,8 @@ const PACK_RECEIPT: SideTable<String, PackInstallReceipt, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_PACK_INSTALL);
 
 /// [`PACK_LIST_PRICE_CURRENCY`] on `row`'s catalog cost when it names no
-/// currency; one that names any, `null` included, keeps it.
+/// currency; one that names any, `null` included, keeps it. Read only for
+/// legacy pre-9534 stored pack-copies (FIX 11778), never for pack bytes.
 fn with_pack_row_currency(row: &mut serde_json::Value) {
     if let Some(cost) = row
         .pointer_mut("/catalog/cost")
@@ -40,25 +42,13 @@ fn with_pack_row_currency(row: &mut serde_json::Value) {
     }
 }
 
-/// The installed pack's catalog data with each row read under the pack's
-/// currency contract ([`with_pack_row_currency`]).
-fn with_pack_currency(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut data: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|error| invalid(error.to_string()))?;
-    if let Some(rows) = data
-        .get_mut("rows")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        rows.iter_mut().for_each(with_pack_row_currency);
-    }
-    serde_json::to_vec(&data).map_err(|error| invalid(error.to_string()))
-}
-
-/// A stored registry row's bytes under the same contract, when the row is a
-/// copy of a row of the pack installed from `pack`: its source rows name
-/// that pack's source (Engine ruling on FIX 9534), the installed one or the
-/// one an install is replacing. `None` for any other row, which reads as it
-/// is stored.
+/// A stored registry row's bytes under the pack's currency contract, when
+/// the row is a legacy pre-9534 copy of a row of the pack installed from
+/// `pack`: its source rows name that pack's source (Engine ruling on FIX
+/// 9534, narrowed by FIX 11778), the installed one or the one an install is
+/// replacing, and its catalog cost names no `currency` key. `None` for any
+/// other row, which reads as it is stored: explicit `null` or any code
+/// reads as-is.
 pub(super) fn stored_pack_row(bytes: &[u8], pack: EntityId) -> Option<Vec<u8>> {
     let mut row: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let copied = row
@@ -67,6 +57,13 @@ pub(super) fn stored_pack_row(bytes: &[u8], pack: EntityId) -> Option<Vec<u8>> {
         .iter()
         .any(|id| id.as_str().and_then(|hex| EntityId::from_hex(hex).ok()) == Some(pack));
     if !copied {
+        return None;
+    }
+    let missing = row
+        .pointer("/catalog/cost")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|cost| !cost.contains_key("currency"));
+    if !missing {
         return None;
     }
     with_pack_row_currency(&mut row);
@@ -140,7 +137,7 @@ impl CatalogSeed {
             .iter()
             .find(|file| file.path == "knowledge/catalog.json")
             .ok_or_else(|| invalid("model catalog data file missing"))?;
-        let mut seed = Self::from_json(&with_pack_currency(&bytes.content)?)?;
+        let mut seed = Self::from_json(&bytes.content)?;
         // Each row the pack ships is read from its installed source, and from
         // nothing the pack's own bytes claim (FIX 5760).
         for row in &mut seed.rows {

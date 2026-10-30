@@ -565,7 +565,9 @@ fn staged_claims(ops: &[RawOp<'_>]) -> crate::Result<Vec<crate::claim::ClaimBody
         if let RawOp::Put(put) = op
             && put.entity_type == crate::registry::ENTITY_TYPE_CLAIM
         {
-            claims.push(crate::claim::validate_claim_body_and_decode(put.data, false)?);
+            claims.push(crate::claim::validate_claim_body_and_decode(
+                put.data, false,
+            )?);
         }
     }
     Ok(claims)

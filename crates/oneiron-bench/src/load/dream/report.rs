@@ -141,6 +141,7 @@ fn cycle_json(m: &Measured<'_>) -> Value {
         "bound_s": m.run.plan.cycle_timeout.as_secs(),
         "partition_attempts": cycle::outcomes(m.scan, t0).0.len(),
         "outcomes": cycle::outcomes(m.scan, t0).0,
+        "partition_attempts_by_scope": cycle::attempts_by_scope(m.scan, t0),
         "turns_planned": field_sum(stages, t0, "turns").0,
         "stage_ms_sum": stage_ms,
         "landed": field_sum(stages, t0, "landed").0,
@@ -326,8 +327,9 @@ pub(super) fn summary(r: &Value) -> String {
             ms_text(&r["seed"]["ms"])
         ),
         format!(
-            "partitions: {} attempts, {} turns planned, {} stage lines, {} pass lines",
+            "partitions: {} Meso attempts (by scope {}), {} partition turns, {} stage lines, {} pass lines",
             c["partition_attempts"],
+            c["partition_attempts_by_scope"],
             ms_text(&c["turns_planned"]),
             c["stage_lines"].as_array().map_or(0, Vec::len),
             c["pass_lines"].as_array().map_or(0, Vec::len)

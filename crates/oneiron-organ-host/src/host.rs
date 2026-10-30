@@ -559,7 +559,10 @@ impl OrganHost {
             grace,
         };
         match process.call(wire, &fds, wait) {
-            Ok((reply, fds, frame, moved)) => Ok((reply.outcome, fds, frame, moved)),
+            Ok((reply, fds, frame, moved)) => {
+                shutdown::answered();
+                Ok((reply.outcome, fds, frame, moved))
+            }
             // The mesh's stop ended the call's wait: a live process is unharmed.
             Err(failure)
                 if !matches!(failure, CallFailure::Revoked)

@@ -423,11 +423,7 @@ pub(super) fn remove(root: &File, kind: VmOutboxKind, member: &str) -> std::io::
 /// out of the member's way, and no list, walk or producer takes it for a
 /// member (FIX 11736). A side name already there is never replaced. Returns
 /// the side name, or `None` when no file is at the member's name.
-pub(super) fn move_aside(
-    root: &File,
-    member: &str,
-    held: &str,
-) -> std::io::Result<Option<String>> {
+pub(super) fn move_aside(root: &File, member: &str, held: &str) -> std::io::Result<Option<String>> {
     let (dir, leaf) = match parent_of(root, member, None) {
         Ok(found) => found,
         Err(error) if is_gone(&error) => return Ok(None),

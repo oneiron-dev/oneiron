@@ -6,11 +6,11 @@ use axum::routing::{get, post};
 use super::super::{OwnerRoute, OwnerTable};
 use super::{
     activate_candidate, approve_skill_activation, approve_skill_permissions, bind_hooks,
-    hook_bindings, import_skill, install_from_hub, installed, line_chats, pack_lenses,
-    pack_organs, place_agent_world, prepare_skill_activation, put, put_organ_build,
-    put_pack_lens_component, qualify_hooks, ref_sync, remove_pack, restore_default_skills,
-    restore_skill, set_hook_enabled, set_ref_sync, setup_answer, setup_prepare, setup_verify,
-    setup_view, skill_receipts, slack_install, slack_manifest, sync_pack, sync_skill,
+    hook_bindings, import_skill, install_from_hub, installed, line_chats, pack_lenses, pack_organs,
+    place_agent_world, prepare_skill_activation, put, put_organ_build, put_pack_lens_component,
+    qualify_hooks, ref_sync, remove_pack, restore_default_skills, restore_skill, set_hook_enabled,
+    set_ref_sync, setup_answer, setup_prepare, setup_verify, setup_view, skill_receipts,
+    slack_install, slack_manifest, sync_pack, sync_skill,
 };
 
 pub(in super::super) fn owner_table() -> OwnerTable {

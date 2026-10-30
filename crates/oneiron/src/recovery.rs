@@ -358,3 +358,4 @@ pub use privacy_kit::{
     KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceExport, PieceHome, RecoveryCode,
     RestoredKitSecret, issue_recovery_root_kit, issue_vault_key_kit, restore_kit,
 };
+pub(crate) use privacy_kit::{KitPiecePair, KitPieceStore, join_kept_piece};

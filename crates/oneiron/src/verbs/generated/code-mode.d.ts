@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4447 declarations.
-// Replies: 1075 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1264 code-mode rows (1224 host rows, 40 run rows), 4456 declarations.
+// Replies: 1077 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1120,9 +1120,10 @@ declare namespace Sdk {
   type GoalAxisScore = { kind: GoalAxisKind; before: number; after: number };
   type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; project?: EntityId | null; roles: TradeoffRole[]; proposal: EntityId; proposal_digest: string; target_digest: string; evidence_digest: string; world_digest: string; axes: Record<string, GoalAxisScore>; gains: string[]; losses: string[] };
   type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin };
-  type SkillTradeoffAsk = { pending: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number };
+  type SkillTradeoffAsk = { pending: EntityId; skill: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number; judge_rubric_digest?: string | null };
   type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk; tradeoff_capacity_advisory?: TradeoffCapacityAdvisory[] | null };
   type SkillOptimizeTradeoffPickRequest = { proposal: EntityId; question_digest: string; choice: TradeoffChoice };
+  type SkillOptimizeTradeoffResolveRequest = { proposal: EntityId; pending: EntityId; evidence: string; choice: TradeoffChoice };
   type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
@@ -1762,7 +1763,8 @@ declare namespace Sdk {
   type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone";
   type OfferIntent = { switch: { seat: EvalSeat; from: OfferModelPin; to: OfferModelPin } } | { train: { seat: EvalSeat; base: OfferModelPin; recipe_ref: string; destination: ComputeDestination } };
   type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: EntityId; authentication: string; offer_digest: string; intent?: OfferIntent | null; at: number };
-  type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; note?: string | null; at: number; source_rows?: EntityId[] | null };
+  type OfferCheckOutcome = "held" | "broken" | "currency_mismatch" | "promised_score_unknown" | "promised_cost_unknown" | "unverifiable_no_calls" | "unverifiable_no_meter" | "unverifiable_not_bound" | "unverifiable_no_model_role" | "unverifiable_mixed_model" | "unverifiable_no_usage" | "unverifiable_unpriced_model" | "unverifiable_unknown_currency" | "unverifiable_unpriced_cache" | "unverifiable_mixed_currency" | "unverifiable_sum_overflow" | "unverifiable_unclassified";
+  type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; outcome: OfferCheckOutcome; note?: string | null; at: number; source_rows?: EntityId[] | null };
   type OfferView = { offer: TrainingOffer; answer?: OfferAnswerRecord | null; checks: OfferCheck[] };
   type OfferRef = { offer: EntityId };
   type OfferPassRequest = Record<string, never>;
@@ -1868,7 +1870,7 @@ declare namespace Sdk {
   type OwnerWorkUnassigned = "no_eligible_reader" | "target_is_recorder" | "target_not_linked" | "no_bundle_holder" | "no_custody_holder";
   type CustodyUncheckedReason = "none_named" | "none_published" | "unread" | "other_manifest" | "disagrees";
   type CustodyRegisterCheck = { kind: "checked"; manifest_ref: string } | { kind: "unchecked"; reason: CustodyUncheckedReason; refs: string[] };
-  type BundleHomeWarning = "home_does_not_keep_sealed_bundles" | "home_profile_unknown";
+  type BundleHomeWarning = "home_does_not_keep_sealed_bundles" | "home_profile_unknown" | { awaiting_reader: { worlds: EntityId[] } };
   type OwnerWorkCancelState = "cancelled" | "already_enacted" | "already_refused";
   type OwnerWorkCancelNote = { entries: string[]; state: OwnerWorkCancelState };
   type OwnerWorkReceipt = { request?: string | null; kind: OwnerWorkKind; target: EntityId; executor?: EntityId | null; status: OwnerWorkStatus; unassigned?: OwnerWorkUnassigned | null; manifest_check?: CustodyRegisterCheck | null; home_warning?: BundleHomeWarning | null; cancel?: OwnerWorkCancelNote | null };
@@ -1939,7 +1941,7 @@ declare namespace Sdk {
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
   type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };
-  type CourtesyDeleteSent = { request: string; pact: string; recipient: string; status: string; created: string; updated: string };
+  type CourtesyDeleteSent = { request: string; pages: string[]; pact: string; recipient: string; status: string; created: string; updated: string };
   type CourtesyDeleteAskedWorld = { world: string; stale?: string | null; stale_epoch?: number | null };
   type CooperativeDeletionDispositionKind = "delete" | "redact" | "restrict_pending_review" | "retain_under_basis" | "legal_hold" | "decline";
   type CourtesyDeleteHold = { hold: string; status: string; records: string[]; lifted?: string | null };
@@ -3198,12 +3200,12 @@ declare namespace Sdk {
   type AttributionLabel = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
   type ProposalHunkVerdict = { verdict: AttributionLabel; confidence?: number; note?: string | null };
   type ProposalShareClaim = { class: AttributionLabel; share: number };
-  type ProposalDeltaSettleRequest = { proposed_text: string; replacements: ProposalReplacement[]; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; artifact_ref?: EntityId | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number; hunk_verdicts?: ProposalHunkVerdict[] | null; shares?: ProposalShareClaim[] | null };
+  type ProposalDeltaSettleRequest = { proposed_text: string; replacements: ProposalReplacement[]; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; executor?: string | null; artifact_ref?: EntityId | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number; hunk_verdicts?: ProposalHunkVerdict[] | null; shares?: ProposalShareClaim[] | null };
   type OpsSummaryView = { ins: number; del: number; kept: number; moved: number; approx: boolean };
   type AmendmentDeltaView = { proposed_ref: string; final_ref: string; source: string; d_norm: number; ops_summary: OpsSummaryView; engine_ver: string };
   type SettledHunkView = { before: string; after: string; edit_mass: number; actor?: EntityId | null; trust?: string | null };
   type AmendmentShareView = { class: AttributionLabel; share: number; subject?: EntityId | null };
-  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number };
+  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number; rejected: boolean; executor?: string | null; type_ref?: CellTypeRef | null; judge?: string | null; judge_model?: string | null; on_judge_model: boolean };
   type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] };
   type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null };
   type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text?: string | null; after_text?: string | null; lamport: number; timestamp: number };
@@ -3305,7 +3307,7 @@ declare namespace Sdk {
   type AnonymousChatBlockReasonView = "policy" | "human_review_unavailable";
   type AnonymousChatResponse = { type: "reply"; content: string; notices: GateSystemNoticeRecord[]; skipped_checks: AnonymousChatSkippedCheckView[]; model_notices: GateSystemNoticeRecord[] } | { type: "blocked"; input: boolean; notice: GateSystemNoticeRecord; preceding_notices: GateSystemNoticeRecord[]; reason: AnonymousChatBlockReasonView; model_notices: GateSystemNoticeRecord[] };
   type ModelWireFormat = "openai-compat" | "anthropic-messages" | "gemini" | "own-server" | "local";
-  type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null; currency: string | null };
+  type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null; currency?: string | null };
   type LlmCatalogEntry = { model: ModelId; display_name: string; locality: ModelLocality; context_window_tokens: number; max_output_tokens?: number | null; cost?: LlmCatalogCost | null; capabilities?: LlmCapability[]; metadata?: Record<string, unknown> };
   type ModelRegistryRow = { version: number; wire: ModelWireFormat; catalog: LlmCatalogEntry; scores?: Record<string, Record<string, number>>; fetched_at?: Record<string, number>; tokens_per_o200k?: number | null; stale_since?: number | null; source_rows?: EntityId[] | null };
   type CatalogSeed = { version: number; rows: ModelRegistryRow[] };
@@ -3365,7 +3367,7 @@ declare namespace Sdk {
   type VoiceVendorEviction = { target: string; vendor_voice_id: string; vendor: VoiceVendorDeleteStatus };
   type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; event_id: string; sequence: number; replayed: boolean; evicted: VoiceVendorEviction[] };
   type VoiceTargetProvisionRequest = { voice_id: string; target: string; include_generated?: boolean; language?: string | null };
-  type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string };
+  type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string; awaiting_verification: boolean };
   type VoiceTargetEvictRequest = { voice_id: string; target: string };
   type VoiceTargetEvictReceipt = { voice_id: string; target: string; evicted: boolean; vendor: VoiceVendorDeleteStatus };
   type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
@@ -3999,6 +4001,13 @@ declare namespace Sdk {
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
   type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
   type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; latest_job_ref?: string | null; steps: ConsolidationStepRef[]; next_step?: string | null };
+  type DreamerCandidateDecisionsRequest = { job_ref: string };
+  type KeptRole = { rank: RoleRank; project?: string | null };
+  type KeptRoute = { role: KeptRole; ceiling: RoleRank; act: AskAct };
+  type KeptAnswer = { answer: DecisionAnswer; answered_at: number; role: KeptRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null };
+  type KeptAsk = { seq: number; to: KeptRoute; answer?: KeptAnswer | null };
+  type KeptDecision = { decision: TypedDecision; ask?: KeptAsk | null };
+  type DreamerDecidedCandidateView = { job_ref: string; position: number; subject: string; corrects: string | null; decisions: KeptDecision[] };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
@@ -5811,6 +5820,8 @@ declare const vault: Sdk.VaultHost & {
   consolidation: {
     /** Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority. */
     accounting(input: Sdk.ConsolidationAccountingRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
+    /** The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value. */
+    candidate_decisions(input: Sdk.DreamerCandidateDecisionsRequest): Promise<Sdk.DreamerDecidedCandidateView[] | StoredResult>;
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
@@ -7360,6 +7371,8 @@ declare const vault: Sdk.VaultHost & {
       tradeoff_asks: ((input: Sdk.EmptyRequest) => Promise<Sdk.SkillOptimizeTradeoffAskView[] | StoredResult>) & {
         /** Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant. */
         pick(input: Sdk.SkillOptimizeTradeoffPickRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+        /** The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference. */
+        resolve(input: Sdk.SkillOptimizeTradeoffResolveRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
       };
     };
     outcomes: {
