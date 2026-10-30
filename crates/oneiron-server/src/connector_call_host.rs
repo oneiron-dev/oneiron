@@ -82,7 +82,7 @@ mod sent;
 mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
-use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
+use presenting::{Intake, KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
@@ -238,58 +238,18 @@ impl ServedConnectorCallHost {
         };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
-        let Some(exchange) = Exchange::new(&self.client, &view, elicitation) else {
+        // The door reads the call's issuer binding again (FIX 9303).
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
+        let Some(exchange) = Exchange::new(&self.client, &view, elicitation, &self.vault, row)
+        else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
         let Some(presenting) = presenting else {
             return Sent::not_sent(OutboundFailureKind::Rejected, None);
         };
-        // The door reads the call's issuer binding again (FIX 9303).
-        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
-        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
         // A grant the send refuses answers as its typed refusal, not TransportNotStarted (FIX 6673).
         presenting.send(&self.vault, &exchange, row, presented)
-    }
-
-    /// The elicitation this send declares, or `None`: a call the engine
-    /// bound no caller to, a revision with no elicitation shape, an
-    /// unreadable key ref or setting, and a key set to `never allow` all
-    /// declare none. A call that names a custody record declares it too: its
-    /// door clears the presented value from each question and every later
-    /// reply (FIX 3843).
-    fn declared<'a>(
-        &'a self,
-        call: &'a FrozenOutboundCall,
-        view: &FrozenToolCallView,
-    ) -> Option<Declared<'a>> {
-        let caller = self.caller.as_ref()?;
-        let revision = view.protocol_revision()?;
-        let capability = elicitation_capability(revision)?;
-        let intake = Intake::of(revision)?;
-        let key_ref = EntityId::from_hex(view.key_ref()?).ok()?;
-        let principal = EntityId::from_hex(&caller.principal_ref).ok()?;
-        match self.vault.connector_elicitation_setting(&key_ref) {
-            Ok(setting) if setting != SlateDisposition::NeverAllow => {}
-            _ => return None,
-        }
-        Some(Declared {
-            capability,
-            intake,
-            call,
-            vault: &self.vault,
-            registry: &self.elicitations,
-            binding: QuestionBinding {
-                principal,
-                grant_id: caller.grant_id,
-                key_ref,
-                parent_intent: call.intent_id().copied(),
-                name: caller.name.clone(),
-                server: view.server().to_owned(),
-                tool: view.tool().to_owned(),
-                endpoint: view.endpoint().to_owned(),
-                revision: revision.to_owned(),
-            },
-        })
     }
 }
 
@@ -394,41 +354,6 @@ impl ConnectorCallHost for ServedConnectorCallHost {
     }
 }
 
-/// The client capability one pinned revision declares for elicitation:
-/// 2025-06-18 an empty object, 2025-11-25 and 2026-07-28 form mode alone,
-/// so URL mode stays undeclared; `None` for any other revision.
-fn elicitation_capability(revision: &str) -> Option<Value> {
-    match revision {
-        "2025-06-18" => Some(json!({})),
-        "2025-11-25" | "2026-07-28" => {
-            let mut modes = Map::new();
-            modes.insert(wire::FORM.to_owned(), json!({}));
-            Some(Value::Object(modes))
-        }
-        _ => None,
-    }
-}
-
-/// How a revision carries a connector's questions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Intake {
-    /// `elicitation/create` requests on the reply stream.
-    Stream,
-    /// A `tools/call` result that asks for input, answered by the same call
-    /// again.
-    Retry,
-}
-
-impl Intake {
-    fn of(revision: &str) -> Option<Self> {
-        match revision {
-            "2025-06-18" | "2025-11-25" => Some(Self::Stream),
-            "2026-07-28" => Some(Self::Retry),
-            _ => None,
-        }
-    }
-}
-
 /// One answer as the connector's wire takes it: its action, and its content
 /// when it carries one.
 pub(crate) fn elicitation_response(
@@ -528,6 +453,12 @@ struct Exchange<'a> {
     tool_headers: HeaderMap,
     /// The elicitation this send declares, if any.
     elicitation: Option<Declared<'a>>,
+    /// The vault that re-reads the call's issuer binding before a refusal
+    /// on a send that declared nothing goes out (FIX 12242).
+    vault: &'a Vault,
+    /// The call's governing key and tool, when its key ref parses: what
+    /// that re-read checks.
+    row: Option<(&'a EntityId, &'a str)>,
 }
 
 impl<'a> Exchange<'a> {
@@ -536,6 +467,8 @@ impl<'a> Exchange<'a> {
         client: &'a reqwest::blocking::Client,
         view: &'a FrozenToolCallView,
         elicitation: Option<Declared<'a>>,
+        vault: &'a Vault,
+        row: Option<(&'a EntityId, &'a str)>,
     ) -> Option<Self> {
         let revision = view.protocol_revision()?;
         let protocol = HeaderValue::from_str(revision).ok()?;
@@ -564,6 +497,8 @@ impl<'a> Exchange<'a> {
             ),
             tool_headers,
             elicitation,
+            vault,
+            row,
         })
     }
 
@@ -725,7 +660,14 @@ impl<'a> Exchange<'a> {
                                     &declared.binding.key_ref,
                                     &declared.binding.tool,
                                 ),
-                                None => live.refuse(request),
+                                // No declared elicitation still re-reads the
+                                // call's issuer binding (FIX 12242).
+                                None => match self.row {
+                                    Some((key_ref, tool)) => {
+                                        live.refuse_unless_held(request, self.vault, key_ref, tool)
+                                    }
+                                    None => live.refuse(request),
+                                },
                             },
                             None => zeroize_json(request),
                         }

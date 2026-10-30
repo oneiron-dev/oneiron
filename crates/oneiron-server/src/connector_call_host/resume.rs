@@ -339,8 +339,8 @@ impl ServedConnectorCallHost {
                 let (tool, arguments, tool_headers) = {
                     let view =
                         FrozenToolCallView::read(&original).map_err(|_| "original_call_unread")?;
-                    let exchange =
-                        Exchange::new(&self.client, &view, None).ok_or("original_call_unread")?;
+                    let exchange = Exchange::new(&self.client, &view, None, &self.vault, None)
+                        .ok_or("original_call_unread")?;
                     (
                         exchange.tool.to_owned(),
                         exchange.arguments,
