@@ -5,15 +5,18 @@
 //! owner's server reads it whether or not it is the holder.
 //!
 //! - Admission takes a row only whole, filed under its own request, in its
-//!   sealing month's base window, within one row's bound. Whether the
-//!   request's signed result names it is judged where it is kept.
+//!   sealing month's base window, within one row's bound, and, once this
+//!   vault folds the request's signed result, only the copy that result
+//!   names (FIX 12065). With no result folded yet, whether it names the
+//!   copy is judged where the copy is kept.
 //! - Reverse rematerialization relays each copy this vault keeps that stands
 //!   on its fold (`KeptExportOutput::stands`), and drops a row once its
 //!   request is refused here, its result names another copy, or its secret
-//!   an admitted revoke ended or an erase here fenced. A row whose request
-//!   or result this vault has not folded stays, as an input row's does; any
-//!   other stays until its base window retires, as no fold says the owner
-//!   imported it.
+//!   an admitted revoke ended or an erase here fenced, or once the fold
+//!   holds the owner's mark that he imported it (FIX 12062): no install
+//!   relays a marked copy again. A row whose request or result this vault
+//!   has not folded stays, as an input row's does; any other stays until
+//!   its base window retires.
 //! - Every install keeps a relayed copy that stands on its fold, once,
 //!   rechecked in the writer that keeps it. Only the recipient machine opens
 //!   it; no install that keeps or relays it can.
@@ -24,9 +27,9 @@ use loro::{LoroDoc, LoroValue, ValueOrContainer};
 
 use super::super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::super::types::WindowKey;
-use super::{CUSTODY_MAP, commit_custody, holds_custody_map, refused};
+use super::{CUSTODY_MAP, admission_read_fault, commit_custody, holds_custody_map, refused};
 use crate::Vault;
-use crate::authority::AuthorityFold;
+use crate::authority::{AuthorityFold, SealedWorkOutput};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::secret_custody::holder_export::{
@@ -50,8 +53,11 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
 
 /// Admits one sealed copy under `row_key`, the map key after its prefix:
 /// one that decodes within one row's bound, filed under its own request, in
-/// its sealing month's base window.
+/// its sealing month's base window, and that the request's signed result
+/// names when `vault` folds one (FIX 12065): a forged copy under a real
+/// request is refused here, not carried until its window retires.
 pub(super) fn admit_export_output(
+    vault: &Vault,
     key: Option<&WindowKey>,
     row_key: &str,
     bytes: &[u8],
@@ -71,13 +77,42 @@ pub(super) fn admit_export_output(
             "export secret supplement outside its sealing month's base window",
         ));
     }
+    // Reading this vault's own authority is the store's work: its fault is
+    // this machine's, never the peer's refused update (FIX 5925).
+    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let fold = vault
+        .authority_view_readonly_in_txn(&rtxn)
+        .map_err(admission_read_fault)?;
+    if fold
+        .owner_work_result(&kept.request)
+        .is_some_and(|answer| !names_copy(answer.outcome.sealed_output(), &kept.sealed))
+    {
+        // The row's key alone: never a byte of the copy.
+        tracing::warn!(
+            request = row_key,
+            "an export secret supplement row its request's signed result does not name was refused"
+        );
+        return Err(refused(
+            "export secret supplement its request's signed result does not name",
+        ));
+    }
     Ok(())
+}
+
+/// Whether `output`, what a signed result names, is the copy `sealed`: its
+/// digest and length.
+fn names_copy(output: Option<&SealedWorkOutput>, sealed: &[u8]) -> bool {
+    output.is_some_and(|output| {
+        output.digest == *blake3::hash(sealed).as_bytes()
+            && usize::try_from(output.bytes).is_ok_and(|bytes| bytes == sealed.len())
+    })
 }
 
 /// Relays each copy this vault keeps into window `key`, the base window of
 /// its sealing month, while it stands on `fold` with `erased` as this
-/// vault's erase fences, and drops from the window every row due to leave
-/// it. Returns whether it wrote any.
+/// vault's erase fences and `fold` holds no import mark of its request, and
+/// drops from the window every row due to leave it, a marked one among
+/// them. Returns whether it wrote any.
 pub(super) fn mirror_export_outputs(
     vault: &Vault,
     doc: &LoroDoc,
@@ -93,7 +128,10 @@ pub(super) fn mirror_export_outputs(
     let fenced = |secret: &EntityId| erased.contains(secret);
     let mut wrote = false;
     for output in kept {
-        if WindowKey::from_timestamp(output.sealed_at) != *key || !output.stands(fold, fenced) {
+        if WindowKey::from_timestamp(output.sealed_at) != *key
+            || !output.stands(fold, fenced)
+            || fold.export_supplement_imported(&output.request)
+        {
             continue;
         }
         let bytes = output.encode();
@@ -124,8 +162,9 @@ pub(super) fn mirror_export_outputs(
             let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
                 return;
             };
-            if KeptExportOutput::decode(&bytes).is_some_and(|output| output.row_done(fold, fenced))
-            {
+            if KeptExportOutput::decode(&bytes).is_some_and(|output| {
+                output.row_done(fold, fenced) || fold.export_supplement_imported(&output.request)
+            }) {
                 done.push(map_key.to_owned());
             }
         });
@@ -139,8 +178,9 @@ pub(super) fn mirror_export_outputs(
 
 /// Keeps each relayed copy, filed under its own request, that stands on
 /// this vault's fold and that it keeps no copy for yet, checked again in the
-/// writer that keeps it. Any other row stays in the window, unread. A row
-/// that fails is logged and left.
+/// writer that keeps it. A copy the fold holds an import mark of is not
+/// kept: its relay is over (FIX 12062). Any other row stays in the window,
+/// unread. A row that fails is logged and left.
 pub(super) fn keep_relayed_export_outputs(
     vault: &Vault,
     window: &str,
@@ -159,6 +199,7 @@ pub(super) fn keep_relayed_export_outputs(
                     continue;
                 };
                 if *map_key == output_row(&output.request)
+                    && !fold.export_supplement_imported(&output.request)
                     && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
                 {
                     due.push(output);

@@ -93,6 +93,7 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)
             | AuthorityOp::OwnerWorkCancel(_)
+            | AuthorityOp::ExportSupplementImported(_)
             | AuthorityOp::CustodyPermitPiece(_)
             | AuthorityOp::WorldKeyWraps(_)
             | AuthorityOp::HomeCandidacy(_)
