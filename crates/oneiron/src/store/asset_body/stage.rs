@@ -48,6 +48,15 @@ pub(crate) struct StagedAssetBody {
     _pin: Option<ResultBodyPin>,
 }
 
+/// What a staged body leaves to hold once the put that names it is
+/// written, until that writer commits or aborts: a published file's pin
+/// (FIX 5399b) and its instance's lease (FIX 6022), without its bytes. A
+/// caller that stages many bodies in one writer holds these.
+pub(crate) struct StagedHold {
+    _key: Option<StagedBodyKey>,
+    _pin: Option<ResultBodyPin>,
+}
+
 enum Staged {
     Inline(Vec<u8>),
     /// The published file, held open, and what its manifest names it.
@@ -61,6 +70,19 @@ impl StagedAssetBody {
     /// The body's length, BLAKE3 and `xxh32`.
     pub(crate) const fn facts(&self) -> AssetBodyFacts {
         self.facts
+    }
+
+    /// What holding this body keeps once its put is written: its bytes and
+    /// its file go now, its pin and lease stay ([`StagedHold`]).
+    #[allow(
+        dead_code,
+        reason = "FIX 12091: the streamed checkpoint keep holds these"
+    )]
+    pub(crate) fn into_hold(self) -> StagedHold {
+        StagedHold {
+            _key: self.key,
+            _pin: self._pin,
+        }
     }
 
     /// The body's bytes when it stays in its row: `None` for a published
