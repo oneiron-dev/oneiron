@@ -29,6 +29,10 @@ pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
 /// OF-578: the functional role the attempt's executor ran as, frozen with
 /// `model` and `executor_seat`; its value is the role's serde token.
 pub const FIELD_EXECUTOR_ROLE: &str = "executor_role";
+/// FIX 8259: the lease generation (`AttemptRecord.attempt_count`) the attempt
+/// settled under, frozen at the terminal seal. Absent on receipts sealed
+/// before the stamp existed.
+pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
@@ -428,6 +432,14 @@ impl ReceiptRecord {
     #[must_use]
     pub fn executor_model(&self) -> Option<&str> {
         self.fields.get(FIELD_MODEL).map(String::as_str)
+    }
+
+    /// The lease generation the attempt settled under (FIX 8259), read from
+    /// the recorded field alone. `None` on receipts that predate the stamp,
+    /// or whose stamp does not parse.
+    #[must_use]
+    pub fn lease_generation(&self) -> Option<u32> {
+        self.fields.get(FIELD_LEASE_GENERATION)?.parse().ok()
     }
 
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never
