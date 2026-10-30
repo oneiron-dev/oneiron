@@ -12,9 +12,11 @@
 //! ([`compartment_access`]) and what the kept copies still need of them
 //! ([`kept`]). Projection (KS7-2), the mixed sync carriers (KS7-3), erase,
 //! hold and retention staging (KS7-4) and capture and restore (KS7-5) call
-//! them. Until KS7-6 flips [`CHECKPOINT_PAYLOADS_ENABLED`], every write here
-//! refuses and every read answers empty.
-#![allow(dead_code, reason = "CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6")]
+//! them, now that KS7-6 turned [`CHECKPOINT_PAYLOADS_ENABLED`] on.
+#![allow(
+    dead_code,
+    reason = "a history purge's generation roll and the strict live-key read wait on callers"
+)]
 
 pub(crate) mod capture;
 pub(crate) mod instance;
@@ -38,9 +40,10 @@ use crate::store::key_custody::{
 use self::instance::{Lifecycle, PayloadInstance};
 
 /// CALLS CHECKPOINT_PAYLOADS_ENABLED (Engine 10-20 07:1x): the one switch
-/// for all of KS-7, false until KS7-6. While it is false nothing mints a
-/// leaf, writes the instance table, changes a checkpoint manifest or refuses
-/// anything that runs today.
+/// for all of KS-7, on since KS7-6 (Engine 10-30 11:12). A capture seals
+/// each owner's rows under its compartment, an erase retires its leaves,
+/// and a restore opens what its custody still holds. Off, nothing mints a
+/// leaf, writes the instance table or changes a checkpoint manifest.
 ///
 /// Sealing is copy-only (call a): live rows and every reader of them stay as
 /// they are; only the copy a checkpoint takes of an owner's rows is sealed,
@@ -48,7 +51,7 @@ use self::instance::{Lifecycle, PayloadInstance};
 /// occurrences, never a digest (call b, [`Subtype`]). A history purge rolls
 /// the purged owner's generation, so its older checkpoints lose that owner's
 /// pre-purge history (call d, [`instance::roll_generation_in_txn`]).
-pub(crate) const CHECKPOINT_PAYLOADS_ENABLED: bool = false;
+pub(crate) const CHECKPOINT_PAYLOADS_ENABLED: bool = true;
 
 /// The width of an owner's canonical id in an item.
 pub(crate) const OWNER_LEN: usize = 32;
