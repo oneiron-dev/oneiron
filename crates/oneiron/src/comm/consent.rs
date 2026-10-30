@@ -7,11 +7,9 @@ use super::claims::{
 };
 use super::opt_out_slots::{
     consume_clear_gates_in_txn, opt_out_slot_heads_in_txn, pending_clear_request_at,
+    rematerialize_subject_contacts_in_txn,
 };
-use super::parties::{
-    active_comm_party_key_in_txn, resolve_or_create_party_in_txn, resolve_party,
-    resolve_party_ref_in_txn,
-};
+use super::parties::{resolve_or_create_party_in_txn, resolve_party, resolve_party_ref_in_txn};
 use super::projection_writes::{
     build_contact_view_in_txn, count_comm_claims, matching_claims_in_txn,
     put_engine_owned_comm_claim_in_txn, require_at_most_one,
@@ -138,7 +136,10 @@ pub fn request_opt_out_clear(
             created_at,
             pending: true,
         };
-        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &gate)?;
+        let gate_id = vault.store.clock.entity_id()?;
+        put_comm_record_in_txn(vault, wtxn, gate_id, &gate)?;
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(vault, wtxn, BTreeSet::from([gate_id]));
         Ok(CommClearOptOutOutcome::PendingHumanRuling)
     })
 }
@@ -234,6 +235,12 @@ pub fn approve_pending_opt_out_clear(
                 });
             if superseded {
                 consume_clear_gates_in_txn(vault, wtxn, &gates)?;
+                #[cfg(feature = "sync")]
+                crate::batch::queue_committed_rows(
+                    vault,
+                    wtxn,
+                    gates.iter().map(|(gate_id, _, _)| *gate_id).collect(),
+                );
                 // Commit the consumed gates, then refuse after the txn —
                 // returning Err here would roll the consume back.
                 return Ok(ClearRuling::Superseded);
@@ -739,56 +746,4 @@ pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
         channel_class,
         now,
     )
-}
-
-/// Re-derives the type-132 cache of every contact that folds a
-/// `channel_class` head standing on one of `subjects`.
-///
-/// A contact folds the heads of the ACTIVE party its key resolves to, and that
-/// party reads its shells through, so a head on a shell reaches the contacts of
-/// every active party the shell points at: a twin's survivor shares its key
-/// (F06 H170), and a merge of two different keys puts the survivor's contacts
-/// under the shell's heads (F06 R2-F3). Those parties come from the witnesses
-/// the fold's inbound walk reads, not the redirect table alone, and the walk
-/// has no depth or cycle error, so a dropped table or a long chain can neither
-/// narrow the refresh nor refuse the STOP (F06 R3-F1, R3-F2). A merged
-/// entity's own key is skipped: no active party answers it, so a rebuild there
-/// folds none of the heads it still carries and would drop its STOP (F06
-/// R4-F1). That also keeps a chain at one refresh per active head (R4-F2).
-/// Each key's contacts come from the full scan the send gate also uses:
-/// the party-channel index (ONE-1868) cannot prove it lists every contact.
-/// Channel scope stays the fold's class match, so an email STOP never
-/// re-derives a telegram contact. Answers the contacts whose rows it
-/// re-derived.
-fn rematerialize_subject_contacts_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    subjects: &BTreeSet<EntityId>,
-    channel_class: &str,
-    now: u64,
-) -> CommResult<Vec<EntityId>> {
-    let mut parties = subjects.clone();
-    parties.extend(crate::identity_redirect::outbound_redirect_heads_in_txn(
-        &vault.store,
-        &*wtxn,
-        subjects,
-    )?);
-    let mut party_keys = BTreeSet::new();
-    for party in parties {
-        party_keys.extend(active_comm_party_key_in_txn(&vault.store, &*wtxn, party)?);
-    }
-    let channel_class = normalize_channel_class(channel_class);
-    let mut contacts = Vec::new();
-    for party_key in party_keys {
-        contacts.extend(
-            crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
-                vault,
-                wtxn,
-                &party_key,
-                Some(&channel_class),
-                now,
-            )?,
-        );
-    }
-    Ok(contacts)
 }
