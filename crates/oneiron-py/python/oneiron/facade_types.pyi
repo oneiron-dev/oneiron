@@ -12674,6 +12674,7 @@ class OriginPublishReview(TypedDict):
     pages: int
     lfs_bytes: OriginPublishLfsBytes
     lossy_paths: bool
+    secret_history: NotRequired[bool | None]
 MirrorRefOutcome = Literal["pending", "dispatched", "applied", "observed_applied", "rejected", "unknown", "refused", "remote_moved", "paused", "covered", "held"]
 class OriginMirrorPlanRefView(TypedDict):
     ref_name: str
