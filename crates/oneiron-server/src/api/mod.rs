@@ -135,6 +135,8 @@ pub(crate) use self::facade::{
 // FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
 // authority clock floor.
 pub(crate) use self::facade::clock_ingress;
+// FIX 12323: a facade route's caller, as its receipt layer resolved it.
+pub(crate) use self::facade::resolved_facade_caller;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —

@@ -21,9 +21,12 @@ pub(super) async fn facade_invocation_claim(
         return next.run(request).await;
     };
     let (mut parts, body) = request.into_parts();
-    let resolved = parts.extensions.get::<ResolvedCaller>().cloned();
+    let resolved = parts
+        .extensions
+        .get::<ResolvedCaller>()
+        .map(|resolved| resolved.auth.clone());
     let auth = match resolved {
-        Some(ResolvedCaller(auth)) => auth,
+        Some(auth) => auth,
         None => match CoreAuth::from_request_parts(&mut parts, &server).await {
             Ok(auth) => auth,
             Err(_) => return next.run(Request::from_parts(parts, body)).await,
@@ -97,10 +100,51 @@ pub(super) async fn facade_invocation_claim(
 }
 
 /// The caller the facade's receipt layer resolved for one request, carried
-/// in its extensions to the invocation claim inside it, so one call
-/// resolves its credential once (FIX 2005).
+/// in its extensions to the invocation claim and the route inside it, so
+/// one call resolves its credential once (FIX 2005, FIX 12323). It keeps
+/// the path and headers it was resolved from: a request built on another
+/// one's extensions (an action's row, FIX 10938) is not the request it
+/// names.
 #[derive(Clone)]
-pub(super) struct ResolvedCaller(pub(super) CoreAuth);
+pub(super) struct ResolvedCaller {
+    pub(super) auth: CoreAuth,
+    path: String,
+    headers: HeaderMap,
+}
+
+impl ResolvedCaller {
+    /// `auth`, as resolved for the request `parts` head.
+    pub(super) fn of(auth: CoreAuth, parts: &axum::http::request::Parts) -> Self {
+        Self {
+            auth,
+            path: parts.uri.path().to_owned(),
+            headers: parts.headers.clone(),
+        }
+    }
+}
+
+/// The caller the receipt layer resolved for this same request, its path
+/// and headers unchanged, for the route's own `CoreAuth` extractor (FIX
+/// 12323). Only a caller whose standing the server reads again here, a
+/// slip, a token id or an attested owner, is taken, and only while it is
+/// still live ([`CoreAuth::credential_is_live`]). `None` for any other: the
+/// extractor resolves it as before, so a revoked or expired credential is
+/// refused there exactly as before, and an account key meets its own
+/// verifier again.
+pub(crate) fn resolved_facade_caller(
+    parts: &axum::http::request::Parts,
+    server: &SyncServer,
+) -> Option<CoreAuth> {
+    let resolved = parts.extensions.get::<ResolvedCaller>()?;
+    let auth = &resolved.auth;
+    let standing =
+        auth.verified_slip().is_some() || auth.jti().is_some() || auth.managed_owner().is_some();
+    (resolved.path == parts.uri.path()
+        && resolved.headers == parts.headers
+        && standing
+        && auth.credential_is_live(server.vault()))
+    .then(|| auth.clone())
+}
 
 /// How long a request naming an invocation another request is running
 /// waits for that call's reply before it is told to retry.
