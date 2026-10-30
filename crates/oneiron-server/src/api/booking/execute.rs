@@ -48,7 +48,8 @@ pub(crate) async fn execute_booking_operation(
 /// credential transport lists the publication's rows (the page, its
 /// publication claim and the event-type claims it validated) and its
 /// solve's (the calendar binding's claims and every row the listing oracle
-/// read), or the cached solve's, whose entry kept them; a silent admission
+/// read), or the cached solve's, whose entry kept them (a hit whose entry
+/// kept none is solved again for a credential caller); a silent admission
 /// answer lists the publication's alone. A hold lists the publication's and
 /// its offerability solve's (FIX 5483): the hold writer reads only
 /// node-local rows beside them. A confirm, reschedule or cancel lists the
@@ -109,6 +110,14 @@ async fn execute(
         &request,
         public_authority.as_ref(),
     )?;
+    // A credential caller's answer lists the rows it was derived from (FIX
+    // 6080): a hit cached without its solve's rows is solved again for it,
+    // still admitted as the hit it was (no new quota or wait). Every other
+    // caller takes the hit as before.
+    let cache_hit = cache.is_some();
+    let cache = cache.filter(|(_, sources)| {
+        sources.is_some() || transport.transport != BookingTransport::Credential
+    });
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
     let mut turn = turn::Turn::new(server, &transport);
@@ -129,7 +138,7 @@ async fn execute(
         }
         let disposition = match &request {
             BookingOperationRequest::Availability(_) => {
-                enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
+                enforce_slot_list(State(Arc::clone(server)), facts, cache_hit).await?
             }
             BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
                 enforce_hold(State(Arc::clone(server)), facts).await?

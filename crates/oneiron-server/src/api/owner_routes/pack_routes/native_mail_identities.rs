@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -21,19 +20,33 @@ use oneiron::channel_identity_provider::native_mail::NativeMailPack;
 use oneiron::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
-use super::super::{OwnerReply, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/packs/native_mail/identities", post(provision_identity))
-        .route(
-            "/packs/native_mail/identities/complete",
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/native_mail/identities",
+                summary: "Provision a native mail identity for an agent end to end (FIX 2096): the identity row, its Stalwart mailbox and the pack connection; a mailbox failure after admission answers the pending row with its fulfillment error.",
+                row: None,
+            },
+            post(provision_identity),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/native_mail/identities/complete",
+                summary: "Retry the mailbox fulfillment of a pending native mail identity.",
+                row: None,
+            },
             post(complete_identity),
-        )
+        ),
+    ]
 }
 
 /// The agent a new native mail identity speaks for, and its address.
