@@ -232,6 +232,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TAGGING_PROVISIONAL, CONTENT),
     (&t::TAGGING_PROVISIONAL_HINT, CONTENT),
     (&t::TAGGING_TAG_SET, CONTENT),
+    (&t::TASK_ACCEPTED_REVIEW, CONTENT),
     (&t::TASK_ASK_BAND, CONTENT),
     (&t::TASK_ASK_LINK_SIGNER, LIVE),
     (&t::TASK_ASK_OPTION_LINK, LIVE),
