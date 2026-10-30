@@ -170,6 +170,7 @@ impl Shape {
                     ResponseFormat::Json { schema }
                 }),
                 locality: self.locality,
+                host_keyless: false,
             },
             messages,
             tools: Vec::new(),

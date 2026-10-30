@@ -64,6 +64,7 @@ pub(crate) fn admit_media_at(
         binding: HostInferenceBinding::Advertised {
             model: request.model.clone(),
             locality,
+            keyless: false,
         },
         extraction_egress,
     };

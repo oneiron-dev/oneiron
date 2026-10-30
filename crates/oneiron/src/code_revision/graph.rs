@@ -11,9 +11,7 @@ use crate::code_artifact::decode_code_artifact_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::limits::{
-    ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
-};
+use crate::scan_check::{EngineScan, ScanCount};
 
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::store::Store;
@@ -59,19 +57,17 @@ fn would_create_child_of_cycle(
     child: &EntityId,
     parent: &EntityId,
 ) -> Result<bool> {
+    let mut count = ScanCount::start(store, txn, EngineScan::AudienceEdgeRows, child.as_bytes())?;
     let mut frontier = VecDeque::new();
     frontier.push_back(*parent);
     let mut visited = HashSet::new();
     visited.insert(*parent);
-    let mut traversed_steps = 0usize;
 
     while let Some(node) = frontier.pop_front() {
         for next_parent in child_of_parents(store, txn, &node)? {
-            if traversed_steps >= MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS {
-                return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
-            }
-            traversed_steps += 1;
+            count.row();
             if next_parent == *child {
+                count.defer(store);
                 return Ok(true);
             }
             if visited.insert(next_parent) {
@@ -80,6 +76,7 @@ fn would_create_child_of_cycle(
         }
     }
 
+    count.defer(store);
     Ok(false)
 }
 
@@ -174,18 +171,27 @@ pub(super) fn require_code_revision_ancestor(
     parent_revision_id: &EntityId,
     ancestor_revision_id: &EntityId,
 ) -> Result<()> {
+    let mut count = ScanCount::start(
+        store,
+        rtxn,
+        EngineScan::DagWalkRecords,
+        parent_revision_id.as_bytes(),
+    )?;
     let mut cursor = *parent_revision_id;
     let mut visited = HashSet::new();
 
-    for _ in 0..MAX_ANCESTOR_DEPTH {
+    loop {
         if cursor == *ancestor_revision_id {
+            count.defer(store);
             return Ok(());
         }
         if !visited.insert(cursor) {
+            count.defer(store);
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision parent chain contains a cycle",
             )));
         }
+        count.row();
         let revision = require_known_code_revision(store, rtxn, &cursor)?;
         let Some(parent_id) = revision.parent_revision_id else {
             break;
@@ -193,9 +199,7 @@ pub(super) fn require_code_revision_ancestor(
         cursor = parent_id;
     }
 
-    if visited.len() >= MAX_ANCESTOR_DEPTH {
-        return Err(Error::IndexOverflow("code_revision_parent_chain"));
-    }
+    count.defer(store);
     Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
         "reverted_to_revision_id must be an ancestor of parent_revision_id",
     )))

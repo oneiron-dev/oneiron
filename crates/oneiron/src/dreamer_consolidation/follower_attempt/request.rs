@@ -121,6 +121,7 @@ pub(super) fn route_digest(model: &ModelId, locality: ModelLocality) -> [u8; 32]
 pub(super) fn ask_request(
     model: &ModelId,
     locality: ModelLocality,
+    keyless: bool,
     work: &AskWork,
     labels: &CallLabelMap,
 ) -> Result<LlmRequest> {
@@ -141,6 +142,7 @@ pub(super) fn ask_request(
     let mut request = request(
         model,
         locality,
+        keyless,
         &work.pins,
         work.instruction.clone(),
         content,
@@ -162,6 +164,7 @@ pub(super) fn ask_request(
 pub(super) fn fold_request(
     model: &ModelId,
     locality: ModelLocality,
+    keyless: bool,
     instruction: &str,
     group: &[String],
     pins: &[Pin],
@@ -170,12 +173,20 @@ pub(super) fn fold_request(
         .iter()
         .map(|text| ContentPart::Text { text: text.clone() })
         .collect();
-    request(model, locality, pins, instruction.to_owned(), content)
+    request(
+        model,
+        locality,
+        keyless,
+        pins,
+        instruction.to_owned(),
+        content,
+    )
 }
 
 fn request(
     model: &ModelId,
     locality: ModelLocality,
+    keyless: bool,
     pins: &[Pin],
     system: String,
     content: Vec<ContentPart>,
@@ -203,6 +214,7 @@ fn request(
             ),
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: vec![

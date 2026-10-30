@@ -59,7 +59,6 @@ pub(crate) struct JudgeTrace {
     pub(crate) model: Option<String>,
     /// The receipt of each decision that gave `answers`, in order; empty when
     /// no ladder was asked (FIX 447).
-    #[allow(dead_code, reason = "the amendment judgment row keeps them (FIX 447)")]
     pub(crate) receipts: Vec<crate::llm::decision::DecisionReceipt>,
 }
 
