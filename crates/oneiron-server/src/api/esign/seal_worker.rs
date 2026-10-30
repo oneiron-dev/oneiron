@@ -25,9 +25,10 @@
 //! installed (a seal pack updated or removed), the host drops it, and the
 //! tick installs the current one, or waits for one. A pack's seal build is
 //! third party unless the operator listed its blake3
-//! (`--trusted-organ-build`, FIX 7644), and a third-party organ cannot start
-//! until filesystem confinement for organs lands: seals then wait, and the
-//! worker says so once. The program the host names stays first party.
+//! (`--trusted-organ-build`, FIX 7644), and a third-party organ starts only
+//! inside a filesystem fence (Landlock on Linux, Seatbelt on macOS, FIX
+//! 7885): on a host with none, seals wait, and the worker says so once. The
+//! program the host names stays first party.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -200,13 +201,14 @@ fn tick(
     }
     if let Some(installed) = host.spec(SEAL_ORGAN)
         && installed.tier == OrganTier::ThirdParty
+        && !oneiron_organ_host::filesystem_confined()
     {
         let build = installed
             .program_hash
             .map(|hash| hash.to_hex())
             .unwrap_or_default();
         return Err(format!(
-            "the seal organ build {build} is third party, and this platform has no filesystem confinement for organs yet: set {}, or list the build with --trusted-organ-build",
+            "the seal organ build {build} is third party, and this host has no filesystem fence for organs (Landlock ABI 3 on Linux, sandbox-exec on macOS): set {}, or list the build with --trusted-organ-build",
             seal.name(ORGAN)
         ));
     }
@@ -333,13 +335,13 @@ fn install(server: &SyncServer, seal: &SealConfig, fetch: FetchGrant) -> Result<
     let tier = server.pack_build_tier(&binary.build);
     let spec = seal_spec_from_pack(&binary, &server.organ_dir(), tier, fetch)
         .map_err(|err| format!("the seal organ build: {err}"))?;
-    if tier == OrganTier::ThirdParty {
+    if tier == OrganTier::ThirdParty && !oneiron_organ_host::filesystem_confined() {
         tracing::warn!(
             organ = SEAL_ORGAN,
             pack = %entry.pack_name,
             build = %binary.build.blake3,
             %platform,
-            "pack organ build is third party: it will not start on this platform until filesystem confinement for organs lands; to seal with it, the operator lists its blake3 with --trusted-organ-build, or names a seal organ program"
+            "pack organ build is third party: it will not start on this host, which has no filesystem fence for organs (Landlock ABI 3 on Linux, sandbox-exec on macOS); to seal with it, the operator lists its blake3 with --trusted-organ-build, or names a seal organ program"
         );
     }
     Ok(spec)

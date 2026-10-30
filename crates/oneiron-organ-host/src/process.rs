@@ -373,18 +373,15 @@ impl OrganProcess {
         ours.set_nonblocking(true)?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
-        let mut command =
-            oneiron_spawn::command_with_fds(&spec.program, &[(theirs.as_raw_fd(), 3)]);
-        command.args(&spec.args);
-        let confined = sandbox::confine(&mut command, spec)?;
+        let (mut command, confined) = sandbox::command(spec, theirs.as_raw_fd())?;
         let child = command.spawn()?;
         drop(theirs);
-        let (isolation, cell) = confined.started();
+        let (isolation, cell, scratch) = confined.started();
         // A first-party organ's soft limits follow what its own buffers are
         // granted (FIX 6194); only Linux can move another process's.
         let reconciled = (spec.tier == OrganTier::FirstParty && cfg!(target_os = "linux"))
             .then_some(spec.memory_bytes);
-        let lifeline = Lifeline::new(child, shutdown, cell, reconciled);
+        let lifeline = Lifeline::new(child, shutdown, cell, scratch, reconciled);
         let pid = lifeline.pid;
         let mut guard = EndOnDrop(Some(Arc::clone(&lifeline)));
         let (hello, hello_lease) = handshake(

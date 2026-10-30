@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::budget::BudgetConfig;
 
-/// Whose code an organ is. Third-party organs need filesystem confinement,
-/// which no platform has yet, so the host refuses them.
+/// Whose code an organ is. A third-party organ runs only inside a
+/// filesystem fence (Landlock on Linux, Seatbelt on macOS, FIX 7885); a
+/// host with none refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrganTier {
     FirstParty,
@@ -74,6 +75,14 @@ pub struct OrganSpec {
     pub max_ask_bytes: u64,
     /// Where a granted `net.fetch` may go.
     pub fetch: FetchGrant,
+    /// What a third-party organ's fence lets it read besides the system's
+    /// own files and its program: dirs, each with all under it, or files.
+    /// A pack build is its program alone, and inputs cross as sealed
+    /// regions on its socket, so a pack organ names none. It writes only
+    /// its own scratch dir, which the host makes for each process and
+    /// removes as it ends; outputs cross as sealed regions too. A
+    /// first-party organ is not fenced and ignores it.
+    pub read_dirs: Vec<PathBuf>,
 }
 
 /// One ask verb an install grant names.
@@ -156,6 +165,7 @@ impl OrganSpec {
                 max_bytes: 8 * 1024 * 1024,
                 ..FetchGrant::default()
             },
+            read_dirs: Vec::new(),
         }
     }
 }
