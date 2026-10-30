@@ -245,14 +245,16 @@ impl WindowManager {
     /// Takes `bundle` and its pad object in, read from `holder`: opens every
     /// section this machine may read and merges each window into its mirror.
     /// A full machine materializes the rows; an `opened`-item machine keeps
-    /// them in the mirror until a promotion materializes it.
+    /// them in the mirror until a promotion materializes it. Beside the take,
+    /// the worlds a kit restore of `bundle` still awaits a reader for
+    /// ([`sealed_bundle_awaiting_reader`], FIX 4496).
     pub fn take_sealed_bundle(
         &self,
         bundle: &SealedVaultBundle,
         pads: &SealedKeyPads,
         holder: Destination,
         opened: bool,
-    ) -> Result<SealedBundleTake> {
+    ) -> Result<(SealedBundleTake, Vec<EntityId>)> {
         let vault = self.vault();
         let outer = vault.open_vault_bundle(bundle, holder)?;
         let pads = vault.open_key_pads(pads)?;
@@ -269,7 +271,7 @@ impl WindowManager {
             self.take_section(&section, !opened, &mut take);
         }
         take.authority = vault.import_opened_world_capsules(&outer)?;
-        Ok(take)
+        Ok((take, sealed_bundle_awaiting_reader(vault, &outer)?))
     }
 
     /// Kit restore from the sealed cloud bundle, on an install that is no
@@ -573,6 +575,21 @@ fn with_world_authority(mut base: Vec<Vec<u8>>, capsules: Vec<Vec<u8>>) -> Vec<V
         }
     }
     base
+}
+
+/// The worlds whose authority capsule `opened` files sealed to no recovery
+/// root pinned here now (FIX 4496): a kit restore of that generation restores
+/// each world's keys only once a machine that reads it publishes again. None
+/// when no root is pinned.
+pub(crate) fn sealed_bundle_awaiting_reader(
+    vault: &Vault,
+    opened: &OpenedVaultBundle,
+) -> Result<Vec<EntityId>> {
+    let pinned = {
+        let txn = vault.store.env.read_txn()?;
+        vault.authority_view_readonly_in_txn(&txn)?.pinned_root
+    };
+    Ok(opened.worlds_awaiting_reader(pinned.map(|pin| pin.id)))
 }
 
 /// Whether `world` was deleted here or its keys destroyed here: an ordinary take

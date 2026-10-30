@@ -4,7 +4,8 @@
 //! upkeep runs as before and never waits on this record; it only notes each
 //! result as it passes ([`observe_sealed_bundle_relay`]). A relay that did
 //! not reach the home measured nothing and replaces no observation, and the
-//! pending counts come only from a relay whose sweep counted them. Before
+//! pending counts come only from a relay whose sweep counted them, and the
+//! worlds awaiting a reader only from one that took or published. Before
 //! that there is no observation, which is not zero. Nothing expires: a newer
 //! measurement replaces the older one. Held in memory, keyed by this
 //! install's machine as the host's connections are, so a restart starts
@@ -27,6 +28,11 @@ pub struct SealedBundleRelayObservation {
     /// The last relay whose erase sweep ran, and when: the one whose
     /// `pending_pad_access` and `pending_erases` were counted.
     pub swept: Option<(u64, SealedBundleRelay)>,
+    /// The last relay that took or published a generation, and when: the one
+    /// whose `awaiting_reader` (and, for an upload, `incomplete_authority`)
+    /// names what a kit restore of the home's newest copy still awaits
+    /// (FIX-LIST 11944).
+    pub generation: Option<(u64, SealedBundleRelay)>,
     /// The last relay that failed, and when, with its error. A later relay
     /// that finishes does not clear it: the times say which is newer.
     pub failed: Option<(u64, String)>,
@@ -74,6 +80,9 @@ pub(crate) fn observe_sealed_bundle_relay(
         Ok(relay) => {
             if relay.swept {
                 entry.swept = Some((at, relay.clone()));
+            }
+            if relay.moved_generation() {
+                entry.generation = Some((at, relay.clone()));
             }
             entry.relayed = Some((at, relay.clone()));
         }

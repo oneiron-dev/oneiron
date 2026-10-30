@@ -33,12 +33,14 @@ mod pad_sweep;
 mod publication;
 mod refill;
 mod relay_observation;
+mod report;
 mod sweep;
 mod turn;
 
 pub use self::access::PadAdmissionReport;
 pub(crate) use self::relay_observation::observe_sealed_bundle_relay;
 pub use self::relay_observation::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
+pub use self::report::SealedBundleRelay;
 
 use std::sync::Arc;
 
@@ -55,7 +57,7 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::{
-    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject, SealedBundleTake,
+    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject,
     holds_sealed_bundle, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
     sealed_generation_hex,
 };
@@ -129,31 +131,6 @@ fn home_holds_sealed_bundle(vault: &Vault, home: PeerMachine) -> crate::error::R
             .map(|roster| roster.profile.device_class),
     };
     Ok(class.is_none_or(holds_sealed_bundle))
-}
-
-/// What one bundle relay moved.
-#[derive(Debug, Clone, Default)]
-pub struct SealedBundleRelay {
-    /// The newest generation taken in this slot, and what its take moved.
-    pub taken: Option<(SealedBundleGeneration, SealedBundleTake)>,
-    /// The generation this machine published for the slot.
-    pub published: Option<SealedBundleGeneration>,
-    /// Erased worlds and hard-erased keys stripped from every pad object the
-    /// home keeps.
-    pub erased: usize,
-    /// Grants of a kept pad object's key this machine sealed for a machine
-    /// admitted since its generation, and the home took (FIX 4271).
-    pub offered: usize,
-    /// Kept pad objects that open with no key here yet: their access is
-    /// pending with the home. Never a swept erase.
-    pub pending_pad_access: usize,
-    /// Erased worlds and keys held back, unswept, while a kept pad object
-    /// opens with no key here.
-    pub pending_erases: usize,
-    /// The relay reached the home; one that did not counted nothing (FIX 4953).
-    pub reached: bool,
-    /// Erase's sweep ran, so the two pending counts were counted (FIX 4953).
-    pub swept: bool,
 }
 
 /// The entry a commit's reply names: what the home acknowledged.
@@ -435,9 +412,10 @@ impl SlotRelay<'_> {
                 .await
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
                 match took {
-                    Ok(take) => {
+                    Ok((take, awaiting)) => {
                         cursor.taken = Some(newest);
                         relay.taken = Some((newest, take));
+                        relay.awaiting_reader = awaiting;
                     }
                     // Not taken: the next slot takes it again before any
                     // upload (FIX 3358).
@@ -491,7 +469,7 @@ impl SlotRelay<'_> {
             let slot = self.slot;
             // A full machine lands what the assembly merges (FIX 4788).
             let materialize = self.mode == SyncResidenceMode::All;
-            let (upload, back) = turn::renewing_turn(rpc, move || {
+            let (upload, awaiting, back) = turn::renewing_turn(rpc, move || {
                 let upload = manager.assemble_sealed_bundle(
                     slot,
                     holder,
@@ -499,7 +477,13 @@ impl SlotRelay<'_> {
                     None,
                     materialize,
                 );
-                (upload, held)
+                let awaiting = upload.as_ref().map_or_else(
+                    |_| Vec::new(),
+                    |upload| {
+                        report::published_awaiting_reader(manager.vault(), &upload.bundle, holder)
+                    },
+                );
+                (upload, awaiting, held)
             })
             .await?;
             held = back;
@@ -534,6 +518,8 @@ impl SlotRelay<'_> {
             {
                 cursor.taken = Some(generation);
                 relay.published = Some(generation);
+                relay.incomplete_authority = upload.incomplete_authority;
+                relay.awaiting_reader = awaiting;
                 break;
             }
             // A refused upload: when the newest generation moved meanwhile,
