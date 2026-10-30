@@ -596,6 +596,8 @@ class Oneiron:
         @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
         @property
+        def outbox(self) -> "Oneiron._VaultOutboxVerbs": ...
+        @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs": ...
         @property
         def shared(self) -> "Oneiron._VaultSharedVerbs": ...
@@ -1665,6 +1667,14 @@ class Oneiron:
             """Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."""
         def dial(self, spec: Facade.MeshDialRequest) -> Facade.MeshPathReceipt:
             """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
+    class _VaultOutboxVerbs:
+        @property
+        def diverged(self) -> "Oneiron._VaultOutboxDivergedVerbs": ...
+    class _VaultOutboxDivergedVerbs:
+        def list(self, spec: Facade.EmptyRequest) -> Facade.OutboxDivergedPage:
+            """The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."""
+        def answer(self, spec: Facade.OutboxDivergedAnswerRequest) -> Facade.OutboxDivergedAnswerReceipt:
+            """The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."""
     class _VaultInspectionVerbs:
         def resolve(self, spec: Facade.InspectionResolveRequest) -> Facade.InspectionResolved:
             """Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."""

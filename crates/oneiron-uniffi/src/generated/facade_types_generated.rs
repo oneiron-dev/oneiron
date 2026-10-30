@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1207 facade rows, 4361 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1159.
+// UniFFI census: 1209 facade rows, 4373 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1161.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -20535,6 +20535,161 @@ pub struct MeshDialRequest {
     pub address: MeshMachineAddress,
     #[serde(rename = "alpn")]
     pub alpn: Vec<u8>,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxCardKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutboxCardKind {
+    #[serde(rename = "outbox_diverged")]
+    OutboxDiverged,
+    #[serde(rename = "outbox_source_damaged")]
+    OutboxSourceDamaged,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxDivergedAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutboxDivergedAnswer {
+    #[serde(rename = "keep")]
+    Keep,
+    #[serde(rename = "remove")]
+    Remove,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxCardAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutboxCardAction {
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "answer")]
+    pub answer: OutboxDivergedAnswer,
+    #[serde(rename = "route")]
+    pub route: String,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxOwnerCard`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutboxOwnerCard {
+    #[serde(rename = "kind")]
+    pub kind: OutboxCardKind,
+    #[serde(rename = "headline")]
+    pub headline: String,
+    #[serde(rename = "body")]
+    pub body: String,
+    #[serde(rename = "actions")]
+    pub actions: Vec<OutboxCardAction>,
+}
+
+/// `oneiron_vault_contract::lib::vm_outbox::VmOutboxKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VmOutboxKind {
+    #[serde(rename = "escrow")]
+    Escrow,
+    #[serde(rename = "custody")]
+    Custody,
+    #[serde(rename = "esign")]
+    Esign,
+    #[serde(rename = "training")]
+    Training,
+    #[serde(rename = "recipients")]
+    Recipients,
+    #[serde(rename = "backup")]
+    Backup,
+    #[serde(rename = "backup_stage_ack")]
+    BackupStageAck,
+}
+
+/// `oneiron_vault_contract::lib::vm_outbox::VmOutboxSide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VmOutboxSide {
+    #[serde(rename = "guest")]
+    Guest,
+    #[serde(rename = "host")]
+    Host,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxMemberStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum OutboxMemberStatus {
+    #[serde(rename = "diverged_unagreed")]
+    DivergedUnagreed {
+        #[serde(rename = "kind")]
+        kind: VmOutboxKind,
+        #[serde(rename = "member")]
+        member: String,
+        #[serde(rename = "held_by")]
+        held_by: VmOutboxSide,
+        #[serde(rename = "held")]
+        held: String,
+        #[serde(rename = "length")]
+        length: u64,
+        #[serde(rename = "retired", default, skip_serializing_if = "Option::is_none")]
+        retired: Option<String>,
+        #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+        answer: Option<OutboxDivergedAnswer>,
+    },
+    #[serde(rename = "source_digest_mismatch")]
+    SourceDigestMismatch {
+        #[serde(rename = "kind")]
+        kind: VmOutboxKind,
+        #[serde(rename = "member")]
+        member: String,
+        #[serde(rename = "recorded")]
+        recorded: String,
+        #[serde(rename = "read")]
+        read: String,
+    },
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxDivergedMember`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OutboxDivergedMember {
+    #[serde(rename = "card")]
+    pub card: OutboxOwnerCard,
+    #[serde(flatten)]
+    pub outbox_member_status: OutboxMemberStatus,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxDivergedPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutboxDivergedPage {
+    #[serde(rename = "carrier")]
+    pub carrier: bool,
+    #[serde(rename = "members")]
+    pub members: Vec<OutboxDivergedMember>,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxDivergedAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutboxDivergedAnswerRequest {
+    #[serde(rename = "kind")]
+    pub kind: VmOutboxKind,
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "held")]
+    pub held: String,
+    #[serde(rename = "answer")]
+    pub answer: OutboxDivergedAnswer,
+}
+
+/// `oneiron::verbs::outbox_diverged::OutboxDivergedAnswerReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutboxDivergedAnswerReceipt {
+    #[serde(rename = "kind")]
+    pub kind: VmOutboxKind,
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "held")]
+    pub held: String,
+    #[serde(rename = "answer")]
+    pub answer: OutboxDivergedAnswer,
+    #[serde(rename = "queued")]
+    pub queued: bool,
 }
 
 /// `oneiron::lens::inspection::InspectionResolveRequest`.
@@ -51948,13 +52103,21 @@ pub enum ConnectorCallReply {
     },
 }
 
+/// `oneiron::verbs::live_voice::LiveVoiceToolCallReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum LiveVoiceToolCallReply {
+    QuestionsNarrowed(NarrowedQuestions),
+    Done(ConnectorCallReply),
+}
+
 /// `oneiron::verbs::live_voice::LiveVoiceToolReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceToolReply {
     #[serde(rename = "processed")]
     pub processed: LiveVoiceProcessed,
     #[serde(rename = "reply")]
-    pub reply: ConnectorCallReply,
+    pub reply: LiveVoiceToolCallReply,
 }
 
 /// `oneiron::verbs::act_answer::ActAnswer` with `T` = `LiveVoiceToolReply`.

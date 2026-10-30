@@ -541,7 +541,7 @@ fn kept_body(kept: Arc<KeptExport>, start: u64, end: u64) -> Body {
             }
             let len = (end - at).min(TRANSFER_PIECE_BYTES);
             let reader = Arc::clone(&kept);
-            let piece = tokio::task::spawn_blocking(move || reader.piece(at, len))
+            let piece = super::clock_ingress::run_blocking(move || reader.piece(at, len))
                 .await
                 .unwrap_or_else(|_| Err(std::io::Error::other("export transfer read stopped")));
             match piece {

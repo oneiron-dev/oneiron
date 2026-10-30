@@ -24,7 +24,7 @@ async fn owned<T: Send + 'static>(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         owner.revalidate(server.vault())?;
         act(&server, &owner)
     })
@@ -72,7 +72,7 @@ pub(crate) async fn vault_slim_drop_heavy(
     let answer = server
         .vault()
         .shed_rebuildable_heap_as_owner(owner, input, |attempt| async move {
-            tokio::task::spawn_blocking(move || attempt.run())
+            super::clock_ingress::run_blocking(move || attempt.run())
                 .await
                 .map_err(|_| internal(VERB))
         })
