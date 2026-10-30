@@ -6,18 +6,21 @@
 //! larger one is read in pages (FIX 6331), every call inside GitWire's own
 //! output and runtime bounds, and no bound ends the walk. Commits come in
 //! topological pages, each resumed from the frontier the pages before it
-//! left. Each slice of a page lists the objects its commits reach apart from
-//! what their parents outside the slice reach. A slice whose listing still
-//! overflows or runs out of time splits in half, down to one commit's tree
-//! and then that tree's entries.
+//! left; a page that overflows or runs out of time is asked again at half
+//! (FIX 6393). Each slice of a page lists the objects its commits reach apart
+//! from what their parents outside the slice reach. A slice whose listing
+//! still overflows or runs out of time splits in half, down to one commit's
+//! tree and then that tree's entries, read in pages when one listing of
+//! them passes the bounds.
 
 use std::collections::{BTreeSet, HashSet};
 
 use super::argv::FrozenGitArgv;
 use super::failure::invalid;
+use super::objects::parse_tree_entries;
 use super::{
-    GitOid, GitWire, GitWireFailure, GitWireFailureClass, GitWireOperation, GitWireRepo,
-    GitWireResult,
+    GitOid, GitTreeEntry, GitWire, GitWireFailure, GitWireFailureClass, GitWireOperation,
+    GitWireRepo, GitWireResult,
 };
 use crate::error::Result;
 
@@ -36,6 +39,10 @@ const COMMIT_PAGE: usize = 65_536;
 /// Commits whose objects one reachable-objects call lists. A call that
 /// overflows or runs out of time splits in half.
 const OBJECT_SLICE_COMMITS: usize = 2_048;
+
+/// Direct entries of one tree the walk takes at a time, the oids one size
+/// batch carries.
+const TREE_PAGE_ENTRIES: usize = SIZE_BATCH_OIDS;
 
 /// The tree entry mode of a tree.
 const TREE_MODE: u32 = 0o040_000;
@@ -187,9 +194,7 @@ impl GitWire<'_> {
             let argv = FrozenGitArgv::commit_page(&positives, walked, page_size);
             let output = match self.run_read_classified(repo, &argv)? {
                 Ok(output) => output,
-                Err(failure)
-                    if failure.class() == GitWireFailureClass::OutputOverflow && page_size > 1 =>
-                {
+                Err(failure) if past_bound(&failure) && page_size > 1 => {
                     page_size /= 2;
                     continue;
                 }
@@ -288,20 +293,30 @@ impl GitWire<'_> {
             Err(failure) if past_bound(&failure) => match trees {
                 [] => Ok(true),
                 [tree] => {
-                    let mut subtrees = Vec::new();
-                    let mut blobs = Vec::new();
-                    for entry in self.read_tree(repo, tree)? {
-                        match entry.mode {
-                            TREE_MODE => subtrees.push(entry.oid),
-                            GITLINK_MODE => {}
-                            _ => blobs.push(entry.oid),
+                    let mut complete = true;
+                    self.read_tree_paged(repo, tree, &mut |entries| {
+                        let mut subtrees = Vec::new();
+                        let mut blobs = Vec::new();
+                        for entry in entries {
+                            match entry.mode {
+                                TREE_MODE => subtrees.push(entry.oid.clone()),
+                                GITLINK_MODE => {}
+                                _ => blobs.push(entry.oid.clone()),
+                            }
                         }
-                    }
-                    let mut complete = self.visit_small_blobs(repo, &blobs, below_bytes, visit)?;
-                    if !subtrees.is_empty() {
                         complete &=
-                            self.walk_trees(repo, &subtrees, exclude, below_bytes, visit)?;
-                    }
+                            self.visit_small_blobs(repo, &blobs, below_bytes, &mut *visit)?;
+                        if !subtrees.is_empty() {
+                            complete &= self.walk_trees(
+                                repo,
+                                &subtrees,
+                                exclude,
+                                below_bytes,
+                                &mut *visit,
+                            )?;
+                        }
+                        Ok(())
+                    })?;
                     Ok(complete)
                 }
                 _ => {
@@ -313,6 +328,44 @@ impl GitWire<'_> {
             },
             Err(failure) => Err(failure.error(GitWireOperation::ReachableObjects)),
         }
+    }
+
+    /// Hands `visit_page` the direct entries of one tree, in pages of at most
+    /// [`TREE_PAGE_ENTRIES`] in tree order (FIX 6393). A listing inside the
+    /// per-call bounds is read in one call; one past them is spooled whole
+    /// and parsed one range at a time
+    /// ([`Self::for_each_tree_entry_retained`], Rule 5), so no tree is too
+    /// wide to walk.
+    fn read_tree_paged(
+        &self,
+        repo: &GitWireRepo,
+        tree: &GitOid,
+        visit_page: &mut dyn FnMut(&[GitTreeEntry]) -> Result<()>,
+    ) -> Result<()> {
+        let argv = FrozenGitArgv::read_tree(tree);
+        match self.run_read_classified(repo, &argv)? {
+            Ok(output) => {
+                for page in parse_tree_entries(&output.stdout)?.chunks(TREE_PAGE_ENTRIES) {
+                    visit_page(page)?;
+                }
+                return Ok(());
+            }
+            Err(failure) if past_bound(&failure) => {}
+            Err(failure) => return Err(failure.error(argv.operation())),
+        }
+        let mut page = Vec::new();
+        self.for_each_tree_entry_retained(repo, tree, &mut |entry| {
+            page.push(entry);
+            if page.len() >= TREE_PAGE_ENTRIES {
+                visit_page(page.as_slice())?;
+                page.clear();
+            }
+            Ok(())
+        })?;
+        if !page.is_empty() {
+            visit_page(page.as_slice())?;
+        }
+        Ok(())
     }
 
     /// Sizes `reached` in bounded batches and reads each blob smaller than
