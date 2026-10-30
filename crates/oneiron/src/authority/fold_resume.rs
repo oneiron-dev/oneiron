@@ -154,11 +154,22 @@ pub(in crate::authority) struct FoldBase {
     rows: BTreeMap<AuthorityEntryHash, RowSummary>,
     /// The rows a fold past the base reads whole: see [`is_projected`].
     projected: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    receipts: BaseReceipts,
+    once: Once,
+}
+
+/// The first-seen seconds and sequence floors a base folded its rows under,
+/// and which of them are write-once receipts' (FIX 1854).
+struct BaseReceipts {
     first_seen: BTreeMap<AuthorityEntryHash, u64>,
     floors: BTreeMap<AuthorityEntryHash, u64>,
-    /// The rows whose first-seen seconds and floor are write-once receipts'.
+    /// The rows whose first-seen seconds and floor are write-once receipts':
+    /// a fold past the base carries them unread. Each is a row of the base
+    /// with first-seen seconds.
     pinned: BTreeSet<AuthorityEntryHash>,
-    once: Once,
+    /// Every other row of the base: a fold past it reads these again (FIX
+    /// 12282), and finds them without a walk over the pinned rows.
+    unpinned: BTreeSet<AuthorityEntryHash>,
 }
 
 impl FoldBase {
@@ -180,26 +191,42 @@ impl FoldBase {
                 .filter(|(_, entry)| is_projected(&entry.op))
                 .map(|(hash, entry)| (*hash, (*entry).clone()))
                 .collect(),
-            first_seen: first_seen.clone(),
-            floors: floors.clone(),
-            pinned: BTreeSet::new(),
+            receipts: BaseReceipts {
+                first_seen: first_seen.clone(),
+                floors: floors.clone(),
+                pinned: BTreeSet::new(),
+                unpinned: rows.iter().map(|(hash, _)| *hash).collect(),
+            },
             once,
         }
     }
 
     /// This base, with `pinned` the rows it took from write-once receipts.
-    pub(in crate::authority) fn with_pinned(self, pinned: BTreeSet<AuthorityEntryHash>) -> Self {
-        Self { pinned, ..self }
+    /// It keeps only its own rows with first-seen seconds; a read pins no
+    /// other.
+    pub(in crate::authority) fn with_pinned(
+        mut self,
+        pinned: BTreeSet<AuthorityEntryHash>,
+    ) -> Self {
+        let pinned: BTreeSet<_> = pinned
+            .into_iter()
+            .filter(|hash| {
+                self.rows.contains_key(hash) && self.receipts.first_seen.contains_key(hash)
+            })
+            .collect();
+        self.receipts.unpinned = self
+            .rows
+            .keys()
+            .filter(|hash| !pinned.contains(*hash))
+            .copied()
+            .collect();
+        self.receipts.pinned = pinned;
+        self
     }
 
-    /// Each pinned row's first-seen seconds and floor, as a read answers them.
-    pub(in crate::authority) fn pinned_receipts(
-        &self,
-    ) -> impl Iterator<Item = (AuthorityEntryHash, u64, Option<u64>)> + '_ {
-        self.pinned.iter().filter_map(move |hash| {
-            let first_seen = *self.first_seen.get(hash)?;
-            Some((*hash, first_seen, self.floors.get(hash).copied()))
-        })
+    /// The first-seen seconds the base folded each row under.
+    pub(in crate::authority) fn first_seen(&self) -> &BTreeMap<AuthorityEntryHash, u64> {
+        &self.receipts.first_seen
     }
 
     /// Each row the base folded.
@@ -243,6 +270,99 @@ impl FoldBase {
         }
         rows.into_values().collect()
     }
+
+    /// The metadata of the rows a fold past the base reads the receipts of,
+    /// in hash order: `tail`'s, each base row the base does not pin, and
+    /// each pinned one `reread` names. The base carries every other row's
+    /// first-seen seconds and floor unread, so no other row is visited (FIX
+    /// 12282).
+    pub(in crate::authority) fn rows_read_with<'a>(
+        &'a self,
+        tail: &[(AuthorityEntryHash, &'a AuthorityLogEntry)],
+        reread: impl IntoIterator<Item = AuthorityEntryHash>,
+    ) -> Vec<RowMeta<'a>> {
+        let pinned = &self.receipts.pinned;
+        let reread = reread.into_iter().filter(|hash| pinned.contains(hash));
+        let mut rows: BTreeMap<_, _> = self
+            .receipts
+            .unpinned
+            .iter()
+            .copied()
+            .chain(reread)
+            .filter_map(|hash| Some((hash, RowMeta::summarized(hash, self.rows.get(&hash)?))))
+            .collect();
+        for (hash, entry) in tail {
+            if !self.rows.contains_key(hash) {
+                rows.entry(*hash)
+                    .or_insert_with(|| RowMeta::of(Some(*hash), *entry));
+            }
+        }
+        rows.into_values().collect()
+    }
+}
+
+impl BaseReceipts {
+    /// The receipts of the base's rows and the `new_rows` past them, as a
+    /// fold over them all reads them: `log`'s for each row it read, and the
+    /// base's for each row the base pins and `log` did not read (FIX 12282).
+    /// Past a base that pins rows, only the rows `log` read, the new rows and
+    /// the unpinned ones are visited, besides one copy of each map.
+    fn past(
+        &self,
+        log: &StoredTail<'_>,
+        base_rows: &BTreeMap<AuthorityEntryHash, RowSummary>,
+        new_rows: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    ) -> Self {
+        let read = log.first_seen_at_secs;
+        let read_floors = &log.observations.sequence_floors;
+        let is_row =
+            |hash: &AuthorityEntryHash| base_rows.contains_key(hash) || new_rows.contains_key(hash);
+        if self.pinned.is_empty() {
+            // The base carries nothing: every value is `log`'s.
+            let pinned: BTreeSet<_> = log
+                .pinned
+                .iter()
+                .filter(|&hash| is_row(hash) && read.contains_key(hash))
+                .copied()
+                .collect();
+            let unpinned = base_rows
+                .keys()
+                .chain(new_rows.keys())
+                .filter(|hash| !pinned.contains(*hash))
+                .copied()
+                .collect();
+            return Self {
+                first_seen: read.clone(),
+                floors: read_floors.clone(),
+                pinned,
+                unpinned,
+            };
+        }
+        let (mut first_seen, mut floors) = (self.first_seen.clone(), self.floors.clone());
+        let mut pinned = self.pinned.clone();
+        for hash in self.unpinned.iter().chain(read.keys()) {
+            first_seen.remove(hash);
+            floors.remove(hash);
+            pinned.remove(hash);
+        }
+        first_seen.extend(read);
+        floors.extend(read_floors);
+        pinned.extend(
+            log.pinned
+                .iter()
+                .filter(|&hash| is_row(hash) && first_seen.contains_key(hash)),
+        );
+        let mut unpinned = self.unpinned.clone();
+        unpinned.extend(new_rows.keys());
+        unpinned.extend(read.keys().filter(|hash| self.pinned.contains(*hash)));
+        unpinned.retain(|hash| !pinned.contains(hash));
+        Self {
+            first_seen,
+            floors,
+            pinned,
+            unpinned,
+        }
+    }
 }
 
 /// A stored log and what this vault folds it under.
@@ -260,16 +380,22 @@ pub(in crate::authority) struct StoredLog<'a> {
 
 /// The stored rows past a base, and what this vault folds the whole log
 /// under: [`StoredLog`]'s inputs over the base's rows and the tail alike.
+/// A base row the base pins and this fold did not read keeps the base's
+/// first-seen seconds and floor (FIX 12282).
 #[derive(Clone, Copy)]
 pub(in crate::authority) struct StoredTail<'a> {
     /// Each stored row the base does not hold, with its hash.
     pub(in crate::authority) tail: &'a [(AuthorityEntryHash, &'a AuthorityLogEntry)],
+    /// The first-seen seconds of each row this fold read: the tail's, and
+    /// each base row's but those the base carries.
     pub(in crate::authority) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(in crate::authority) now_secs: u64,
     pub(in crate::authority) peer_consent_roots:
         &'a BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    /// The floors of the same rows, and this vault's observation policy.
     pub(in crate::authority) observations: &'a AuthorityLocalObservations,
-    /// The rows whose first-seen seconds and floor are receipts' (FIX 1854).
+    /// The rows read whose first-seen seconds and floor are receipts' (FIX
+    /// 1854).
     pub(in crate::authority) pinned: &'a BTreeSet<AuthorityEntryHash>,
     pub(in crate::authority) posture: crate::HostingPrivacyPosture,
     pub(in crate::authority) pin: Option<&'a PinnedRoot>,
@@ -396,23 +522,29 @@ impl FoldBase {
             .filter(|(hash, _)| !self.rows.contains_key(hash))
             .map(|(hash, entry)| (*hash, *entry))
             .collect();
-        // A row pinned here and in the base holds one receipt's values.
-        let on_base = |map: &BTreeMap<AuthorityEntryHash, u64>| {
-            map.iter()
-                .filter(|(hash, _)| self.rows.contains_key(*hash))
-                .filter(|(hash, _)| !(self.pinned.contains(*hash) && pinned.contains(*hash)))
-                .map(|(hash, value)| (*hash, *value))
-                .collect::<Vec<_>>()
-        };
+        // A row pinned here and in the base holds one receipt's values, and
+        // a row the base pins and this fold did not read holds the base's
+        // (FIX 12282). Every other base row reads as the base read it: each
+        // one the base does not pin, and each pinned one read with no
+        // receipt now.
+        let base = &self.receipts;
+        let mut reread = base.unpinned.iter().chain(
+            first_seen_at_secs
+                .keys()
+                .filter(|hash| base.pinned.contains(*hash) && !pinned.contains(*hash)),
+        );
         if new_rows.is_empty()
-            || on_base(first_seen_at_secs) != on_base(&self.first_seen)
-            || on_base(&observations.sequence_floors) != on_base(&self.floors)
+            || reread.any(|hash| {
+                first_seen_at_secs.get(hash) != base.first_seen.get(hash)
+                    || observations.sequence_floors.get(hash) != base.floors.get(hash)
+            })
         {
             return None;
         }
         let memory_floor_bytes = super::log_budget::fold_memory_floor(Some(&observations.policy));
         let (consent_arm, _) = super::fold_engine::own_log_inputs(inputs.posture, None);
         let no_handoff_line = BTreeSet::new();
+        // Only the new rows' floors are read, and this fold read each one.
         let context = FoldContext {
             sequence_floors: Some(&observations.sequence_floors),
             floor_vouched: (!observations.unvouched).then_some(&observations.vouched),
@@ -496,11 +628,12 @@ impl FoldBase {
         }
         // The install's own view, in its first and only round, over the
         // rows its stale-roster window reads.
+        let receipts = self.receipts.past(&log, &self.rows, &new_rows);
         let read_whole: Vec<&AuthorityLogEntry> = projected.values().collect();
         let mut view = super::install_fold::install_view(
             &read_whole,
             fold.clone(),
-            first_seen_at_secs,
+            &receipts.first_seen,
             Some(now_secs),
             observations.policy.stale_roster_window_secs,
             inputs.pin.as_ref(),
@@ -520,9 +653,7 @@ impl FoldBase {
             inputs: self.inputs.clone(),
             rows,
             projected,
-            first_seen: first_seen_at_secs.clone(),
-            floors: observations.sequence_floors.clone(),
-            pinned: pinned.clone(),
+            receipts,
             once: Once {
                 judged,
                 head: tail.tip,

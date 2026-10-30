@@ -54,9 +54,11 @@ impl RowReceipts {
         })
     }
 
-    /// The receipts of `base`'s rows and `tail`'s, as [`Self::read_in_txn`]
-    /// reads them: each pinned base row's from the base, and the rest read.
-    /// An arriving base row reads, first seen now.
+    /// The receipts of the rows a fold past `base` reads, as
+    /// [`Self::read_in_txn`] reads them: `tail`'s, each unpinned base row's,
+    /// and each arriving base row's, first seen now. The fold takes every
+    /// other base row's from the base, so no other row is visited here (FIX
+    /// 12282).
     pub(super) fn past_base_in_txn(
         store: &Store,
         txn: &heed::RoTxn<'_>,
@@ -66,24 +68,7 @@ impl RowReceipts {
         backfilled: bool,
         now_secs: u64,
     ) -> Result<Self> {
-        let carried: BTreeMap<_, _> = base
-            .pinned_receipts()
-            .filter(|(hash, ..)| !arriving.contains_key(hash))
-            .map(|(hash, first_seen, floor)| (hash, (first_seen, floor)))
-            .collect();
-        let rows: Vec<_> = base
-            .rows_with(tail)
-            .into_iter()
-            .filter(|row| row.hash.is_none_or(|hash| !carried.contains_key(&hash)))
-            .collect();
-        let mut receipts = Self::read_in_txn(store, txn, &rows, arriving, backfilled, now_secs)?;
-        for (hash, (first_seen, floor)) in carried {
-            receipts.first_seen_at_secs.insert(hash, first_seen);
-            if let Some(floor) = floor {
-                receipts.observations.sequence_floors.insert(hash, floor);
-            }
-            receipts.pinned.insert(hash);
-        }
-        Ok(receipts)
+        let rows = base.rows_read_with(tail, arriving.keys().copied());
+        Self::read_in_txn(store, txn, &rows, arriving, backfilled, now_secs)
     }
 }
