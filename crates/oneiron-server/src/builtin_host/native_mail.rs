@@ -3,7 +3,7 @@
 //! server, the host keeps the pack connected with the stored credential and
 //! reads every active native mail identity's inbox each built-in pass. Each
 //! message's raw bytes go to the quarantine directory; the vault keeps their
-//! references, with each message's subject and bounded plain-text body.
+//! references, with each message's decoded subject and reply top text.
 //! Sends leave through the served sink's email transport.
 
 use std::collections::BTreeMap;

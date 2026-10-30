@@ -68,11 +68,13 @@ pub struct EmailProviderInbound {
     /// The `Subject` header as the provider decoded it, when it read one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    /// The message's plain-text body as the provider decoded it, up to the
-    /// provider's bound, when it read one. What the sender wrote: foreign
-    /// inbound data, never instructions.
+    /// The reply's own words: the trimmed top of its decoded plain-text body,
+    /// above its first quoted block ([`EMAIL_QUOTE_MARKERS`]), cut to
+    /// [`EMAIL_REPLY_TOP_TEXT_MAX_BYTES`]; absent when the provider read no
+    /// body or the body holds nothing above its quote. What the sender wrote:
+    /// foreign inbound data, never instructions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_body: Option<String>,
+    pub reply_top_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
     pub received_at: u64,
@@ -94,7 +96,7 @@ impl EmailProviderInbound {
             header_mailbox: None,
             thread_headers: None,
             subject: None,
-            text_body: None,
+            reply_top_text: None,
             payload_ref: None,
             received_at,
         }
@@ -120,6 +122,50 @@ impl EmailProviderInbound {
         self.payload_ref = Some(payload_ref.into());
         self
     }
+
+    /// Attaches what the reply says in its own words: its decoded subject,
+    /// and the top text of its decoded plain-text body
+    /// ([`Self::reply_top_text`]).
+    #[must_use]
+    pub fn with_reply_text(mut self, subject: Option<String>, text_body: Option<&str>) -> Self {
+        self.subject = subject;
+        self.reply_top_text = text_body
+            .map(|body| {
+                let top = email_reply_top_text(body).trim();
+                top[..top.floor_char_boundary(EMAIL_REPLY_TOP_TEXT_MAX_BYTES)].to_owned()
+            })
+            .filter(|top| !top.is_empty());
+        self
+    }
+}
+
+/// The most of an email reply's top text an inbound keeps.
+pub const EMAIL_REPLY_TOP_TEXT_MAX_BYTES: usize = 4 * 1024;
+
+/// The lines that open the quoted block of an email reply, each read on a
+/// trimmed line as (how it starts, how it ends): a `>` quote line, and an
+/// `On <date>, <sender> wrote:` attribution, which a client may wrap onto a
+/// second line.
+pub const EMAIL_QUOTE_MARKERS: &[(&str, &str)] = &[(">", ""), ("On ", "wrote:")];
+
+/// An email reply's top text: its body above the first line that opens a
+/// quoted block ([`EMAIL_QUOTE_MARKERS`]); the whole body when none does.
+fn email_reply_top_text(body: &str) -> &str {
+    let mut at = 0;
+    let mut lines = body.split_inclusive('\n').peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        let wrapped = lines.peek().copied().map(str::trim);
+        let opens = EMAIL_QUOTE_MARKERS.iter().any(|&(start, end)| {
+            trimmed.starts_with(start)
+                && (trimmed.ends_with(end) || wrapped.is_some_and(|next| next.ends_with(end)))
+        });
+        if opens {
+            break;
+        }
+        at += line.len();
+    }
+    &body[..at]
 }
 
 /// Slack Events API payload fields needed for shared-presence routing.
