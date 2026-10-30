@@ -482,9 +482,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // and the custody publication run on past the vault's deletion, so its
     // backups go at their deadline (FIX 11710).
     let tick = crate::owner::schedule::SCHEDULE_TICK;
-    ladder_workers.extend(
-        sync_server.spawn_backup_schedule_admitted(tick, state.backup_admission()),
-    );
+    ladder_workers
+        .extend(sync_server.spawn_backup_schedule_admitted(tick, state.backup_admission()));
     ladder_workers.extend(sync_server.spawn_custody_publication_admitted(state.backup_admission()));
     ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
