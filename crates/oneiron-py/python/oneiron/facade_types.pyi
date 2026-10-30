@@ -14144,6 +14144,7 @@ class SlideJudgment(TypedDict):
     presence: NotRequired[TypedDecision | None]
     location: NotRequired[SlideLocation | None]
     band_mode: BandMode
+    ceiling: DecisionRung
     renderer: str
     frontier: list[int]
     media: NotRequired[list[DecisionMedia]]
