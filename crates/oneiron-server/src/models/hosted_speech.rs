@@ -340,7 +340,7 @@ impl HostedCloner {
         let sent = holding_replies(&self.budgets, send).await;
         // The request went out: a failed one keeps its reservation as spend.
         let outcome = match &sent {
-            Ok(_) => CallOutcome::Used(1),
+            Ok(_) => CallOutcome::UsedCounted(1),
             Err(_) => CallOutcome::Failed,
         };
         if let Err(denied) = permit.settle(outcome) {

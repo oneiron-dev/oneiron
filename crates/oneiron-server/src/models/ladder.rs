@@ -31,7 +31,7 @@ use futures_util::StreamExt;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
-    CallOutcome, KeyCustody, Payer, RunAdmission, RunCall, RunDenied, RunPermit,
+    CallOutcome, KeyCustody, Payer, RunAdmission, RunCall, RunDenied, RunOverageSource, RunPermit,
 };
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
@@ -1511,9 +1511,15 @@ impl OfferLadder {
         match answered {
             Ok(mut response) => {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
+                let source = if response.usage.is_provider_counted() {
+                    RunOverageSource::ProviderReported
+                } else {
+                    RunOverageSource::Counted
+                };
                 permit.settle_media(
                     response.usage.token_units(operation, &media.caps),
                     response.usage.inference_calls(),
+                    source,
                 )?;
                 let raw = std::mem::take(&mut response.usage.raw_provider);
                 response.usage.raw_provider = self.served(index, walk).stamp(raw);

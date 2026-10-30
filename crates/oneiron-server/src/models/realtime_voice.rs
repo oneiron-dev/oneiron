@@ -153,7 +153,7 @@ impl RealtimeVoiceSession {
         let socket = match opened {
             Ok(socket) => socket,
             Err(error) => {
-                settle(permit, CallOutcome::Used(0));
+                settle(permit, CallOutcome::UsedCounted(0));
                 return Err(error);
             }
         };
@@ -237,13 +237,19 @@ impl RealtimeVoiceSession {
     /// reported (FIX 11481).
     fn answered(&mut self, event: &JsonValue) -> LlmResult<()> {
         self.responding = false;
-        let tokens = event
+        let reported = event
             .pointer("/response/usage/total_tokens")
-            .and_then(JsonValue::as_u64)
-            .unwrap_or(0);
+            .and_then(JsonValue::as_u64);
+        let tokens = reported.unwrap_or(0);
         self.last_tokens = tokens;
         if let Some(permit) = self.permit.take() {
-            settle(permit, CallOutcome::Used(tokens));
+            // Absent usage settles as a counted zero, never the provider's
+            // report (FIX 11481).
+            let outcome = match reported {
+                Some(_) => CallOutcome::Used(tokens),
+                None => CallOutcome::UsedCounted(0),
+            };
+            settle(permit, outcome);
         }
         let reserve = self.last_tokens.max(RESPONSE_RESERVED_TOKENS);
         match admit_response(&self.run, &self.connector, reserve) {
@@ -266,7 +272,7 @@ impl RealtimeVoiceSession {
             let outcome = if self.responding {
                 CallOutcome::Failed
             } else {
-                CallOutcome::Used(0)
+                CallOutcome::UsedCounted(0)
             };
             settle(permit, outcome);
         }
