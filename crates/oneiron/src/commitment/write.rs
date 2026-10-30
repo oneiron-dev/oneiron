@@ -25,11 +25,10 @@ use super::{
 /// The commitment, schedule, wake, close, memory, receipt and deep-link
 /// readers follow a commitment to the head of that chain
 /// ([`Vault::commitment_head_in_txn`]), and the batched lapse stages its
-/// successors in the batch's own transaction. `false` while the claim
-/// supersession refuses to close a predecessor before its occurred start: a
-/// scheduled instance's occurred range is its due window, so fulfilling,
-/// releasing or superseding it before its due instant would fail.
-pub(super) const STATUS_CHANGE_MINTS_SUCCESSOR: bool = false;
+/// successors in the batch's own transaction. A predecessor superseded before
+/// its occurred start (a scheduled instance closed before its due window)
+/// closes at that start.
+pub(super) const STATUS_CHANGE_MINTS_SUCCESSOR: bool = true;
 
 impl Vault {
     /// The head of a commitment's status chain: `id` itself, or the

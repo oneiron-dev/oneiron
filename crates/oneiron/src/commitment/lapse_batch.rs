@@ -299,12 +299,9 @@ fn supersede_with_successor_in_txn(
     let (successor_body, _) = active_claim_parts_in(store, &*wtxn, &successor)?;
     let (mut body, header) = active_claim_parts_in(store, &*wtxn, &predecessor)?;
     crate::Vault::require_source_trust_supersession_rights(&successor_body, &body)?;
-    if now < header.occurred_start {
-        return Err(Error::InvalidTimeRange {
-            start: header.occurred_start,
-            end: now,
-        });
-    }
+    // As the claim supersession: before its occurred start the predecessor
+    // closes at that start, and the supersession keeps the real `now`.
+    let closed_end = now.max(header.occurred_start);
     let revisions = crate::claim::supersession_diff::capture_in_store_txn(
         store,
         &*wtxn,
@@ -338,7 +335,7 @@ fn supersede_with_successor_in_txn(
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred: TimeRange {
                 start: header.occurred_start,
-                end: now,
+                end: closed_end,
             },
             learned_at: header.learned_at,
             data: crate::claim::encode_claim_body(&body)?,

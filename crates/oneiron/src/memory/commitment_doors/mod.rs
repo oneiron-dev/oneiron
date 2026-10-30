@@ -138,7 +138,10 @@ impl Memory<'_> {
         let (body, record) = self.commitment_record_in(lane, txn, id)?;
         let payload =
             CommitmentSchedulePayload::decode(&record.schedule).map_err(schedule_error)?;
-        let raw = self.vault.get_raw_in(txn, id)?.ok_or_else(unavailable)?;
+        // The status chain's head carries the times of the commitment's
+        // current status (FIX 9726); `id` stays the view's identity.
+        let head = self.vault.commitment_head_in_txn(txn, id)?;
+        let raw = self.vault.get_raw_in(txn, &head)?.ok_or_else(unavailable)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("commitment claim header"))?;
         let refs = evidence_refs(&body)?;
