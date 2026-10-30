@@ -41,7 +41,6 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use super::{live, open_record};
-use drawn_parts::{PackageMarks, drawn_nodes, drawn_parts, drawn_pictures, drawn_strings};
 use crate::Vault;
 use crate::edit_roundtrip::VaultAssets;
 use crate::edit_roundtrip::slides_review::{SlideRenderer, review_image_key};
@@ -53,6 +52,7 @@ use crate::memory::{
 };
 use crate::secret_custody::SecretSight;
 use crate::typed_body::LiftedSources;
+use drawn_parts::{PackageMarks, drawn_nodes, drawn_parts, drawn_pictures, drawn_strings};
 use oneiron_docedit::deck::DeckView;
 use oneiron_docedit::edit::transaction::{AssetRef, Assets};
 use oneiron_docedit::graphic::AssetRecord;
