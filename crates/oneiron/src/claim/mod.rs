@@ -56,8 +56,15 @@ mod expression_archive;
 mod expression_preference;
 mod history_handoff;
 mod history_pin_exchange;
+pub(crate) use history_pin_exchange::MachineHistoryRuntime;
 #[cfg(feature = "sync")]
 pub(crate) use history_pin_exchange::PinExchangeOutcome;
+mod history_pin_freshness;
+pub use history_pin_freshness::{
+    MACHINE_HISTORY_FRESHNESS_CHALLENGE_LIFETIME, MACHINE_HISTORY_FRESHNESS_DOMAIN,
+    MACHINE_HISTORY_FRESHNESS_VERSION, MachineHistoryFreshnessChallenge,
+    MachineHistoryFreshnessResponse, MachineHistoryPinFreshness,
+};
 pub(crate) mod history_projection;
 pub use history_projection::ResolvedMachineClaim;
 pub(crate) mod history_store;

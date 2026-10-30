@@ -186,6 +186,7 @@ impl Store {
             project_forks: crate::workspace_roster::ProjectForks::default(),
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             machine_history_issuer: Mutex::new(None),
+            machine_history_runtime: crate::claim::MachineHistoryRuntime::default(),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
             limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
