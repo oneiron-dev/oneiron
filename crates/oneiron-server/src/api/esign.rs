@@ -37,7 +37,8 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
         .route("/sign/layout", post(presentation::layout))
         .route(
             "/sign/geometry",
-            post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+            post(presentation::upload_geometry)
+                .layer(DefaultBodyLimit::max(presentation::GEOMETRY_BODY_BYTES)),
         )
         .route_layer(axum::middleware::from_fn_with_state(
             Arc::clone(&desk.budget),
