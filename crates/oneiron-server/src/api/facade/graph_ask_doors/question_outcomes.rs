@@ -1,13 +1,17 @@
 //! `vault.questions.outcome_windows`, `vault.questions.outcomes` and
 //! `vault.questions.outcomes.project`: the caller's standing question's
 //! closed outcome windows, its outcome labels and calibration pairs, and the
-//! projection that binds its labels.
+//! projection that binds its labels. Each replies through the caller's own
+//! live lane (OF-506, FIX 11827): a narrowed caller gets each window, label
+//! and pair whose rows that lane reads, and a projection's count of the
+//! labels it reads; a full one, every one, as before. The projection binds
+//! as it binds for anyone.
 
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
-    OutcomeWindowClose, calibration_pairs, closed_outcome_windows, outcome_labels,
-    project_bound_outcomes,
+    OutcomeWindowClose, calibration_pairs_in_lane, closed_outcome_windows_in_lane,
+    outcome_labels_in_lane, project_bound_outcomes_in_lane,
 };
 use oneiron::memory::MemoryResult;
 use oneiron::receipt::{
@@ -16,7 +20,7 @@ use oneiron::receipt::{
 };
 
 use super::super::host_doors::support::{Listed, internal, naming};
-use super::asker;
+use super::{asker, asker_lane};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -42,9 +46,16 @@ async fn vault_questions_outcome_windows_answer(
     const VERB: &str = "vault.questions.outcome_windows";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     crate::api::facade::clock_ingress::run_blocking(
         move || -> MemoryResult<Vec<OutcomeWindowClose>> {
-            Ok(closed_outcome_windows(server.vault(), principal, input.id)?)
+            let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+            Ok(closed_outcome_windows_in_lane(
+                server.vault(),
+                &lane,
+                principal,
+                input.id,
+            )?)
         },
     )
     .await
@@ -91,11 +102,19 @@ async fn vault_questions_outcomes_answer(
     // (mesh PR2b).
     let destination = auth.destination();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     crate::api::facade::clock_ingress::run_blocking(move || -> MemoryResult<QuestionOutcomes> {
         let vault = server.vault();
+        let lane = asker_lane(vault, &auth, principal, VERB)?;
         Ok(QuestionOutcomes {
-            labels: outcome_labels(vault, principal, input.id, &destination)?,
-            calibration: calibration_pairs(vault, principal, input.id, &destination)?,
+            labels: outcome_labels_in_lane(vault, &lane, principal, input.id, &destination)?,
+            calibration: calibration_pairs_in_lane(
+                vault,
+                &lane,
+                principal,
+                input.id,
+                &destination,
+            )?,
         })
     })
     .await
@@ -127,11 +146,14 @@ async fn vault_questions_outcomes_project_answer(
     const VERB: &str = "vault.questions.outcomes.project";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     crate::api::facade::clock_ingress::run_blocking(
         move || -> MemoryResult<QuestionOutcomesProjected> {
+            let vault = server.vault();
+            let lane = asker_lane(vault, &auth, principal, VERB)?;
             Ok(QuestionOutcomesProjected {
                 id: input.id,
-                projected: project_bound_outcomes(server.vault(), principal, input.id)?,
+                projected: project_bound_outcomes_in_lane(vault, &lane, principal, input.id)?,
             })
         },
     )
