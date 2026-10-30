@@ -2165,7 +2165,7 @@ AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Can
 SpendState = Literal["open", "closed"]
 class SpendPayer(TypedDict):
     party: EntityId
-    granted_by: EntityId
+    granted_by: NotRequired[EntityId | None]
     at_ms: int
 class SpendScope(TypedDict):
     scope: SpendScopeId
