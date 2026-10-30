@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 128] = [
+    pub const ALL: [Self; 131] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -133,6 +133,9 @@ impl EngineLimit {
         Self::ConnectorCharterCaps,
         Self::ConnectorCatalogVerbs,
         Self::ConnectorDispatchBatch,
+        Self::IdentityDecisionStateBytes,
+        Self::IdentityExcerptBytes,
+        Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
     ];
 
@@ -266,6 +269,9 @@ impl EngineLimit {
             Self::ConnectorCharterCaps => "limits.connector_charter_caps",
             Self::ConnectorCatalogVerbs => "limits.connector_catalog_verbs",
             Self::ConnectorDispatchBatch => "limits.connector_dispatch_batch",
+            Self::IdentityDecisionStateBytes => "limits.identity_decision_state_bytes",
+            Self::IdentityExcerptBytes => "limits.identity_excerpt_bytes",
+            Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
         }
     }
@@ -460,6 +466,11 @@ impl EngineLimit {
             | Self::ConnectorCharterCaps => 16,
             Self::ConnectorCatalogVerbs => 64,
             Self::ConnectorDispatchBatch => 4_096,
+            Self::IdentityDecisionStateBytes => 65_536,
+            Self::IdentityExcerptBytes => 65_536,
+            // The 64 MiB cache the community refresh refused past before
+            // Rule 5 (FIX 8854).
+            Self::CommunityCacheBytes => 64 << 20,
             // The manifest's old fixed refusal.
             Self::ConnectorManifestEntries => 4_096,
         }

@@ -12,6 +12,7 @@ pub struct PackSource {
     pub(super) sections: Vec<PackSection>,
     pub(super) hooks: Vec<super::PackHook>,
     pub(super) organs: Vec<super::PackOrgan>,
+    pub(super) lenses: Vec<super::PackLens>,
 }
 impl PackSource {
     /// Every file of any size and count is read whole (FIX 8202): no byte,
@@ -114,9 +115,16 @@ impl PackSource {
                         file.path.as_str(),
                         "identity.md" | "policy.md" | "skills.json"
                     ))
-                && !["skills/", "knowledge/", "scripts/", "hooks/", "organs/"]
-                    .iter()
-                    .any(|prefix| file.path.starts_with(prefix))
+                && ![
+                    "skills/",
+                    "knowledge/",
+                    "scripts/",
+                    "hooks/",
+                    "organs/",
+                    "lenses/",
+                ]
+                .iter()
+                .any(|prefix| file.path.starts_with(prefix))
             {
                 return Err(invalid("unknown pack source facet"));
             }
@@ -129,6 +137,7 @@ impl PackSource {
         }
         let hooks = super::hooks::parse_source_hooks(&manifest, &files)?;
         let organs = super::organs::parse_source_organs(&manifest, &files)?;
+        let lenses = super::lenses::parse_source_lenses(&manifest, &files)?;
         Ok(Self {
             files,
             manifest,
@@ -136,6 +145,7 @@ impl PackSource {
             sections,
             hooks,
             organs,
+            lenses,
         })
     }
     pub fn entity_id(&self) -> Result<crate::EntityId> {
@@ -156,18 +166,38 @@ impl PackSource {
     pub fn organs(&self) -> &[super::PackOrgan] {
         &self.organs
     }
+    pub fn lenses(&self) -> &[super::PackLens] {
+        &self.lenses
+    }
+    /// The lens this source carries in its folder `name`.
+    #[must_use]
+    pub fn lens(&self, name: &str) -> Option<&super::PackLens> {
+        self.lenses.iter().find(|lens| lens.name == name)
+    }
     pub fn has_code(&self) -> bool {
         self.manifest.kind == super::PackKind::Connector
             || !self.organs.is_empty()
-            || self.files.iter().any(|file| {
-                file.path.starts_with("scripts/")
-                    || file.path.contains("/scripts/")
-                    || file.path.starts_with("hooks/")
-            })
+            || self.files.iter().any(is_script_or_hook_file)
+    }
+    /// Organs are this source's only code: it is no connector and carries
+    /// no script and no hook.
+    pub(super) fn code_is_organs_only(&self) -> bool {
+        !self.organs.is_empty()
+            && self.manifest.kind != PackKind::Connector
+            && !matches!(self.manifest.adapter, Some(PackAdapter::Script(_)))
+            && self.hooks.is_empty()
+            && !self.files.iter().any(is_script_or_hook_file)
     }
     pub fn content_hash(&self) -> SkillContentHash {
         self.hash
     }
+}
+
+/// A script or hook body: code a source carries as a file.
+fn is_script_or_hook_file(file: &HubFile) -> bool {
+    file.path.starts_with("scripts/")
+        || file.path.contains("/scripts/")
+        || file.path.starts_with("hooks/")
 }
 
 /// A pack-carried board recipe. Its verbs and authority are permission requests,
@@ -192,7 +222,6 @@ impl PackSection {
                 b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
             })
             || self.verbs.is_empty()
-            || self.verbs.len() > 128
             || self.verbs.iter().any(|verb| !allow.contains(verb))
             || self
                 .verbs

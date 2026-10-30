@@ -126,6 +126,9 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// FIX 9598: an approved Dreamer claim whose VAD consolidation is still owed, written in the
+    /// approval's commit and cleared in the consolidation's own. Key: id16 (claim).
+    CLAIM_VAD_OWED: VaultMeta b"claim:vad_owed:v1:" Named Engine;
     /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
     /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
     /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).
@@ -187,6 +190,9 @@ side_tables! {
     /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
     /// unchanged room is not declared again. Key: id16 of the room.
     COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw;
+    /// The last site-skill candidate filed for one (site, scope), with its content fingerprint and
+    /// source evidence (FIX 7606). Key: hash32 (site) + hash32 (scope).
+    COACH_SITE_SKILL_SEEN: VaultMeta b"coach:site_skill_seen:v1:" Named;
     /// A quick pick that later proved wrong: a case where a person changed an answer the
     /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
     /// (FIX 2437). Key: id16 of the source the host bound the answer to.
