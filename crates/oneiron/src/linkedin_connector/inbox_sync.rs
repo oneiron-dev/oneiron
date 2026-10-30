@@ -92,7 +92,7 @@ impl LinkedInInboxSyncConfig {
         Ok(self)
     }
 
-    fn adapter(&self) -> Result<LinkedInMcpConnectorAdapter> {
+    pub(super) fn adapter(&self) -> Result<LinkedInMcpConnectorAdapter> {
         let adapter = LinkedInMcpConnectorAdapter::new(self.receiving_address_or_handle.clone())?;
         if let Some(session_ref) = &self.session_ref {
             adapter.with_session_ref(session_ref.clone())
@@ -375,10 +375,17 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 }
             }
 
-            let receipt = match self
-                .vault
-                .route_inbound_surface_event(event.event_input.clone())
-            {
+            // The message's words go to the provider-event archive, as a
+            // Slack or LINE inbound's do (FIX 12328), and its event names the
+            // archive, which the connector reply responder reads them from.
+            let event_input = match archive_linkedin_message(self.vault, &event, now) {
+                Ok(payload_ref) => event.event_input.clone().with_payload_ref(payload_ref),
+                Err(err) => {
+                    release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
+                    return Err(err);
+                }
+            };
+            let receipt = match self.vault.route_inbound_surface_event(event_input.clone()) {
                 Ok(receipt) => receipt,
                 Err(err) => {
                     release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
@@ -392,7 +399,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 // second admission.
                 let admission = match self
                     .vault
-                    .enqueue_inbound_surface_event(event.event_input.clone(), now)
+                    .enqueue_inbound_surface_event(event_input.clone(), now)
                 {
                     Ok(admission) => admission,
                     Err(err) => {
@@ -414,7 +421,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                     self.vault,
                     &self.config,
                     &event.message,
-                    &event.event_input,
+                    &event_input,
                 )?;
                 report.new_messages = report.new_messages.saturating_add(1);
                 report.admitted.push(ack);
@@ -545,6 +552,26 @@ pub(super) fn message_in_backfill_window(
         return true;
     };
     occurred_at.saturating_add(backfill_window_secs) >= now
+}
+
+/// Keeps one LinkedIn message as the provider event its surface event
+/// names (FIX 12328): its thread, id, time and words, archived under the
+/// event's own id, read back by `Vault::read_provider_event_text` at
+/// `/text`. Returns the archive's ref. The same message is the same bytes,
+/// so a poll that reclaims it names the same version.
+fn archive_linkedin_message(
+    vault: &Vault,
+    event: &LinkedInConversationMessageEvent,
+    now: u64,
+) -> Result<String> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "thread_id": event.message.thread_id,
+        "message_id": event.message.message_id,
+        "occurred_at": event.message.occurred_at,
+        "text": event.message.text,
+    }))
+    .map_err(|err| Error::InvalidConfig(format!("LinkedIn message did not encode: {err}")))?;
+    vault.archive_provider_event(LINKEDIN_CHANNEL, &event.event_input.event_id, &body, now)
 }
 
 fn claim_linkedin_inbox_message(

@@ -2,11 +2,14 @@
 //! connection checks only a served host can run, the isolated probes that
 //! qualify a built-in on them (FIX 710), the channel handles it
 //! keeps for every checked built-in channel, the provider webhooks those
-//! handles serve, the native mail pack's inbox reads, the transports its
-//! served sinks send through, and the Slack app's manifest and OAuth install.
+//! handles serve, the native mail pack's inbox reads, the inbox sync of each
+//! LinkedIn seat an installed connector serves (FIX 12328), the transports
+//! its served sinks send through, and the Slack app's manifest and OAuth
+//! install.
 
 mod checks;
 mod handles;
+mod linkedin_inbox;
 mod native_mail;
 mod probes;
 mod slack_app;
@@ -62,36 +65,44 @@ pub(crate) fn install_served_transports(server: &Arc<SyncServer>) {
         .install_served_transports(Arc::new(transports));
 }
 
-/// Starts the reconcile loop. Each pass reads the installed packs and keeps
-/// one handle per built-in channel whose engine pack is Active and whose
-/// connection check is Verified, dropping a handle the moment its receipt
-/// or check goes, then reads the native mail pack's inboxes. Each pass is
-/// admitted through `admit`, the way a housekeeping pass is, so a vault
-/// frozen for reap reconciles nothing.
+/// Starts the reconcile loop, and beside it the LinkedIn inbox sync. Each
+/// reconcile pass reads the installed packs and keeps one handle per
+/// built-in channel whose engine pack is Active and whose connection check
+/// is Verified, dropping a handle the moment its receipt or check goes, then
+/// reads the native mail pack's inboxes. Each pass of either is admitted
+/// through `admit`, the way a housekeeping pass is, so a vault frozen for
+/// reap reconciles and reads nothing.
 pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
     let server = Arc::clone(server);
     tokio::spawn(async move {
-        loop {
-            if let Some(admission) = admit() {
-                let vault = Arc::clone(server.vault());
-                let handles = Arc::clone(&server.builtin_handles);
-                let base = server.config.oauth_resource_indicator.clone();
-                let line = server.config.line;
-                let native_mail = server.config.native_mail.clone();
-                let pass = tokio::task::spawn_blocking(move || {
-                    let _admission = admission;
-                    handles.reconcile(&vault, base.as_deref(), &line);
-                    handles.poll_native_mail(&vault, native_mail.as_ref());
-                })
-                .await;
-                if let Err(error) = pass {
-                    tracing::warn!(%error, "built-in channel reconcile pass panicked");
-                }
-            }
-            tokio::time::sleep(RECONCILE_EVERY).await;
-        }
+        tokio::join!(
+            reconcile(Arc::clone(&server), Arc::clone(&admit)),
+            linkedin_inbox::sync_linkedin_inboxes(server, admit),
+        );
     })
+}
+
+async fn reconcile(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
+    loop {
+        if let Some(admission) = admit() {
+            let vault = Arc::clone(server.vault());
+            let handles = Arc::clone(&server.builtin_handles);
+            let base = server.config.oauth_resource_indicator.clone();
+            let line = server.config.line;
+            let native_mail = server.config.native_mail.clone();
+            let pass = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                handles.reconcile(&vault, base.as_deref(), &line);
+                handles.poll_native_mail(&vault, native_mail.as_ref());
+            })
+            .await;
+            if let Err(error) = pass {
+                tracing::warn!(%error, "built-in channel reconcile pass panicked");
+            }
+        }
+        tokio::time::sleep(RECONCILE_EVERY).await;
+    }
 }

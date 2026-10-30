@@ -6,7 +6,8 @@
 //! OF-247 `InboundSurfaceEventInput` values without starting a browser or
 //! touching a live LinkedIn session. Its production transports call those
 //! tools on the connector the owner installed, each as an admitted
-//! installed-tool call through the host's connector calls.
+//! installed-tool call through the host's connector calls, and a served
+//! host syncs each served seat's inbox over them.
 
 mod connector_call_transport;
 mod conversation_parse;
@@ -14,6 +15,7 @@ mod inbox_sync;
 mod normalize_keys;
 mod sandbox_host;
 mod seat_policy;
+mod served_inbox_sync;
 mod verified_connect;
 mod verified_send;
 
@@ -54,6 +56,7 @@ pub use self::seat_policy::{
     LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy, linkedin_connect_consent_screen_copy,
     run_linkedin_kill_switch,
 };
+pub use self::served_inbox_sync::LinkedInServedSeat;
 pub use self::verified_connect::{
     LinkedInConnectionObservation, LinkedInConnectionState, LinkedInMcpConnectRequest,
     LinkedInMcpConnectTransport, LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
