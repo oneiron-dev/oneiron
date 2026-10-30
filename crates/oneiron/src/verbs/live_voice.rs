@@ -193,5 +193,5 @@ pub enum LiveVoiceToolCallReply {
     /// on this device left here.
     QuestionsNarrowed(super::act_answer::NarrowedQuestions),
     /// The connector's reply, whole.
-    Done(super::sdk_connector_call::ConnectorCallReply),
+    Done(super::connector_call::ConnectorCallReply),
 }
