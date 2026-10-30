@@ -30,6 +30,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::store::{ASSET_FILE_PLANE, AssetBodySpool};
 use crate::sync::WindowManager;
+use crate::sync::bridge::Materializer;
 use crate::sync::loro_support::{TombstoneIndex, map_get_bytes};
 use crate::sync::transport::{
     ASSET_BODY_FRAME_BYTES, ASSET_BODY_RETRY, AssetBodyAddress, AssetBodyData, AssetBodyEnd,
@@ -50,8 +51,9 @@ pub const ASSET_BODY_FRAMES_PER_POLL: usize = 16;
 /// resolves it.
 pub struct AssetBodyPeer<'a> {
     pub vault: &'a Vault,
-    /// The lease vault the window's receipts verify against.
-    pub lease_vault_id: u64,
+    /// The windows' materializer: the lease vault the window's receipts
+    /// verify against, and the live queries a landed body notifies.
+    pub materializer: &'a Materializer,
     /// The live document of a window this socket moves bodies for, under
     /// its scope; `None` for any other window.
     pub window: &'a dyn Fn(&WindowKey) -> Option<LoroDoc>,
@@ -69,7 +71,7 @@ pub(crate) fn with_manager_peer<T>(
     let windows = || manager.loaded_keys();
     f(&AssetBodyPeer {
         vault: manager.vault(),
-        lease_vault_id: manager.materializer().lease_vault_id(),
+        materializer: manager.materializer(),
         window: &window,
         windows: &windows,
     })
