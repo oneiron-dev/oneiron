@@ -182,7 +182,7 @@ pub(super) fn land(
             let windows = || vec![carried.window.clone()];
             let peer = AssetBodyPeer {
                 vault,
-                lease_vault_id: manager.materializer().lease_vault_id(),
+                materializer: manager.materializer(),
                 window: &window,
                 windows: &windows,
             };

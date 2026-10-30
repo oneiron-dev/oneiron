@@ -91,7 +91,7 @@ fn with_peer<T>(
     let windows = || followed.clone();
     let peer = AssetBodyPeer {
         vault: server.vault(),
-        lease_vault_id: manager.materializer().lease_vault_id(),
+        materializer: manager.materializer(),
         window: &window,
         windows: &windows,
     };
