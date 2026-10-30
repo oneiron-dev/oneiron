@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1207 facade rows, 4362 declarations.
+Census: 1207 facade rows, 4364 declarations.
 Inputs: 1135 of 1207 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1041 of 1207 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -17416,12 +17416,19 @@ ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | 
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
+LegalHoldState = Literal["retained_for_law", "use_restricted"]
+class LegalHoldNotice(TypedDict):
+    state: LegalHoldState
+    bound: LegalHoldBound
+    works_self_hosted: bool
+    self_hosted_note: str
 class RecordRefusal(TypedDict):
     reason: RefusalReason
     code: str
     message: str
     suggestions: list[str]
     field: str
+    legal_hold: NotRequired[LegalHoldNotice | None]
 class CommitOutcomeLanded(CommitReceipt):
     outcome: Literal["landed"]
 class CommitOutcomeRefused(TypedDict):
@@ -18356,6 +18363,7 @@ class FacadeMemoryError(TypedDict):
     retry_after: NotRequired[int | None]
     resets_at: NotRequired[list[int]]
     reason_codes: NotRequired[list[str]]
+    legal_hold: NotRequired[LegalHoldNotice | None]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus
