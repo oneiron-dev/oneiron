@@ -395,7 +395,6 @@ pub(super) fn entity_omission(row: &ExportEntity) -> Result<Option<EntityOmissio
             crate::subject_model::imported_subject_body(&body).is_ok()
                 || crate::actor_claims::imported_actor_body(&body).is_ok()
                 || crate::skill_reliability::imported_reliability_body(&body).is_ok()
-                || crate::edit_distance::attribution::imported_skill_cost_body(&body).is_ok()
         })
     {
         Some(ImportRefusalReason::OwningClaimAdapterRequired)
