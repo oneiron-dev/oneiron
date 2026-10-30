@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1209 facade rows, 4375 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1161.
+// UniFFI census: 1210 facade rows, 4376 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1162.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -34481,6 +34481,20 @@ pub struct LensProposalReceipt {
     pub proposed_by: String,
     #[serde(rename = "proposed_at")]
     pub proposed_at: u64,
+}
+
+/// `oneiron::skill_hub::pack_catalog::lenses::PackLensProposeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PackLensProposeRequest {
+    #[serde(rename = "pack_name")]
+    pub pack_name: String,
+    #[serde(rename = "lens")]
+    pub lens: String,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<MadeByTrigger>,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<LensScope>,
 }
 
 /// `oneiron::lens::activation::LensActivateRequest`.

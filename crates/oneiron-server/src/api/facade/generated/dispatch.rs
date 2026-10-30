@@ -18198,6 +18198,28 @@ async fn vault_lenses_propose(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_lenses_propose_from_pack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.lenses.propose_from_pack",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_lenses_activate(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -39260,6 +39282,9 @@ async fn call_verb_row(
             vault_settings_inference_defaults_replace(server, call, input).await
         }
         "vault.lenses.propose" => vault_lenses_propose(server, call, input).await,
+        "vault.lenses.propose_from_pack" => {
+            vault_lenses_propose_from_pack(server, call, input).await
+        }
         "vault.lenses.activate" => vault_lenses_activate(server, call, input).await,
         "vault.lenses.deactivate" => vault_lenses_deactivate(server, call, input).await,
         "vault.lenses.list" => vault_lenses_list(server, call, input).await,

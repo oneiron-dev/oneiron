@@ -2858,6 +2858,8 @@ class Oneiron:
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."""
+        def propose_from_pack(self, spec: Facade.PackLensProposeRequest) -> Facade.LensProposalReceipt:
+            """Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it."""
         def activate(self, spec: Facade.LensActivateRequest) -> Facade.LensActivationReceipt:
             """The owner selects a proposed lens revision for its pack slot."""
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:

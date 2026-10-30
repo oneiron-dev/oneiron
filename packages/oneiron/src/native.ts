@@ -603,6 +603,7 @@ vaultSettingsWakePolicySet(input: unknown): unknown
 vaultSettingsInferenceDefaults(input: unknown): unknown
 vaultSettingsInferenceDefaultsReplace(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
+vaultLensesProposeFromPack(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown

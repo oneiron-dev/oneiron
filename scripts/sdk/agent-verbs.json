@@ -8768,6 +8768,19 @@
       "section": false
     },
     {
+      "name": "vault.lenses.propose_from_pack",
+      "description": "Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it.",
+      "input": "crate::skill_hub::pack_catalog::PackLensProposeRequest",
+      "output": "crate::receipt::LensProposalReceipt",
+      "call": "memory.lenses_propose_from_pack(input)?",
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.lenses.activate",
       "description": "The owner selects a proposed lens revision for its pack slot.",
       "input": "crate::lens::LensActivateRequest",
