@@ -192,10 +192,7 @@ impl BatchBuilder<'_> {
         // BM25 analysis and the HNSW neighbour search run here, before the
         // transaction, so the shared critical section only writes.
         let prepared = PreparedIndexWork::for_ops(vault, &self.ops);
-        #[cfg(feature = "sync")]
         let mut ops = std::mem::take(&mut self.ops);
-        #[cfg(not(feature = "sync"))]
-        let ops = std::mem::take(&mut self.ops);
         let (origin, birth_mask) = (self.origin, self.birth_mask);
         let text_births = std::mem::take(&mut self.text_births);
         let births = std::mem::take(&mut self.births);
@@ -214,6 +211,16 @@ impl BatchBuilder<'_> {
             #[cfg(feature = "sync")]
             if let Err(err) =
                 super::apply::admit_federated_puts(vault, wtxn, &mut ops, &federated_puts)
+            {
+                return Rows::Discard(Err(err.into()));
+            }
+            // A generic put of a projector-only `comm.*` class leaves the
+            // batch here, before the gate stages anything for it, as the
+            // projector's source event in this write. A bound writer's puts
+            // stay with the door, judged by its read below.
+            if reader.is_none()
+                && let Err(err) =
+                    crate::comm::route_projector_only_batch_puts_in_txn(vault, wtxn, &mut ops)
             {
                 return Rows::Discard(Err(err.into()));
             }

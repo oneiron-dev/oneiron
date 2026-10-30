@@ -66,6 +66,13 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
+        // A generic put of a projector-only `comm.*` class leaves the batch
+        // here, before the gate, VAD and lexical staging, as the projector's
+        // source event in `wtxn`. An actor-bound batch's puts stay with the
+        // door, gated for its actor.
+        if actor.is_none() {
+            crate::comm::route_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?;
+        }
         let text_index_trusted = if contains_text_op(&self.ops) {
             vault.ensure_text_index_trusted()?;
             true

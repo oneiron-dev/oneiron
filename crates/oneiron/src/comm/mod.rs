@@ -9,8 +9,8 @@
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
 //! reads the human clear takes across a party's redirect shells;
 //! `descriptor` the synced ARCH-0057 claim-class descriptors;
-//! `generic_put_routing` the generic claim door's routing of the
-//! projector-only classes through the projector;
+//! `generic_put_routing` the generic claim door's and batch builder's
+//! routing of the projector-only classes through the projector;
 //! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
@@ -58,6 +58,7 @@ pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
     seed_claim_class_descriptors,
 };
+pub(crate) use self::generic_put_routing::route_projector_only_batch_puts_in_txn;
 pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
