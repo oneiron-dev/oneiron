@@ -16149,7 +16149,7 @@
      "path": "src/code_run/dispatcher/read_worlds.rs",
      "purpose": "A run's read-world capture as its host serves it (FIX 6130)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -17011,13 +17011,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/read_worlds.rs",
      "purpose": "The worlds of the rows one code run is served (FIX 6130): its ledger in `CODE_RUN_READ_WORLD`, on the run's…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -68426,6 +68426,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "InvocationClaimEntry",
+      "InvocationClaimRelease",
+      "StoredPeerMachine"
+     ],
+     "path": "src/store/invocation_claims.rs",
+     "purpose": "Durable client-named invocation claims (FIX 11889)",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/anchor.rs",
      "purpose": "The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image…",
@@ -69014,9 +69031,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "mod": 1,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -77385,7 +77402,7 @@
      "path": "src/vault/response_bodies.rs",
      "purpose": "The host's typed writes of its row-held responses (KS-2B2, FIX 5683 part B2): an HTTP idempotency entry and…",
      "surface": {
-      "fn": 4
+      "fn": 7
      }
     },
     {
@@ -85853,7 +85870,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86093,7 +86110,7 @@
    },
    "over_bar": 107,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5823,
+   "source_files": 5824,
    "test_files": 902
   },
   "oneiron-android": {
@@ -102717,7 +102734,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat.rs",
@@ -105185,13 +105202,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/invocations.rs",
      "purpose": "The facade's invocation claims: one call per client-named invocation id (OF-580)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 15
      }
     },
     {
@@ -112871,7 +112888,7 @@
      "path": "src/idempotency.rs",
      "purpose": "Durable HTTP idempotency storage and replay state",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -112901,7 +112918,7 @@
      "path": "src/idempotency/intent.rs",
      "purpose": "The intent a keyed mutation keeps before its route runs (FIX 9527, 6056)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -112940,6 +112957,16 @@
      "purpose": "The import audience sweep (OF-492)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/invocation_claims.rs",
+     "purpose": "Durable client-named invocation claims (FIX 11889)",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -113087,7 +113114,7 @@
      "path": "src/livequery/error.rs",
      "purpose": "The HTTP facade error body on app frames",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -119486,6 +119513,13 @@
      "layout": "file",
      "purpose": "The import audience sweep (OF-492)"
     },
+    "invocation_claims": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Durable client-named invocation claims (FIX 11889)"
+    },
     "ladder_poll": {
      "files": 1,
      "impl_vault": false,
@@ -119711,9 +119745,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 31,
+   "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1493,
+   "source_files": 1494,
    "test_files": 182
   },
   "oneiron-spawn": {
