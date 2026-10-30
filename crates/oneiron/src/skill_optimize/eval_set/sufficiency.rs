@@ -384,8 +384,10 @@ impl Vault {
                     reference: ask.id.to_hex(),
                     weight: 1.0,
                     at,
-                    // The ask keeps no rows its two options were read from,
-                    // and its id is no row (FIX 5761): unknown.
+                    // Key-only-unknown by design (FIX 12041, decided): the
+                    // two options arrive as caller-supplied texts the engine
+                    // reads no rows for, and the ask id is no row (FIX 5761).
+                    // The consumer (FIX 11913) lists unknown, never a refusal.
                     source_rows: None,
                 },
             )
