@@ -266,6 +266,9 @@ impl Vault {
             None,
             now,
         )?;
+        if let Some(records) = &export_records {
+            self.keep_export_records_in_txn(&mut txn, &receipt.id, records)?;
+        }
         let delivery = match (&receipt.export, archive) {
             (Some(summary), Some((archive, positions))) => {
                 let copy = RemovalExportCopy {

@@ -1016,14 +1016,18 @@ impl<'a> DreamerRunnerStore<'a> {
             parked_at: input.now,
         };
         let existing = PARKED.get(&self.vault.store, &*wtxn, &record.attempt_id)?;
-        if let Some(existing) = existing
+        if let Some(existing) = &existing
             && existing.park_owner != record.park_owner
         {
             return Err(invalid_dreamer_runner(
                 "dreamer parked row is owned by a different parker",
             ));
         }
+        if let Some(existing) = &existing {
+            super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, existing)?;
+        }
         PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
+        super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
         Ok(record)
     }
@@ -1077,6 +1081,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let (status, _) = self
             .status_with_park_in_txn(wtxn, attempt_id)?
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
+        super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {
             // Callers pass their own clock (the trap layer's counts

@@ -332,6 +332,9 @@ side_tables! {
     /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
     /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).
     SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named;
+    /// The record ids an export-first removal's export counted, beside its
+    /// receipt (FIX 11886). Key: hex32 (receipt id).
+    SHARED_ACT_REMOVAL_EXPORT_RECORDS: VaultMeta b"shared-act:removal-export-records:v1:" Named;
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
