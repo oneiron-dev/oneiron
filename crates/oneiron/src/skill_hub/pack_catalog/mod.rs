@@ -86,8 +86,8 @@ mod route_halt;
 #[cfg(test)]
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 pub use qualify::{
-    ConnectorPackQualification, PackConnectorReceipt, PackHookQualification, PackHookReplay,
-    ProbePackQualifier, QualifiedPackFitPolicy, SetupCheckQualifier,
+    BuiltinProbeQualifier, ConnectorPackQualification, PackConnectorReceipt, PackHookQualification,
+    PackHookReplay, ProbePackQualifier, QualifiedPackFitPolicy, SetupCheckQualifier,
 };
 mod schema;
 mod screening;
