@@ -33,11 +33,11 @@ use super::{EntityDoc, invalid};
 use crate::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::ActorStamp;
 use crate::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
 use crate::provenance::text_commit::{RowProvenance, TextCommitReceipt};
-use crate::write_envelope::WriteActor;
 
 /// What joins a commit's engine stamp to its receipt.
 pub(super) const RECEIPT_PREFIX: &str = "|made_by=";
@@ -50,22 +50,24 @@ pub(super) const ROW_BIRTH_RESTATED: &str = "oneiron.entity_doc.v1 row_birth";
 /// The process a generic commit's receipt names (C-ENTITY-PROCESS): the
 /// engine operation `oneiron.entity_doc.<verb>` at version 1, which takes no
 /// render parameters, so its parameter hash is the empty input's. It is the
-/// operation that wrote the change, not a model.
-fn engine_process(actor: WriteActor, verb: &str) -> MadeByProcess {
+/// operation that wrote the change, not a model. Its actor is the writer's
+/// stamp token (FIX 10930).
+fn engine_process(stamp: ActorStamp, verb: &str) -> MadeByProcess {
     MadeByProcess {
-        actor: actor.entity_ref(),
-        class: MadeByClass::of_writer(actor.actor_class()),
+        actor: stamp.token,
+        class: MadeByClass::of_writer(stamp.class),
         identity: format!("oneiron.entity_doc.{verb}"),
         version: "1".to_owned(),
         params_hash: format!("{:x}", Sha256::digest([])),
     }
 }
 
-/// `stamped`, one commit's engine stamp, with its receipt: `actor` wrote it
-/// at `at` through the operation `verb`, reading `sources`.
+/// `stamped`, one commit's engine stamp, with its receipt: the actor whose
+/// token is `stamp` wrote it at `at` through the operation `verb`, reading
+/// `sources`.
 pub(super) fn receipted(
     stamped: &str,
-    actor: WriteActor,
+    stamp: ActorStamp,
     at: u64,
     verb: &str,
     sources: &[EntityId],
@@ -78,7 +80,7 @@ pub(super) fn receipted(
                 role: MadeByInputRole::Input,
             })
             .collect(),
-        process: engine_process(actor, verb),
+        process: engine_process(stamp, verb),
         at,
         trigger: None,
     };
@@ -90,7 +92,7 @@ pub(super) fn receipted(
 
 /// `stamped` with `made_by` as its receipt: the generic receipt, or a row's
 /// own birth envelope that names the stamp's actor at the commit's time (FIX
-/// 10929).
+/// 10929), written naming the stamp's token (FIX 10930).
 pub(super) fn receipted_as(stamped: &str, made_by: &MadeBy) -> Result<String> {
     let receipt = serde_json::to_string(made_by)
         .map_err(|_| Error::InvariantViolation("document receipt encoding"))?;

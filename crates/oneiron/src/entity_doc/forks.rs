@@ -476,6 +476,8 @@ pub(super) fn open_proposal_in_txn(
         let live = storage::load(&vault.store, txn, &h)?;
         let mut fork = live.fork(&req.base)?;
         bind_actor(vault, txn, &fork, req.actor, at)?;
+        // The fork's commits name the actor's stamp token (FIX 10930).
+        let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, req.actor)?;
         // New text is admitted before the fork holds it, and a handle of a
         // key the live text's lift marked writes its value again (OF-067).
         let lifted =
@@ -483,7 +485,7 @@ pub(super) fn open_proposal_in_txn(
         if let Some(text) = &req.rewrite {
             let text = admitted_text_in_txn(vault, txn, req.entity, text, &lifted, &mut plan)?;
             let base = fork.text();
-            fork.edit_with(req.actor, at, sources, |body| {
+            fork.edit_with(stamp, at, sources, |body| {
                 body.delete(0, body.len_unicode())
                     .map_err(|_| invalid("fork rewrite delete"))?;
                 body.insert(0, &text.stored)
@@ -498,7 +500,7 @@ pub(super) fn open_proposal_in_txn(
             for (edit, op) in req.edits.iter().enumerate() {
                 let text = admitted_prose_in_txn(vault, txn, req.entity, op, &lifted, &mut plan)?;
                 let stored = &text.stored;
-                let place = apply(&mut fork, req.entity, op, stored, at, sources, &lifted)?;
+                let place = apply(&mut fork, req.entity, op, stamp, stored, at, sources, &lifted)?;
                 if let Some(place) = place {
                     let slot = format!("/requests/{index}/edits/{edit}/text");
                     let said = LandedProse::anchored(req.actor, slot, &fork, place, &text, &lifted);

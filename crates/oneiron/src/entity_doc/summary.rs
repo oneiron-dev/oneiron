@@ -98,11 +98,13 @@ pub(crate) fn birth_summary_in_txn(
     // A SUMMARY its writing door already stamped keeps that birth on its
     // document's birth commit (FIX 10929).
     let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &entity)?;
+    // The birth commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     let doc = EntityDoc::open_initialized_born(
         loro::LoroDoc::new(),
         entity,
         &text,
-        actor,
+        (actor, stamp),
         at,
         |doc| {
             EntityDoc::replace_metadata(doc, &record_metadata)?;
@@ -174,8 +176,10 @@ impl Vault {
             let keep = super::metadata::encode_value(&keep_value)?;
             let before = doc.doc.oplog_vv();
             super::forks::bind_actor(self, txn, &doc, actor, at)?;
+            // The memo's commit names the actor's stamp token (FIX 10930).
+            let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
             map_insert_bytes(&doc.doc.get_map("meta"), "keep", &keep)?;
-            super::document::stamp(&doc.doc, actor, at, "summary_keep")?;
+            super::document::stamp(&doc.doc, stamp, at, "summary_keep")?;
             storage::persist(self, txn, summary, &mut head, &doc, Some(&before))
         })
     }
