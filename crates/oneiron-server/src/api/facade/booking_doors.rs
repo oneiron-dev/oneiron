@@ -58,12 +58,12 @@ pub(crate) async fn vault_booking_page_token(
 /// the configuration claim, each busy EVENT and charged booking with the
 /// claims on it). The visitor's sentence, the parse, live holds (side-table
 /// rows) and the session counters list none, and no busy detail leaves
-/// through the answer. A refusal lists unknown.
+/// through the answer. A refusal carries nothing and lists none (FIX 6080).
 pub(crate) async fn vault_booking_constraint_turn(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: BookingConstraintTurnRequest,
-) -> MaybeListed<BookingConstraintTurnResponse> {
+) -> Listed<BookingConstraintTurnResponse> {
     let answer: MemoryResult<(BookingConstraintTurnResponse, Vec<EntityId>)> = async {
         let transport = credential_transport_context(server, auth)
             .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
@@ -83,8 +83,8 @@ pub(crate) async fn vault_booking_constraint_turn(
     }
     .await;
     match answer {
-        Ok((response, rows)) => (Ok(response), Some(rows)),
-        Err(error) => (Err(error), None),
+        Ok((response, rows)) => (Ok(response), rows),
+        Err(error) => (Err(error), Vec::new()),
     }
 }
 
@@ -116,19 +116,26 @@ async fn booking_operation(
     }
 }
 
+/// `vault.booking.availability` (FIX 6080): its credential transport always
+/// binds the live publication, and a cached answer that kept no rows beside
+/// it is solved again for it, so the executor lists every availability
+/// answer it gives ([`execute_booking_operation_listing`]). A refusal
+/// carries nothing and lists none.
 pub(crate) async fn vault_booking_availability(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     request: BookingAvailabilityRequest,
 ) -> MaybeListed<BookingOperationResponse> {
     let BookingAvailabilityRequest::Availability { page_token, input } = request;
-    booking_operation(
+    let (answer, rows) = booking_operation(
         server,
         auth,
         page_token,
         BookingOperationRequest::Availability(input),
     )
-    .await
+    .await;
+    let rows = if answer.is_err() { Some(Vec::new()) } else { rows };
+    (answer, rows)
 }
 
 pub(crate) async fn vault_booking_book(
