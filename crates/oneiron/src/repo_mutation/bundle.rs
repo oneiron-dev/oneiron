@@ -336,7 +336,20 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
             .metadata_edit
             .as_ref()
             .ok_or(invalid("a bundle file carries its reviewed state change"))?;
-        let old = utf8(before.read_file(&file.path)?.unwrap_or(b""))?;
+        let base_text = before.read_file(&file.path)?;
+        let mut old = utf8(base_text.unwrap_or(b""))?;
+        // A file the base fork withholds (a remediated key's, FIX 7608 slice
+        // 6) has no base text: a document already holding its path is
+        // lowered from the text it holds, never refused (FIX 10975).
+        let mut held = None;
+        if base_text.is_none()
+            && state.expected.present
+            && vault.code_document_frontier(&scope, &file.path)?.is_some()
+        {
+            let session = vault.open_code_document(&scope, &file.path, &old, row.session)?;
+            old = session.text();
+            held = Some(session);
+        }
         let changed_state = state.expected != state.replacement;
         let (edit, metadata_edit) = match &file.content {
             None => {
@@ -360,9 +373,11 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
                 )
             }
         };
-        let session = vault
-            .open_code_document(&scope, &file.path, &old, row.session)?
-            .with_op_provenance(row.op_provenance.clone());
+        let session = match held {
+            Some(session) => session,
+            None => vault.open_code_document(&scope, &file.path, &old, row.session)?,
+        }
+        .with_op_provenance(row.op_provenance.clone());
         items.push(CodeFileIngress {
             operation: row.file_operation(index)?,
             session,
