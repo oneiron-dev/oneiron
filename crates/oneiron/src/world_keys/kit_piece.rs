@@ -6,7 +6,8 @@
 //! reads the piece of the install it was copied from. A world kit's draw keeps its
 //! piece in that kit's own pending pair, and the piece moves to the current pair
 //! once the kit is current (FIX 11977, 12046): each drawn kit keeps its own until
-//! its confirm.
+//! its confirm. The kit module's settle makes that move, one settle per install
+//! at a time (FIX 12136).
 
 use crate::Vault;
 use crate::error::Result;
@@ -41,7 +42,7 @@ impl Vault {
 
     /// This install's kit-piece slots as they stand: `None` with no keystore or
     /// no machine id yet. Nothing is minted.
-    fn kit_piece_store_here(&self) -> Result<Option<KitPieceStore>> {
+    pub(super) fn kit_piece_store_here(&self) -> Result<Option<KitPieceStore>> {
         let Ok(keystore) = self.device_keystore() else {
             return Ok(None);
         };
@@ -140,46 +141,6 @@ impl Vault {
             .iter()
             .all(|piece| piece.kit_id() == kit)
             .then_some(kit)
-    }
-
-    /// Settles this install's world-kit pieces (FIX 11977, 12046): the current
-    /// world kit's pending piece, when it has one, replaces the current pair's,
-    /// then its pending pair empties, and the pending pieces of the kits in
-    /// `replaced`, which can no longer be confirmed, are deleted. The piece of a
-    /// kit still pending stays, whatever kit became current. Runs after a
-    /// confirm's commit, with the kits it replaced, and before a draw keeps its
-    /// piece, with none. A step that fails is logged and leaves its piece where
-    /// it is, where a restore here still reads it.
-    pub(super) fn settle_pending_kit_pieces(&self, replaced: &[KitId]) {
-        if let Err(error) = self.move_pending_kit_piece() {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a confirmed world kit's piece stays in its pending kit-piece slots"
-            );
-        }
-        for kit in replaced {
-            self.drop_pending_kit_piece(*kit);
-        }
-    }
-
-    /// [`Self::settle_pending_kit_pieces`]'s move: the current pair is written
-    /// before the pending pair empties, so a failure between them leaves the
-    /// piece in both pairs, never in neither.
-    fn move_pending_kit_piece(&self) -> Result<()> {
-        let Some(store) = self.kit_piece_store_here()? else {
-            return Ok(());
-        };
-        let Some(kit) = self.current_world_kit()? else {
-            return Ok(());
-        };
-        let pending = KitPiecePair::Pending(kit);
-        let Some(piece) = store.get(pending).map_err(keystore_error)? else {
-            return Ok(());
-        };
-        store
-            .put(&piece, KitPiecePair::Current(KitSecretKind::RecoveryRoot))
-            .map_err(keystore_error)?;
-        store.delete(pending).map_err(keystore_error)
     }
 
     /// A drawn world kit whose pending row did not commit (FIX 12046): no

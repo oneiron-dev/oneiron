@@ -68,6 +68,11 @@ impl KitPieceStore {
         }
     }
 
+    /// The vault id and machine id that name these slots.
+    pub(crate) fn vault_install(&self) -> ([u8; 32], [u8; 16]) {
+        (self.vault_id, self.install)
+    }
+
     /// Keeps `piece` in `pair`, its kind's current pair or its own kit's pending
     /// pair, replacing the piece kept there. A tail that does not write after its
     /// head did empties the pair: half a piece is no piece.

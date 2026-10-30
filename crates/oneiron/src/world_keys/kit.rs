@@ -30,6 +30,8 @@
 //! confirms it ([`Vault::confirm_world_kit`]); only the request's door
 //! refuses it.
 
+mod settle;
+
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -354,7 +356,7 @@ impl Vault {
         .map_err(kit_refused)?;
         drop(prepared);
         if store.is_some() {
-            self.settle_pending_kit_pieces(&[]);
+            self.settle_pending_kit_pieces(None, &[]);
         }
         let manifest = kit.manifest().clone();
         let pair = KitPiecePair::Pending(manifest.kit_id);
@@ -438,8 +440,8 @@ impl Vault {
     /// data key needs it held on this handle: the new wrap replaces the old
     /// kit's, so a locked key refuses the confirm before anything is written.
     /// Once it commits, this machine's piece of the kit leaves its pending
-    /// key slots for the current ones, and the kits it replaced keep none
-    /// pending (FIX 11977, 12046).
+    /// key slots for the current ones while the kit is still current, and
+    /// the kits it replaced keep none pending (FIX 11977, 12046, 12136).
     pub fn confirm_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -456,7 +458,7 @@ impl Vault {
             self.activate_owner_root_with(owner, prepared, carry, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
-        self.settle_pending_kit_pieces(&replaced);
+        self.settle_pending_kit_pieces(Some(row.kit), &replaced);
         transition.finish()?;
         Ok(ConfirmedWorldKit {
             kit: row.kit,
