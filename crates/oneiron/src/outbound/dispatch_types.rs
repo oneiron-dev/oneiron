@@ -486,6 +486,19 @@ pub struct OutboundExecutionOutcome {
     /// or a spent quota, on a definite non-delivery. Its stated seconds ride
     /// the `retry_after` field.
     pub provider_wait: Option<crate::outbound_intent_ledger::ProviderWaitKind>,
+    /// The connector's own seat policy held this send before any provider
+    /// call (FIX 8791): on a definite non-delivery, the send stays queued
+    /// and its dispatch is Held.
+    pub hold: Option<OutboundExecutionHold>,
+}
+
+/// A connector's own hold on a send it did not make (FIX 8791): its reason,
+/// and the instant the hold ends when the connector's policy names one. The
+/// dispatch is Held, with that instant as its `retry_at`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundExecutionHold {
+    pub reason: String,
+    pub until: Option<u64>,
 }
 
 /// Typed adapter execution result. Unknown adapter outcomes must be modeled
@@ -510,6 +523,7 @@ impl OutboundExecutionOutcome {
             recovery_suggestions: Vec::new(),
             remote_task: None,
             provider_wait: None,
+            hold: None,
         }
     }
 
@@ -524,6 +538,7 @@ impl OutboundExecutionOutcome {
             recovery_suggestions: Vec::new(),
             remote_task: None,
             provider_wait: None,
+            hold: None,
         }
     }
 
@@ -540,6 +555,7 @@ impl OutboundExecutionOutcome {
             recovery_suggestions: Vec::new(),
             remote_task: Some(handle),
             provider_wait: None,
+            hold: None,
         }
     }
 
@@ -551,6 +567,17 @@ impl OutboundExecutionOutcome {
         kind: crate::outbound_intent_ledger::ProviderWaitKind,
     ) -> Self {
         self.provider_wait = Some(kind);
+        self
+    }
+
+    /// Marks this definite non-delivery as the connector's own hold (FIX
+    /// 8791): the send stays queued and its dispatch is Held until `until`.
+    #[must_use]
+    pub fn with_hold(mut self, reason: impl Into<String>, until: Option<u64>) -> Self {
+        self.hold = Some(OutboundExecutionHold {
+            reason: reason.into(),
+            until,
+        });
         self
     }
 

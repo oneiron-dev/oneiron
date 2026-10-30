@@ -3,8 +3,8 @@
 //! evidence: its value, approval, source and original attribution stay intact.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::*;
 use super::writer::{GateCodes, PromotionRejection};
+use super::*;
 use super::{corrections, resolved_outputs};
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
@@ -175,7 +175,13 @@ pub fn promote_scoped_consolidation(
             // and the gate's codes when the gate refused it (FIX 10355),
             // and never the text.
             Err(rejection) => {
-                log_rejected(run, index, "promote", rejection.kind, rejection.gate.as_ref());
+                log_rejected(
+                    run,
+                    index,
+                    "promote",
+                    rejection.kind,
+                    rejection.gate.as_ref(),
+                );
                 rejection.record(id, &mut outcome);
             }
         }
@@ -207,8 +213,9 @@ fn log_rejected(
     gate: Option<&GateCodes>,
 ) {
     let attempt_id = crate::entity_id::bytes_to_hex_lower(run.attempt_id.as_bytes());
-    let (gate_outcome, reason_codes) =
-        gate.map_or(("", &[][..]), |(outcome, codes)| (*outcome, codes.as_slice()));
+    let (gate_outcome, reason_codes) = gate.map_or(("", &[][..]), |(outcome, codes)| {
+        (*outcome, codes.as_slice())
+    });
     match kind {
         Some(kind) => tracing::warn!(
             attempt_id = %attempt_id,

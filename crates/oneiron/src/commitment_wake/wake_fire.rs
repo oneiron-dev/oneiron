@@ -90,6 +90,10 @@ pub enum CommitmentWakeSkip {
     StatedIntention,
     /// Query-only strength acknowledges the exact phase without enqueueing.
     Decision,
+    /// The instance's series was rejected, replaced by an edit, or is no
+    /// longer approved (FIX 1471): it acknowledges the exact phase without
+    /// enqueueing, so a withdrawn series stops reminding.
+    SeriesWithdrawn,
 }
 
 /// Eligibility verdict for one instance, before any write happens.
@@ -110,7 +114,8 @@ pub(super) enum WakeEligibility {
 ///    `decode_commitment_claim`. The PUBLIC `get_commitment_claim` opens a
 ///    nested read transaction, which is illegal under LMDB, and is therefore
 ///    never reachable from here.
-/// 3. Ineligible instances acknowledge the exact phase and commit, so the
+/// 3. Ineligible instances, including one whose series was rejected or
+///    replaced, acknowledge the exact phase and commit, so the
 ///    deadline-source read converges instead of busy-looping.
 /// 4. An eligible instance enqueues one `Event`/MICRO attempt.
 /// 5. The phase is acknowledged in the SAME transaction: any error before
@@ -144,7 +149,9 @@ fn wake_eligibility_in_txn(
     wtxn: &RwTxn<'_>,
     due: &CommitmentWakeDue,
 ) -> Result<WakeEligibility> {
-    let Some(body) = vault.get_claim_in_txn(wtxn, &due.instance_id)? else {
+    // The instance's current status sits at the head of its status chain.
+    let head = vault.commitment_head_in_txn(wtxn, &due.instance_id)?;
+    let Some(body) = vault.get_claim_in_txn(wtxn, &head)? else {
         return Ok(WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance));
     };
     // A non-commitment claim at an instance ref is an index that outlived its
@@ -152,7 +159,39 @@ fn wake_eligibility_in_txn(
     let Some(record) = decode_commitment_claim(&body)? else {
         return Ok(WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance));
     };
-    Ok(wake_eligibility(&record))
+    if let skip @ WakeEligibility::Skip(_) = wake_eligibility(&record) {
+        return Ok(skip);
+    }
+    series_eligibility_in_txn(vault, wtxn, &record)
+}
+
+/// [`wake_eligibility`] plus the series check, read from the vault as it is
+/// now: what the executor and the approval door ask before they act.
+pub(super) fn current_wake_eligibility(
+    vault: &Vault,
+    record: &CommitmentRecord,
+) -> Result<WakeEligibility> {
+    if let skip @ WakeEligibility::Skip(_) = wake_eligibility(record) {
+        return Ok(skip);
+    }
+    let txn = vault.store.env.read_txn()?;
+    series_eligibility_in_txn(vault, &txn, record)
+}
+
+/// Eligible while the instance's series still fires, so an instance a
+/// rejected or replaced series minted stops waking.
+fn series_eligibility_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    record: &CommitmentRecord,
+) -> Result<WakeEligibility> {
+    Ok(
+        if vault.commitment_instance_series_fires_in_txn(txn, record)? {
+            WakeEligibility::Eligible
+        } else {
+            WakeEligibility::Skip(CommitmentWakeSkip::SeriesWithdrawn)
+        },
+    )
 }
 
 pub(super) fn wake_eligibility(record: &CommitmentRecord) -> WakeEligibility {

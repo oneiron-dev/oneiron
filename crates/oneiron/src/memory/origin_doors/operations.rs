@@ -44,7 +44,8 @@ impl Memory<'_> {
         self.origin_owner(owner)?;
         let host = self.vault.local_machine()?.map(|machine| machine.id);
         let writer = origin_authority_writer(input.writer.as_deref(), host)?;
-        let authority = self.vault.set_served_origin_authority(
+        let authority = self.vault.set_served_origin_authority_as_owner(
+            owner,
             &input.repo,
             input.expected_epoch,
             input.residence,

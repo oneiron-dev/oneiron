@@ -42,6 +42,7 @@ pub(super) fn audit_and_stage_body(
         &fixed.id,
         fixed.entity_type,
         data,
+        fixed.options.storage.asset_file,
     )?;
     crate::ports::keep_worlds_of_unmade_epoch_in_txn(
         store,

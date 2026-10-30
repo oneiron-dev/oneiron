@@ -2,7 +2,7 @@
 use super::export_input::{ExportPromotion, VerifiedEngineExport, export_message};
 use super::publication::{OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
-use super::tree::OriginTreeFile;
+use super::tree::{OriginTreeFile, start_tree_count};
 use crate::Vault;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
@@ -100,6 +100,25 @@ impl Vault {
         request: &EngineCommitExport,
         authority: Option<&OriginAuthorityLease>,
     ) -> Result<OriginPublicationReceipt> {
+        match self.export_engine_commit_judged(git, repo, request, authority, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(receipt) => Ok(receipt),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::export_engine_commit`], with `judge` deciding the exact ref
+    /// move once its Git projection is known and before anything records
+    /// or publishes it (FIX 8800): a refusal there exports nothing.
+    pub(crate) fn export_engine_commit_judged<R>(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        request: &EngineCommitExport,
+        authority: Option<&OriginAuthorityLease>,
+        judge: impl FnOnce(&GitOid) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
         let _guard = lock_repository(repo.common_dir())?;
         // The shared eligibility (G4 PR3): the stored promotion is judged
         // again before any Git object is created, at its original point.
@@ -159,6 +178,9 @@ impl Vault {
             },
             revision.finalized_at,
         )?;
+        if let Err(refused) = judge(&oid)? {
+            return Ok(Err(refused));
+        }
         self.with_write_txn_grouped(|txn| {
             let key = export_key(repo, revision.revision_id);
             if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
@@ -204,10 +226,11 @@ impl Vault {
             learned_at: revision.finalized_at,
         };
         self.put_origin_publication_intent(&publication)?;
-        match authority {
+        let receipt = match authority {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),
-        }
+        }?;
+        Ok(Ok(receipt))
     }
 }
 
@@ -257,32 +280,32 @@ impl Vault {
     }
 }
 
-/// Writes a complete byte-preserving tree without moving a public ref.
+/// Writes a complete byte-preserving tree without moving a public ref. It
+/// writes every file and directory however many (rule 5, FIX 9998): past
+/// its scan row it raises a check; the byte floor and the mode stay.
 pub(in crate::origin) fn write_tree_files(
     git: &GitWire<'_>,
     repo: &GitWireRepo,
     files: &BTreeMap<String, OriginTreeFile>,
     now: u64,
 ) -> Result<GitOid> {
+    let mut count = start_tree_count(git, repo)?;
     let mut directories: BTreeMap<String, Vec<GitTreeEntry>> = BTreeMap::new();
     directories.insert(String::new(), Vec::new());
     let mut total = 0_usize;
     for (path, file) in files {
+        count.row();
         let parts: Vec<_> = path.split('/').collect();
-        if parts.len() > 128
-            || parts.iter().any(|p| {
-                p.is_empty() || matches!(*p, "." | ".." | ".git") || p.as_bytes().contains(&0)
-            })
+        if parts
+            .iter()
+            .any(|p| p.is_empty() || matches!(*p, "." | ".." | ".git") || p.as_bytes().contains(&0))
         {
             return Err(Error::InvariantViolation("unsafe exported file path"));
         }
         total = total
             .checked_add(file.content.len())
             .ok_or(Error::ArithmeticOverflow("export bytes"))?;
-        if files.len() > 100_000
-            || total > 128 * 1024 * 1024
-            || !matches!(file.mode, 0o100644 | 0o100755 | 0o120000)
-        {
+        if total > 128 * 1024 * 1024 || !matches!(file.mode, 0o100644 | 0o100755 | 0o120000) {
             return Err(Error::IndexOverflow("export file bounds or mode"));
         }
         let mut plan = GitWirePlan::new();
@@ -307,6 +330,7 @@ pub(in crate::origin) fn write_tree_files(
     paths.retain(|p| !p.is_empty());
     paths.push(String::new());
     for path in paths {
+        count.row();
         let mut entries = directories
             .remove(&path)
             .ok_or(Error::InvariantViolation("export directory missing"))?;
@@ -320,6 +344,7 @@ pub(in crate::origin) fn write_tree_files(
         plan.write_tree(entries)?;
         let oid = write_one(git, repo, &plan, now)?;
         if path.is_empty() {
+            count.finish(git.vault());
             return Ok(oid);
         }
         let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));

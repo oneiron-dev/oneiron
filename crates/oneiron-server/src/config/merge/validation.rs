@@ -43,6 +43,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
+        "channel_endpoints" => struct_fields::<crate::config::ChannelEndpointsConfig>(),
         "linear" => struct_fields::<super::LinearConfig>(),
         _ => return None,
     };
@@ -144,6 +145,7 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
         connector.validate(name)?;
     }
     config.line.validate()?;
+    config.channel_endpoints.validate()?;
     if let Some(linear) = &config.linear {
         linear.validate()?;
     }

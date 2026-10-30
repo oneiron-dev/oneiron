@@ -9,6 +9,9 @@ use super::stages::{
     working_hours_mask,
 };
 use super::{BookingCounts, load_booking_counts};
+use crate::booking::anti_abuse::{
+    applicable_booking_anti_abuse_rules, effective_minimum_notice_secs,
+};
 use crate::booking::config::{
     EventTypeConfig, RoutingMode, load_event_type_config, load_event_type_config_listed,
 };
@@ -138,7 +141,7 @@ impl BookingSolver<'_> {
         }
 
         let requested = half_open(req.window)?;
-        let config = match (&self.synthetic_config, producers) {
+        let mut config = match (&self.synthetic_config, producers) {
             (Some(config), _) => config.clone(),
             (None, Some(producers)) => {
                 let (config, claim) =
@@ -148,6 +151,20 @@ impl BookingSolver<'_> {
             }
             (None, None) => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
         };
+        // The owner's activated notice rule is the notice step four honours
+        // (FIX 9630); with none in scope, the configuration's own stands.
+        if self.synthetic_config.is_none() {
+            let rows = applicable_booking_anti_abuse_rules(
+                self.vault,
+                &self.page_ref,
+                &Some(req.event_type.clone()),
+            )?;
+            if let Some(notice) =
+                effective_minimum_notice_secs(&rows, &self.page_ref, &req.event_type)
+            {
+                config.min_notice_secs = notice;
+            }
+        }
         config.validate()?;
         if config.key != req.event_type {
             return Err(BookingError::InvalidConfig(format!(

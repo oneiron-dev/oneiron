@@ -515,12 +515,9 @@ impl Vault {
         // replacement staged earlier in the same txn rolls back with it.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
-        if now < old_header.occurred_start {
-            return Err(Error::InvalidTimeRange {
-                start: old_header.occurred_start,
-                end: now,
-            });
-        }
+        // A claim superseded before its occurred start closes at that start
+        // (FIX 9726); the supersession itself keeps the real `now`.
+        let closed_end = now.max(old_header.occurred_start);
 
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
@@ -542,7 +539,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange {
                     start: old_header.occurred_start,
-                    end: now,
+                    end: closed_end,
                 },
                 learned_at: old_header.learned_at,
                 data,
@@ -570,10 +567,15 @@ impl Vault {
                 now,
             )?;
         let decision = match (close, binding) {
-            (SupersedeClose::Granted { checker: Some(checker), .. }, Some(binding)) => self
-                .apply_checked_deferred_closure_in_txn(
-                    wtxn, ops, binding, transition, &old_body, checker,
-                )?,
+            (
+                SupersedeClose::Granted {
+                    checker: Some(checker),
+                    ..
+                },
+                Some(binding),
+            ) => self.apply_checked_deferred_closure_in_txn(
+                wtxn, ops, binding, transition, &old_body, checker,
+            )?,
             (_, binding) => {
                 self.apply_lifecycle_materialization(wtxn, ops, binding, transition, true)?;
                 None
