@@ -77,7 +77,6 @@ impl Carrier {
             let sent = self.send_sets(link)?;
             link.send(&VmOutboxFrame::Pull)?;
             link.flush()?;
-            self.divergence_notices_told(told);
             let mut taken = false;
             loop {
                 match link.read()? {
@@ -90,6 +89,11 @@ impl Carrier {
                     Some(_) => anyhow::bail!("the host sent an outbox frame out of turn"),
                 }
             }
+            // The host's Done answers the Pull sent after the notices on this
+            // ordered stream, so it read them: only now are they told. A turn
+            // that fails before Done sends them again; the host acts on a
+            // notice only while its own record still holds that copy.
+            self.divergence_notices_told(told);
             if !sent && !taken && !self.gate.idle() {
                 return Ok(());
             }
