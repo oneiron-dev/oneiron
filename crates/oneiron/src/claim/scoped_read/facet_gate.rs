@@ -2,11 +2,11 @@
 //! what this lane reads, by the one rule MCP uses too
 //! (`federation::facet_read`). The owner is never limited (owner ruling
 //! FACET-READ = A).
-use super::ScopedRead;
+use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::error::Result;
-use crate::federation::ScopeAxis;
-use crate::federation::facet_read::facets_admit_in;
+use crate::federation::facet_read::{facets_admit_in, placed_facets_admit};
+use crate::federation::{ScopeAxis, ScopeId};
 
 impl ScopedRead<'_> {
     /// Read inside `room`'s signed facets, as a turn in it does, while
@@ -74,45 +74,13 @@ impl ScopedRead<'_> {
         id: &EntityId,
         raw: Option<&[u8]>,
     ) -> Result<bool> {
-        let credential = self
-            .actor_key
-            .authority_scope()
-            .map(|scope| &scope.facets)
-            .filter(|facets| !matches!(facets, ScopeAxis::All));
-        // A turn holds the facets its room had when it opened and meets this
-        // snapshot's into them, so it only narrows.
-        let room = match &self.actor_key.room_turn {
-            Some(turn) => Some(
-                turn.terms.meet_facets(
-                    &crate::workspace_roster::room_facets_in(self.vault, txn, turn.room)?
-                        .unwrap_or(ScopeAxis::All),
-                ),
-            ),
-            None => None,
-        }
-        .filter(|facets| !matches!(facets, ScopeAxis::All));
-        // A named room read outside a turn takes the room's signed facets as
-        // this snapshot finds them (FIX 643).
-        let named = match self.actor_key.room_facets {
-            Some(room) => Some(crate::context_board::room_facets_axis_in(
-                self.vault, txn, room,
-            )?),
-            None => None,
-        }
-        .filter(|facets| !matches!(facets, ScopeAxis::All));
-        if (credential.is_none() && room.is_none() && named.is_none())
-            || self.actor_key.facets_owner_exempt_in(self.vault, txn)?
-        {
+        let Some(limits) = self.actor_key.facet_limits_in(self.vault, txn)? else {
             return Ok(true);
-        }
+        };
         let Some(raw) = raw else {
             return Ok(false);
         };
-        for facets in credential
-            .into_iter()
-            .chain(room.as_ref())
-            .chain(named.as_ref())
-        {
+        for facets in limits.axes() {
             let inside = match self.session_view {
                 Some(view) => facets_admit_in(self.vault, view, txn, *id, raw, facets)?,
                 None => facets_admit_in(self.vault, &self.vault.store, txn, *id, raw, facets)?,
@@ -122,5 +90,85 @@ impl ScopedRead<'_> {
             }
         }
         Ok(true)
+    }
+}
+
+/// The facets one read is limited to in one snapshot: its credential's, its
+/// room turn's and its named room's, each where it names fewer than all.
+struct FacetLimits<'k> {
+    credential: Option<&'k ScopeAxis<ScopeId>>,
+    room: Option<ScopeAxis<ScopeId>>,
+    named: Option<ScopeAxis<ScopeId>>,
+}
+
+impl FacetLimits<'_> {
+    /// Each axis a row must sit inside.
+    fn axes(&self) -> impl Iterator<Item = &ScopeAxis<ScopeId>> {
+        self.credential
+            .into_iter()
+            .chain(self.room.as_ref())
+            .chain(self.named.as_ref())
+    }
+}
+
+impl ScopedReadActorKey {
+    /// The facets a read under this key is limited to in `txn`, `None` when
+    /// it reads every facet: no axis names fewer than all, or the key is the
+    /// owner's, or a narrower credential of the owner's while its exemption
+    /// holds.
+    fn facet_limits_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<FacetLimits<'_>>> {
+        let credential = self
+            .authority_scope()
+            .map(|scope| &scope.facets)
+            .filter(|facets| !matches!(facets, ScopeAxis::All));
+        // A turn holds the facets its room had when it opened and meets this
+        // snapshot's into them, so it only narrows.
+        let room = match &self.room_turn {
+            Some(turn) => Some(
+                turn.terms.meet_facets(
+                    &crate::workspace_roster::room_facets_in(vault, txn, turn.room)?
+                        .unwrap_or(ScopeAxis::All),
+                ),
+            ),
+            None => None,
+        }
+        .filter(|facets| !matches!(facets, ScopeAxis::All));
+        // A named room read outside a turn takes the room's signed facets as
+        // this snapshot finds them (FIX 643).
+        let named = match self.room_facets {
+            Some(room) => Some(crate::context_board::room_facets_axis_in(vault, txn, room)?),
+            None => None,
+        }
+        .filter(|facets| !matches!(facets, ScopeAxis::All));
+        if (credential.is_none() && room.is_none() && named.is_none())
+            || self.facets_owner_exempt_in(vault, txn)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(FacetLimits {
+            credential,
+            room,
+            named,
+        }))
+    }
+
+    /// [`ScopedRead::facets_allow_in`] for a CLAIM whose `FacetOf` targets
+    /// are `placed`, as its access class carries them (FIX 11915).
+    pub(super) fn facets_allow_placed_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        placed: &[EntityId],
+    ) -> Result<bool> {
+        let Some(limits) = self.facet_limits_in(vault, txn)? else {
+            return Ok(true);
+        };
+        Ok(limits
+            .axes()
+            .all(|facets| placed_facets_admit(facets, placed)))
     }
 }

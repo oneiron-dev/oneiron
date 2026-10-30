@@ -1,6 +1,7 @@
 //! Relationship access checks share the row read transaction with grant resolution.
-use super::ScopedRead;
+use super::access_class::ClassVerdicts;
 use super::agent_grants::{AskedFilter, HeldGrants};
+use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
 use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
@@ -44,14 +45,17 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// read asks on its own ([`Self::asking_use_of`]). The third holds, for the
 /// same serving txn, each reader's own live Grants once a row's own
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
+/// The fourth holds, for the same serving txn, each reader's verdict on each
+/// CLAIM access class it judged (FIX 11915).
 #[derive(Default)]
 pub(super) struct HeldAuthority<'v>(
     RefCell<Option<AccessContext<'v>>>,
     Option<EntityId>,
     HeldGrants,
+    ClassVerdicts,
 );
 
-impl HeldAuthority<'_> {
+impl<'v> HeldAuthority<'v> {
     /// The row checks of one serving txn whose filter the read resolved from
     /// `requested` over its key's own floor (`None`: the floor alone).
     pub(super) fn for_request(requested: Option<&super::RetrievalFilter>) -> Self {
@@ -59,6 +63,7 @@ impl HeldAuthority<'_> {
             RefCell::default(),
             None,
             HeldGrants::fresh(AskedFilter::Known(requested.cloned())),
+            ClassVerdicts::default(),
         )
     }
 
@@ -66,19 +71,21 @@ impl HeldAuthority<'_> {
     /// conjunct on its own, after every other gate (FIX 5226): `id` is judged
     /// by every other gate as before, and every other row, each source `id`
     /// was written from included, keeps that conjunct. It shares this read's
-    /// Grants.
+    /// Grants and class verdicts.
     pub(super) fn asking_use_of(&self, id: EntityId) -> Self {
-        Self(RefCell::default(), Some(id), self.2.clone())
+        Self(RefCell::default(), Some(id), self.2.clone(), self.3.clone())
     }
 
     /// A peer's row checks in this read's serving txn: its own relationship
     /// authority and legal non-use conjunct, under its own floor alone, and
-    /// this read's Grants, where it reads its own actor's entry.
+    /// this read's Grants and class verdicts, where it reads its own actor's
+    /// entry and its own reader's verdicts.
     pub(super) fn for_peer(&self) -> Self {
         Self(
             RefCell::default(),
             None,
             self.2.shared_asking(AskedFilter::Known(None)),
+            self.3.clone(),
         )
     }
 
@@ -91,6 +98,58 @@ impl HeldAuthority<'_> {
     /// The Grants this serving txn holds, by reader.
     pub(super) fn grants(&self) -> &HeldGrants {
         &self.2
+    }
+
+    /// The CLAIM access class verdicts this serving txn holds, by reader.
+    pub(super) fn class_verdicts(&self) -> &ClassVerdicts {
+        &self.3
+    }
+
+    /// `judge` over the relationship authority of `principal` this serving
+    /// txn holds: loaded in `txn` at the first row that needs it, then
+    /// reused (FIX 11915). A load that fails holds nothing and is the
+    /// read's error.
+    pub(super) fn relationship_allows_in(
+        &self,
+        vault: &'v crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        principal: Option<EntityId>,
+        judge: impl FnOnce(&AccessContext<'v>) -> bool,
+    ) -> Result<bool> {
+        let mut held = self.0.borrow_mut();
+        let context = match held.take() {
+            Some(context) => context,
+            None => AccessContext::load(vault, txn, principal)?,
+        };
+        let allowed = judge(&context);
+        *held = Some(context);
+        Ok(allowed)
+    }
+}
+
+impl ScopedReadActorKey {
+    /// Whether a read under this key meets the relationship gate in `txn`. A
+    /// narrower credential of the owner's is exempt only while its holder
+    /// still exists and is the vault's owner in this snapshot (Astra
+    /// #1413-003, Sol R5-007).
+    pub(super) fn relationship_gated_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        if !self.enforce_access_grants {
+            return Ok(false);
+        }
+        let Some(owner) = self.owner_exemption else {
+            return Ok(true);
+        };
+        crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
+            .map(|owner| !owner)
+            .map_err(|refusal| {
+                crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
+                    Box::new(refusal),
+                ))
+            })
     }
 }
 
@@ -114,24 +173,10 @@ impl<'v> ScopedRead<'v> {
         Ok(self.vault.store.env.read_txn()?)
     }
 
-    /// Whether this read's relationship gate binds in `txn`. A narrower
-    /// credential of the owner's is exempt only while its holder still exists
-    /// and is the vault's owner in this snapshot (Astra #1413-003, Sol
-    /// R5-007).
+    /// Whether this read's relationship gate binds in `txn`; see
+    /// [`ScopedReadActorKey::relationship_gated_in`].
     pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
-        if !self.actor_key.enforce_access_grants {
-            return Ok(false);
-        }
-        let Some(owner) = self.actor_key.owner_exemption else {
-            return Ok(true);
-        };
-        crate::memory::owner_exemption_holds_in_txn(self.vault, txn, owner)
-            .map(|owner| !owner)
-            .map_err(|refusal| {
-                crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
-                    Box::new(refusal),
-                ))
-            })
+        self.actor_key.relationship_gated_in(self.vault, txn)
     }
 
     /// Whether the relationship gate admits the claim `id` in `txn`, judged
@@ -152,14 +197,9 @@ impl<'v> ScopedRead<'v> {
         if self.support_disclosure_admits_in(txn, id, &read)? {
             return Ok(true);
         }
-        let mut held = authority.0.borrow_mut();
-        let context = match held.take() {
-            Some(context) => context,
-            None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
-        };
-        let allowed = read.allowed_by(&context);
-        *held = Some(context);
-        Ok(allowed)
+        authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
+            read.allowed_by(context)
+        })
     }
 
     /// [`Self::relationship_claim_allowed_in`] for a claim that may never
@@ -246,15 +286,10 @@ impl<'v> ScopedRead<'v> {
         if self.support_disclosure_admits_in(txn, id, &read)? {
             return Ok(true);
         }
-        let mut held = authority.0.borrow_mut();
-        let context = match held.take() {
-            Some(context) => context,
-            None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
-        };
-        let allowed = read.allowed_by(&context)
-            || self.conversation_message_granted_in(txn, id, &read, &context);
-        *held = Some(context);
-        Ok(allowed)
+        authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
+            read.allowed_by(context)
+                || self.conversation_message_granted_in(txn, id, &read, context)
+        })
     }
 
     /// Whether `context` holds a live read grant over the conversation the

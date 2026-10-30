@@ -17,15 +17,30 @@ impl ScopedRead<'_> {
         id: &EntityId,
         raw: &[u8],
     ) -> bool {
-        let Some(proof) = self.actor_key.proof.as_ref() else {
-            return true;
-        };
         // A NOTE carries every world it is in; the guest's current scope
         // holds it at one of them (FIX-LIST 9433).
-        self.vault
-            .guest_row_admitted_in_txn(txn, proof.claims(), || match self.session_view {
+        self.actor_key
+            .guest_bound_admits_at(self.vault, txn, || match self.session_view {
                 Some(view) => note_world::blob_scope_every_world(view, txn, *id, raw),
                 None => note_world::blob_scope_every_world(&self.vault.store, txn, *id, raw),
             })
+    }
+}
+
+impl ScopedReadActorKey {
+    /// Whether a row at `position` stands inside the current effective scope
+    /// of the guest grant this key's credential names, in `txn`: the one
+    /// guest bound of a stored row and of a claim's access class (FIX 11915).
+    /// `position` is read only once a narrowing reached past the view.
+    pub(super) fn guest_bound_admits_at(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        position: impl FnOnce() -> Result<Option<crate::federation::Scope>>,
+    ) -> bool {
+        let Some(proof) = self.proof.as_ref() else {
+            return true;
+        };
+        vault.guest_row_admitted_in_txn(txn, proof.claims(), position)
     }
 }
