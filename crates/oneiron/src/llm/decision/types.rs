@@ -618,6 +618,9 @@ pub struct EvidenceVersion {
     #[serde(with = "super::codec::entity")]
     #[schemars(with = "String")]
     pub id: EntityId,
+    /// Hex on a JSON wire, its bytes in storage (FIX 12262).
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub body_hash: [u8; 32],
 }
 
