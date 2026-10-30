@@ -17312,6 +17312,7 @@ class FrozenReadLane(TypedDict):
     records: NotRequired[list[str]]
     worlds: NotRequired[ScopeAxis[ScopeId] | None]
     room_facets: NotRequired[EntityId | None]
+    withheld: NotRequired[list[str]]
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str

@@ -54476,6 +54476,8 @@ pub struct FrozenReadLane {
         skip_serializing_if = "Option::is_none"
     )]
     pub room_facets: Option<String>,
+    #[serde(rename = "withheld", default, skip_serializing_if = "Option::is_none")]
+    pub withheld: Option<Vec<String>>,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionRecord`.
