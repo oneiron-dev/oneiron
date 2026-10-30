@@ -157,7 +157,8 @@ pub fn callable_helper_cases(vault: &Vault, helper: &EntityId) -> Result<Vec<Cal
     for skill in std::iter::once(*helper).chain(record.forked_from) {
         let mut taken = 0;
         for row in CASES.iter_rev_from(&vault.store, &rtxn, skill.as_bytes())? {
-            let (key, frozen) = row?;
+            // One row that does not decode never costs the gate the others.
+            let Ok((key, frozen)) = row else { continue };
             let caller = frozen.caller.actor();
             if author.is_some() && caller == author {
                 continue;
