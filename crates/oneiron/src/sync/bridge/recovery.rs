@@ -170,19 +170,12 @@ fn land_edge(
     let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(crate::Error::InvalidKey)?;
     let fields = crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
     if kind == crate::edge::EdgeKind::AddressedTo {
-        let trusted_soft = crate::recovery::trusted_soft_addressing_edge(
-            snapshot,
-            &source,
-            &target,
-            &edge.value,
-        )?;
+        let trusted_soft =
+            crate::recovery::trusted_soft_addressing_edge(snapshot, &source, &target, &edge.value)?;
         if trusted_soft
             && !matches!(
                 crate::batch::stored_entity_type(&vault.store, txn, &target)?,
-                Some(
-                    crate::registry::ENTITY_TYPE_PERSON
-                        | crate::registry::ENTITY_TYPE_AGENT_DEF
-                )
+                Some(crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF)
             )
         {
             return Err(ArtifactError::InvalidRecoveryArtifact(
@@ -199,9 +192,7 @@ fn land_edge(
                 fields,
             )?
         {
-            return Err(
-                crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
-            );
+            return Err(crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into());
         }
     } else if !matches!(kind, EdgeKind::SpawnedBy | EdgeKind::RepliesTo)
         && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
@@ -217,10 +208,9 @@ fn land_edge(
     if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &source)?
         || !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &target)?
     {
-        return Err(ArtifactError::InvalidRecoveryArtifact(
-            "edge endpoint missing at recovery",
-        )
-        .into());
+        return Err(
+            ArtifactError::InvalidRecoveryArtifact("edge endpoint missing at recovery").into(),
+        );
     }
     if matches!(kind, EdgeKind::SpawnedBy | EdgeKind::RepliesTo) {
         crate::conversation_dag::validate_received_edge(
@@ -280,9 +270,8 @@ fn land_parents(
                 .into());
             }
             let tombstoned = tombstones.contains(&source) || tombstones.contains(&target);
-            let outcome = super::submit_parent_in_txn(
-                vault, txn, window, source, target, value, tombstoned,
-            )?;
+            let outcome =
+                super::submit_parent_in_txn(vault, txn, window, source, target, value, tombstoned)?;
             match outcome {
                 super::ParentOutcome::Waiting => waiting.push((source, target, value)),
                 super::ParentOutcome::Rejected => {

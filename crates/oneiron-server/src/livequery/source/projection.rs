@@ -121,7 +121,10 @@ impl LiveQuerySource for BoundSource {
                 serde_json::to_value(view_result(pack.items, *pack.narrowing))
             }
             Channel::Receipts => {
-                let actor = self.auth.principal_ref().ok_or_else(AppError::unauthorized)?;
+                let actor = self
+                    .auth
+                    .principal_ref()
+                    .ok_or_else(AppError::unauthorized)?;
                 let rows = scoped_pages(limit, |page, after| {
                     oneiron::sync::bridge::scoped_subscription_receipts(
                         server.vault(),
@@ -142,7 +145,10 @@ impl LiveQuerySource for BoundSource {
                 serde_json::to_value(rows)
             }
             Channel::PendingConsent => {
-                let actor = self.auth.principal_ref().ok_or_else(AppError::unauthorized)?;
+                let actor = self
+                    .auth
+                    .principal_ref()
+                    .ok_or_else(AppError::unauthorized)?;
                 let rows = scoped_pages(limit, |page, after| {
                     oneiron::sync::bridge::scoped_subscription_pending(
                         server.vault(),

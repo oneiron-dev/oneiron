@@ -343,9 +343,8 @@ fn write_carrier(
     map_key: &str,
     pin: &CitationPin,
 ) -> Result<BTreeSet<String>> {
-    let encode = |pin: &CitationPin| {
-        rmp_serde::to_vec_named(pin).map_err(|_| refused("does not encode"))
-    };
+    let encode =
+        |pin: &CitationPin| rmp_serde::to_vec_named(pin).map_err(|_| refused("does not encode"));
     let commit = || doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     let bytes = encode(pin)?;
     if bytes.len() <= PART_BYTES {
@@ -356,7 +355,14 @@ fn write_carrier(
     let no_one = encode(&pin.actor_erased())?;
     let (parts, pieces) = split_parts(&no_one)?;
     let listed = parts.keys().collect();
-    write_manifest(map, map_key, PartedPin { parts, actor: pin.actor })?;
+    write_manifest(
+        map,
+        map_key,
+        PartedPin {
+            parts,
+            actor: pin.actor,
+        },
+    )?;
     commit();
     write_parts(map, &pieces, commit)?;
     Ok(listed)

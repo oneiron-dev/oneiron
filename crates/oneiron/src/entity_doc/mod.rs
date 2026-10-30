@@ -19,6 +19,7 @@ mod metadata;
 pub mod office;
 mod pins;
 mod promotion_evidence;
+mod proposal_lineage;
 mod prose_admission;
 mod quote_citation;
 pub(crate) use promotion_evidence::{

@@ -166,6 +166,30 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     data: &[u8],
     posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
+    validate_replicated_authority_log_beside_for_local_vault(
+        store,
+        wtxn,
+        id,
+        data,
+        posture,
+        &|| Ok(std::collections::BTreeMap::new()),
+    )
+}
+
+/// [`validate_replicated_authority_log_for_local_vault`] for a row a window
+/// or batch carries with other authority rows (`beside`, FIX 2535, 2989):
+/// where this vault's fold with the row alone needs history, the fold with
+/// every row beside it in judges it, as the selector door and the local
+/// append door judge theirs, so history that arrives in two or more rows
+/// together lands at the replicated commit too.
+pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+    posture: crate::HostingPrivacyPosture,
+    beside: crate::authority::RowsBeside<'_>,
+) -> Result<()> {
     crate::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = crate::authority::decode_authority_log_entry_body(data)?;
     let entry_hash = crate::authority::authority_entry_hash(&entry)?;
@@ -188,13 +212,15 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
             )))?,
     };
     // The vault's own fold, under its hosting posture: a Hosted vault's
-    // cloud root is a root here too. Where it needs history this row
-    // supplies, the fold with the row in judges it (FIX 2535).
-    let local_fold = crate::authority::preflight_authority_rows_in_txn(
+    // cloud root is a root here too. Where it needs history this row, or
+    // the rows beside it, supply, the fold with them in judges it (FIX
+    // 2535, 2989).
+    let local_fold = crate::authority::preflight_authority_rows_beside_in_txn(
         store,
         posture,
         wtxn,
         &[(entry_hash, &entry)],
+        beside,
     )?;
     let local_vault_id =
         local_fold
