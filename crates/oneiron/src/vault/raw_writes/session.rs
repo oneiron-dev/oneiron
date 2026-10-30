@@ -10,8 +10,9 @@
 //!   vector stages in the room's overlay as one segment, every op or none,
 //!   after the refusals its base write meets: the public raw-put and edge
 //!   checks, the actor's proof, the caller's write lane over stored rows,
-//!   an agent definition's owner-only widening, and a claim's gate on base
-//!   policy, whose decision the room does not keep. It rides no turn of the room, so close drops it with the room;
+//!   an agent definition's owner-only widening, a claim's gate on base
+//!   policy, whose decision the room does not keep, and, under a read lane,
+//!   a claim's typed record refs resolved over the room (FIX 11062). It rides no turn of the room, so close drops it with the room;
 //!   nothing reaches base unless the vault comes to hold it.
 //! - While the room is on record, the write is ordinary memory and lands in
 //!   base as an unbound session's does. An anonymous room keeps nothing: its
@@ -22,8 +23,10 @@
 //!   the caller is in it; otherwise they read base, as before. Its searches,
 //!   builder runs, type scans and ChildOf walks do too (`composed_reads`).
 //!
-//! A delete is the owner's own act and runs the `vault.delete` row on base,
-//! as before. Authority and policy always read base.
+//! A delete is the owner's own act. A row only the off-record room staged,
+//! which base never held, is deleted in the room (FIX 10763); any other
+//! runs the `vault.delete` row on base, as before. Authority and policy
+//! always read base.
 
 use heed::RoTxn;
 
@@ -33,6 +36,7 @@ use crate::affect::Vad;
 use crate::batch::BatchBuilder;
 use crate::batch::BatchOp;
 use crate::claim::ClaimSource;
+use crate::core_write::CoreWriteLane;
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, OffRecordError};
@@ -200,6 +204,13 @@ impl Memory<'_> {
         // The caller's write lane, as on base (FIX 6068): a put over a stored
         // row it does not read refuses as missing.
         let lane = self.core_write_lane()?;
+        // Under a read lane, each CLAIM's typed record refs must resolve for
+        // it over the room once the ops are staged (FIX 1223, 11062), as the
+        // base batch judges them over its own staged rows.
+        let claims = match &lane {
+            CoreWriteLane::Read(_) => staged_claims(ops)?,
+            CoreWriteLane::Target(_) | CoreWriteLane::Unbound => Vec::new(),
+        };
         let put_ids: Vec<EntityId> = ops
             .iter()
             .filter_map(|op| match op {
@@ -222,7 +233,80 @@ impl Memory<'_> {
             for entry in entries {
                 apply(wtxn, entry)?;
             }
+            if let CoreWriteLane::Read(reader) = &lane
+                && !claims.is_empty()
+            {
+                let view = session.read_view()?;
+                let room = self
+                    .vault()
+                    .scoped_read_in_session(reader.actor_key().clone(), &view);
+                for body in &claims {
+                    if crate::gate::unresolved_claim_reference(&room, wtxn, body)?.is_some() {
+                        return Err(unresolved_reference());
+                    }
+                }
+            }
             Ok(())
+        });
+        staged.map_err(|error| refusal.take().unwrap_or_else(|| error.into()))?;
+        Ok(true)
+    }
+
+    /// Deletes `id` in the room this surface's session names while it is
+    /// off record, when the room staged the row and base never held it (FIX
+    /// 10763), and answers `true`; `false` when the delete is base's, as
+    /// before: no live room, a room on record, or a row base holds or the
+    /// room does not stage. Deletion stays an owner verb: the caller's
+    /// deletion authority is proved in the room's writer.
+    ///
+    /// # Errors
+    ///
+    /// The room's own refusals (anonymous, closing, gone, a caller off its
+    /// roster), the deletion authority's refusal, and the session apply's.
+    pub(super) fn raw_delete_in_session(&self, id: &EntityId) -> MemoryResult<bool> {
+        let room_only = self.raw_session_read(|session| {
+            if session.write_route()?.target() != RouteTarget::Overlay {
+                return Ok(false);
+            }
+            session.read_composed_in_vault(|vault, view, txn| {
+                Ok(view.entities.stages_row(id.as_bytes())
+                    && EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.is_none())
+            })
+        })?;
+        if room_only != Some(true) {
+            return Ok(false);
+        }
+        let Some(session) = self.raw_session()? else {
+            return Ok(false);
+        };
+        let route = session.write_route()?;
+        let conversation = session.overlay_conversation_shell()?;
+        let now = self.vault().store.clock.now_recorded_at();
+        // Its own row is its scope's turn, as a raw put's: no promote or save
+        // replays it; close drops it.
+        let entry = JournalEntry {
+            scope: JournalScope::new(conversation, *id),
+            role: JournalRole::TurnOwnedArtifact,
+            learned_at: now,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            op: BatchOp::Delete { id: *id },
+            source_run: crate::skill_attribution::current_run_write_token(),
+        };
+        let mut refusal = None;
+        let staged = session.overlay_write_routed(&route, |wtxn, apply| {
+            if let Err(error) = crate::memory::verify_deletion_authority_in_txn(
+                self.vault(),
+                wtxn,
+                self.actor(),
+                self.actor_class(),
+            ) {
+                refusal = Some(error);
+                return Err(Error::InvariantViolation("a bound raw delete was refused"));
+            }
+            apply(wtxn, entry)
         });
         staged.map_err(|error| refusal.take().unwrap_or_else(|| error.into()))?;
         Ok(true)
@@ -472,6 +556,28 @@ fn read_on_base<R>(error: Error) -> MemoryResult<Option<R>> {
         ) => Ok(None),
         error => Err(error.into()),
     }
+}
+
+/// The CLAIM bodies `ops` put, in op order, as their room stages them.
+fn staged_claims(ops: &[RawOp<'_>]) -> crate::Result<Vec<crate::claim::ClaimBody>> {
+    let mut claims = Vec::new();
+    for op in ops {
+        if let RawOp::Put(put) = op
+            && put.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        {
+            claims.push(crate::claim::validate_claim_body_and_decode(put.data, false)?);
+        }
+    }
+    Ok(claims)
+}
+
+/// The claim gate's unresolved-record-reference refusal, as the base batch
+/// words it; the room keeps no gate decision, so none is receipted.
+fn unresolved_reference() -> Error {
+    Error::Gate(GateError::GateWriteRejected {
+        outcome: "deny",
+        reason_codes: vec![crate::gate::GateReasonCode::DenyUnresolvedRecordReference.as_str()],
+    })
 }
 
 /// The below-owner refusal of an agent definition's widening, as the base
