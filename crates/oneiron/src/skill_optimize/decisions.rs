@@ -7,14 +7,16 @@ use crate::llm::decision::catalogue::SKILL_OPTIMIZE_JUDGMENT;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
     DecisionQuestion, Reversibility, StateCut, TypedDecision, cut_text, fit_reserve_state,
+    fit_state,
 };
+use crate::entity_id::bytes_to_hex_lower;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 use serde_json::{Value, json};
 
 use super::{
     BlindPreference, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplayObservation,
-    PreferredResponse,
+    JudgeRubric, PreferredResponse,
 };
 
 mod replay_pairs;
@@ -188,6 +190,21 @@ fn score_cut<S: HeldOutReplayNotes + ?Sized>(
     )?;
     decided_score(&decision)
         .ok_or_else(|| invalid("skill judgment abstained or requested escalation"))
+}
+
+/// Puts the common judge rubric on a judgment's `state`: its text, cut to
+/// `cut` bytes when the caller fits the state to the ladder's bound (the cut
+/// named), and its pin (its skill, version and digest).
+fn put_rubric(state: &mut Value, rubric: &JudgeRubric, cut: Option<usize>) {
+    state["judge_rubric"] = json!(cut_text(&rubric.text, cut));
+    state["judge_rubric_pin"] = json!({
+        "skill": rubric.skill.to_hex(),
+        "version": rubric.version,
+        "digest": bytes_to_hex_lower(&rubric.digest),
+    });
+    if let Some(bytes) = cut {
+        state["judge_rubric_cut_at_bytes"] = json!(bytes);
+    }
 }
 
 fn case_state<S: HeldOutReplayNotes + ?Sized>(
@@ -479,7 +496,18 @@ impl dyn HeldOutReplayNotes + '_ {
             band,
             ..decisions.dial
         };
-        let state = json!({"question": question, "digest": question.digest()?});
+        // The tradeoff weighs an edit, so it reads the common rubric and its
+        // pin beside the question (FIX 3584); the blind preference stays
+        // rubric-free. Past the ladder's bound only the rubric text is cut.
+        let rubric = self.rubric()?;
+        let digest = question.digest()?;
+        let state = fit_state(rubric.as_ref().map_or(0, |rubric| rubric.text.len()), |cut| {
+            let mut state = json!({"question": question, "digest": digest});
+            if let Some(rubric) = &rubric {
+                put_rubric(&mut state, rubric, cut);
+            }
+            state
+        });
         let (typed, decision) = decisions.decide(
             self.judge_revision(),
             "tradeoff",
