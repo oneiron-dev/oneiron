@@ -8,10 +8,12 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use oneiron::Vault;
 use oneiron::channel_identity_provider::native_mail::NativeMailPack;
 use oneiron::channel_identity_provider::{
-    LINE_CHANNEL, LineOfficialAccountAdapter, SLACK_CHANNEL, SlackSharedPresenceAdapter,
+    EMAIL_CHANNEL, LINE_CHANNEL, LineOfficialAccountAdapter, SLACK_CHANNEL,
+    SlackSharedPresenceAdapter,
 };
 use oneiron::skill_hub::pack_catalog::{CheckedBuiltinConnection, PackSetupSecret};
 
+use super::gmail::{GMAIL_CONNECTION, GmailMailboxes};
 use super::native_mail::{NATIVE_MAIL_CHANNEL, NATIVE_MAIL_CONNECTION, NativeMailInboxes};
 use super::slack_app::{public_origin, slack_app_config};
 use crate::config::{LineConfig, NativeMailConfig};
@@ -32,6 +34,8 @@ pub(crate) struct BuiltinHandles {
     line: RwLock<Option<Arc<LineHandle>>>,
     /// The native mail pack's connection and each inbox's read progress.
     native_mail: Mutex<NativeMailInboxes>,
+    /// Whether the Gmail seats' mailboxes are served, and their last poll.
+    gmail: Mutex<GmailMailboxes>,
 }
 
 pub(crate) struct SlackHandle {
@@ -124,6 +128,17 @@ impl BuiltinHandles {
             (checked, basis)
         });
         inboxes.pass(vault, checked, config);
+    }
+
+    /// One pass over the Gmail seats' mailboxes: they are read while the
+    /// email pack's Gmail connection is checked, as a handle follows its
+    /// check.
+    pub(crate) fn poll_gmail(&self, vault: &Vault) {
+        let checked = checked(vault, EMAIL_CHANNEL, GMAIL_CONNECTION).is_some();
+        self.gmail
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pass(vault, checked);
     }
 }
 

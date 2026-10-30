@@ -2,8 +2,9 @@
 //! connection checks only a served host can run, the isolated probes that
 //! qualify a built-in on them (FIX 710), the channel handles it
 //! keeps for every checked built-in channel, the provider webhooks those
-//! handles serve, the native mail pack's inbox reads, the transports its
-//! served sinks send through, and the Slack app's manifest and OAuth install.
+//! handles serve, the native mail pack's inbox reads, the Gmail seats'
+//! mailbox reads (FIX 1168), the transports its served sinks send through,
+//! and the Slack app's manifest and OAuth install.
 
 mod checks;
 mod gmail;
@@ -63,7 +64,8 @@ pub(crate) fn install_served_transports(server: &SyncServer) {
 /// Starts the reconcile loop. Each pass reads the installed packs and keeps
 /// one handle per built-in channel whose engine pack is Active and whose
 /// connection check is Verified, dropping a handle the moment its receipt
-/// or check goes, then reads the native mail pack's inboxes. Each pass is
+/// or check goes, then reads the native mail pack's inboxes and, once per
+/// the Gmail poll interval, pages the Gmail seats' mailboxes. Each pass is
 /// admitted through `admit`, the way a housekeeping pass is, so a vault
 /// frozen for reap reconciles nothing.
 pub(crate) fn spawn(
@@ -83,6 +85,7 @@ pub(crate) fn spawn(
                     let _admission = admission;
                     handles.reconcile(&vault, base.as_deref(), &line);
                     handles.poll_native_mail(&vault, native_mail.as_ref());
+                    handles.poll_gmail(&vault);
                 })
                 .await;
                 if let Err(error) = pass {

@@ -1,5 +1,10 @@
-//! The Gmail read wire a served host pages Gmail seats' mailboxes through
-//! (FIX 1168). It is header-only, as the adapter's message metadata is:
+//! The Gmail seats' served mailboxes (FIX 1168): while the built-in email
+//! pack is Active and its Gmail connection's check Verified, the host pages
+//! every active Gmail seat's mailbox through the adapter's own page door
+//! ([`GmailDelegatedAdapter::run_mailbox_page`]) once per
+//! [`GMAIL_POLL_EVERY`], from where the seat's stored progress left it.
+//!
+//! The read wire is header-only, as the adapter's message metadata is:
 //! `users.messages.list` for one page of the placement the read asks for,
 //! then `users.messages.get` with `format=metadata` for each message's
 //! labels, receive time and the headers the adapter reads. No body is
@@ -9,18 +14,33 @@
 //! does not open that mailbox.
 
 use std::io::Read;
+use std::time::{Duration, Instant};
 
-use oneiron::channel_identity::MailboxAddr;
-use oneiron::channel_identity_provider::EmailThreadHeaders;
+use oneiron::channel_identity::{AssignmentAddress, MailboxAddr};
 use oneiron::channel_identity_provider::gmail::{
-    GmailInboxPage, GmailMessageMetadata, GmailReadAuthority, GmailReadWire, HeaderMailbox,
-    gmail_authorization,
+    GmailDelegatedAdapter, GmailInboxPage, GmailMessageMetadata, GmailReadAuthority, GmailReadWire,
+    HeaderMailbox, active_gmail_seats, gmail_authorization,
 };
 use oneiron::channel_identity_provider::mail_placement::{MailPlacement, PlacementPolicy};
-use oneiron::channel_identity_provider::mailbox_cursor::MailboxPageToken;
+use oneiron::channel_identity_provider::mailbox_cursor::{
+    MailboxPageToken, mailbox_cursor_snapshot,
+};
+use oneiron::channel_identity_provider::{EMAIL_CHANNEL, EmailThreadHeaders};
+use oneiron::outbound::ServedChannelSink;
+use oneiron::{EntityId, Vault};
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::Value;
 
+/// The built-in email pack's Gmail connection (packs/builtin/email/PACK.md).
+pub(super) const GMAIL_CONNECTION: &str = "gmail";
+/// How often every Gmail seat's mailbox is paged.
+const GMAIL_POLL_EVERY: Duration = Duration::from_secs(60);
+/// The most pages one seat reads in one poll, so a first scan of a large
+/// mailbox spreads over polls rather than holding the built-in pass.
+const GMAIL_PAGES_PER_POLL: usize = 10;
+/// How far before its last full scan's end a new scan reads back. Mail
+/// Gmail received earlier was listed by that scan, so the scan ends there.
+const GMAIL_RESCAN_OVERLAP_SECS: u64 = 86_400;
 /// Gmail's users collection; a seat's mailbox address is the user id.
 const GMAIL_USERS_URL: &str = "https://gmail.googleapis.com/gmail/v1/users";
 /// How many messages one page lists.
@@ -30,23 +50,136 @@ const GMAIL_METADATA_HEADERS: [&str; 4] = ["From", "Message-ID", "References", "
 /// The largest reply one Gmail call reads.
 const MAX_GMAIL_REPLY_BYTES: u64 = 1_048_576;
 
+/// Whether the Gmail mailboxes are served, and when they were last paged,
+/// kept across passes in memory. Each poll builds its own HTTPS client on
+/// the pass's blocking thread, and drops it there.
+#[derive(Default)]
+pub(crate) struct GmailMailboxes {
+    served: bool,
+    polled_at: Option<Instant>,
+}
+
+impl GmailMailboxes {
+    /// One pass: while the email pack's Gmail connection is `checked`, every
+    /// active Gmail seat's mailbox is paged once per [`GMAIL_POLL_EVERY`];
+    /// unchecked, no mailbox is read.
+    pub(super) fn pass(&mut self, vault: &Vault, checked: bool) {
+        if !checked {
+            if self.served {
+                tracing::info!("Gmail mailboxes no longer served");
+            }
+            *self = Self::default();
+            return;
+        }
+        if !self.served {
+            tracing::info!("Gmail mailboxes served");
+            self.served = true;
+        }
+        if self
+            .polled_at
+            .is_some_and(|at| at.elapsed() < GMAIL_POLL_EVERY)
+        {
+            return;
+        }
+        self.polled_at = Some(Instant::now());
+        let client = match ServedChannelSink::client() {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::warn!(%error, "the Gmail read client did not start; mailboxes are read next poll");
+                return;
+            }
+        };
+        let seats = match active_gmail_seats(vault) {
+            Ok(seats) => seats,
+            Err(error) => {
+                tracing::warn!(%error, "Gmail seats unreadable");
+                return;
+            }
+        };
+        for identity in seats {
+            if let Err(error) = poll_seat(vault, &client, identity) {
+                tracing::warn!(identity = %identity.to_hex(), %error, "a Gmail mailbox read failed; it is read again next poll");
+            }
+        }
+    }
+}
+
+/// Pages one seat's mailbox from where its stored progress left it, until
+/// the scan ends or [`GMAIL_PAGES_PER_POLL`] pages are read. A seat whose
+/// grant only sends has no mailbox to read.
+fn poll_seat(
+    vault: &Vault,
+    client: &reqwest::blocking::Client,
+    identity: EntityId,
+) -> oneiron::Result<()> {
+    let Some(adapter) = GmailDelegatedAdapter::for_delegated_identity(vault, identity)? else {
+        return Ok(());
+    };
+    if !adapter.config().grants_read() {
+        return Ok(());
+    }
+    let wire = HttpGmailReadWire {
+        client,
+        read_since: read_since(vault, &adapter, identity)?,
+    };
+    let mut admitted = 0_usize;
+    for _ in 0..GMAIL_PAGES_PER_POLL {
+        let page = adapter.run_mailbox_page(vault, identity, &wire, vault.now_recorded_at());
+        let outcome = match page {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                log_admitted(identity, admitted);
+                return Err(error);
+            }
+        };
+        admitted = admitted.saturating_add(outcome.messages_admitted);
+        for skipped in &outcome.skipped {
+            tracing::warn!(identity = %identity.to_hex(), message = %skipped.message_id, reason = %skipped.reason, "a Gmail message was set aside; the mailbox reads on");
+        }
+        if outcome.progress.next_cursor.is_none() {
+            break;
+        }
+    }
+    log_admitted(identity, admitted);
+    Ok(())
+}
+
+fn log_admitted(identity: EntityId, admitted: usize) {
+    if admitted > 0 {
+        tracing::info!(identity = %identity.to_hex(), admitted, "Gmail mail admitted");
+    }
+}
+
+/// Where a scan of this seat's mailbox reads back to: its last full scan's
+/// end, less [`GMAIL_RESCAN_OVERLAP_SECS`], while the stored progress is this
+/// mailbox's under the same placement. `None` reads the whole mailbox: the
+/// seat's first scan, or a scan after the mailbox or placement changed.
+fn read_since(
+    vault: &Vault,
+    adapter: &GmailDelegatedAdapter,
+    identity: EntityId,
+) -> oneiron::Result<Option<u64>> {
+    let config = adapter.config();
+    let mailbox = AssignmentAddress::normalize(EMAIL_CHANNEL, config.mailbox_address());
+    Ok(mailbox_cursor_snapshot(vault, identity)?
+        .filter(|progress| {
+            progress.mailbox_address == mailbox.as_str()
+                && progress.placement_policy == config.placement_policy()
+        })
+        .and_then(|progress| progress.last_complete_at)
+        .map(|at| at.saturating_sub(GMAIL_RESCAN_OVERLAP_SECS)))
+}
+
 /// The production [`GmailReadWire`]: Gmail's REST API on the served HTTPS
 /// client (no proxy, no redirects, short timeouts).
-pub(super) struct HttpGmailReadWire<'a> {
+struct HttpGmailReadWire<'a> {
     client: &'a reqwest::blocking::Client,
     /// Mail Gmail received before this instant (Unix seconds) ends a scan:
     /// the seat's last full scan listed it. `None` reads the whole mailbox.
     read_since: Option<u64>,
 }
 
-impl<'a> HttpGmailReadWire<'a> {
-    pub(super) const fn new(
-        client: &'a reqwest::blocking::Client,
-        read_since: Option<u64>,
-    ) -> Self {
-        Self { client, read_since }
-    }
-
+impl HttpGmailReadWire<'_> {
     /// One page after `cursor`: the listed messages' metadata, in Gmail's
     /// newest-first order, keeping those `policy` admits. The page ends the
     /// scan at the first message received before [`Self::read_since`], or

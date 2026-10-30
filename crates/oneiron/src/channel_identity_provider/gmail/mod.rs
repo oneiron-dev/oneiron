@@ -44,9 +44,11 @@
 mod http;
 mod provider;
 mod run;
+mod seat;
 mod send;
 pub use self::http::{HttpGmailSendWire, gmail_authorization};
 pub use self::run::GmailReadAuthority;
+pub use self::seat::active_gmail_seats;
 pub use self::send::{
     GMAIL_SEND_PLAN_REF_PREFIX, GmailReplyThread, GmailSendAuthority, GmailSendPlan, GmailSendSink,
     GmailSendWire, GmailSendWireError, GmailSentMessage,
