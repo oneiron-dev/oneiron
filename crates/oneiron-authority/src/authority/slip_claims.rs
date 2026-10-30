@@ -143,6 +143,20 @@ impl SlipClaims {
         }
         Ok(())
     }
+    /// Whether these claims are a full-vault owner-grade instrument, not
+    /// merely `core:read`: the vault-wide comm reach (FIX 3899), the top
+    /// scope, no org, record or channel bound, and reusable. `oneiron`'s
+    /// verified view asks it of an unattenuated presentation; a host
+    /// action's durable identity asks it of its root's own mint (FIX 7231).
+    #[must_use]
+    pub fn is_full_vault_owner_grade(&self) -> bool {
+        super::effective_slip_comm(self.comm) == super::CommReach::Vault
+            && self.scope == Scope::top()
+            && self.org_ref.is_none()
+            && self.records.is_empty()
+            && self.channels.is_empty()
+            && !self.single_use
+    }
     /// True when `self` is a valid narrowing of `parent`. Public so `oneiron`'s slip
     /// verifier (its one caller outside this crate) checks caveat chains across the line.
     pub fn narrows(&self, parent: &Self) -> bool {
