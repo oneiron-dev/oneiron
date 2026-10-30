@@ -350,8 +350,21 @@ impl LifecycleReceiptRow {
 
     /// [`Self::into_revision`], beside the read set this receipt kept.
     fn into_revision_and_reads(self) -> (CalendarRevision, Vec<EntityId>) {
-        let reads = self.reads.clone();
-        (self.into_revision(), reads)
+        let Self {
+            event_ref,
+            uid,
+            sequence,
+            reads,
+            ..
+        } = self;
+        (
+            CalendarRevision {
+                event_ref,
+                uid,
+                sequence,
+            },
+            reads,
+        )
     }
 }
 
