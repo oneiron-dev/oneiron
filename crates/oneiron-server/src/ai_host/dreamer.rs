@@ -1127,8 +1127,8 @@ impl TaskLend<'_> {
         let record = &attempt.status.attempt;
         if matches!(rendered, DreamerAttemptExecution::Completed { .. })
             && let Some(owner) = record.lease_owner.as_deref()
-            && let Err(error) = oneiron::skill_attribution::bind_dreamer_weave_lens_attribution(
-                ctx.vault, record.id, owner,
+            && let Err(error) = oneiron::skill_attribution::bind_dreamer_weave_attribution(
+                ctx.vault, record.id, owner, None,
             )
         {
             tracing::warn!(kind = ?error.kind(), "a weave lens render's pack attribution did not bind");

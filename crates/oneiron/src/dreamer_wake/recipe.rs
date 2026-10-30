@@ -365,6 +365,17 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
                 "a recipe's evidence sits in no single project; its output keeps the default project"
             );
         }
+        // The recipe's pack closes attributed (FIX 1875), bound while its
+        // lease holds; a bind that fails leaves the receipt unattributed and
+        // the recipe runs on.
+        if let Err(error) = crate::skill_attribution::bind_dreamer_weave_attribution(
+            vault,
+            attempt.status.attempt.id,
+            lease_owner,
+            evidence.project,
+        ) {
+            tracing::warn!(kind = ?error.kind(), "a weave recipe's pack attribution did not bind");
+        }
         let draft = self.runtime.draft(text, &evidence.bytes)?;
         let candidate = ClaimCandidate::new(
             draft.predicate,

@@ -132,26 +132,36 @@ pub fn bind_agent_run_attribution(
     Ok(true)
 }
 
-/// Binds the execution context of the leased Dreamer weave-lens `attempt`,
-/// once, so the receipt of the weave-report pack it loaded closes attributed
-/// (FIX 1875). The run is solo and the Dreamer decides; it has no project and
-/// no agent definition, and places at the vault type tree's root. Returns
-/// whether it bound one now: another attempt kind, a run no longer leased to
-/// `lease_owner`, one already bound, or one with no executor binds nothing.
+/// The Dreamer attempts that load a skill pack and bind its attribution:
+/// the weave lens's render and an owner-admitted weave recipe.
+const DREAMER_WEAVE_ATTEMPT_TYPES: [&str; 2] = [
+    crate::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND,
+    crate::dreamer_runner::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+];
+
+/// Binds the execution context of the leased Dreamer weave `attempt` (a
+/// weave lens render or a weave recipe), once, so the receipt of the pack it
+/// loaded closes attributed (FIX 1875). The run is solo and the Dreamer
+/// decides; it has no agent definition, sits in `project` (a recipe's
+/// evidence project, else none) and places at the vault type tree's root.
+/// Returns whether it bound one now: another attempt kind, a run no longer
+/// leased to `lease_owner`, one already bound, or one with no executor binds
+/// nothing.
 ///
 /// # Errors
 ///
 /// Storage errors and the attribution door's own refusals.
-pub fn bind_dreamer_weave_lens_attribution(
+pub fn bind_dreamer_weave_attribution(
     vault: &Vault,
     attempt: AttemptId,
     lease_owner: &str,
+    project: Option<EntityId>,
 ) -> Result<bool> {
     let Some(status) = DreamerRunnerStore::new(vault).status(attempt)? else {
         return Ok(false);
     };
     let record = &status.attempt;
-    if status.payload.attempt_type != crate::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
+    if !DREAMER_WEAVE_ATTEMPT_TYPES.contains(&status.payload.attempt_type.as_str())
         || !matches!(record.state, AttemptState::Leased | AttemptState::Landing)
         || record.lease_owner.as_deref() != Some(lease_owner)
     {
@@ -167,7 +177,7 @@ pub fn bind_dreamer_weave_lens_attribution(
         return Ok(false);
     };
     let type_ref = crate::task_type::type_tree(vault, None)?.root();
-    let credit = credit_options(vault, None, &type_ref)?;
+    let credit = credit_options(vault, project, &type_ref)?;
     let mut fields = PackAttributionFields {
         type_ref,
         executor,
@@ -176,7 +186,7 @@ pub fn bind_dreamer_weave_lens_attribution(
         pattern: pattern_context(SOLO_ROLE)?,
         team_shape: vec![SOLO_ROLE.to_owned()],
         decider: vault.dreamer_actor_for_attempt(attempt)?.entity_ref(),
-        project: None,
+        project,
         output: None,
         contributions: Vec::new(),
         used_edges: Vec::new(),
