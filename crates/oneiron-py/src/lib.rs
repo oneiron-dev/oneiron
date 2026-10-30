@@ -9690,6 +9690,21 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consolidation_candidate_decisions(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.consolidation.candidate_decisions")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consolidation.candidate_decisions", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consolidation_promote(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.promote")?;
         let output = py

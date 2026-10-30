@@ -5326,6 +5326,11 @@ export_facade! {
     let output = client.vault_consolidation_lineage(&input)?;
     crate::codec::lift_record("vault.consolidation.lineage", &output)
 };
+"vault.consolidation.candidate_decisions" => fn vault_consolidation_candidate_decisions(&self, input: DreamerCandidateDecisionsRequest) -> Vec<DreamerDecidedCandidateView> = |client| {
+    let input: oneiron::memory::DreamerCandidateDecisionsRequest = crate::codec::lower_record("vault.consolidation.candidate_decisions", input)?;
+    let output = client.vault_consolidation_candidate_decisions(&input)?;
+    crate::codec::lift_record("vault.consolidation.candidate_decisions", &output)
+};
 "vault.consolidation.promote" => fn vault_consolidation_promote(&self, input: ConsolidationPromoteRequest) -> ConsolidationPromotion = |client| {
     let input: oneiron::memory::consolidation::ConsolidationPromoteRequest = crate::codec::lower_record("vault.consolidation.promote", input)?;
     let output = client.vault_consolidation_promote(&input)?;

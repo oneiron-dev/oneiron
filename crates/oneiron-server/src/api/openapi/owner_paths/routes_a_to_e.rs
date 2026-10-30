@@ -618,6 +618,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/dreamer/candidate-decisions",
+        summary: "Every candidate one Dreamer attempt decided a correction for, with its kept decisions: ids and decisions only.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/dreamer/changes",
         summary: "The Dreamer's standing changes, newest first, and the people whose about it wrote.",
         row: None,

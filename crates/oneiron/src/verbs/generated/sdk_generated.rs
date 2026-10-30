@@ -5970,6 +5970,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consolidation.candidate_decisions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::DreamerCandidateDecisionsRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.promote",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::consolidation::ConsolidationPromoteRequest,
@@ -7684,6 +7690,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consolidation.home.get",
     "vault.consolidation.home.pick",
     "vault.consolidation.lineage",
+    "vault.consolidation.candidate_decisions",
     "vault.consolidation.promote",
     "vault.consolidation.pin",
     "vault.consolidation.frontier",
@@ -9997,6 +10004,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.consolidation.lineage" => crate::code_run::vault_read::request_schema::<
             Option<crate::dreamer_runner::ConsolidationLineageView>,
+        >(),
+        "vault.consolidation.candidate_decisions" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::DreamerDecidedCandidateView>,
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
@@ -17902,6 +17912,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.candidate_decisions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.promote" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22516,6 +22533,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.lineage" => {
             let _input: crate::dreamer_runner::ConsolidationLineageRequest = decode(value.clone())?;
         }
+        "vault.consolidation.candidate_decisions" => {
+            let _input: crate::memory::DreamerCandidateDecisionsRequest = decode(value.clone())?;
+        }
         "vault.consolidation.promote" => {
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
                 decode(value.clone())?;
@@ -25144,6 +25164,9 @@ pub fn invoke(
         "vault.consolidation.lineage" => {
             encode(vault_consolidation_lineage(memory, decode(value)?)?)
         }
+        "vault.consolidation.candidate_decisions" => encode(
+            vault_consolidation_candidate_decisions(memory, decode(value)?)?,
+        ),
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
         }
@@ -34654,6 +34677,16 @@ pub fn vault_consolidation_lineage(
     crate::dreamer_runner::consolidation_lineage_as(
         memory.vault(),
         &memory.embedded_owner("vault.consolidation.lineage")?,
+        input,
+    )
+}
+pub fn vault_consolidation_candidate_decisions(
+    memory: &Memory<'_>,
+    input: crate::memory::DreamerCandidateDecisionsRequest,
+) -> MemoryResult<Vec<crate::memory::DreamerDecidedCandidateView>> {
+    crate::memory::read_dreamer_candidate_decisions_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.candidate_decisions")?,
         input,
     )
 }

@@ -354,6 +354,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.consolidation.home.get"
         | "vault.consolidation.home.pick"
         | "vault.consolidation.lineage"
+        | "vault.consolidation.candidate_decisions"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
