@@ -5,7 +5,7 @@ use super::model::*;
 use super::xml::Xml;
 use crate::deck::DeckView;
 use crate::resource::Resources;
-use crate::retained_opc::{Limits, Package, XmlLimits};
+use crate::retained_opc::{Limits, Package};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Reads identities without creating missing ones or changing any package byte.
@@ -39,13 +39,8 @@ pub(super) fn resolve_positions(
     // The archive already expanded these parts; its own size is the budget.
     let package_limits = Limits {
         archive_bytes: bytes.len().max(1),
-        entries: parts.len().max(1),
         part_bytes: parts.values().map(Vec::len).max().unwrap_or(0).max(1),
         expanded_bytes: parts.values().map(Vec::len).sum::<usize>().max(1),
-        xml: XmlLimits {
-            max_depth: limits.max_xml_depth,
-            max_nodes: limits.max_xml_nodes,
-        },
     };
     let Ok(package) = Package::open(bytes, package_limits, limits.resources) else {
         return;

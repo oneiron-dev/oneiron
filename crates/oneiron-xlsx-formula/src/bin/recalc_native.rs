@@ -17,7 +17,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use oneiron_docedit::retained_opc::{Limits, XmlLimits};
+use oneiron_docedit::retained_opc::Limits;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
 use oneiron_xlsx_formula::{DocumentLocation, FormulaError, RecalcClock};
 
@@ -25,13 +25,8 @@ use oneiron_xlsx_formula::{DocumentLocation, FormulaError, RecalcClock};
 /// resource policy row; a vault host passes its resolved limits instead.
 const LIMITS: Limits = Limits {
     archive_bytes: 512 * 1024 * 1024,
-    entries: 10_000,
     part_bytes: 64 * 1024 * 1024,
     expanded_bytes: 512 * 1024 * 1024,
-    xml: XmlLimits {
-        max_depth: 256,
-        max_nodes: 1_000_000,
-    },
 };
 
 fn main() -> Result<ExitCode, Box<dyn Error>> {

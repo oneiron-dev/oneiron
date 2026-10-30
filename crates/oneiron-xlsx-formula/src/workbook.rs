@@ -154,10 +154,11 @@ impl FormualizerEngine {
     }
 }
 
-/// The host's ceilings over the writer's own defaults, the stricter of each.
-/// The output is a package the host reads back, so it fits the archive limit.
-/// The writer reads the clock once, at `clock`'s instant and offset, and
-/// seeds the random functions from it; CELL names `location`.
+/// The host's byte ceilings over the writer's own defaults, the stricter of
+/// each; counts are the writer's own (FIX 10590). The output is a package
+/// the host reads back, so it fits the archive limit. The writer reads the
+/// clock once, at `clock`'s instant and offset, and seeds the random
+/// functions from it; CELL names `location`.
 fn options(
     limits: Limits,
     clock: &RecalcClock,
@@ -167,11 +168,9 @@ fn options(
     let mut options = XlsxRecalculateOptions {
         limits: XlsxRecalculateLimits {
             max_input_bytes: own.max_input_bytes.min(limits.archive_bytes),
-            max_entries: own.max_entries.min(limits.entries),
             max_expanded_bytes: own.max_expanded_bytes.min(limits.expanded_bytes),
             max_worksheet_bytes: own.max_worksheet_bytes.min(limits.part_bytes),
             max_output_bytes: own.max_output_bytes.min(limits.archive_bytes),
-            max_xml_depth: own.max_xml_depth.min(limits.xml.max_depth),
             ..own
         },
         ..XlsxRecalculateOptions::default()
@@ -989,8 +988,7 @@ fn keep_gated_bytes(before: &Package, after: &[u8], formulas: &Formulas) -> Resu
             None if name.ends_with(".rels") => {
                 let before_rels = before.part(name)?;
                 if before_rels.as_deref().is_some_and(|rels| {
-                    !route_workbook([], [rels], [], before.limits().xml, before.resources())
-                        .is_in_process()
+                    !route_workbook([], [rels], [], before.resources()).is_in_process()
                 }) {
                     return Err(unsupported(
                         "recalculation changes a relationship part with an external target",
@@ -1124,7 +1122,6 @@ pub(crate) fn external_formulas(package: &Package) -> Result<BTreeMap<(String, S
                     [],
                     [],
                     [formula.text.as_str()],
-                    package.limits().xml,
                     package.resources(),
                 )
                 .is_in_process()

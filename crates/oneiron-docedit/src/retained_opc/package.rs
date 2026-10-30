@@ -4,7 +4,7 @@
 //!
 //! ZIP central-directory reader and copy-through writer. All source records
 //! remain owned by the package; only checked edits and added parts change output.
-use super::{Error, Result, XmlLimits, xml};
+use super::{Error, Result, xml};
 use crate::resource::{Dimension, Resources, wide};
 
 mod open;
@@ -23,23 +23,17 @@ const LOCAL: u32 = 0x0403_4b50;
 const CENTRAL: u32 = 0x0201_4b50;
 const EOCD: u32 = 0x0605_4b50;
 
-/// Caller-selected limits, checked before decompression and again after it.
-/// The entry count and the XML counts are observations, not refusals: the
-/// package's memory is reserved through its [`Resources`] (FIX 8574, 8598).
+/// Caller-selected byte ceilings, checked before decompression and again
+/// after it. Counts are observations, never carried here: the package's
+/// memory is reserved through its [`Resources`] (FIX 8574, 10590).
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Maximum source ZIP bytes.
     pub archive_bytes: usize,
-    /// The entries a caller expects: an observation. Only the ZIP32 codec
-    /// bounds the count (65,535 is its ZIP64 sentinel).
-    pub entries: usize,
     /// Maximum expanded bytes per entry.
     pub part_bytes: usize,
     /// Maximum total expanded bytes.
     pub expanded_bytes: usize,
-    /// XML depth and nodes a caller expects at the signature and edit doors:
-    /// observations, never a refusal.
-    pub xml: XmlLimits,
 }
 
 /// A package may still be exported exactly when XML metadata cannot be
