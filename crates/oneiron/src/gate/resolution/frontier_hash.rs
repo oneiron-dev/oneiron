@@ -3,6 +3,7 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+use crate::booking::anti_abuse::{BookingAntiAbuseRule, BookingAntiAbuseRuleRow};
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -668,6 +669,7 @@ pub(super) fn hash_policy_frontier_v0(
         hash_opt_str(hasher, signature.key_id.as_deref());
         hash_str(hasher, &signature.sig);
     }
+    hash_booking_anti_abuse_rows(hasher, &resolution.booking_anti_abuse_rows);
 
     Ok(())
 }
@@ -940,6 +942,90 @@ fn hash_class_policy_tables(hasher: &mut Sha256, resolution: &PolicyManifestReso
             hash_str(hasher, row.posture.as_str());
             hash_str(hasher, row.precedence.as_str());
         }
+    }
+}
+
+fn hash_booking_anti_abuse_rows(hasher: &mut Sha256, rows: &[BookingAntiAbuseRuleRow]) {
+    hash_str(hasher, "booking_anti_abuse_rules");
+    hash_len(hasher, rows.len());
+    for row in rows {
+        hash_str(hasher, &row.row_id);
+        hash_bytes(hasher, row.scope.page_ref.as_bytes());
+        hash_opt_str(
+            hasher,
+            row.scope.event_type.as_ref().map(|key| key.0.as_str()),
+        );
+        match &row.rule {
+            BookingAntiAbuseRule::RequiredIntake { min_chars } => {
+                hash_str(hasher, "required-intake");
+                hash_u64(hasher, u64::from(min_chars.get()));
+            }
+            BookingAntiAbuseRule::MinimumNotice {
+                normal_secs,
+                high_value_secs,
+            } => {
+                hash_str(hasher, "minimum-notice");
+                hash_u64(hasher, normal_secs.get());
+                hash_u64(hasher, high_value_secs.get());
+            }
+            BookingAntiAbuseRule::HoneypotAndSubmitFloor { min_submit_millis } => {
+                hash_str(hasher, "honeypot-submit-floor");
+                hash_u64(hasher, min_submit_millis.get());
+            }
+            BookingAntiAbuseRule::SlotListRate {
+                per_minute_per_ip,
+                cache_ttl_secs,
+            } => {
+                hash_str(hasher, "slot-list-rate");
+                hash_u64(hasher, u64::from(per_minute_per_ip.get()));
+                hash_u64(hasher, cache_ttl_secs.get());
+            }
+            BookingAntiAbuseRule::BookRate {
+                per_minute_per_ip,
+                max_active_future_per_email,
+            } => {
+                hash_str(hasher, "book-rate");
+                hash_u64(hasher, u64::from(per_minute_per_ip.get()));
+                hash_u64(hasher, u64::from(*max_active_future_per_email));
+            }
+            BookingAntiAbuseRule::HoldRate {
+                max_active_per_session,
+                per_minute_per_ip,
+            } => {
+                hash_str(hasher, "hold-rate");
+                hash_u64(hasher, u64::from(*max_active_per_session));
+                hash_u64(hasher, u64::from(per_minute_per_ip.get()));
+            }
+            BookingAntiAbuseRule::EmailPromptToCorrect {
+                check_syntax,
+                check_mx,
+                check_disposable_domain,
+            } => {
+                hash_str(hasher, "email-prompt-to-correct");
+                hash_bool(hasher, *check_syntax);
+                hash_bool(hasher, *check_mx);
+                hash_bool(hasher, *check_disposable_domain);
+            }
+            BookingAntiAbuseRule::QuarantineBorderline => {
+                hash_str(hasher, "quarantine-borderline");
+            }
+            BookingAntiAbuseRule::EmailOtpReserve { enabled } => {
+                hash_str(hasher, "email-otp-reserve");
+                hash_bool(hasher, *enabled);
+            }
+            BookingAntiAbuseRule::TentativeConfirmLinkReserve {
+                enabled,
+                expires_after_secs,
+            } => {
+                hash_str(hasher, "tentative-confirm-link-reserve");
+                hash_bool(hasher, *enabled);
+                hash_u64(hasher, expires_after_secs.get());
+            }
+        }
+        hash_u64(hasher, row.version);
+        hash_u64(hasher, row.amended_at);
+        hash_bytes(hasher, row.amended_by.as_bytes());
+        hash_opt_entity(hasher, row.owner_stamp_ref);
     }
 }
 
