@@ -564,6 +564,18 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/packs/line/chats",
+        summary: "Every LINE group or room the served bot was seen in (FIX 3115), each an optional offer to bind it to an agent: the route key a bind provisions and the identity that already holds it, if any.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/packs/line/chats/bind",
+        summary: "Bind one observed LINE chat to an agent (`observation_ref`, `agent_ref`; the chat comes from the stored observation, never the request): provisions the chat's own route key through the owner's provision door and answers that door's lifecycle receipt as it stands (pending fulfillment, held or applied).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/packs/organs",
         summary: "Every organ of an Active installation, with the platforms this vault holds a build for.",
         row: None,
