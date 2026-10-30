@@ -141,5 +141,5 @@ fn same_observation(a: &RepoSecretMark, b: &RepoSecretMark) -> bool {
 fn git_blob_oid(bytes: &[u8]) -> Result<GitOid> {
     let oid = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, bytes)
         .map_err(|_| Error::InvariantViolation("a landed blob's Git object id"))?;
-    Ok(GitOid::parse_hex(oid.to_string())?)
+    GitOid::parse_hex(oid.to_string())
 }
