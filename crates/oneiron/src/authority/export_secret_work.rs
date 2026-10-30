@@ -277,6 +277,37 @@ pub(crate) fn export_secret_executor(
 }
 
 impl Vault {
+    /// The needs an owner archive names for the custody secrets only the
+    /// fold knows here (FIX 11844): each secret the fold proves an install
+    /// holds whose id has no row in snapshot `rtxn`, at the highest
+    /// generation the fold proves, named as a held row's unopened value is.
+    /// Every custody request is over a portable secret and the fold says
+    /// nothing of a device binding, so each such secret goes. A row here
+    /// wins: its own read names it, or withholds it. A fold that does not
+    /// read names none, warned; the archive is the export's as before.
+    pub(crate) fn fold_only_holder_needs_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Vec<HolderExportNeed> {
+        let needs = self.authority_view_readonly_in_txn(rtxn).and_then(|fold| {
+            let mut needs = Vec::new();
+            for (secret, generation) in fold.custody_held_generations() {
+                if !crate::ports::EntityStoreRead::port_entity_present(&self.store, rtxn, &secret)?
+                {
+                    needs.push(HolderExportNeed { secret, generation });
+                }
+            }
+            Ok(needs)
+        });
+        needs.unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "an export's fold-only custody secrets were not read; none is named for its holder"
+            );
+            Vec::new()
+        })
+    }
+
     /// Records one export secret request for each of `basis`'s needs in the
     /// export's audit write `txn`, each in a savepoint of its own, best
     /// effort: a fault is logged, leaves `txn` as it was and reads as

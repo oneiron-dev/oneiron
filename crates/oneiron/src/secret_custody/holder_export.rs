@@ -19,13 +19,24 @@
 //! entry ([`Vault::export_secret_supplement`]) from whichever install keeps
 //! it: the bytes stay sealed through any server. The recipient machine opens
 //! it ([`Vault::open_export_secret_supplement`]) into the archive row the
-//! owner imports (`crate::batch::export`'s secret supplement).
+//! owner imports (`crate::batch::export`'s secret supplement). The copy is
+//! kept with the second it was sealed at, and rides the window plane to the
+//! owner's other installs, each of which keeps it once it folds the result
+//! that names it (`relay`, FIX 11843).
 
+mod relay;
 mod sealed;
 
 use base64::Engine as _;
 use zeroize::Zeroizing;
 
+pub(crate) use self::relay::KeptExportOutput;
+use self::relay::kept_output_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::relay::{
+    MAX_RELAYED_OUTPUT_BYTES, held_export_outputs, keep_relayed_export_output_in_txn,
+    relayed_export_output_due_in_txn,
+};
 use self::sealed::{SupplementBinding, open_supplement, output_of, seal_supplement};
 use super::control::permits::{permit_for, permitted_keys};
 use super::storage_seal::{read_opened_in_txn, read_secret_custody_meta_in_txn};
@@ -42,8 +53,10 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::world_keys::{OwnerWorkReceipt, OwnerWorkStatus};
 use crate::{EntityId, Vault};
 
-/// Each export secret request's sealed copy, by the request's entry hash:
-/// written once, in the commit of the result that names its digest.
+/// Each export secret request's sealed copy, by the request's entry hash, as
+/// [`KeptExportOutput`]: its holder writes it once, in the commit of the
+/// result that names its digest, and each other install keeps the one a
+/// window relays to it.
 const OUTPUTS: SideTable<[u8; 32], Vec<u8>, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_EXPORT_OUTPUT);
 
@@ -77,9 +90,9 @@ impl Vault {
         request: &OwnerWorkRequest,
         work: &ExportSecretWork,
     ) -> Result<Option<OwnerWorkOutcome>> {
-        if let Some(kept) = OUTPUTS.get(&self.store, txn, &hash)? {
+        if let Some(kept) = kept_output_in_txn(self, txn, &hash)? {
             return Ok(Some(OwnerWorkOutcome::Sealed {
-                output: output_of(&kept)?,
+                output: output_of(&kept.sealed)?,
             }));
         }
         let Some(record) = read_secret_custody_meta_in_txn(&self.store, txn, &work.secret)? else {
@@ -121,7 +134,12 @@ impl Vault {
                 .map_err(|_| Error::InvariantViolation("sealed export secret length"))?,
             envelopes,
         };
-        OUTPUTS.put(&self.store, txn, &hash, &sealed)?;
+        let kept = KeptExportOutput {
+            sealed_at: self.instant_in_txn(txn)?.secs(),
+            request: hash,
+            sealed,
+        };
+        OUTPUTS.put(&self.store, txn, &hash, &kept.encode())?;
         Ok(Some(OwnerWorkOutcome::Sealed { output }))
     }
 
@@ -192,9 +210,9 @@ impl Vault {
             .owner_work_result(&request)
             .and_then(|answer| answer.outcome.sealed_output().copied());
         let sealed = match output {
-            Some(output) => OUTPUTS
-                .get(&self.store, &txn, &request)?
-                .filter(|kept| *blake3::hash(kept).as_bytes() == output.digest),
+            Some(output) => kept_output_in_txn(self, &txn, &request)?
+                .map(|kept| kept.sealed)
+                .filter(|sealed| *blake3::hash(sealed).as_bytes() == output.digest),
             None => None,
         };
         Ok(Some(ExportSecretSupplement {

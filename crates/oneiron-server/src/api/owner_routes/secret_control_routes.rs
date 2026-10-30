@@ -15,6 +15,7 @@
 //! length (`sealed_spool`, FIX 5674). Each act's surface is audit only: no
 //! route here refuses on where the owner said yes.
 
+pub(crate) mod export_supplement;
 pub(crate) mod pending;
 mod sealed_spool;
 
@@ -106,6 +107,7 @@ pub(super) fn owner_table() -> OwnerTable {
         ),
     ];
     table.extend(pending::owner_table());
+    table.extend(export_supplement::owner_table());
     table
 }
 
