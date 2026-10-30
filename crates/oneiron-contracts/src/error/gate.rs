@@ -90,6 +90,10 @@ pub enum GateDenialReason {
     /// its writer's own read. Invented, missing and unreadable are this one
     /// refusal; it is never retried as a proposal.
     DenyUnresolvedRecordReference,
+    /// FIX 10537: an ancestor on a delegated child's live delegation chain no
+    /// longer allows a write the child's own bound allows; the write waits
+    /// for review.
+    PendingDelegationChainCeiling,
 }
 
 impl GateDenialReason {
@@ -121,6 +125,7 @@ impl GateDenialReason {
             }
             Self::DenyMessageAddress => "gate.deny.message_address",
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
+            Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
         }
     }
 
@@ -154,6 +159,7 @@ impl GateDenialReason {
             }
             "gate.deny.message_address" => Some(Self::DenyMessageAddress),
             "gate.deny.unresolved_record_reference" => Some(Self::DenyUnresolvedRecordReference),
+            "gate.pending.delegation_chain_ceiling" => Some(Self::PendingDelegationChainCeiling),
             _ => None,
         }
     }
@@ -179,7 +185,8 @@ impl GateDenialReason {
             | Self::PendingPolicyManifestAuthority
             | Self::PendingExternalEffectAuthority
             | Self::PendingChecker
-            | Self::PendingCheckerUnavailable => GateDenialOutcome::Pending,
+            | Self::PendingCheckerUnavailable
+            | Self::PendingDelegationChainCeiling => GateDenialOutcome::Pending,
         }
     }
 }
