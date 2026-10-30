@@ -4,24 +4,31 @@
 use super::{AttemptQueue, AttemptRecord, DreamerRunnerStore, EngineExecutorConfig, Vault};
 
 /// Stamps `config.model`, the model a run no seat bore and no plan bound
-/// actually runs on, as its attempt's executor, so its pack attribution
-/// names what ran it. Call it once the run's config is settled and before
-/// any pack loads. A stamp that fails is logged and leaves the executor
-/// unknown; the run goes on as it would today.
+/// actually runs on, as its attempt's executor, beside `template`'s model,
+/// the seat its host configured, and the role it runs as, as a seat-born
+/// run's stamp names them (FIX 2770), so its pack attribution names what ran
+/// it. Call it once the run's config is settled and before any pack loads. A
+/// stamp that fails is logged and leaves the executor unknown; the run goes
+/// on as it would today.
 pub(super) fn stamp_seatless_executor(
     vault: &Vault,
     attempt: &AttemptRecord,
     config: &EngineExecutorConfig,
+    template: &EngineExecutorConfig,
 ) {
     let Some(lease_owner) = attempt.lease_owner.as_deref() else {
         tracing::warn!(attempt = ?attempt.id, "a seatless run holds no lease; its executor stays unknown");
         return;
     };
-    if let Err(error) = AttemptQueue::new(vault).set_executor_model(
+    if let Err(error) = AttemptQueue::new(vault).set_executor_stamp(
         attempt.id,
         lease_owner,
         attempt.attempt_count,
         config.model.as_str(),
+        template.model.as_str(),
+        // The native code-mode template is the chat seat, as a seat-born
+        // run's stamp names it.
+        crate::ai_host::CHAT_ROLE,
     ) {
         tracing::warn!(%error, attempt = ?attempt.id, "a seatless run's executor was not stamped; its attribution stays unknown");
     }
