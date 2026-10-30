@@ -397,10 +397,6 @@ impl Vault {
     /// # Errors
     ///
     /// The reader's and the staging errors, and the slice append's.
-    #[allow(
-        dead_code,
-        reason = "FIX 12091: the streamed checkpoint keep calls this"
-    )]
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn append_blob_artifact_version_from_reader_in_txn(
         &self,

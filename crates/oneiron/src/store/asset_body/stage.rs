@@ -74,10 +74,6 @@ impl StagedAssetBody {
 
     /// What holding this body keeps once its put is written: its bytes and
     /// its file go now, its pin and lease stay ([`StagedHold`]).
-    #[allow(
-        dead_code,
-        reason = "FIX 12091: the streamed checkpoint keep holds these"
-    )]
     pub(crate) fn into_hold(self) -> StagedHold {
         StagedHold {
             _key: self.key,
