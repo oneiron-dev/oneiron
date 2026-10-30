@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 
 use rmpv::Value;
+use zeroize::Zeroizing;
 
 use super::{Door, byte_values, detect, detect_bytes, sanitize_messagepack};
 
@@ -433,4 +434,43 @@ fn skip(stored: &[u8], at: usize) -> Option<usize> {
         }
     }
     (at <= stored.len()).then_some(at)
+}
+
+/// An array item's text for the joined read: borrowed when it copies
+/// nothing, else its lossy copy, held wiped (FIX 11563). The joined text
+/// built from these is wiped too, so no lossy copy of an item survives the
+/// read.
+pub(super) enum JoinedText<'a> {
+    /// Valid UTF-8 in place: no copy, nothing to wipe.
+    Borrowed(&'a str),
+    /// A lossy copy, wiped on drop.
+    Owned(Zeroizing<String>),
+}
+
+impl std::borrow::Borrow<str> for JoinedText<'_> {
+    fn borrow(&self) -> &str {
+        match self {
+            JoinedText::Borrowed(text) => text,
+            JoinedText::Owned(text) => text.as_str(),
+        }
+    }
+}
+
+impl<'a> JoinedText<'a> {
+    /// `bytes` as text: borrowed when it is valid UTF-8, else its lossy
+    /// copy, wiped on drop.
+    pub(super) fn from_bytes(bytes: &'a [u8]) -> Self {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => JoinedText::Borrowed(text),
+            Err(_) => JoinedText::from_computed(bytes),
+        }
+    }
+
+    /// `bytes` as text, always copied wiped: for bytes with no owner to
+    /// borrow from, like an array of byte values read into a buffer.
+    pub(super) fn from_computed(bytes: &[u8]) -> Self {
+        JoinedText::Owned(Zeroizing::new(
+            String::from_utf8_lossy(bytes).into_owned(),
+        ))
+    }
 }
