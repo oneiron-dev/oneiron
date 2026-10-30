@@ -24644,7 +24644,7 @@
      "path": "src/dispatch_byoa/record.rs",
      "purpose": "The small records the runner seat route keeps beside its attempts (OF-137): a bound work's hops…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -24815,7 +24815,7 @@
      "path": "src/dispatch_byoa/work_binding.rs",
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 5,
       "fn": 6,
       "struct": 4
