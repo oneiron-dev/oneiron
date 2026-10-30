@@ -111,8 +111,10 @@ credential.
   inbox Ask per owner for each unanswered copy. `GET
   /v1/owner/outbox/diverged` shows the copies with their cards, and `POST
   /v1/owner/outbox/diverged` (`kind`, `member`, `held`, `answer`: `remove` or
-  `keep`) passes the owner's answer to the companion. The carrier does it at
-  its next turn. For a guest copy, `remove` deletes the file while it still
+  `keep`) passes the owner's answer to the companion. The facade verbs
+  `vault.outbox.diverged.list` and `vault.outbox.diverged.answer` take the
+  same page and answer, with their SDK and MCP doors (FIX 11739). The
+  carrier does it at its next turn. For a guest copy, `remove` deletes the file while it still
   has that digest. For a host copy, the guest's next scan sends an ordinary
   remove that names the digest. This change does not bump the outbox wire
   revision: both carrier ends ship in one release.

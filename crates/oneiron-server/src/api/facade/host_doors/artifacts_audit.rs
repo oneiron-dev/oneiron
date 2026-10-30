@@ -204,7 +204,7 @@ pub(super) async fn vault_authority_audit_answer(
 ) -> MemoryResult<oneiron::receipt::AuthorityAuditPage> {
     let owner = owner_proof(auth, server, "vault.authority.audit")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    crate::api::facade::clock_ingress::run_blocking(move || {
         server
             .vault()
             .authority_audit(&owner, &input)
@@ -237,7 +237,7 @@ pub(super) async fn vault_mesh_path_receipts_answer(
 ) -> MemoryResult<Vec<oneiron::sync::mesh_path::MeshPathReceipt>> {
     let _owner = owner_proof(auth, server, "vault.mesh.path_receipts")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    crate::api::facade::clock_ingress::run_blocking(move || {
         server
             .vault()
             .mesh_path_receipts(input.bound())

@@ -19,6 +19,7 @@ mod custody_seal;
 mod dtos;
 mod input_error;
 mod js_json;
+mod legal_hold;
 mod numeric;
 mod pairing;
 #[cfg(test)]

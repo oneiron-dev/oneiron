@@ -264,7 +264,7 @@ async fn picked<T: Send + 'static>(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || match act(&server, &picker) {
+    super::clock_ingress::run_blocking(move || match act(&server, &picker) {
         Ok((answer, rows)) => (Ok(answer), rows),
         Err(error) => (Err(error), Vec::new()),
     })

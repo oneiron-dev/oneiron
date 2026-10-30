@@ -149,6 +149,8 @@ pub enum AgentVerb {
     VaultRetrievalPolicyAdmit,
     VaultRetrievalPolicyUpdate,
     VaultExport,
+    VaultExportTransferRead,
+    VaultExportTransferRelease,
     SelfCredentialAttenuate,
     SelfActor,
     VaultScopePosition,
@@ -310,6 +312,8 @@ pub enum AgentVerb {
     VaultMeshSetAlpnGrant,
     VaultMeshRevokeMachine,
     VaultMeshDial,
+    VaultOutboxDivergedList,
+    VaultOutboxDivergedAnswer,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
@@ -668,6 +672,7 @@ pub enum AgentVerb {
     VaultCodeIngressGet,
     VaultCodeOriginRegister,
     VaultCodeOriginMirrorGet,
+    VaultCodeOriginMirrorPlan,
     VaultCodeOriginMirrorSet,
     VaultCodeOriginMirrorStrategy,
     VaultCodeOriginMirrorClear,
@@ -1378,6 +1383,8 @@ impl AgentVerb {
         Self::VaultRetrievalPolicyAdmit,
         Self::VaultRetrievalPolicyUpdate,
         Self::VaultExport,
+        Self::VaultExportTransferRead,
+        Self::VaultExportTransferRelease,
         Self::SelfCredentialAttenuate,
         Self::SelfActor,
         Self::VaultScopePosition,
@@ -1539,6 +1546,8 @@ impl AgentVerb {
         Self::VaultMeshSetAlpnGrant,
         Self::VaultMeshRevokeMachine,
         Self::VaultMeshDial,
+        Self::VaultOutboxDivergedList,
+        Self::VaultOutboxDivergedAnswer,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
@@ -1897,6 +1906,7 @@ impl AgentVerb {
         Self::VaultCodeIngressGet,
         Self::VaultCodeOriginRegister,
         Self::VaultCodeOriginMirrorGet,
+        Self::VaultCodeOriginMirrorPlan,
         Self::VaultCodeOriginMirrorSet,
         Self::VaultCodeOriginMirrorStrategy,
         Self::VaultCodeOriginMirrorClear,
@@ -2610,6 +2620,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => "vault.retrieval.policy.admit",
             Self::VaultRetrievalPolicyUpdate => "vault.retrieval.policy.update",
             Self::VaultExport => "vault.export",
+            Self::VaultExportTransferRead => "vault.export.transfer.read",
+            Self::VaultExportTransferRelease => "vault.export.transfer.release",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::SelfActor => "self.actor",
             Self::VaultScopePosition => "vault.scope.position",
@@ -2771,6 +2783,8 @@ impl AgentVerb {
             Self::VaultMeshSetAlpnGrant => "vault.mesh.set_alpn_grant",
             Self::VaultMeshRevokeMachine => "vault.mesh.revoke_machine",
             Self::VaultMeshDial => "vault.mesh.dial",
+            Self::VaultOutboxDivergedList => "vault.outbox.diverged.list",
+            Self::VaultOutboxDivergedAnswer => "vault.outbox.diverged.answer",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
@@ -3147,6 +3161,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => "vault.code.ingress.get",
             Self::VaultCodeOriginRegister => "vault.code.origin.register",
             Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
+            Self::VaultCodeOriginMirrorPlan => "vault.code.origin.mirror.plan",
             Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
             Self::VaultCodeOriginMirrorStrategy => "vault.code.origin.mirror.strategy",
             Self::VaultCodeOriginMirrorClear => "vault.code.origin.mirror.clear",
@@ -3869,6 +3884,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfCredentialAttenuate
                 | Self::SelfActor
                 | Self::VaultScopePosition
@@ -4030,6 +4047,8 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedList
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -4388,6 +4407,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -5127,6 +5147,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfCredentialAttenuate
                 | Self::SelfActor
                 | Self::VaultScopePosition
@@ -5288,6 +5310,8 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedList
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -5646,6 +5670,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -6523,6 +6548,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfActor
                 | Self::VaultReceipts
                 | Self::VaultAssetsIngest
@@ -6677,6 +6704,8 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedList
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -7021,6 +7050,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -7712,6 +7742,7 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -8450,6 +8481,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => &["spec"],
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultExportTransferRead => &["spec"],
+            Self::VaultExportTransferRelease => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -8611,6 +8644,8 @@ impl AgentVerb {
             Self::VaultMeshSetAlpnGrant => &["spec"],
             Self::VaultMeshRevokeMachine => &["spec"],
             Self::VaultMeshDial => &["spec"],
+            Self::VaultOutboxDivergedList => &["spec"],
+            Self::VaultOutboxDivergedAnswer => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -8969,6 +9004,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorPlan => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
             Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
@@ -9680,6 +9716,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => &["spec"],
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultExportTransferRead => &["spec"],
+            Self::VaultExportTransferRelease => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -9841,6 +9879,8 @@ impl AgentVerb {
             Self::VaultMeshSetAlpnGrant => &["spec"],
             Self::VaultMeshRevokeMachine => &["spec"],
             Self::VaultMeshDial => &["spec"],
+            Self::VaultOutboxDivergedList => &["spec"],
+            Self::VaultOutboxDivergedAnswer => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -10199,6 +10239,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorPlan => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
             Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
@@ -11193,7 +11234,13 @@ impl AgentVerb {
                 "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
             }
             Self::VaultExport => {
-                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline."
+                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref, read at /v1/core/export-transfers/{transfer_ref} or vault.export.transfer.read."
+            }
+            Self::VaultExportTransferRead => {
+                "Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."
+            }
+            Self::VaultExportTransferRelease => {
+                "Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
@@ -11675,6 +11722,12 @@ impl AgentVerb {
             }
             Self::VaultMeshDial => {
                 "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."
+            }
+            Self::VaultOutboxDivergedList => {
+                "The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."
+            }
+            Self::VaultOutboxDivergedAnswer => {
+                "The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."
             }
             Self::VaultInspectionResolve => {
                 "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."
@@ -12727,6 +12780,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginMirrorGet => {
                 "Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."
+            }
+            Self::VaultCodeOriginMirrorPlan => {
+                "Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review."
             }
             Self::VaultCodeOriginMirrorSet => {
                 "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."

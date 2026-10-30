@@ -81,6 +81,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
+pub(crate) use super::outbox_diverged_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_step_doors::*;
@@ -161,6 +162,10 @@ pub(crate) use super::secret_custody_doors::*;
 pub(crate) use super::custody_drain_doors::*;
 // The owner's reservoir source preview door (FIX 11352), likewise.
 pub(crate) use super::reservoir_source_doors::*;
+// A kept export's read and release doors (FIX 11176), likewise.
+pub(crate) use super::export_transfer::{
+    vault_export_transfer_read, vault_export_transfer_release,
+};
 // The usage repair doors (FIX 6476), likewise.
 pub(crate) use super::usage_repair_doors::*;
 // The owner's root wave door (OF-427), likewise.

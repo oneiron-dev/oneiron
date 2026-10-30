@@ -2384,7 +2384,7 @@
     },
     {
       "name": "vault.export",
-      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline.",
+      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref, read at /v1/core/export-transfers/{transfer_ref} or vault.export.transfer.read.",
       "input": "crate::memory::ExportOptions",
       "output": "crate::memory::ExportAnswer",
       "call": "crate::memory::ExportAnswer::Inline(memory.export(&input)?)",
@@ -2410,6 +2410,34 @@
           "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
         }
       }
+    },
+    {
+      "name": "vault.export.transfer.read",
+      "description": "Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it.",
+      "input": "crate::memory::ExportTransferReadRequest",
+      "output": "crate::memory::ExportTransferPiece",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.export.transfer.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.export.transfer.release",
+      "description": "Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is.",
+      "input": "crate::memory::ExportTransferReleaseRequest",
+      "output": "crate::memory::ExportTransferReleased",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.export.transfer.release\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
     },
     {
       "name": "self.credential.attenuate",
@@ -4900,6 +4928,34 @@
       "host_door": true,
       "host_door_lists": true,
       "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.outbox.diverged.list",
+      "description": "The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::OutboxDivergedPage",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.outbox.diverged.list\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.outbox.diverged.answer",
+      "description": "The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn.",
+      "input": "crate::task_verb::sdk::OutboxDivergedAnswerRequest",
+      "output": "crate::task_verb::sdk::OutboxDivergedAnswerReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.outbox.diverged.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -10277,6 +10333,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.origin.mirror.plan",
+      "description": "Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review.",
+      "input": "crate::origin::publish::OriginMirrorPlanRequest",
+      "output": "crate::origin::publish::OriginMirrorPlanView",
+      "call": "memory.origin_mirror_plan_as(&memory.embedded_owner(\"vault.code.origin.mirror.plan\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.origin.mirror.set",
       "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked.",
       "input": "crate::memory::origin_doors::OriginMirrorSetRequest",
@@ -13545,7 +13616,7 @@
       "description": "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.",
       "input": "ProposalDeltaReadRequest",
       "output": "crate::task_verb::sdk::ProposalDeltaRead",
-      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, &input)?",
+      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, crate::claim::CallerLocality::OnDevice, &input)?",
       "host_door": true,
       "scope": "Read",
       "admission": {

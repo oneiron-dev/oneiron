@@ -40,6 +40,7 @@ pub fn api_error_schema() -> Value {
                 "type": "array",
                 "items": { "type": "string" },
             },
+            "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
         },
     })
 }
@@ -72,6 +73,7 @@ pub fn api_error_envelope_schema() -> Value {
                         "type": "array",
                         "items": { "type": "string" },
                     },
+                    "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
                 },
             },
         },
@@ -84,6 +86,7 @@ pub fn openapi_error_components() -> Value {
         "ErrorCode": error_code_schema(),
         "ApiError": api_error_schema(),
         "ApiErrorEnvelope": api_error_envelope_schema(),
+        "LegalHoldNoticeSchema": crate::api::legal_hold_schema::legal_hold_notice_schema(),
     })
 }
 
