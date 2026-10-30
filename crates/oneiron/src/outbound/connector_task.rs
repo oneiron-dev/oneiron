@@ -496,6 +496,23 @@ impl Vault {
             .ok_or(Error::EntityNotFound)
     }
 
+    /// Replaces the content ref a connector TASK still waiting to send
+    /// carries. A TASK that already reached a terminal outcome stays as it is.
+    pub(crate) fn replace_connector_send_task_content_ref(
+        &self,
+        task_ref: EntityId,
+        content_ref: Option<&str>,
+        learned_at: u64,
+    ) -> Result<(), Error> {
+        update_connector_send_task_body(self, task_ref, learned_at, |body| {
+            if body.outcome.is_some() {
+                return Ok(());
+            }
+            body.content_ref = content_ref.map(str::to_owned);
+            Ok(())
+        })
+    }
+
     /// Lists the shared TASK rows that are valid connector-send tasks.
     pub fn connector_send_tasks(&self) -> Result<Vec<ConnectorSendTask>, Error> {
         let mut tasks = Vec::new();
