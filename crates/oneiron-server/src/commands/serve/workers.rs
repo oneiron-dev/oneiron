@@ -232,6 +232,11 @@ pub(crate) async fn start_desktop_workers(
         Arc::clone(&sync_server),
         crate::server::admit_every_pass(),
     ));
+    // A transcript upload that met an open session lands once it closes (FIX 9654).
+    workers.push(crate::calendar_host::spawn_pending_transcript_drain(
+        Arc::clone(&sync_server),
+        crate::server::admit_every_pass(),
+    ));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(
         &sync_server,
