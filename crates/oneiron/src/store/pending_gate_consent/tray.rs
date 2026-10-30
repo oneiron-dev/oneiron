@@ -123,6 +123,23 @@ impl Store {
         pending_gate_consent_in(self, txn, claim_id)
     }
 
+    /// `claim_id`'s tray row, or `None` when the tray holds none, holds one
+    /// that names another claim, or holds one that does not decode: for a
+    /// reader that lists such a claim as unproved instead of failing its read
+    /// (FIX 11857, L01 10:45). Only a store failure fails it.
+    pub(crate) fn lenient_tray_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<Option<PendingGateConsentRecord>> {
+        Ok(match tray_slot_in(self, txn, claim_id)? {
+            PendingGateConsentSlot::Held(record) => Some(record),
+            PendingGateConsentSlot::Corrupt
+            | PendingGateConsentSlot::ClaimIdUndecodable
+            | PendingGateConsentSlot::RowUndecodable => None,
+        })
+    }
+
     /// Removes `claim_id`'s tray row with no owner answer: its obligation
     /// stays open, and the owner is shown a fresh item.
     pub(crate) fn delete_pending_gate_consent_in_txn(

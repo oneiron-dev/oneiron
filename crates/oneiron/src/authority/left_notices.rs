@@ -324,7 +324,10 @@ impl Vault {
     /// each cut down to what they admit. A one-shot transfer is served once
     /// (FIX-LIST 10773): a slip any door already consumed, or one an archive
     /// door already served, takes nothing, and the first answer that takes
-    /// anything spends it on every archive of `person`, in this writer.
+    /// anything spends it on every archive of `person`, in this writer. A
+    /// pact-bound transfer takes only what its pact still leaves it, read in
+    /// this writer, and each answer that takes anything is logged under that
+    /// pact on the archives it served (FIX 11860).
     fn transferred_exports_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -348,7 +351,17 @@ impl Vault {
         {
             return Ok(Vec::new());
         }
-        let admits = transferred_admission(bounds, now);
+        let pact_grant = bounds
+            .as_ref()
+            .ok()
+            .and_then(super::slip::TransferredBounds::pact_grant);
+        let served_pact = match (&bounds, pact_grant) {
+            (Ok(bounds), Some(_)) => {
+                bounds.served_pact_scope(&self.authority_view_readonly_in_txn(txn)?)
+            }
+            _ => None,
+        };
+        let admits = transferred_admission(bounds, now, served_pact);
         let copies = match receipt_id {
             Some(receipt_id) => self
                 .projected_removal_export_in_txn(txn, person, receipt_id, now, &admits)?
@@ -358,6 +371,9 @@ impl Vault {
         };
         if single_use && !copies.is_empty() {
             self.spend_removal_archive_slip_in_txn(txn, person, slip_id)?;
+        }
+        if let Some(grant) = pact_grant {
+            self.log_removal_archive_pact_serve_in_txn(txn, &copies, grant, slip_id, now)?;
         }
         Ok(copies)
     }
@@ -392,15 +408,17 @@ impl Vault {
 }
 
 /// Which archived records a transferred holder takes at `now`: those its
-/// authenticated caveat bounds admit. Caveats the meet refuses (a floor, a
-/// second pact) leave the holder nothing; they are its own bytes.
+/// authenticated caveat bounds admit, a pact-bound one within `served_pact`.
+/// Caveats the meet refuses (a floor, a second pact) leave the holder
+/// nothing; they are its own bytes.
 fn transferred_admission(
     bounds: Result<super::slip::TransferredBounds>,
     now: u64,
+    served_pact: Option<crate::federation::FederationDirectionScope>,
 ) -> impl Fn(EntityId, Option<&crate::federation::Scope>) -> bool {
     move |id: EntityId, position: Option<&crate::federation::Scope>| {
         bounds
             .as_ref()
-            .is_ok_and(|bounds| bounds.admits(id, position, now))
+            .is_ok_and(|bounds| bounds.admits(id, position, now, served_pact.as_ref()))
     }
 }
