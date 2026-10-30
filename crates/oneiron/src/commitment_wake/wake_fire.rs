@@ -144,7 +144,9 @@ fn wake_eligibility_in_txn(
     wtxn: &RwTxn<'_>,
     due: &CommitmentWakeDue,
 ) -> Result<WakeEligibility> {
-    let Some(body) = vault.get_claim_in_txn(wtxn, &due.instance_id)? else {
+    // The instance's current status sits at the head of its status chain.
+    let head = vault.commitment_head_in_txn(wtxn, &due.instance_id)?;
+    let Some(body) = vault.get_claim_in_txn(wtxn, &head)? else {
         return Ok(WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance));
     };
     // A non-commitment claim at an instance ref is an index that outlived its

@@ -356,7 +356,7 @@ pub(super) fn imported_evidence_value(source_id: &str, source_record_id: &str) -
     ])
 }
 
-pub(super) fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
+pub(crate) fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
     match value {
         Value::Null => MsgpackValue::Nil,
         Value::Bool(value) => MsgpackValue::Boolean(*value),
