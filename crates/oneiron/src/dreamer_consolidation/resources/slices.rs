@@ -215,7 +215,7 @@ impl BranchResources<'_> {
                 ..
             }) = crate::claim::relationship_read(&vault.store, &txn, &message, &raw)
             {
-                rels.extend(space);
+                rels.extend(space.into_iter().flatten());
             }
         }
         Ok(rels)
