@@ -79,7 +79,6 @@ pub(super) fn materialize_edges_from_delta(
     // BEFORE `applied_edges.push`).
     let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let result = vault.with_write_txn_grouped(|wtxn| {
-        let entities_map = doc.get_map("entities");
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let edges_map = doc.get_map("edges");
         // HOLE-1871-F2: the stale rows and stranded live candidates this delta
@@ -210,7 +209,7 @@ pub(super) fn materialize_edges_from_delta(
                     let src_ready = ensure_entity_materialized_from_crdt(
                         vault,
                         wtxn,
-                        &entities_map,
+                        doc,
                         &tombstones,
                         window_key,
                         &src,
@@ -219,7 +218,7 @@ pub(super) fn materialize_edges_from_delta(
                     let tgt_ready = ensure_entity_materialized_from_crdt(
                         vault,
                         wtxn,
-                        &entities_map,
+                        doc,
                         &tombstones,
                         window_key,
                         &tgt,
