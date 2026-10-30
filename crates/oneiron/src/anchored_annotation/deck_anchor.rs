@@ -82,7 +82,8 @@ pub(super) fn deck_file_locator(
     let Locator::Pptx { shape_id, .. } = locator else {
         return None;
     };
-    let filed = filed_ids(at, bound_to(at, head, version), shape_id.parse().ok()?)?;
+    let node = shape_id.parse::<u64>().ok()?;
+    let filed = filed_ids(at, bound_to(at, head, version), node)?;
     let shape_id = match filed.shape {
         None => WHOLE_SLIDE.to_owned(),
         Some((native, creation)) => creation
