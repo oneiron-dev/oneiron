@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4381 declarations.
+Census: 1209 facade rows, 4382 declarations.
 Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -14135,6 +14135,9 @@ class DecisionMedia(TypedDict):
     name: str
     reference: DecisionMediaRef
     served: MediaServed
+class LivePin(TypedDict):
+    frontier: list[int]
+    commits: int
 class SlideJudgment(TypedDict):
     thread_id: EntityId
     target: PptxCommentTarget
@@ -14150,6 +14153,7 @@ class SlideJudgment(TypedDict):
     render_hash: list[int]
     evidence_hash: list[int]
     judged_version: NotRequired[int | None]
+    judged_live: NotRequired[LivePin | None]
     comment: str
     labels: SlideReviewLabels
 class PptxCommentActionAddBody(TypedDict):
