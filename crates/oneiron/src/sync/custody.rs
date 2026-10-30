@@ -512,9 +512,11 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
                 if group.verify(&fold).is_err() {
                     continue;
                 }
+                // A value sealed under its carrier key (FIX 7402) opens once
+                // that key is answered here; until then the group is kept.
                 let value = match (&secret, fold.vault_id) {
                     (Some(secret), Some(vault_id)) => {
-                        group.open_value(&vault_id, secret.machine, &secret.secret)
+                        vault.open_custody_value(&group, &vault_id, secret)
                     }
                     _ => None,
                 };

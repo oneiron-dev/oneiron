@@ -401,6 +401,7 @@ impl Memory<'_> {
                     cut: cut.clone(),
                     statement: &launch.statement,
                     now,
+                    requester: launch.requester.clone(),
                 },
             )?
             .iter()

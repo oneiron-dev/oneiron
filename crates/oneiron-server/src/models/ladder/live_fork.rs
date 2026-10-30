@@ -10,12 +10,13 @@ use super::*;
 impl OfferLadder {
     /// The rung `request`'s walk would send it to now, and the request as
     /// that rung sends it, its prompt first: the first rung the walk does
-    /// not pass over (one that rests, has its probation request out, or
-    /// would take the work off the device as a fallback). `None` when no
-    /// rung can take it now: no rung is guessed.
+    /// not pass over (one that rests, has its probation request out, its
+    /// order refuses, or would take the work off the device as a fallback).
+    /// `None` when no rung can take it now: no rung is guessed.
     pub(crate) fn live_rung(&self, request: &LlmRequest) -> Option<(LiveForkRung, LlmRequest)> {
         self.admits(request).ok()?;
-        let index = (0..self.rungs.len()).find(|index| self.takes_now(*index, request))?;
+        let routes = self.rests.world_routes(request);
+        let index = (0..self.rungs.len()).find(|index| self.takes_now(*index, request, &routes))?;
         let rung = &self.rungs[index];
         let captured = LiveForkRung {
             provider: rung.provider.clone(),
@@ -27,9 +28,10 @@ impl OfferLadder {
     }
 
     /// Whether the walk would send `request` to the rung at `index` now.
-    fn takes_now(&self, index: usize, request: &LlmRequest) -> bool {
+    fn takes_now(&self, index: usize, request: &LlmRequest, routes: &WorldModelRoutes) -> bool {
         let rung = &self.rungs[index];
-        self.kept_on_device(index, request).is_none()
+        self.route_admitted(routes, index)
+            && self.kept_on_device(index, request).is_none()
             && self
                 .rests
                 .resting(&rung.offer.binding, &rung.wire_model)
@@ -59,7 +61,8 @@ impl OfferLadder {
                 && oneiron::code_run::live_fork_offer_digest(&rung.offer.binding).as_deref()
                     == Some(offer_digest)
         })?;
-        if !self.takes_now(index, request) {
+        let routes = self.rests.world_routes(request);
+        if !self.takes_now(index, request, &routes) {
             return None;
         }
         let rung = &self.rungs[index];

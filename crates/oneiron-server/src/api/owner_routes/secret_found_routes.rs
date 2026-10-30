@@ -19,7 +19,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
@@ -29,7 +28,7 @@ use axum::routing::{get, post};
 use oneiron::secret_custody::{FoundKeyCard, FoundKeyCursor, FoundKeyNotice, FoundKeySettled};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{has_json_content_type, query_params};
 use crate::auth::CoreAuth;
@@ -41,13 +40,54 @@ use crate::server::SyncServer;
 /// time through `next_cursor` (FIX 8204).
 const MAX_FOUND_PAGE: usize = 200;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/secrets/found", get(found))
-        .route("/secrets/found/delete", post(delete))
-        .route("/secrets/found/grant", post(grant))
-        .route("/secrets/found/not-a-secret", post(not_a_secret))
-        .route("/secrets/found/re-enter", post(reenter))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/found",
+                summary: "Each record the write door lifted keys out of, newest first, with its keys, a page at a time: `{notices, next_cursor, done}`, continued with `after`.",
+                row: None,
+            },
+            get(found),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/found/delete",
+                summary: "Deletes the record or file the key sits in (a hard delete, with its redaction receipt) and settles every key found there.",
+                row: None,
+            },
+            post(delete),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/found/grant",
+                summary: "A standing grant to that agent on the key's class, in that project, until revoked.",
+                row: None,
+            },
+            post(grant),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/found/not-a-secret",
+                summary: "The owner overrules the scan for that key in its record.",
+                row: None,
+            },
+            post(not_a_secret),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/found/re-enter",
+                summary: "Seals the kept value of a key ruled no secret again, where its custody key no longer opens it.",
+                row: None,
+            },
+            post(reenter),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/found/delete`'s body (FIX 11611),

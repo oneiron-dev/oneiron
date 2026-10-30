@@ -15,26 +15,66 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::cloud_registration::{LoggedOut, Polled, Started, Status};
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/cloud-registration/start", post(start))
-        .route("/cloud-registration/poll", post(poll))
-        .route("/cloud-registration/status", get(status))
-        .route("/cloud-registration/refresh", post(refresh))
-        .route("/cloud-registration/logout", post(logout))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/cloud-registration/start",
+                summary: "Start a login that links this vault to the owner's Oneiron cloud account (G7); `replace` (bool) lets the link replace a current link to another cloud account. A pending start answers `flow`, the opaque local handle a poll names, and the `verification_uri` and `user_code` apart: the owner approves where the cloud asks.",
+                row: None,
+            },
+            post(start),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/cloud-registration/poll",
+                summary: "Send at most one due poll of the login `flow` names (the handle `start` answered, never a code or a token): still pending, with when to poll next, or linked, with the link's first status and any link it replaced.",
+                row: None,
+            },
+            post(poll),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/cloud-registration/status",
+                summary: "Where the vault's cloud account link stands, read without refreshing it: not configured, signed out, erasing, registered, needing a refresh or a login, unavailable or failed.",
+                row: None,
+            },
+            get(status),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/cloud-registration/refresh",
+                summary: "Refresh the vault's cloud account link once; answers where the link then stands.",
+                row: None,
+            },
+            post(refresh),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/cloud-registration/logout",
+                summary: "Stop the vault's cloud account link, or with `erase` (bool) erase every token kept for it first, then try the revoke.",
+                row: None,
+            },
+            post(logout),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

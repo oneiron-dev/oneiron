@@ -89,6 +89,37 @@ impl SiteSkillLoader for RunSiteSkills {
                 error => read_failed(&error),
             })
     }
+
+    fn note_delivered(&self, seq: u64, scope: &str, matches: &[SiteSkillMatch]) {
+        if matches.is_empty() {
+            return;
+        }
+        let at = self.vault.now_recorded_at();
+        let rows: Vec<_> = matches
+            .iter()
+            .filter_map(|found| {
+                oneiron::skill_attribution::SiteSkillExposure::delivered(
+                    self.run_id,
+                    scope,
+                    seq,
+                    &found.skill_id,
+                    &found.revision,
+                    &found.knowledge,
+                    at,
+                )
+            })
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        if let Err(error) = oneiron::skill_attribution::record_site_exposures(&self.vault, &rows) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                %error,
+                "a run's site-skill exposure was not recorded"
+            );
+        }
+    }
 }
 
 /// A skill-hub read that failed, in the engine's words.

@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -17,13 +16,21 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::task_verb::sdk::{ConnectorSlateRedraftReply, ConnectorSlateRedraftRequest};
 
 use super::connector_admission_routes::{engine, with_slate_drafter};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/connectors/slate/redraft", post(redraft))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/connectors/slate/redraft",
+            summary: "Ask the host's configured drafter to re-draft one connector grant slate from the owner's instruction (FIX 987, ARCH-0072): it proposes changed rows with their rationale at the reviewed revision, which `/connectors/slate/accept` takes; nothing is stamped, activated or granted. A host with no drafter answers `unavailable` and the slate is unchanged.",
+            row: Some("vault.connectors.slates.redraft"),
+        },
+        post(redraft),
+    )]
 }
 
 /// `POST /v1/owner/connectors/slate/redraft`: the owner's re-draft request.

@@ -247,6 +247,16 @@ pub(super) fn custody_work_value(
     ])
 }
 
+/// The bytes `recipients` take encoded as a custody request's row carries
+/// them: what its writer measures against one sync frame (FIX 8087).
+///
+/// # Errors
+/// When the codec cannot encode them.
+pub fn custody_recipients_encoded_len(recipients: &[CustodyRecipientPermit]) -> Result<usize> {
+    let list = recipients.iter().map(permit_value).collect();
+    Ok(encode_value(&Value::Array(list))?.len())
+}
+
 pub(super) fn permit_value(permit: &CustodyRecipientPermit) -> Value {
     Value::Map(vec![
         (Value::from("machine"), Value::from(permit.machine.to_hex())),

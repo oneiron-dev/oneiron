@@ -130,7 +130,7 @@ impl Memory<'_> {
                             &id,
                             prior,
                             now,
-                            Some(crate::WriteActor::new(self.actor, self.actor_class)),
+                            Some(self.write_actor()),
                         )
                     })?;
                 }

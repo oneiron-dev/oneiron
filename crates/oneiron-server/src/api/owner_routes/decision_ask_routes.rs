@@ -11,7 +11,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -20,7 +19,7 @@ use oneiron::EntityId;
 use oneiron::llm::decision::{DecisionAnswer, DecisionAsk, HostRule};
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -31,12 +30,45 @@ use crate::server::SyncServer;
 const PAGE: usize = 50;
 const PAGE_MAX: usize = 500;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/decisions/asks", get(list))
-        .route("/decisions/asks/answer", post(answer))
-        .route("/decisions/rules", get(rules))
-        .route("/decisions/rules/revoke", post(revoke_rule))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/decisions/asks",
+                summary: "The asks after after, oldest first.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/decisions/asks/answer",
+                summary: "The owner's answer to one ask, with the reason typed on the card when there is one.",
+                row: None,
+            },
+            post(answer),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/decisions/rules",
+                summary: "Every host rule row at its latest revision, revoked ones included.",
+                row: None,
+            },
+            get(rules),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/decisions/rules/revoke",
+                summary: "The owner revokes one rule row, so it answers nothing; the next ask of its question goes up the ladder.",
+                row: None,
+            },
+            post(revoke_rule),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

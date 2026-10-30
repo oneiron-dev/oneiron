@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -16,16 +15,42 @@ use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 
 use super::super::error_map::core_engine_error;
-use super::super::owner_routes::owner;
+use super::super::openapi::OwnerRoute;
+use super::super::owner_routes::{OwnerTable, owner};
 use super::super::unix_seconds_now;
 
 type Reply<T> = Result<Json<T>, EnvelopedApiError>;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/packs/defaults/restore", post(restore_defaults))
-        .route("/packs/defaults/import", post(import_hub_skill))
-        .route("/packs/defaults/restore-skill", post(restore_hub_skill))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/defaults/restore",
+                summary: "Restore defaults.",
+                row: None,
+            },
+            post(restore_defaults),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/defaults/import",
+                summary: "Import hub skill.",
+                row: None,
+            },
+            post(import_hub_skill),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/defaults/restore-skill",
+                summary: "Restore hub skill.",
+                row: None,
+            },
+            post(restore_hub_skill),
+        ),
+    ]
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]

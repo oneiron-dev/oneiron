@@ -538,6 +538,7 @@ fn fork_hash_retrieval_blend_weights(hasher: &mut Sha256, weights: RetrievalBlen
     fork_hash_f32(hasher, weights.salience);
     fork_hash_f32(hasher, weights.confidence);
     fork_hash_f32(hasher, weights.gravity);
+    fork_hash_f32(hasher, weights.relevance);
 }
 
 fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
@@ -549,8 +550,6 @@ fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
     fork_hash_f64(hasher, ALPHA_TAU_SECS);
     fork_hash_f64(hasher, TEMPORAL_FLOOR);
     fork_hash_f32(hasher, COSINE_GHOST_VECTOR_THRESHOLD);
-    // Channel relevance entered the blend; replays keyed before it differ.
-    fork_hash_f64(hasher, crate::fusion::RELEVANCE_LOG_WEIGHT);
     fork_hash_f32(hasher, crate::fusion::BLEND_SCORE_CEILING);
     // EMBED-PACK: each ranked list's fusion scale is its top
     // FUSION_LIST_LENGTH, and the phonetic list is scored over every

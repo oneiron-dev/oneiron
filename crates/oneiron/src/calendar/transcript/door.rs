@@ -147,7 +147,7 @@ impl Memory<'_> {
                         // The engine observed a verified upload and closed SESSION. Neither
                         // the basis nor its timestamp is accepted from the caller.
                         let envelope = crate::WriteEnvelope::new(
-                            crate::WriteActor::new(self.actor(), self.actor_class()),
+                            self.write_actor(),
                             crate::claim::ClaimSource::Observed,
                             crate::WriteProvenance::new(rmpv::Value::from(
                                 "vault.calendar.transcript.ingest",

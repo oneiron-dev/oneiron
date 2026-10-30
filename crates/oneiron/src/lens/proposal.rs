@@ -265,7 +265,7 @@ impl Memory<'_> {
             proposed_at: crate::unix_seconds_now(),
             scope: LensScope::default(),
         };
-        let writer = crate::WriteActor::new(self.actor(), self.actor_class());
+        let writer = self.write_actor();
         let trigger = input.trigger;
         self.with_verified_actor_write_txn(|txn| {
             let live = vault.live_pack_skill_in_txn(txn, &record.pack_name, &skill_id)?;

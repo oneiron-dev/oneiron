@@ -202,7 +202,9 @@ impl SideRestoreSource<'_> {
 
 /// The current pad objects of `vault`, open in this process, captured in
 /// `txn`, named for the vault and home that transaction reads
-/// (`PAD_SOURCE_IDENTITY`). A fault leaves them not captured.
+/// (`PAD_SOURCE_IDENTITY`). A fault leaves them not captured, and a vault
+/// with no genesis names no vault, as a disk source in that state
+/// ([`UncapturedPadObjects::SourceVaultUnfolded`], FIX 11826).
 pub(super) fn capture_open_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> PadObjectsCapture {
     #[cfg(feature = "sync")]
     {
@@ -212,6 +214,11 @@ pub(super) fn capture_open_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> PadOb
         let (vault_id, home) = match pad_objects_identity_in_txn(vault, txn) {
             Ok(identity) => identity,
             Err(error) => return not_captured(UncapturedPadObjects::IdentityUnread, &error),
+        };
+        let Some(vault_id) = vault_id else {
+            return PadObjectsCapture::NotCaptured {
+                reason: UncapturedPadObjects::SourceVaultUnfolded,
+            };
         };
         // Every generation's bundle: a copy adopts the ones it does not keep.
         match capture_current_pad_objects_in_txn(&vault.store, txn, vault_id, home, |_| true) {
