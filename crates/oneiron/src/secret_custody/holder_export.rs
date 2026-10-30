@@ -22,10 +22,12 @@
 //! owner imports (`crate::batch::export`'s secret supplement). The copy is
 //! kept with the second it was sealed at, and rides the window plane to the
 //! owner's other installs, each of which keeps it once it folds the result
-//! that names it (`relay`, FIX 11843).
+//! that names it (`relay`, FIX 11843). A kept copy whose secret an admitted
+//! revoke ended or an erase here fenced is forgotten (`settle`, FIX 12064).
 
 mod relay;
 mod sealed;
+mod settle;
 
 use base64::Engine as _;
 use zeroize::Zeroizing;
