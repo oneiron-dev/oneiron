@@ -7,7 +7,7 @@
 //! and the restore names it owed.
 
 use super::super::{
-    GENERATIONS, PARTS, SealedBundleEntry, SealedBundleObject, order, part_key,
+    GENERATIONS, PARTS, SealedBundleEntry, SealedBundleObject, object_prefix, order, part_key,
     sealed_generation_hex,
 };
 use super::{
@@ -166,6 +166,32 @@ fn adopt_in_txn(
         put_access(store, wtxn, grant, raw)?;
     }
     GENERATIONS.put(store, wtxn, &key, &meta.entry.encode())
+}
+
+/// Puts `entry`'s pad object back as a store held it: `parts` at their
+/// offsets, whole or not, under `digest`, its entry last (FIX 11825). What a
+/// store's own objects put back hold, never cut again nor required whole.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn put_pads_as_held(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    mut entry: SealedBundleEntry,
+    digest: [u8; 32],
+    parts: &[(u64, Vec<u8>)],
+) -> Result<()> {
+    let generation = entry.generation;
+    let prefix = object_prefix(&generation, SealedBundleObject::Pads);
+    PARTS.delete_from(store, wtxn, prefix.as_bytes())?;
+    for (offset, part) in parts {
+        let key = part_key(&generation, SealedBundleObject::Pads, *offset);
+        PARTS.put(store, wtxn, &key, part)?;
+    }
+    entry.pads_digest = digest;
+    let key = sealed_generation_hex(&generation);
+    GENERATIONS.put(store, wtxn, &key, &entry.encode())
 }
 
 /// Whether `object` carries both of `entry`'s objects whole: its pad object

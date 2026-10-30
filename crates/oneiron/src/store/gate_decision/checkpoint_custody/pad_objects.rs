@@ -390,8 +390,9 @@ pub(crate) fn install_source_pad_objects_in_txn(
 
 /// Puts `baseline`, a store's own pad objects as an install read them, back
 /// over what that install wrote (`installed`), in a savepoint of `wtxn`, when
-/// the install did not read back once committed. Whether they are back and
-/// read back in it.
+/// the install did not read back once committed: each as the store held it,
+/// whole or not, and read back against `baseline` (FIX 11825). Whether they
+/// are back and read back in it.
 #[cfg(feature = "sync")]
 pub(crate) fn put_back_pad_objects_in_txn(
     store: &Store,
