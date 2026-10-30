@@ -3,11 +3,12 @@
 //!
 //! Each new child takes a fresh id (FIX 2971): a digest of its parent, its
 //! axis, its exact winner and its generation, the count of nodes split from
-//! that parent on that axis for that exact winner before it. A node whose
-//! earlier children merged away splits again into new children beside the
-//! tombstones its old receipts resolve through, and two trees that split
-//! the same way spell the same child alike, as the vault's donor prior and
-//! the merge-back read a leaf by its id.
+//! that parent on that axis for that exact winner before it. The parent segment
+//! is the first 16 hex of the framed parent digest (FIX 9053), so depth no longer
+//! lengthens the id. A node whose earlier children merged away splits again into
+//! new children beside the tombstones its old receipts resolve through, and two
+//! trees that split the same way spell the same child alike, as the vault's donor
+//! prior and the merge-back read a leaf by its id.
 
 use super::{
     DecisionAxis, SPLIT_MIN_RUNS_PER_WINNER, SplitDecision, TaskTypeNode, TaskTypeRef,
@@ -88,10 +89,12 @@ impl TaskTypeTree {
     }
 }
 
-/// A split child's id, `<parent>/<decision>.<digest>`: the first 16 hex of
-/// BLAKE3 over the framed parent, axis, exact winner and generation. Only
-/// characters a typeRef node id may hold, and no lossy spelling of the
-/// winner: two winners one slug would fold stay two children.
+/// A split child's id, `<parent-hash>/<decision>.<digest>` (FIX 9053): the parent
+/// segment is the first 16 hex of BLAKE3 over the framed parent, and the digest
+/// is the first 16 hex of BLAKE3 over the framed parent, axis, exact winner and
+/// generation, so depth no longer lengthens the id. Only characters a typeRef
+/// node id may hold, and no lossy spelling of the winner: two winners one slug
+/// would fold stay two children.
 fn split_child_id(parent: &str, axis: DecisionAxis, winner: &str, generation: u64) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(SPLIT_CHILD_ID_DOMAIN);
@@ -105,8 +108,14 @@ fn split_child_id(parent: &str, axis: DecisionAxis, winner: &str, generation: u6
     }
     hasher.update(&generation.to_le_bytes());
     let digest = hasher.finalize().to_hex();
+    let mut parent_hasher = blake3::Hasher::new();
+    parent_hasher.update(SPLIT_CHILD_ID_DOMAIN);
+    parent_hasher.update(&(parent.as_bytes().len() as u64).to_le_bytes());
+    parent_hasher.update(parent.as_bytes());
+    let parent_digest = parent_hasher.finalize().to_hex();
+    let parent_hash = &parent_digest.as_str()[..16];
     format!(
-        "{parent}/{}.{}",
+        "{parent_hash}/{}.{}",
         SplitDecision::from(axis).as_str(),
         &digest.as_str()[..16]
     )

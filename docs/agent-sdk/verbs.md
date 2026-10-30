@@ -151,6 +151,8 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.policy.admit`
 - `vault.retrieval.policy.update`
 - `vault.export`
+- `vault.export.transfer.read`
+- `vault.export.transfer.release`
 - `self.credential.attenuate`
 - `self.actor`
 - `vault.scope.position`
@@ -670,6 +672,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.ingress.get`
 - `vault.code.origin.register`
 - `vault.code.origin.mirror.get`
+- `vault.code.origin.mirror.plan`
 - `vault.code.origin.mirror.set`
 - `vault.code.origin.mirror.strategy`
 - `vault.code.origin.mirror.clear`
