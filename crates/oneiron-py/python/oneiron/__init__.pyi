@@ -2621,7 +2621,7 @@ class Oneiron:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
         def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
             """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
-        def get(self, spec: Facade.CheckoutGetInput) -> Facade.CheckoutLeaseView:
+        def get(self, spec: Facade.CheckoutGetInput) -> Facade.ScopedReadResult[Facade.CheckoutLeaseView | None]:
             """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
         def renew(self, spec: Facade.CheckoutRenewInput) -> Facade.CheckoutLeaseView:
             """Renew the caller's still-live checkout under its exact holder and epoch fence."""

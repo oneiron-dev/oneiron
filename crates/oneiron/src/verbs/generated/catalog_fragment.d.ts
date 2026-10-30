@@ -5502,7 +5502,7 @@ declare const vault: Sdk.VaultHost & {
       /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
       claim(input: Sdk.CheckoutClaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
       /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
-      get(input: Sdk.CheckoutGetInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      get(input: Sdk.CheckoutGetInput): Promise<Sdk.ScopedReadResult<Sdk.CheckoutLeaseView | null> | StoredResult>;
       /** Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head. */
       publish(input: Sdk.CheckoutPublishInput): Promise<Sdk.CheckoutPublished | StoredResult>;
       /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */

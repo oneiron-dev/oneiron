@@ -2274,7 +2274,7 @@ export class Oneiron {
         /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
         claim: (input: Facade.CheckoutClaimInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutClaim(input) as Facade.CheckoutLeaseView),
         /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
-        get: (input: Facade.CheckoutGetInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.CheckoutLeaseView),
+        get: (input: Facade.CheckoutGetInput): Facade.ScopedReadResult<Facade.CheckoutLeaseView | null> => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.ScopedReadResult<Facade.CheckoutLeaseView | null>),
         /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
         renew: (input: Facade.CheckoutRenewInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutRenew(input) as Facade.CheckoutLeaseView),
         /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
