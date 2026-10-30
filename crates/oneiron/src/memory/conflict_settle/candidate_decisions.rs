@@ -7,18 +7,27 @@
 //! candidates whose subject an owner-delegated conflict review Grant covers.
 //! Ids and decisions only, never a candidate's value.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::super::outbound::parse_job_ref;
 use super::super::support::hex_string;
 use super::super::{Memory, MemoryResult};
-use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_consolidation::KeptDecision;
 use crate::error::Error;
+use crate::{EdgeActorClass, EntityId, Vault};
+
+/// `vault.consolidation.candidate_decisions`'s input: the Dreamer attempt.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerCandidateDecisionsRequest {
+    /// 32-hex attempt id (`job:` prefix allowed), as
+    /// `vault.consolidation.status` names it.
+    pub job_ref: String,
+}
 
 /// One candidate a Dreamer attempt decided a correction for.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DreamerDecidedCandidateView {
     /// 32-hex attempt id.
     pub job_ref: String,
@@ -67,4 +76,19 @@ impl Memory<'_> {
         }
         Ok(read)
     }
+}
+
+/// Reads, as the vault owner, the candidates `input`'s attempt decided a
+/// correction for (FIX 11409): the SDK door over
+/// [`Memory::dreamer_candidate_decisions`]. The owner reads every one, as
+/// that read answers for its scope.
+pub fn read_dreamer_candidate_decisions_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: DreamerCandidateDecisionsRequest,
+) -> MemoryResult<Vec<DreamerDecidedCandidateView>> {
+    let actor = owner.revalidate(vault)?;
+    vault
+        .memory(actor, EdgeActorClass::Human)
+        .dreamer_candidate_decisions(Some(owner), &input.job_ref)
 }

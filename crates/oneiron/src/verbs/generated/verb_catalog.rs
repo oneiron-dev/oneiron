@@ -1090,6 +1090,7 @@ pub enum AgentVerb {
     VaultConsolidationHomeGet,
     VaultConsolidationHomePick,
     VaultConsolidationLineage,
+    VaultConsolidationCandidateDecisions,
     VaultConsolidationPromote,
     VaultConsolidationPin,
     VaultConsolidationFrontier,
@@ -2324,6 +2325,7 @@ impl AgentVerb {
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
+        Self::VaultConsolidationCandidateDecisions,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationPin,
         Self::VaultConsolidationFrontier,
@@ -3585,6 +3587,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
+            Self::VaultConsolidationCandidateDecisions => "vault.consolidation.candidate_decisions",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationPin => "vault.consolidation.pin",
             Self::VaultConsolidationFrontier => "vault.consolidation.frontier",
@@ -4803,6 +4806,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -6066,6 +6070,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -6318,6 +6323,7 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultClaimsSeed
                 | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultTasksLinearProvenance
@@ -7425,6 +7431,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -9422,6 +9429,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
+            Self::VaultConsolidationCandidateDecisions => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
             Self::VaultConsolidationFrontier => &["spec"],
@@ -10657,6 +10665,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
+            Self::VaultConsolidationCandidateDecisions => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
             Self::VaultConsolidationFrontier => &["spec"],
@@ -13980,6 +13989,9 @@ impl AgentVerb {
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."
+            }
+            Self::VaultConsolidationCandidateDecisions => {
+                "The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

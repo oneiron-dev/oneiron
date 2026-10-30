@@ -1155,6 +1155,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consolidation.home.get", post(facade_route))
         .route("/vault.consolidation.home.pick", post(facade_route))
         .route("/vault.consolidation.lineage", post(facade_route))
+        .route(
+            "/vault.consolidation.candidate_decisions",
+            post(facade_route),
+        )
         .route("/vault.consolidation.promote", post(facade_route))
         .route("/vault.consolidation.pin", post(facade_route))
         .route("/vault.consolidation.frontier", post(facade_route))
