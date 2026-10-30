@@ -506,7 +506,8 @@ impl Vault {
     /// their ordinals is. A due window goes to the projector's surprise check:
     /// a window that only repeats the turn the projection holds writes
     /// nothing, its repeats riding that turn's round, and any other window is
-    /// queued whole. Either way the window is read: the watermark passes it.
+    /// queued less the turns whose words a round already took. Either way the
+    /// window is read: the watermark passes it.
     /// The enqueue, the projector rows and the Micro watermark land in one
     /// transaction, so a crash cannot queue a window twice or lose one; the
     /// scans and history reads run in a read snapshot before that

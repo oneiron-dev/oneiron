@@ -25,6 +25,15 @@ pub(super) fn admits_credentials(url: &str, private_carrier: bool) -> bool {
         || (uri.scheme_str() == Some("ws") && loopback)
 }
 
+impl SyncClientConfig {
+    /// FIX 11111: whether the configured server may carry this machine's
+    /// credentials on the main sync socket, which dials it over the mesh
+    /// dialer when one is set.
+    pub(crate) fn server_admits_credentials(&self) -> bool {
+        admits_credentials(&self.server_url, self.mesh_dialer.is_some())
+    }
+}
+
 /// One residence dial's endpoint, read once, and the carrier chosen for it.
 pub(super) struct ResidenceEndpoint<'a> {
     pub(super) url: String,

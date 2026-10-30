@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use heed::RwTxn;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, RegistryError, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::ports::EntityStoreStaging;
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
@@ -318,21 +318,13 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::compaction::raise_epoch_floor_in_txn(store, wtxn, &entity_record)?;
     if entity_type == ENTITY_TYPE_SKILL {
         let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
-        match crate::skill::decode_skill_record(body) {
-            Ok(record) => {
-                if let Some(content_hash) = record.content_hash {
-                    crate::skill_hub::maintain_skill_content_hash_index_for_delete(
-                        store,
-                        wtxn,
-                        id,
-                        content_hash,
-                    )?;
-                }
-            }
-            Err(error)
-                if error.kind() == ErrorKind::InvalidSkillBody
-                    && crate::skill::is_legacy_opaque_skill_body(body) => {}
-            Err(error) => return Err(error),
+        if let Some(content_hash) = crate::skill::decode_skill_record(body)?.content_hash {
+            crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+                store,
+                wtxn,
+                id,
+                content_hash,
+            )?;
         }
     }
     crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;

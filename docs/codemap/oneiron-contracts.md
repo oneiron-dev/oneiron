@@ -40,7 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/record.rs` | src | m | 1 struct · 2 enum · 1 fn · 2 const · 2 crate-vis | ErasedHoldTarget, RecordError, RoomLiveSpeakersHold | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
 | `src/error/registry.rs` | src | s | 1 enum · 1 crate-vis | RegistryError | Registry-domain errors: structural-kind registration, entity-type and edge-kind refusals raised by the… |
 | `src/error/relay.rs` | src | s | 1 enum · 1 crate-vis | RelayError | Relay-domain errors: relay attestation refusals, vault-receipt trust, and the hosted policy manifest and… |
-| `src/error/secret.rs` | src | s | 2 enum · 1 crate-vis | KitRecord, SecretError | Secret-domain errors: secret custody, binding and tier refusals, and the secret-lease doors with their… |
+| `src/error/secret.rs` | src | m | 2 enum · 1 crate-vis | KitRecord, SecretError | Secret-domain errors: secret custody, binding and tier refusals, and the secret-lease doors with their… |
 | `src/error/store.rs` | src | s | 4 enum · 1 fn · 1 crate-vis | SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem | Store-domain errors: the vault-root preflight and the index/analyzer compatibility refusals a store open or… |
 | `src/error/sync.rs` | src | m | 1 struct · 6 enum · 6 fn · 4 crate-vis | SyncConfigField, SyncEngineContext, SyncError, SyncProtocolPruneScope, SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation | Sync-domain errors: the CRDT window/protocol/engine failures behind `feature = "sync"`, plus the… |
 | `src/gate.rs` | src | s | 1 struct | RetrievalFilter | The caller-supplied retrieval filter |
@@ -70,7 +70,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody.rs` | src | s | 2 enum · 4 fn | CustodyClass, CustodyTier | ARCH-0069 S1 custody classes and tiers |
 | `src/secret_lease.rs` | src | s | 1 enum · 2 fn | SecretLeaseStatus | Secret lease status |
 | `src/serialize.rs` | src | s | 1 mod | — | Serde adapters shared by the engine crates' serialized envelopes |
-| `src/serialize/entity_ref.rs` | src | s | 6 fn · 2 mod | — | Hex adapters for typed entity references in host-side serialized envelopes |
+| `src/serialize/entity_ref.rs` | src | s | 8 fn · 3 mod | — | Hex adapters for typed entity references in host-side serialized envelopes |
 | `src/temporal.rs` | src | L | 6 struct · 6 enum · 8 fn · 1 const | OpenPhrase, QueryTemporalHints, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus, TemporalPhraseSpan +4 | `TimeRange`, temporal expressions/parsing, granularity |
 | `src/write_envelope.rs` | src | s | 1 struct · 7 fn | WriteActor | The write actor every write path stamps |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-contracts` made `pub` so `oneiron` can reach them across the crate split |

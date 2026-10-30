@@ -16,8 +16,8 @@
 //! seat's month, so a window that would pass or fail closes as
 //! `unverifiable_mixed_model` instead, with their calls and cost.
 use super::{
-    DAY_SECS, DreamerAdmittedAttempt, OfferCheckInput, SeatUsage, Sources, TrainingOffer, Vault,
-    WINDOW_SECS,
+    DAY_SECS, DreamerAdmittedAttempt, OfferCheckInput, OfferCheckOutcome, SeatUsage, Sources,
+    TrainingOffer, Vault, WINDOW_SECS,
 };
 use crate::usage::UnpricedCache;
 
@@ -46,6 +46,16 @@ impl Alone {
             Self::NoMeter => "unverifiable_no_meter",
             Self::NotBound => "unverifiable_not_bound",
             Self::NoModelRole => "unverifiable_no_model_role",
+        }
+    }
+
+    /// The typed outcome the check records beside its note (FIX 6315).
+    const fn outcome(self) -> OfferCheckOutcome {
+        match self {
+            Self::NoCalls => OfferCheckOutcome::UnverifiableNoCalls,
+            Self::NoMeter => OfferCheckOutcome::UnverifiableNoMeter,
+            Self::NotBound => OfferCheckOutcome::UnverifiableNotBound,
+            Self::NoModelRole => OfferCheckOutcome::UnverifiableNoModelRole,
         }
     }
 }
@@ -99,6 +109,19 @@ impl Gap {
             Self::MixedCurrency => "unverifiable_mixed_currency",
             Self::SumOverflow => "unverifiable_sum_overflow",
             Self::Unclassified => "unverifiable_unclassified",
+        }
+    }
+
+    /// The typed outcome the check records beside its note (FIX 6315).
+    const fn outcome(self) -> OfferCheckOutcome {
+        match self {
+            Self::NoUsage => OfferCheckOutcome::UnverifiableNoUsage,
+            Self::UnpricedModel => OfferCheckOutcome::UnverifiableUnpricedModel,
+            Self::UnknownCurrency => OfferCheckOutcome::UnverifiableUnknownCurrency,
+            Self::UnpricedCache => OfferCheckOutcome::UnverifiableUnpricedCache,
+            Self::MixedCurrency => OfferCheckOutcome::UnverifiableMixedCurrency,
+            Self::SumOverflow => OfferCheckOutcome::UnverifiableSumOverflow,
+            Self::Unclassified => OfferCheckOutcome::UnverifiableUnclassified,
         }
     }
 }
@@ -236,6 +259,26 @@ impl Unverifiable {
         }
     }
 
+    /// The outcome the check records: the code that stands alone, the
+    /// mixed-model head when the seat's other calls were counted out, else
+    /// the first gap kind present, in [`Gap::ORDER`].
+    fn outcome(&self) -> OfferCheckOutcome {
+        if let Some(alone) = self.alone {
+            return alone.outcome();
+        }
+        if self.counted_out > 0 {
+            return OfferCheckOutcome::UnverifiableMixedModel;
+        }
+        for gap in Gap::ORDER {
+            if self.calls_of(gap) > 0 {
+                return gap.outcome();
+            }
+        }
+        // Unreachable: `of` builds this only with a gap, and `unread` sets
+        // `alone`. The mixed head is the harmless fallback.
+        OfferCheckOutcome::UnverifiableMixedModel
+    }
+
     /// The note of a code that stands alone.
     fn alone_note(alone: Alone, approved: &str, days: u64, promised: &str) -> String {
         let code = alone.code();
@@ -305,6 +348,7 @@ impl Unverifiable {
                 observed_monthly_cost: None,
                 observed_score: None,
                 held: None,
+                outcome: self.outcome(),
                 note: Some(note),
                 source_rows: sources.rows(),
             },

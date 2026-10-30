@@ -1,8 +1,110 @@
-//! Opened world-section views and bundle section selection.
+//! World sections: their seal and their codec in segments (FIX 10240), the
+//! opened view, and bundle section selection.
 //! The entry type is `OpenedBundleSection`.
-//! `super` owns sealed-section storage and the private section codec.
+//! `super` owns sealed-section storage and the section body codec.
+//!
+//! A section's body rides in parts of at most [`CHUNK`] bytes, each naming
+//! the body's digest, its index and the count. A section of more than
+//! [`MAX_SEGMENT_PARTS`] parts rides as several segments, sealed one after
+//! another in that one sequence of parts; each segment names the section's
+//! tag, its index and the segment count, and every one but the last is full.
+//! No part count caps a section. A segment left out leaves its parts out:
+//! the section does not open, with the error a missing part gives.
 
 use super::*;
+
+/// The most envelopes one section segment holds: 1 GiB of section body.
+const MAX_SEGMENT_PARTS: usize = 128;
+
+impl SealedBundleSection {
+    pub(super) fn seal(vault_id: &[u8; 32], key: &WorldKey, payload: &[u8]) -> Result<Self> {
+        let body = encode_section_body(vault_id, key.id(), payload);
+        let count = body.len().div_ceil(CHUNK);
+        let tag = section_digest(SECTION_TAG_CONTEXT, vault_id, key);
+        let params = seal_params(BUNDLE.purpose, vault_id, &tag, SECTION_RECIPIENT);
+        let kek = section_kek(vault_id, key);
+        let mut parts = Vec::with_capacity(count);
+        seal_parts(
+            &params,
+            &kek,
+            &body,
+            &even_sizes(body.len(), count),
+            |part| {
+                parts.push(part);
+                Ok(())
+            },
+        )?;
+        Ok(Self { tag, parts })
+    }
+
+    pub(super) fn open(&self, vault_id: &[u8; 32], key: &WorldKey) -> Result<OpenedBundleSection> {
+        let policy = symmetric_policy(BUNDLE.purpose, vault_id, &self.tag, SECTION_RECIPIENT);
+        let kek = section_kek(vault_id, key);
+        let body = open_parts(&policy, &kek, &self.parts)?;
+        decode_section_body(vault_id, key.id(), &body)
+    }
+
+    /// Each segment, in index order: tag (32) ‖ segment index (4) ‖ segment
+    /// count (4) ‖ part count (2) ‖ each part `u32`-length-prefixed. Every
+    /// segment but the last holds [`MAX_SEGMENT_PARTS`] parts.
+    pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let segments = self.parts.chunks(MAX_SEGMENT_PARTS);
+        let of = u32::try_from(segments.len()).map_err(|_| refused("too many segments"))?;
+        for (at, segment) in (0..of).zip(segments) {
+            out.extend_from_slice(&self.tag);
+            out.extend_from_slice(&at.to_be_bytes());
+            out.extend_from_slice(&of.to_be_bytes());
+            let count = u16::try_from(segment.len()).map_err(|_| refused("too many parts"))?;
+            out.extend_from_slice(&count.to_be_bytes());
+            for part in segment {
+                put_counted(out, &part.to_bytes())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One section, its segments joined in index order. Each names the
+    /// first one's tag and segment count and the next index, and holds 1 to
+    /// [`MAX_SEGMENT_PARTS`] parts, the full count but in the last; anything
+    /// else is malformed. Whether every part is there is the open's check.
+    pub(super) fn parse(cursor: &mut Cursor<'_>, vault_id: &[u8; 32]) -> Result<Self> {
+        let malformed = || refused("malformed bundle section");
+        let mut vault = Some(vault_id.to_vec());
+        let mut first: Option<([u8; 32], u32)> = None;
+        let mut parts = Vec::new();
+        let mut index = 0u32;
+        loop {
+            let tag: [u8; 32] = cursor.array().ok_or_else(malformed)?;
+            let at = u32::from_be_bytes(cursor.array().ok_or_else(malformed)?);
+            let of = u32::from_be_bytes(cursor.array().ok_or_else(malformed)?);
+            let count = usize::from(u16::from_be_bytes(cursor.array().ok_or_else(malformed)?));
+            let last = at.checked_add(1) == Some(of);
+            if *first.get_or_insert((tag, of)) != (tag, of)
+                || at != index
+                || at >= of
+                || count == 0
+                || count > MAX_SEGMENT_PARTS
+                || (!last && count != MAX_SEGMENT_PARTS)
+            {
+                return Err(malformed());
+            }
+            for _ in 0..count {
+                parts.push(parse_envelope(
+                    cursor,
+                    BUNDLE.purpose,
+                    WrapType::SymmetricKek,
+                    &tag,
+                    SECTION_RECIPIENT,
+                    &mut vault,
+                )?);
+            }
+            if last {
+                return Ok(Self { tag, parts });
+            }
+            index += 1;
+        }
+    }
+}
 
 impl std::fmt::Debug for SealedBundleSection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

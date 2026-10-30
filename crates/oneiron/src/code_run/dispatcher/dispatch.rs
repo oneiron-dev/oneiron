@@ -28,7 +28,11 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let run_id = site.map(|site| site.run_id);
-        match call {
+        let agent_verb = match &call {
+            SelfCall::AgentVerb(call) => Some(call.verb),
+            _ => None,
+        };
+        let outcome = match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::AgentsPut(call) => {
                 let disposition = self.put_agent_definition(
@@ -101,7 +105,9 @@ impl HostSelfDispatcher<'_> {
             // The run repo rows read on the lane their door admitted, under
             // the run's lease, at its executor site (FIX 6867).
             SelfCall::Repo(call) => self.dispatch_repo(call, site, read_as),
-        }
+        }?;
+        self.note_created_from_outcome(agent_verb, &outcome);
+        Ok(outcome)
     }
 }
 
