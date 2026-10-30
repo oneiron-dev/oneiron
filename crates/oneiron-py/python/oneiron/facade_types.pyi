@@ -6718,8 +6718,19 @@ class OutboxMemberStatusSourceDigestMismatch(TypedDict):
     member: str
     recorded: str
     read: str
-OutboxMemberStatus = OutboxMemberStatusDivergedUnagreed | OutboxMemberStatusSourceDigestMismatch
-OutboxCardKind = Literal["outbox_diverged", "outbox_source_damaged"]
+class OutboxMemberStatusKeptAside(TypedDict):
+    status: Literal["kept_aside"]
+    kind: VmOutboxKind
+    member: str
+    held_by: VmOutboxSide
+    held: str
+    length: int
+    aside: str
+    kept_at_ms: int
+    removing: bool
+    failed: NotRequired[str | None]
+OutboxMemberStatus = OutboxMemberStatusDivergedUnagreed | OutboxMemberStatusSourceDigestMismatch | OutboxMemberStatusKeptAside
+OutboxCardKind = Literal["outbox_diverged", "outbox_source_damaged", "outbox_kept_aside"]
 class OutboxCardAction(TypedDict):
     label: str
     answer: OutboxDivergedAnswer

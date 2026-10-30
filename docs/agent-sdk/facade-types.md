@@ -2622,9 +2622,9 @@ export type VmOutboxSide = "guest" | "host"
 /** `oneiron::verbs::outbox_diverged::OutboxDivergedAnswer` */
 export type OutboxDivergedAnswer = "keep" | "remove"
 /** `oneiron::verbs::outbox_diverged::OutboxMemberStatus` */
-export type OutboxMemberStatus = { status: "diverged_unagreed"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; retired?: string | null; answer?: OutboxDivergedAnswer | null } | { status: "source_digest_mismatch"; kind: VmOutboxKind; member: string; recorded: string; read: string }
+export type OutboxMemberStatus = { status: "diverged_unagreed"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; retired?: string | null; answer?: OutboxDivergedAnswer | null } | { status: "source_digest_mismatch"; kind: VmOutboxKind; member: string; recorded: string; read: string } | { status: "kept_aside"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; aside: string; kept_at_ms: number; removing: boolean; failed?: string | null }
 /** `oneiron::verbs::outbox_diverged::OutboxCardKind` */
-export type OutboxCardKind = "outbox_diverged" | "outbox_source_damaged"
+export type OutboxCardKind = "outbox_diverged" | "outbox_source_damaged" | "outbox_kept_aside"
 /** `oneiron::verbs::outbox_diverged::OutboxCardAction` */
 export type OutboxCardAction = { label: string; answer: OutboxDivergedAnswer; route: string }
 /** `oneiron::verbs::outbox_diverged::OutboxOwnerCard` */
