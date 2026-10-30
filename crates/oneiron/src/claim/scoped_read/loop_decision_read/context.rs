@@ -1,11 +1,12 @@
 //! A loop decision's own context as the authorised loop read admits it: the
 //! loop link its writer stamped (FIX 7500), and the read context it kept for
 //! an event that names no entity the reader reads, a candidate that never
-//! landed or a claim-free admission (FIX 7499). The context is judged under
-//! the reader's live authority each time: never a stored list of readers,
-//! and never a row made up to pass the row checks. It only adds events the
-//! named-entity route does not admit, and admits none the reader's own
-//! authority does not.
+//! landed or a claim-free admission (FIX 7499), or a stored candidate whose
+//! status or evidence the reader's floor refuses (FIX 10999). The context is
+//! judged under the reader's live authority each time: never a stored list
+//! of readers, and never a row made up to pass the row checks. It only adds
+//! events the named-entity route does not admit, and admits none the
+//! reader's own authority does not.
 
 use std::collections::BTreeSet;
 
@@ -41,8 +42,12 @@ impl<'v> ScopedRead<'v> {
     /// What `record`'s kept read context admits, when the reader is admitted
     /// to every read context it kept (a bundle's every member): `None` when
     /// it kept none or one does not admit. A decision on a claim `claim`
-    /// that is stored now is judged by its row alone, as before, and so is a
-    /// kept record position under a read narrowed to a room, worlds, an
+    /// that is stored now is judged by its row's audience, facet and guest
+    /// conjuncts plus the position its writer kept for it, with no status,
+    /// evidence or landing asked, so a Proposed or evidence-refused
+    /// candidate's event reads (FIX 10999). One whose writer kept no
+    /// position for that claim is judged by its row alone, as before, and so
+    /// is a kept record position under a read narrowed to a room, worlds, an
     /// audience, peers or another device.
     pub(super) fn loop_context_admitted_in(
         &self,
@@ -56,6 +61,9 @@ impl<'v> ScopedRead<'v> {
             return Ok(None);
         }
         if let Some(claim) = claim
+            && !contexts
+                .iter()
+                .any(|context| context.record == Some(claim) && context.position.is_some())
             && self.entity_record_in(txn, &claim)?.is_some()
         {
             return Ok(None);
@@ -79,9 +87,11 @@ impl<'v> ScopedRead<'v> {
 
     /// One kept read context under the reader's live authority: each row it
     /// is about passes the reader's own full row floor now, audience and
-    /// private threads included; a record stored now passes it too, and one
-    /// that never landed sits where the reader's Scope, grants and
-    /// relationships read it.
+    /// private threads included; a record stored now passes it too, or, when
+    /// its writer kept the record's position, passes its row's audience,
+    /// facet and guest conjuncts and that position, with no status, evidence
+    /// or landing asked (FIX 10999); and one that never landed sits where the
+    /// reader's Scope, grants and relationships read it.
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -103,15 +113,32 @@ impl<'v> ScopedRead<'v> {
             }
         }
         if let Some(record) = context.record
-            && self.entity_record_in(txn, &record)?.is_some()
+            && let Some(row) = self.entity_record_in(txn, &record)?
         {
-            return self.is_entity_retrievable_held_in(
+            if self.is_entity_retrievable_held_in(
                 txn,
                 &read.policy,
                 &read.filter,
                 &record,
                 &read.held,
-            );
+            )? {
+                return Ok(true);
+            }
+            let Some(position) = &context.position else {
+                return Ok(false);
+            };
+            // FIX 10999: the stored row's own audience, facet and guest
+            // conjuncts, then the position its writer kept. Its status,
+            // evidence and landing govern the claim, not whether its
+            // decision may be seen.
+            let raw = row.encode();
+            if !self.audience_readable_raw_in(txn, &record, &raw, &read.held)?
+                || !self.facets_allow_in(txn, &record, &raw)?
+                || !self.guest_bound_admits_in(txn, &record, &raw)
+            {
+                return Ok(false);
+            }
+            return self.loop_position_admitted_in(txn, read, Some(&record), position);
         }
         match &context.position {
             None => Ok(true),
