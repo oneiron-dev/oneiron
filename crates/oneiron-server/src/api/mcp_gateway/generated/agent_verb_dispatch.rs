@@ -293,6 +293,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.retrieval.policy.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.policy.update" => a.spec.clone().ok_or_else(invalid),
         "vault.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.export.transfer.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.export.transfer.release" => a.spec.clone().ok_or_else(invalid),
         "self.credential.attenuate" => a.spec.clone().ok_or_else(invalid),
         "self.actor" => a.spec.clone().ok_or_else(invalid),
         "vault.scope.position" => a.spec.clone().ok_or_else(invalid),
@@ -1981,6 +1983,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.export.transfer.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.export.transfer.release" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.credential.attenuate" => {
@@ -5183,7 +5191,7 @@ pub(crate) fn mcp_agent_verb_arguments(
 pub(crate) async fn execute_agent_verb_input(
     server: &Arc<SyncServer>,
     tool: &str,
-    input: Value,
+    mut input: Value,
     actor: &McpCallContext,
     run: Option<McpCodeRun>,
     served: &mut McpServed,
@@ -5201,21 +5209,25 @@ pub(crate) async fn execute_agent_verb_input(
     // An owner's erase or revoke reads the restriction-only clock through
     // its hooks and door, as the engine classifies it (FIX 11201).
     let restrictive = crate::api::clock_ingress::restrictive_call(server, tool, Some(&input));
+    // A custody row's value leaves the args before its hooks read them,
+    // and rides to its door scoped, as an HTTP body's does (FIX 11665).
+    let secret = crate::api::facade::lift_custody_secret(tool, &mut input);
+    let listed = super::skill_execution::CALLER.scope(
+        actor.clone(),
+        execute_agent_verb_listing(
+            server,
+            tool,
+            input,
+            actor,
+            run,
+            &producers,
+            served,
+            board_hooks,
+        ),
+    );
     let produced = crate::api::clock_ingress::scoped(
         restrictive,
-        super::skill_execution::CALLER.scope(
-            actor.clone(),
-            execute_agent_verb_listing(
-                server,
-                tool,
-                input,
-                actor,
-                run,
-                &producers,
-                served,
-                board_hooks,
-            ),
-        ),
+        crate::api::facade::with_custody_secret(secret, listed),
     )
     .await;
     served.extend(producers.take());
@@ -7573,6 +7585,20 @@ async fn execute_agent_verb_row(
             // The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.
             // Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).
             let surface = crate::api::facade::owner_binding::act_surface(auth);
+            // A transfer is kept on the server, as on REST, and read through vault.export.transfer.read (FIX 11176).
+            if input.delivery.unwrap_or_default() == oneiron::memory::ExportDelivery::Transfer {
+                let (transfer, listed) = crate::api::facade::mcp_export_transfer(
+                    server,
+                    auth,
+                    surface,
+                    &actor.destination(),
+                    &input,
+                    action,
+                )
+                .map_err(mcp_facade_error)?;
+                served.extend(listed);
+                return mcp_agent_verb_output(transfer, crate::mcp::McpPageSource::complete(1));
+            }
             let output = match (auth.verified_slip(), action) {
                 (Some(proof), _) if proof.claims().holder_ref == "host" => server
                     .vault
@@ -7625,6 +7651,40 @@ async fn execute_agent_verb_row(
                 }
             }
             .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.export.transfer.read" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.export.transfer.read", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::ExportTransferReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_export_transfer_read(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.export.transfer.release" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.export.transfer.release", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::ExportTransferReleaseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_export_transfer_release(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

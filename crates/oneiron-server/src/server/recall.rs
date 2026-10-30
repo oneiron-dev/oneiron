@@ -389,6 +389,8 @@ impl SyncServer {
     ///
     /// Beside the pack come the rows it is derived from without naming them,
     /// as [`Self::recall_off_runtime_listing`] lists them.
+    // FIX 11469: kept as the sync door FIX 2060 ruled; no production host calls it yet.
+    #[allow(dead_code)]
     pub(crate) fn recall_at_sync_door(
         &self,
         actor: EntityId,
@@ -403,6 +405,8 @@ impl SyncServer {
         (pack, producers.take())
     }
 
+    // FIX 11469: the sync door's own read, kept with it.
+    #[allow(dead_code)]
     fn recall_at_sync_door_listing(
         &self,
         actor: EntityId,

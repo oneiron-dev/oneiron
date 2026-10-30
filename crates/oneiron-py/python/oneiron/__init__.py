@@ -1527,9 +1527,21 @@ class Oneiron:
         def __call__(self, format: str | None = None) -> dict[str, Any]:
             """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
+        @property
+        def transfer(self) -> "Oneiron._VaultExportTransferVerbs":
+            return Oneiron._VaultExportTransferVerbs(self._client)
         def scoped(self, spec):
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
             return json.loads(_translate(lambda: self._client.vault_export_scoped(json.dumps(spec))))
+    class _VaultExportTransferVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."""
+            return json.loads(_translate(lambda: self._client.vault_export_transfer_read(json.dumps(spec))))
+        def release(self, spec):
+            """Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."""
+            return json.loads(_translate(lambda: self._client.vault_export_transfer_release(json.dumps(spec))))
     class _VaultScopeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

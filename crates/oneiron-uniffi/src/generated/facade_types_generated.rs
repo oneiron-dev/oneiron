@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1204 facade rows, 4342 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1156.
+// UniFFI census: 1206 facade rows, 4348 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1158.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -2378,7 +2378,7 @@ pub struct WireReadScope {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub entity_types: Option<Vec<u8>>,
+    pub entity_types: Option<Vec<String>>,
     #[serde(rename = "max_sensitivity_band")]
     pub max_sensitivity_band: u8,
     #[serde(rename = "include_stale")]
@@ -7927,11 +7927,54 @@ pub struct DetailsOnDevice {
     pub details_on_device: bool,
 }
 
+/// `oneiron::verbs::act_answer::NarrowedQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NarrowedQuestion {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "message", default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(
+        rename = "requested_schema",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requested_schema: Option<crate::WireJson>,
+    #[serde(rename = "on_device", default, skip_serializing_if = "Option::is_none")]
+    pub on_device: Option<bool>,
+}
+
+/// `oneiron::verbs::act_answer::NarrowedQuestions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NarrowedQuestions {
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(rename = "questions_narrowed")]
+    pub questions_narrowed: bool,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "call_ref")]
+    pub call_ref: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "foreign")]
+    pub foreign: bool,
+    #[serde(rename = "questions")]
+    pub questions: Vec<NarrowedQuestion>,
+    #[serde(rename = "live_until_ms")]
+    pub live_until_ms: u64,
+    #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
+    pub reasons: Option<Vec<String>>,
+}
+
 /// `oneiron::verbs::act_answer::ActAnswer` with `T` = `FanoutLaunchView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerFanoutLaunchView {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(FanoutLaunchView),
 }
 
@@ -11082,6 +11125,56 @@ pub struct ExportTransfer {
 pub enum ExportAnswer {
     Inline(MemoryExport),
     Transfer(ExportTransfer),
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferReadRequest {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+    #[serde(rename = "offset", default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    #[serde(rename = "length", default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<u64>,
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferPiece`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferPiece {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+    #[serde(rename = "offset")]
+    pub offset: u64,
+    #[serde(rename = "bytes_base64")]
+    pub bytes_base64: String,
+    #[serde(rename = "length")]
+    pub length: u64,
+    #[serde(rename = "total_bytes")]
+    pub total_bytes: u64,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "end")]
+    pub end: bool,
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferReleaseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferReleaseRequest {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferReleased`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferReleased {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+    #[serde(rename = "released")]
+    pub released: bool,
 }
 
 /// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `ScopeId`.
@@ -20715,6 +20808,7 @@ pub struct SharedActExecuted {
 #[serde(untagged)]
 pub enum ActAnswerSharedActExecuted {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(SharedActExecuted),
 }
 
@@ -24633,6 +24727,7 @@ pub struct RecordEraseOutcome {
 #[serde(untagged)]
 pub enum ActAnswerRecordEraseOutcome {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(RecordEraseOutcome),
 }
 
@@ -44419,6 +44514,7 @@ pub struct SlideReviewOutcome {
 #[serde(untagged)]
 pub enum ActAnswerSlideReviewOutcome {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(SlideReviewOutcome),
 }
 
@@ -44549,6 +44645,7 @@ pub struct ArtifactAskOutcome {
 #[serde(untagged)]
 pub enum ActAnswerArtifactAskOutcome {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(ArtifactAskOutcome),
 }
 
@@ -51641,6 +51738,7 @@ pub struct LiveVoiceToolReply {
 #[serde(untagged)]
 pub enum ActAnswerLiveVoiceToolReply {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(LiveVoiceToolReply),
 }
 
@@ -54340,6 +54438,7 @@ pub struct ConnectorView {
 #[serde(untagged)]
 pub enum ActAnswerConnectorCallReply {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(ConnectorCallReply),
 }
 
