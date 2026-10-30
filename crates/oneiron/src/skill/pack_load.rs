@@ -8,6 +8,11 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_cla
 use crate::skill_optimize::exploration_trial;
 use crate::{EntityId, Error, Result, Vault};
 
+// A paired eval measurement's skill arm, by its pinned content (FIX 10677).
+mod measured;
+
+pub use self::measured::MeasuredSkillPack;
+
 /// One actual tier-2 load. Native record-only skills have no file tree.
 #[derive(Debug, Clone)]
 pub struct LoadedSkillPack {
