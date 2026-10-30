@@ -573,11 +573,10 @@ fn deck_error(error: DeckError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
-    if let Some(capacity) = package_capacity(match &error {
-        DeckError::Package(error) => Some(error),
-        _ => None,
-    }) {
-        return capacity;
+    // Its own ceiling, a package's or a graphic's, keeps its dimension
+    // (FIX 10654).
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
     }
     ContractError::new(ErrorCode::InvalidDocument, error.to_string())
 }
@@ -604,11 +603,10 @@ fn transaction_error(error: TransactionError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
-    if let Some(capacity) = package_capacity(match &error {
-        TransactionError::Package(error) => Some(error),
-        _ => None,
-    }) {
-        return capacity;
+    // Its own ceiling, a package's or a graphic's, keeps its dimension
+    // (FIX 10654).
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
     }
     let code = match &error {
         TransactionError::Invalid(_) => ErrorCode::BadRequest,
@@ -641,11 +639,10 @@ fn emit_error(error: EmitError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
-    if let Some(capacity) = package_capacity(match &error {
-        EmitError::Package(error) => Some(error),
-        _ => None,
-    }) {
-        return capacity;
+    // Its own ceiling, a package's or a graphic's, keeps its dimension
+    // (FIX 10654).
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
     }
     let code = match &error {
         EmitError::Plan(error) => return compile(error.clone()),

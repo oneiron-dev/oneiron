@@ -159,8 +159,20 @@ impl Vault {
                 // stricter than the preflight. Re-evaluate before any durable row.
                 let docx_limits = if proposal.format == OfficeFormat::Docx {
                     let limits = self.docx_archive_limits_in_txn(wtxn, Some(actor.entity_ref()))?;
-                    oneiron_docedit::validate_blocking_with_limits(&proposal.new_bytes, limits)
-                        .map_err(|_| {
+                    // The DOCX linker runs in the host's memory (FIX 10651); a
+                    // resource refusal is the engine's error (FIX 10587).
+                    let resources = crate::office_body::document_resources();
+                    resources
+                        .docx(|| {
+                            oneiron_docedit::validate_blocking_with_limits(
+                                &proposal.new_bytes,
+                                limits,
+                            )
+                        })
+                        .map_err(|error| {
+                            if let Some(refusal) = oneiron_docedit::docx_resource(&error) {
+                                return crate::office_body::document_refused(refusal);
+                            }
                             Error::Artifact(ArtifactError::InvalidEditManifest(
                                 "docx output fails the current archive budget or linker",
                             ))
@@ -219,14 +231,21 @@ impl Vault {
                             "docx proposal requires exactly one native tracked transaction",
                         )));
                     };
-                    let expected =
-                        oneiron_docedit::revise_with_limits(&source, transaction, limits).map_err(
-                            |_| {
-                                Error::Artifact(ArtifactError::InvalidEditManifest(
-                                    "docx transaction cannot replay against its pinned base",
-                                ))
-                            },
-                        )?;
+                    // The DOCX replay runs in the host's memory (FIX 10651); a
+                    // resource refusal is the engine's error (FIX 10587).
+                    let resources = crate::office_body::document_resources();
+                    let expected = resources
+                        .docx(|| {
+                            oneiron_docedit::revise_with_limits(&source, transaction, limits)
+                        })
+                        .map_err(|error| {
+                            if let Some(refusal) = error.resource() {
+                                return crate::office_body::document_refused(refusal);
+                            }
+                            Error::Artifact(ArtifactError::InvalidEditManifest(
+                                "docx transaction cannot replay against its pinned base",
+                            ))
+                        })?;
                     if !crate::edit_roundtrip::docx_parts_match_replay(
                         &expected,
                         &proposal.new_bytes,
@@ -771,10 +790,21 @@ impl Vault {
         if proposal.format == OfficeFormat::Docx {
             let rtxn = self.store.env.read_txn()?;
             let limits = self.docx_archive_limits_in_txn(&rtxn, Some(actor.entity_ref()))?;
-            oneiron_docedit::validate_blocking_with_limits(&proposal.new_bytes, limits)
-                .map_err(|_| Error::Artifact(ArtifactError::EditRoundtripFailed(
-                    "native docx proposal exceeds archive limits or fails the Word package linker",
-                )))?;
+            // The DOCX linker runs in the host's memory (FIX 10651); a
+            // resource refusal is the engine's error (FIX 10587).
+            let resources = crate::office_body::document_resources();
+            resources
+                .docx(|| {
+                    oneiron_docedit::validate_blocking_with_limits(&proposal.new_bytes, limits)
+                })
+                .map_err(|error| {
+                    if let Some(refusal) = oneiron_docedit::docx_resource(&error) {
+                        return crate::office_body::document_refused(refusal);
+                    }
+                    Error::Artifact(ArtifactError::EditRoundtripFailed(
+                        "native docx proposal exceeds archive limits or fails the Word package linker",
+                    ))
+                })?;
         }
         if proposal.format != proposal.manifest.format
             || match proposal.format {

@@ -21,7 +21,7 @@ use crate::pptx_comments::{
     PptxAnchorOutcome, PptxCommentEdit, PptxCommentLimits, PptxSlideIdentity,
 };
 use crate::resource::{CapacityHit, ResourceRefusal, Resources};
-use crate::retained_opc::{Limits, XmlLimits};
+use crate::retained_opc::Limits;
 use crate::xlsx_body::{XlsxBook, XlsxChange};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -148,17 +148,14 @@ impl DocxLimits {
     }
 }
 
-/// OPC package ceilings for XLSX and PPTX, checked before decompression and
-/// again after it.
+/// OPC package byte ceilings for XLSX and PPTX, checked before decompression
+/// and again after it (FIX 10590).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackageLimits {
     pub archive_bytes: usize,
-    pub entries: usize,
     pub part_bytes: usize,
     pub expanded_bytes: usize,
-    pub xml_depth: usize,
-    pub xml_nodes: usize,
 }
 
 impl PackageLimits {
@@ -166,13 +163,8 @@ impl PackageLimits {
     pub fn package(self) -> Limits {
         Limits {
             archive_bytes: self.archive_bytes,
-            entries: self.entries,
             part_bytes: self.part_bytes,
             expanded_bytes: self.expanded_bytes,
-            xml: XmlLimits {
-                max_depth: self.xml_depth,
-                max_nodes: self.xml_nodes,
-            },
         }
     }
 }
@@ -309,17 +301,12 @@ pub struct DeckCreateArgs {
     pub graphics: Option<GraphicSettings>,
 }
 
-/// A host's graphic ceilings: an asset past a byte or pixel one is refused,
-/// not truncated. The SVG node, depth, segment and fill-edge counts are
-/// observations, never a reason to refuse (FIX 8574).
+/// A host's graphic byte and pixel ceilings: an asset past one is refused,
+/// not truncated (FIX 10590).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphicSettings {
     pub svg_bytes: usize,
-    pub svg_nodes: usize,
-    pub svg_depth: usize,
-    pub segments: usize,
-    pub fill_edges: usize,
     pub raster_bytes: usize,
     pub raster_pixels: u64,
 }
@@ -329,10 +316,6 @@ impl GraphicSettings {
     pub fn graphic(self) -> GraphicLimits {
         GraphicLimits {
             svg_bytes: self.svg_bytes,
-            svg_nodes: self.svg_nodes,
-            svg_depth: self.svg_depth,
-            segments: self.segments,
-            fill_edges: self.fill_edges,
             raster_bytes: self.raster_bytes,
             raster_pixels: self.raster_pixels,
         }
