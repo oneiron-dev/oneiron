@@ -17,7 +17,7 @@ use super::{
     ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxSheetVisibility,
     XlsxStyle, XlsxTable,
 };
-use crate::batch::secret_scan::LiftedKeys;
+use crate::batch::secret_scan::{LiftedKeys, mask_unplaced_json};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -446,7 +446,24 @@ impl Memory<'_> {
             return Ok(read.view);
         }
         let keys = read.keys;
-        self.lifted_view(read.view, || Ok(keys))
+        if input.at.is_none() {
+            return self.lifted_view(read.view, || Ok(keys));
+        }
+        // At an earlier frontier, a text that still shows a key no mark
+        // places reads as the door's placeholder to a masked reader, its
+        // owner's proposal filed (FIX 8996).
+        if !self.reads_lifted_keys_masked()? {
+            return Ok(read.view);
+        }
+        let mut value = serde_json::to_value(&read.view)
+            .map_err(|_| crate::Error::InvariantViolation("an office body view did not encode"))?;
+        let lifted = keys.mask_json(&mut value);
+        if !(mask_unplaced_json(&mut value) || lifted) {
+            return Ok(read.view);
+        }
+        Ok(serde_json::from_value(value).map_err(|_| {
+            crate::Error::InvariantViolation("a masked office body view did not decode")
+        })?)
     }
 
     /// Whether this read of `artifact`'s body `view` reads it whole: a reader

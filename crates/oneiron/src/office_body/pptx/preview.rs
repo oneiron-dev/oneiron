@@ -18,7 +18,8 @@
 //! refused, any ask its read filed kept. The keys judged are those of what
 //! is drawn, read in the snapshot the deck is (FIX 9994, 9995): its texts',
 //! and those the marks of the retained package it draws over, of that
-//! package's parts and of each picture it resolves name.
+//! package's parts and of each picture it resolves name. A mark in the
+//! package or a part counts only where the asked slides draw it (FIX 10453).
 //!
 //! The memory a preview allocates is admitted to the host's renderer before
 //! it is (FIX 7653, [`SlideRenderer::admit`]): the copy the package keeps,
@@ -28,6 +29,8 @@
 //! read, with no wait (FIX 8240, [`SlideRenderer::materialized`]). Every
 //! named slide is still drawn; only a real floor or the render's deadline
 //! refuses, typed by the host.
+mod drawn_parts;
+
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -37,6 +40,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use super::{live, open_record};
+use drawn_parts::PackageMarks;
 use crate::Vault;
 use crate::edit_roundtrip::VaultAssets;
 use crate::edit_roundtrip::slides_review::{SlideRenderer, review_image_key};
@@ -177,11 +181,13 @@ impl Memory<'_> {
         // says why (OF-067, FIX 2941).
         let masked = self.reads_lifted_keys_masked()?;
         let vault = self.vault();
-        let projection = vault.deck_projection(&artifact, fork.as_ref(), renderer)?;
+        let projection =
+            vault.deck_projection(&artifact, fork.as_ref(), &input.slides, renderer)?;
         let key = projection.key.hash();
         // Whether this read needs sight is the snapshot drawn's to say, its
-        // texts, retained package, parts and pictures (FIX 9995, 9994), and
-        // it is judged on this read before a kept drawing is read or one
+        // texts, retained package, parts and pictures (FIX 9995, 9994), the
+        // package and its parts where the asked slides draw them (FIX 10453),
+        // and it is judged on this read before a kept drawing is read or one
         // drawn.
         let held_back = masked && !projection.lifted.is_empty();
         let view = if !masked {
@@ -354,7 +360,8 @@ struct Projection {
     rows: Vec<EntityId>,
     /// The keys what is drawn holds, read in the snapshot the deck was: its
     /// lifted texts' (FIX 2941), and those the marks of the retained package,
-    /// of its parts and of each resolved picture name (FIX 9994).
+    /// of its parts and of each resolved picture name (FIX 9994), the
+    /// package's and the parts' where the asked slides draw them (FIX 10453).
     lifted: LiftedSources,
     /// The bytes of the package `package` was read from.
     source_bytes: u64,
@@ -369,18 +376,20 @@ struct Projection {
 
 impl Vault {
     /// The deck at its head, or with `fork` that open fork's actual merged
-    /// candidate over the head, as [`Vault::pptx_body_fork_review`] reads it.
-    /// The package's bytes are admitted to `renderer` (FIX 7653).
+    /// candidate over the head, as [`Vault::pptx_body_fork_review`] reads it,
+    /// judged for the asked `slides`. The package's bytes are admitted to
+    /// `renderer` (FIX 7653).
     fn deck_projection(
         &self,
         artifact: &EntityId,
         fork: Option<&EntityId>,
+        slides: &[u64],
         renderer: &dyn SlideRenderer,
     ) -> Result<Projection> {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let (head, retained, deck, lifted, (assets, asset_rows, pictures)) = {
+        let (head, retained, deck, (lifted, marks), (assets, asset_rows, pictures)) = {
             let txn = self.store.env.read_txn()?;
             let texts = self.typed_body_lifted_sources_in_txn(&txn, artifact)?;
             let (head, body) = self.deck_head(&txn, artifact)?;
@@ -408,13 +417,13 @@ impl Vault {
             let assets = HeldAssets::resolve(&listing, &[&deck]);
             // What the drawing is made of besides the texts: the retained
             // package by its pinned hash, each part as the deck pins it, and
-            // each picture's bytes (FIX 9994).
-            let mut files = vec![retained.map_or(source.source_hash, |retained| retained.hash)];
-            files.extend(deck.opaque_parts.values().copied());
-            files.extend(listing.files.take());
-            let lifted = self.lifted_sources_with_files_in_txn(&txn, texts, &files)?;
+            // each picture's bytes (FIX 9994). The package's and the parts'
+            // marks count where the asked slides draw them (FIX 10453).
+            let pinned = retained.map_or(source.source_hash, |retained| retained.hash);
+            let marks = PackageMarks::read_in_txn(&self.store, &txn, &pinned, &deck)?;
+            let lifted = self.lifted_sources_with_files_in_txn(&txn, texts, &listing.files.take())?;
             let resolved = (assets, listing.rows.into_inner(), listing.admitted.get());
-            (head, retained, deck, lifted, resolved)
+            (head, retained, deck, (lifted, marks), resolved)
         };
         let (bytes, rows) = self.deck_source_listing(artifact, &source, retained)?;
         // The package, its size known only once read whole, is named
@@ -435,6 +444,7 @@ impl Vault {
             )
         })?;
         renderer.materialized(source_bytes, source_bytes);
+        let lifted = lifted.with_keys(marks.drawn_keys(&deck, slides, &package, &bytes));
         let key = export_key(
             &deck,
             &package,
