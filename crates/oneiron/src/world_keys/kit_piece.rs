@@ -73,7 +73,10 @@ impl Vault {
     /// a restore here asks the owner for one piece fewer. A piece its slots cannot
     /// give back counts as none: the owner is then asked for every piece.
     pub fn keeps_kit_piece(&self, kind: KitSecretKind) -> bool {
-        matches!(self.kept_kit_piece(KitPiecePair::Current(kind)), Ok(Some(_)))
+        matches!(
+            self.kept_kit_piece(KitPiecePair::Current(kind)),
+            Ok(Some(_))
+        )
     }
 
     /// Rebuilds a kit's secret on this machine (FIX 2063): [`restore_kit`] over

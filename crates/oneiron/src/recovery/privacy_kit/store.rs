@@ -181,10 +181,9 @@ impl KitPieceStore {
     /// The head and tail slots of `pair`.
     fn slots(&self, pair: KitPiecePair) -> [KeystoreSlot; 2] {
         let parts = match pair {
-            KitPiecePair::Current(KitSecretKind::VaultKey) => [
-                KitPieceSlot::VaultKeyHead,
-                KitPieceSlot::VaultKeyTail,
-            ],
+            KitPiecePair::Current(KitSecretKind::VaultKey) => {
+                [KitPieceSlot::VaultKeyHead, KitPieceSlot::VaultKeyTail]
+            }
             KitPiecePair::Current(KitSecretKind::RecoveryRoot) => [
                 KitPieceSlot::RecoveryRootHead,
                 KitPieceSlot::RecoveryRootTail,

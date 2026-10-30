@@ -6,10 +6,7 @@ use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::storage::{
-    ACTIVE_FUTURE_PER_EMAIL_CEIL, ACTIVE_FUTURE_PER_EMAIL_FLOOR, ROW_ID_MAX_LEN, RULE_KEY_DOMAIN,
-    SLOT_LIST_CACHE_TTL_CEIL_SECS, SLOT_LIST_CACHE_TTL_FLOOR_SECS, hex_lower, refused,
-};
+use super::storage::{ROW_ID_MAX_LEN, RULE_KEY_DOMAIN, hex_lower, refused};
 // Referenced only by intra-doc links on the rule types; gated so the names are
 // in scope for rustdoc without being unused imports.
 #[cfg(doc)]
@@ -129,11 +126,14 @@ pub enum AmendmentDirection {
 }
 
 /// What a successful amendment stored, plus whether the owner must be shown
-/// a notice. Every activation is owner-visible.
+/// a notice. Every activation and every retained proposal is owner-visible.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuleAmendmentOutcome {
     pub stored: BookingAntiAbuseRuleRow,
     pub owner_notice_required: bool,
+    /// `false`: the change is retained as a proposal awaiting its holder
+    /// (FIX 9627), and the active row is unchanged.
+    pub activated: bool,
 }
 
 mod entity_ref_serde {
@@ -214,18 +214,16 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
                 ));
             }
         }
-        BookingAntiAbuseRule::SlotListRate { cache_ttl_secs, .. } => {
-            check_slot_list_cache_ttl(cache_ttl_secs.get())?;
-        }
+        // The cache TTL and the per-email cap are the owner's to pick: no
+        // compiled range binds them (FIX 9629). A cap of zero would admit no
+        // booking at all, so it must admit one.
         BookingAntiAbuseRule::BookRate {
             max_active_future_per_email,
             ..
         } => {
-            if !(ACTIVE_FUTURE_PER_EMAIL_FLOOR..=ACTIVE_FUTURE_PER_EMAIL_CEIL)
-                .contains(max_active_future_per_email)
-            {
+            if *max_active_future_per_email == 0 {
                 return Err(refused(
-                    "active future bookings per email must sit within 1-2",
+                    "the per-email active future booking cap must admit at least one",
                 ));
             }
         }
@@ -240,20 +238,12 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
             }
         }
         BookingAntiAbuseRule::RequiredIntake { .. }
+        | BookingAntiAbuseRule::SlotListRate { .. }
         | BookingAntiAbuseRule::HoneypotAndSubmitFloor { .. }
         | BookingAntiAbuseRule::EmailPromptToCorrect { .. }
         | BookingAntiAbuseRule::QuarantineBorderline
         | BookingAntiAbuseRule::EmailOtpReserve { .. }
         | BookingAntiAbuseRule::TentativeConfirmLinkReserve { .. } => {}
-    }
-    Ok(())
-}
-
-pub(super) fn check_slot_list_cache_ttl(ttl_secs: u64) -> Result<(), BookingError> {
-    if !(SLOT_LIST_CACHE_TTL_FLOOR_SECS..=SLOT_LIST_CACHE_TTL_CEIL_SECS).contains(&ttl_secs) {
-        return Err(refused(
-            "slot-list response cache ttl must sit within 30-60 seconds",
-        ));
     }
     Ok(())
 }

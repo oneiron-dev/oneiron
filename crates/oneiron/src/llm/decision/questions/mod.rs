@@ -8,6 +8,7 @@ mod artifact_refresh;
 mod ask_history;
 mod backfill;
 mod criteria;
+mod erase;
 mod graph_ask;
 mod health_ask;
 mod lifetime;
@@ -16,6 +17,7 @@ mod reader_authority;
 mod recipe;
 mod records;
 mod refresh;
+mod response_custody;
 mod role_asks;
 mod saved_reader;
 mod standing;
@@ -42,6 +44,7 @@ pub(crate) use ask_history::{
     StandingReask, record_failed_standing_reask, record_standing_reask_in_txn,
 };
 pub use backfill::schedule_backfill;
+pub(crate) use erase::erase_questions_for_actor_in_txn;
 pub use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,
@@ -68,6 +71,7 @@ pub use refresh::{
     refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
+pub(crate) use response_custody::{typed_question_carriage, typed_question_owners};
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
 pub(crate) use saved_reader::wake_artifact_reads;

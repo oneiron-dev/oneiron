@@ -506,7 +506,10 @@ fn reliability_citations(
         // A read landing mid-fork must not answer with whichever head the
         // edge index yielded first; the richest trace is the one to reason
         // from, exactly as the posterior read resolves on weight.
-        if best.as_ref().is_none_or(|(len, _, _)| receipts.len() > *len) {
+        if best
+            .as_ref()
+            .is_none_or(|(len, _, _)| receipts.len() > *len)
+        {
             best = Some((receipts.len(), receipts, id));
         }
     }

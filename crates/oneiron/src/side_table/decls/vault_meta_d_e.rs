@@ -412,6 +412,10 @@ side_tables! {
     /// by artifact ref. Key: id16.
     EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored
         => crate::edit_distance::erase_proposal_texts_in_txn;
+    /// Raw proposal document whose served texts were custody-marked before it was kept, outside
+    /// the side-row wall as an entity document is (FIX 11539), keyed by artifact ref. Key: id16.
+    EDIT_DISTANCE_PROPOSAL_DOCUMENT: VaultMeta b"edit_distance/proposal_document/v1\0" Raw
+        => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Rebuildable training-reservoir candidate index row, keyed by the proposal artifact's entity
     /// id. Key: id16.
     EDIT_DISTANCE_RESERVOIR_CANDIDATE: VaultMeta b"edit_distance/reservoir_candidate/v1\0" Raw;
