@@ -141,6 +141,35 @@ pub(crate) fn typed_body_entities_in_txn(store: &Store, txn: &RoTxn<'_>) -> Resu
     HEADS.scan_keys(store, txn, &[])
 }
 
+/// Whether `payload` is a typed body's frame.
+pub(crate) fn is_typed_body_frame(payload: &[u8]) -> bool {
+    payload.starts_with(FRAME_PREFIX)
+}
+
+/// The version vector of the sender's head that `payload`, a typed body's
+/// frame, names, read against `entity`'s body here, when this body holds
+/// operations that head lacks: what a reply sends. `None` for a payload that
+/// is no typed body's frame, a head this body does not hold, or one that
+/// holds all of it.
+pub(crate) fn typed_body_lack_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    payload: &[u8],
+) -> Result<Option<VersionVector>> {
+    let Some((frame, _)) = decode(payload)? else {
+        return Ok(None);
+    };
+    let Some(head) = HEADS.get(store, txn, entity)? else {
+        return Ok(None);
+    };
+    let doc = load(DOCS.get(store, txn, entity)?, Some(&head.frontier))?;
+    let theirs = Frontiers::decode(&frame.frontier)
+        .ok()
+        .and_then(|frontier| doc.frontiers_to_vv(&frontier));
+    Ok(theirs.filter(|theirs| !theirs.includes_vv(&doc.oplog_vv())))
+}
+
 /// Joins `payload`, a typed body's frame, to `entity`'s body in the caller's
 /// writer, through `owner`'s merge preflight. `None` when `payload` is no
 /// typed body's frame; else whether the head moved, a body was taken or a
