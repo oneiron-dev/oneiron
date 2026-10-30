@@ -645,12 +645,7 @@ pub(super) fn require_note_writer(
     }
     let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
     if !body.author_ref.is(memory.actor())
-        && !super::proposals::automatic_edit_grant(
-            memory.vault(),
-            txn,
-            id,
-            memory.write_actor(),
-        )?
+        && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
     {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(

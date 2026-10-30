@@ -211,6 +211,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.budgets.resident_shares.set" => a.spec.clone().ok_or_else(invalid),
         "vault.runners.seats.quotas" => a.spec.clone().ok_or_else(invalid),
         "vault.runners.seats.top_up" => a.spec.clone().ok_or_else(invalid),
+        "vault.runners.seats.resume" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.resume" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.resume_as" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.ack" => a.spec.clone().ok_or_else(invalid),
@@ -717,6 +718,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.settings.inference_defaults" => Ok(Value::Object(serde_json::Map::new())),
         "vault.settings.inference_defaults.replace" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.propose" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.propose_from_pack" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.activate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.list" => a.spec.clone().ok_or_else(invalid),
@@ -1794,6 +1796,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runners.seats.top_up" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.runners.seats.resume" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.fanout.resume" => {
@@ -3234,6 +3239,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.propose" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.propose_from_pack" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.activate" => {
@@ -6706,6 +6714,23 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_runners_seats_top_up(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.runners.seats.resume" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.runners.seats.resume", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dispatch_byoa::RunnerWorkResumeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_runners_seats_resume(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14758,6 +14783,14 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::lens::LensProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_lenses_propose(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.propose_from_pack" => {
+            let input: oneiron::skill_hub::pack_catalog::PackLensProposeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_lenses_propose_from_pack(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

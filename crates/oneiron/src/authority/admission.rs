@@ -147,35 +147,33 @@ const AUTHORITY_FRAME_FLOOR: usize = 8 * 1024 * 1024;
 #[cfg(feature = "sync")]
 const _: () = assert!(AUTHORITY_FRAME_FLOOR == crate::sync::MAX_DECODED_PAYLOAD_BYTES);
 
-/// What a custody request's permits may fill, encoded, before its writer
-/// asks (FIX 8087): half of one frame, so the question comes well before the
-/// request stops riding one frame whole beside the rest of its row.
-const CUSTODY_PERMITS_ASK_BYTES: usize = AUTHORITY_FRAME_FLOOR / 2;
+/// What a custody request's permits may fill, encoded, in one row: inline
+/// in the request's own row, and past it in each piece row (FIX 8087,
+/// 11866). Half of one frame, so every such row rides one frame whole
+/// beside the rest of it.
+const CUSTODY_PERMITS_ROW_BYTES: usize = AUTHORITY_FRAME_FLOOR / 2;
 
-/// Measures a custody request's `permits` (FIX 8087), the mirror of a
-/// profile revision's rides-whole probe: by count on the
-/// `authority_record_items` row ([`measure_authority_work`]), and under it,
-/// encoded as the request's row carries them, against
-/// [`CUSTODY_PERMITS_ASK_BYTES`], where the row is asked with the permits
-/// that fit there as its bound. The request is still signed and kept whole:
-/// never clipped, held or refused. A set past one frame needs the request in
-/// pieces, which are not built yet.
-pub(crate) fn measure_custody_permits(watch: &LimitWatch, permits: &[CustodyRecipientPermit]) {
-    if permits.is_empty() || measure_authority_work(watch, permits.len()).is_some() {
-        return;
+/// How many of a custody request's `permits` one piece row carries (FIX
+/// 11866), or `None` when they ride inline in the request's own row, as
+/// before. Measured by count on the `authority_record_items` row
+/// ([`measure_authority_work`]), which asks past it, and encoded as a row
+/// carries them against [`CUSTODY_PERMITS_ROW_BYTES`]: past it, as many as
+/// fit there, one at least. Every permit is kept, never clipped, held or
+/// refused. A codec that cannot say keeps them inline
+/// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+pub(crate) fn custody_permit_piece_len(
+    watch: &LimitWatch,
+    permits: &[CustodyRecipientPermit],
+) -> Option<usize> {
+    if permits.is_empty() {
+        return None;
     }
-    // A codec that cannot say counts as past the frame: the row only asks.
-    let encoded =
-        oneiron_authority::authority::custody_recipients_encoded_len(permits).unwrap_or(usize::MAX);
-    if encoded <= CUSTODY_PERMITS_ASK_BYTES {
-        return;
+    measure_authority_work(watch, permits.len());
+    let encoded = oneiron_authority::authority::custody_recipients_encoded_len(permits).ok()?;
+    if encoded <= CUSTODY_PERMITS_ROW_BYTES {
+        return None;
     }
-    let fits = CUSTODY_PERMITS_ASK_BYTES / encoded.div_ceil(permits.len());
-    watch.crossed(
-        EngineLimit::AuthorityRecordItems,
-        u64::try_from(fits).unwrap_or(u64::MAX),
-        u64::try_from(permits.len()).unwrap_or(u64::MAX),
-    );
+    Some((CUSTODY_PERMITS_ROW_BYTES / encoded.div_ceil(permits.len())).max(1))
 }
 
 impl Vault {

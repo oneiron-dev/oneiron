@@ -125,7 +125,7 @@ fn ask_detail(
     format!(
         "The {kind} outbox member {member} was retired ({retired}), but {end} keeps a copy the \
          carrier never agreed on ({held}). Nothing removes it without your answer: remove it, or \
-         keep it."
+         keep it under its own name, out of the way of the member's next version."
     )
 }
 
