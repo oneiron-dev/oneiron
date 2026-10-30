@@ -112,6 +112,26 @@ impl Vault {
         Ok(finalize_receipt_scan(scan, &query, None))
     }
 
+    /// Every outbound receipt whose id is `receipt_id`, read from the whole
+    /// of each source [`Self::scan_receipts`] reads, with no result limit: a
+    /// caller proving that one id names one receipt sees every receipt that
+    /// carries it, however many outbound receipts the vault holds.
+    pub(crate) fn outbound_receipts_with_id(&self, receipt_id: &str) -> Result<Vec<ReceiptRecord>> {
+        let mut matches = Vec::new();
+        // Each source is filtered as it is read, so no two sources are held whole at once.
+        let mut keep = |records: Vec<ReceiptRecord>| {
+            matches.extend(records.into_iter().filter(|receipt| {
+                receipt.receipt_kind == ReceiptKind::Outbound && receipt.receipt_id == receipt_id
+            }));
+        };
+        keep(scan_attempt_pack_receipts(self)?.records);
+        keep(scan_durable_send_receipts(self)?.records);
+        keep(super::direct_dispatch::receipts(self)?);
+        keep(dispatch_observations(self)?);
+        keep(scan_suppression_receipts(self)?.records);
+        Ok(matches)
+    }
+
     /// Alias for callers that prefer verb-first query naming.
     pub fn query_receipts(&self, query: ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
         self.receipts(query)
