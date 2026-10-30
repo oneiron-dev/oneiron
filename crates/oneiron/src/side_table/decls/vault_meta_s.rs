@@ -354,6 +354,10 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
+    /// its contract, the caller, the revision. Key: id16 (skill that ran) + u64be at + u64be step
+    /// seq + receipt string.
+    SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named;
     /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
     /// the exact content hash it scored). Key: id16 (skill entity).
     SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
