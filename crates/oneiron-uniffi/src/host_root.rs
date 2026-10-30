@@ -60,6 +60,7 @@ impl Oneiron {
             &oneiron_remote::OpenOptions {
                 dimensions,
                 device_class,
+                hold_checkpoint_root_signer: false,
             },
             host_root_secret.as_slice(),
         )?;

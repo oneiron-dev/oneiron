@@ -50,6 +50,7 @@ pub(crate) fn open(
     let options = OpenOptions {
         dimensions,
         device_class,
+        hold_checkpoint_root_signer: false,
     };
     py.detach(|| OneironClient::open_with_host_root(path.as_deref(), &options, host_root_secret))
         .map_err(raise)
