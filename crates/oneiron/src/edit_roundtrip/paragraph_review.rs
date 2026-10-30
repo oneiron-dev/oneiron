@@ -108,6 +108,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_block".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -119,6 +120,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "read_only_block".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
@@ -130,6 +132,7 @@ impl Vault {
                         refused.push(UnitRefusal {
                             unit,
                             reason: "missing_block".into(),
+                            judged_live: judged_live.clone(),
                         });
                         continue;
                     }
@@ -139,6 +142,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: None,
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
@@ -150,6 +154,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "evidence_budget".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -159,6 +164,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }

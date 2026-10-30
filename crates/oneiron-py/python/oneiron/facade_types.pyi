@@ -14278,9 +14278,11 @@ class ArtifactAskSubmit(TypedDict):
 class UnitAbstention(TypedDict):
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class UnitRefusal(TypedDict):
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
