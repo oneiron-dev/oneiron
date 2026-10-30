@@ -205,7 +205,9 @@ pub use self::use_handle::{
     SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
     SentValue,
 };
-pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser, handle_record_in_txn};
+pub(crate) use self::use_handle::{
+    SecretUseConsumed, SecretUseContext, SecretUser, handle_record_in_txn,
+};
 // The holder's manifest judgment an enacted register's result signs (FIX
 // 5334), which `CustodyManifestCheck::Judged` and the owner work receipt carry.
 pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};

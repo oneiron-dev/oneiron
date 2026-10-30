@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::Memory;
 use crate::outbound_intent_ledger::IntentLedgerError;
-use crate::secret_custody::SentPresentation;
+use crate::secret_custody::{SecretUseContext, SentPresentation};
 use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call::{
@@ -24,15 +24,21 @@ const CONNECTOR_CALL_INVOCATION_CONFLICT: &str = "connector_call_invocation_conf
 
 impl PendingConnectorCall {
     /// Whether `other` asks for exactly this call: the same caller, tool,
-    /// arguments and mutation.
+    /// arguments and mutation, and for a `self.use` call the same use but
+    /// for its intent and generation (FIX 2822).
     fn same_call(&self, other: &Self) -> bool {
         let arguments = |text: &str| serde_json::from_str::<Value>(text).ok();
+        let same_use = match (&self.secret_use, &other.secret_use) {
+            (Some(held), Some(asked)) => held.same_use(asked),
+            (held, asked) => held.is_none() && asked.is_none(),
+        };
         self.name == other.name
             && self.tool == other.tool
             && self.mutation == other.mutation
             && self.principal_ref == other.principal_ref
             && self.credential == other.credential
             && self.grant == other.grant
+            && same_use
             && arguments(&self.arguments).is_some()
             && arguments(&self.arguments) == arguments(&other.arguments)
     }
@@ -53,30 +59,31 @@ impl Vault {
             .map(|(outcome, _)| outcome)
     }
 
-    /// [`Self::call_connector`] with the value of the custody record
-    /// `credential` as the call's credential, in place of the route's own
-    /// secret: the call `self.use` makes for a handle (OF-560). The call's
-    /// row keeps the record, so a resume presents the same one; the
+    /// [`Self::call_connector`] with the value of the custody record the
+    /// use `secret_use` resolved as the call's credential, in place of the
+    /// route's own secret: the call `self.use` makes for a handle (OF-560).
+    /// The call's row keeps the record and the use, so a resume presents the
+    /// same record and writes that send's own use records (FIX 2822); the
     /// credential door rechecks its binding at each send, and a delivered
     /// reply comes back cleared of the value. The caller checked the binding
-    /// before, and wrote the use's record. Beside the outcome, or the engine
-    /// error that ended the call, the custody presentation the call's send
-    /// made, if it sent (FIX 7647): an error after the send hands it out
-    /// exactly as an outcome does (FIX 8053).
+    /// before, and committed the use's intent record. Beside the outcome, or
+    /// the engine error that ended the call, the custody presentation the
+    /// call's send made, if it sent (FIX 7647): an error after the send hands
+    /// it out exactly as an outcome does (FIX 8053).
     pub(crate) fn call_connector_with_secret<H: ConnectorCallHost>(
         &self,
         memory: &Memory<'_>,
         request: ConnectorCallRequest,
         invocation: Option<ConnectorCallInvocation>,
         host: &mut H,
-        credential: EntityId,
+        secret_use: SecretUseContext,
     ) -> (
         Result<ConnectorCallOutcome, IntentLedgerError>,
         Option<SentPresentation>,
     ) {
         let _ = host.take_sent_presentation();
         let outcome = self
-            .start_connector_call(memory, request, invocation, Some(credential), None, host)
+            .start_connector_call(memory, request, invocation, Some(secret_use), None, host)
             .map(|(outcome, _)| outcome);
         (outcome, host.take_sent_presentation())
     }
@@ -91,28 +98,28 @@ impl Vault {
         request: ConnectorCallRequest,
         invocation: Option<ConnectorCallInvocation>,
         host: &mut H,
-        credential: EntityId,
+        secret_use: SecretUseContext,
         grant: SecretGrantRef,
     ) -> (
         Result<ConnectorCallOutcome, IntentLedgerError>,
         Option<SentPresentation>,
     ) {
-        let (credential, grant) = (Some(credential), Some(grant));
+        let (secret_use, grant) = (Some(secret_use), Some(grant));
         let _ = host.take_sent_presentation();
         let outcome = self
-            .start_connector_call(memory, request, invocation, credential, grant, host)
+            .start_connector_call(memory, request, invocation, secret_use, grant, host)
             .map(|(outcome, _)| outcome);
         (outcome, host.take_sent_presentation())
     }
 
-    /// The body of every call: `credential` is the record a `self.use` call
-    /// presents, if any, and `grant` the secret grant it redeems.
+    /// The body of every call: `secret_use` is the `self.use` whose record
+    /// the call presents, if any, and `grant` the secret grant it redeems.
     fn start_connector_call<H: ConnectorCallHost>(
         &self,
         memory: &Memory<'_>,
         request: ConnectorCallRequest,
         invocation: Option<ConnectorCallInvocation>,
-        credential: Option<EntityId>,
+        secret_use: Option<SecretUseContext>,
         grant: Option<SecretGrantRef>,
         host: &mut H,
     ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
@@ -142,8 +149,10 @@ impl Vault {
             settled: None,
             held_reasons: Vec::new(),
             owner_ask_seq: None,
-            credential,
+            credential: secret_use.as_ref().map(|secret_use| secret_use.custody),
             grant,
+            secret_use,
+            live_use: false,
             code_consent_wait: None,
             source_rows: Some(Vec::new()),
             approval: None,
@@ -164,10 +173,15 @@ impl Vault {
             PENDING_CALLS.get(&self.store, &txn, &call_ref)?
         };
         // An off-record caller's held arguments open for the comparison and
-        // the resume (FIX 9159).
+        // the resume (FIX 9159). Its caller's live use records a pass it
+        // drives again (FIX 2822).
         let held = held
             .map(|held| held.opened(&self.store, &call_ref))
-            .transpose()?;
+            .transpose()?
+            .map(|held| PendingConnectorCall {
+                live_use: true,
+                ..held
+            });
         match held {
             None => {
                 let pending = super::connector_call_code::with_code_pass(memory, pending);
