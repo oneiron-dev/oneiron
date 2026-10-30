@@ -39,6 +39,7 @@
 mod receipts;
 pub(crate) use receipts::{birth_process, cut_receipted_message};
 
+use std::collections::HashSet;
 use std::ops::ControlFlow;
 
 #[cfg(test)]
@@ -266,12 +267,14 @@ impl ProposalTextArtifact {
             ));
         }
 
+        let made_by_inputs = self.window_made_by_inputs(&proposed_frontiers, &final_frontiers)?;
         let record = FinalizedProposalText {
             artifact_ref: self.artifact_ref,
             proposed_ref: LoroOpRef::from_bytes(proposed_frontiers.encode()),
             final_ref: LoroOpRef::from_bytes(final_frontiers.encode()),
             ops_by_actor,
             source_turn_ref: self.source_turn_ref,
+            made_by_inputs,
         };
         put_finalized_proposal_text(vault, &record, &self.doc)?;
         Ok(record)
@@ -331,6 +334,25 @@ impl ProposalTextArtifact {
             ));
         }
         Ok(spans)
+    }
+
+    /// Every MadeBy input row id the window's commits named (FIX 11350), in
+    /// first-seen order, deduped by id. Re-reads the window's messages: the
+    /// replay already validated the window, and this keeps the gathering in one
+    /// place rather than threading it through the replay.
+    fn window_made_by_inputs(&self, from: &Frontiers, to: &Frontiers) -> Result<Vec<EntityId>> {
+        let mut changes = self.window_changes(from, to)?;
+        changes.sort_by_key(|change| (change.lamport, change.peer_id));
+        let mut seen = HashSet::new();
+        let mut inputs = Vec::new();
+        for change in &changes {
+            for id in receipts::made_by_inputs_from_message(change.message.as_deref()) {
+                if seen.insert(id) {
+                    inputs.push(id);
+                }
+            }
+        }
+        Ok(inputs)
     }
 
     /// Every change (clipped to the window) between the two versions.

@@ -15,7 +15,7 @@ use super::store::{advance_watermark_in_txn, miner_watermark};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::edit_distance::attribution::{
-    AmendmentJudgment, amendment_evidence, amendment_judgments,
+    AmendmentJudgment, HunkRange, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::amendment_delta;
 use crate::edit_distance::{PROPOSAL_ARTIFACT, TextRead};
@@ -262,8 +262,8 @@ fn clusters_from(
         {
             continue;
         }
-        for substitution in substitutions(&source.ends) {
-            if !minable.admits(&substitution) {
+        for (substitution, range) in substitutions(&source.ends) {
+            if !minable.admits(range.as_ref()) {
                 continue;
             }
             let target = binding.as_ref().map_or_else(Default::default, |row| {
@@ -404,33 +404,41 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
 // ---------------------------------------------------------------------------
 
 /// Extracts every substitution one amendment shows, through the lane its Δ
-/// was measured on.
+/// was measured on, each beside the retained range it was read at.
 ///
 /// * A recorded window (`recorded_ops`) — one pair per recorded
-///   CHANGE, from the change's own before/after text read at its refs. Op
-///   runs see churn: a word typed, replaced, and typed again yields the
-///   substitution the decider actually performed.
+///   CHANGE, from the change's own before/after text read at its refs, beside
+///   that change's range. Op runs see churn: a word typed, replaced, and typed
+///   again yields the substitution the decider actually performed.
 /// * Two endpoints (`reconstructed`) — the texts read through
-///   each end's ref are re-diffed here for line pairs. ED-02's
-///   `myers_line_diff` counts lines rather than naming them, so the pairing is
-///   done locally instead of widening that lane's API for one consumer.
+///   each end's ref are re-diffed here for line pairs, which carry no range:
+///   ED-02's `myers_line_diff` counts lines rather than naming them, so the
+///   pairing is done locally instead of widening that lane's API for one
+///   consumer.
 ///
 /// A change text the retained document no longer holds yields no pair. A
 /// field-diff Δ resolves to no text at all (see [`amendment_source`]).
-fn substitutions(ends: &SourceEnds) -> Vec<Substitution> {
+fn substitutions(ends: &SourceEnds) -> Vec<(Substitution, Option<HunkRange>)> {
     match ends {
-        SourceEnds::Recorded(artifact) => artifact
-            .record
-            .ops_by_actor
-            .iter()
-            .filter_map(|(_, span)| match artifact.change_texts(span) {
-                (TextRead::Text(before), TextRead::Text(after)) => {
-                    substitution_pair(&before, &after)
-                }
-                _ => None,
-            })
+        SourceEnds::Recorded(artifact) => {
+            let found = artifact.record.artifact_ref.entity_id();
+            artifact
+                .record
+                .ops_by_actor
+                .iter()
+                .filter_map(|(_, span)| match artifact.change_texts(span) {
+                    (TextRead::Text(before), TextRead::Text(after)) => {
+                        substitution_pair(&before, &after)
+                            .map(|pair| (pair, Some(HunkRange::from_span(found, span))))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+        SourceEnds::Endpoints(before, after) => line_substitutions(before, after)
+            .into_iter()
+            .map(|pair| (pair, None))
             .collect(),
-        SourceEnds::Endpoints(before, after) => line_substitutions(before, after),
     }
 }
 

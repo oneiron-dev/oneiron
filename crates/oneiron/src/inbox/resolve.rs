@@ -8,8 +8,9 @@ use crate::Vault;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
-    AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
-    attach_amendment_deltas, capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
+    AMENDMENT_UNCAPTURED_INBOX, AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd,
+    OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
+    capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
 };
 use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
 use crate::entity_id::EntityId;
@@ -535,6 +536,11 @@ fn accept_member_with_amendment_in_txn(
         }
         None => (None, Vec::new()),
     };
+    // A Δ the door could not measure counts here (FIX 11542):
+    // `captured_amendment_delta` is read-only, so the bump rides this write.
+    if !delta_reasons.is_empty() {
+        bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
+    }
     vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,

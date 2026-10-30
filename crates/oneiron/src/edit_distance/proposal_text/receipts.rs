@@ -239,6 +239,23 @@ pub(crate) fn birth_process(doc: &EntityDoc) -> Option<MadeByProcess> {
     .then_some(made_by.process)
 }
 
+/// Every MadeBy input row id `message` names, in commit order (FIX 11350).
+/// Ids only: the eligibility check is row readability, and Prompt vs Input is
+/// irrelevant to it. Unparseable or unreceipted messages name none. It reads a
+/// spelling only and authenticates nothing: an input that does not read holds
+/// its pair, so collecting all is the safe direction.
+pub(super) fn made_by_inputs_from_message(message: Option<&str>) -> Vec<EntityId> {
+    let Some(message) = message else {
+        return Vec::new();
+    };
+    let Some((_, json)) = message.split_once(RECEIPT_PREFIX) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<MadeBy>(json)
+        .map(|made_by| made_by.inputs.into_iter().map(|input| input.row).collect())
+        .unwrap_or_default()
+}
+
 /// A message [`receipted_message`] spells (`<prefix> <open|edit>
 /// actor=<id>.<class> before=<hash> |made_by=<json>`), cut around its stamp's
 /// actor id: the stamp before the id, the id (any token, so an erased one

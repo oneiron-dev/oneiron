@@ -56,6 +56,19 @@ impl RawValue for DeltaRow {
 /// below) stamp it, which is what makes ONE attach pass serve both.
 pub(crate) const OUTCOME_APPROVED_AMENDED: &str = "approved_amended";
 
+/// Uncaptured-Δ counters per door (FIX 11542), keyed by door name.
+const AMENDMENT_UNCAPTURED_COUNT: SideTable<String, u64, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_UNCAPTURED_COUNT);
+
+/// Door key for uncaptured side-ledger rows: the identity-topology projection
+/// pass and the settlement door both write the row through
+/// [`put_amendment_uncaptured_in_txn`], so both count here.
+pub(crate) const AMENDMENT_UNCAPTURED_STORE: &str = "store";
+
+/// Door key for inbox amendments the door could not measure: the inbox writes
+/// no side-ledger row, only the receipt reason, so it counts here.
+pub(crate) const AMENDMENT_UNCAPTURED_INBOX: &str = "inbox";
+
 /// `trigger_ref` prefix a proposal-outcome receipt carries for its proposal.
 pub(super) const PROPOSAL_TRIGGER_PREFIX: &str = "event:";
 
@@ -81,12 +94,55 @@ pub(crate) fn put_amendment_delta_in_txn(
 
 /// Records that capture was attempted for `receipt_id` and measured nothing,
 /// returning whether a row was written.
+///
+/// A written row also bumps the store door's uncaptured counter (FIX 11542):
+/// first-writer-wins on the row is what keeps the counter exact, since a
+/// retry finds the row and writes nothing.
 pub(crate) fn put_amendment_uncaptured_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     receipt_id: &str,
 ) -> Result<bool> {
-    put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Uncaptured)
+    let wrote = put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Uncaptured)?;
+    if wrote {
+        bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_STORE)?;
+    }
+    Ok(wrote)
+}
+
+/// Bumps `door`'s uncaptured counter, returning the new count.
+///
+/// # Errors
+///
+/// Storage errors, and overflow past `u64::MAX`.
+pub(crate) fn bump_amendment_uncaptured_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    door: &str,
+) -> Result<u64> {
+    let key = door.to_owned();
+    let current = AMENDMENT_UNCAPTURED_COUNT
+        .get(&vault.store, &*wtxn, &key)?
+        .unwrap_or(0);
+    let next = current
+        .checked_add(1)
+        .ok_or(crate::error::Error::ArithmeticOverflow(
+            "amendment uncaptured counter",
+        ))?;
+    AMENDMENT_UNCAPTURED_COUNT.put(&vault.store, wtxn, &key, &next)?;
+    Ok(next)
+}
+
+/// `door`'s uncaptured count, `0` when nothing has counted there yet.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn amendment_uncaptured_count(vault: &Vault, door: &str) -> Result<u64> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(AMENDMENT_UNCAPTURED_COUNT
+        .get(&vault.store, &rtxn, &door.to_owned())?
+        .unwrap_or(0))
 }
 
 /// The write-once side-ledger row itself — a Δ payload or
@@ -288,7 +344,7 @@ pub fn project_identity_amendment_deltas(vault: &Vault) -> Result<usize> {
                     put_amendment_delta_in_txn(vault, wtxn, receipt_id, delta)?
                 }
                 ProjectedDelta::Uncaptured => {
-                    put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Uncaptured)?
+                    put_amendment_uncaptured_in_txn(vault, wtxn, receipt_id)?
                 }
             };
             if wrote {

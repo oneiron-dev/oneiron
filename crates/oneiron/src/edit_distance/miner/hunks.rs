@@ -1,55 +1,70 @@
 //! Per-hunk mining of a partly unclear amendment (FIX 9808).
 //!
-//! The judgment keeps each changed hunk's label beside the identities of the
-//! substitutions that hunk made, at the miner's own extraction granularity. A
-//! judgment with an unclear share then mines only what its clear hunks made;
-//! the unclear hunks stay held in the unclear ledger, and nothing of theirs is
-//! taken, not even a substitution a clear hunk also made.
+//! The judgment keeps each changed hunk's label beside the retained ranges of
+//! the substitutions that hunk made, at the miner's own extraction granularity
+//! (FIX 11344). A judgment with an unclear share then mines only what its
+//! clear hunks made; the unclear hunks stay held in the unclear ledger, and
+//! nothing of theirs is taken, not even a substitution a clear hunk also made.
 
 use std::collections::BTreeSet;
 
+use super::mining::{line_substitutions, substitution_pair};
 use super::model::Substitution;
-use crate::edit_distance::attribution::{AmendmentClass, AmendmentJudgment};
-use crate::entity_id::bytes_to_hex_lower;
+use crate::edit_distance::attribution::{AmendmentClass, AmendmentJudgment, HunkRange};
+use crate::edit_distance::{RetainedProposal, TextRead};
 
-/// Domain for a hunk's substitution identity, so it can never be read as a
-/// cluster handle or another unit's hash.
-const HUNK_SUBSTITUTION_DOMAIN: &[u8] = b"oneiron:edit-distance-hunk-substitution:v1";
-
-/// The identities of the substitutions one changed hunk made, at the miner's
-/// own extraction granularity: the hunk's whole changed run, as a recorded
-/// change is read, and each line it replaced one for one, as a reconstructed
-/// re-diff is read. Empty when the hunk makes no substitution. The judge
-/// records them beside the hunk's label; they are digests, never the hunk's
-/// text.
-pub(in crate::edit_distance) fn hunk_substitution_refs(before: &str, after: &str) -> Vec<String> {
-    let mut refs: Vec<String> = super::mining::substitution_pair(before, after)
+/// The retained ranges of the substitutions one changed hunk made, at the
+/// miner's own extraction granularity: each recorded change whose extracted
+/// pair is one of the hunk's pairs. Empty when the hunk makes no substitution.
+/// The judge records them beside the hunk's label; they are ranges, never the
+/// hunk's text.
+///
+/// Both sides normalize at compare time: the hunk's pairs and each change's
+/// pair come out of the same extractor, so a host cut that normalizes
+/// differently from the recorded change still locates — the digest this
+/// replaces compared pre-stored hashes and held the hunk instead.
+pub(in crate::edit_distance) fn hunk_substitution_ranges(
+    artifact: &RetainedProposal,
+    before: &str,
+    after: &str,
+) -> Vec<HunkRange> {
+    let hunk_pairs: Vec<Substitution> = substitution_pair(before, after)
         .into_iter()
-        .chain(super::mining::line_substitutions(before, after))
-        .map(|pair| substitution_ref(&pair))
+        .chain(line_substitutions(before, after))
         .collect();
-    refs.sort();
-    refs.dedup();
-    refs
+    if hunk_pairs.is_empty() {
+        return Vec::new();
+    }
+    let found = artifact.record.artifact_ref.entity_id();
+    let mut ranges: Vec<HunkRange> = artifact
+        .record
+        .ops_by_actor
+        .iter()
+        .filter_map(|(_, span)| {
+            let (TextRead::Text(change_before), TextRead::Text(change_after)) =
+                artifact.change_texts(span)
+            else {
+                return None;
+            };
+            let pair = substitution_pair(&change_before, &change_after)?;
+            hunk_pairs
+                .contains(&pair)
+                .then(|| HunkRange::from_span(found, span))
+        })
+        .collect();
+    ranges.sort();
+    ranges.dedup();
+    ranges
 }
 
-fn substitution_ref(substitution: &Substitution) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(HUNK_SUBSTITUTION_DOMAIN);
-    hasher.update(substitution.from.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(substitution.to.as_bytes());
-    bytes_to_hex_lower(hasher.finalize().as_bytes())
-}
-
-/// The substitution identities the clear hunks of `judgment` made, or with
-/// `clear` false its unclear hunks.
-fn refs_where(judgment: &AmendmentJudgment, clear: bool) -> BTreeSet<&str> {
+/// The retained ranges the clear hunks of `judgment` made, or with `clear`
+/// false its unclear hunks.
+fn ranges_where(judgment: &AmendmentJudgment, clear: bool) -> BTreeSet<HunkRange> {
     judgment
         .hunks
         .iter()
         .filter(|hunk| (hunk.class != AmendmentClass::Unclear) == clear)
-        .flat_map(|hunk| hunk.substitution_refs.iter().map(String::as_str))
+        .flat_map(|hunk| hunk.ranges.iter().copied())
         .collect()
 }
 
@@ -57,9 +72,9 @@ fn refs_where(judgment: &AmendmentJudgment, clear: bool) -> BTreeSet<&str> {
 pub(super) enum MinableHunks {
     /// No share is unclear: every substitution the amendment shows.
     Whole,
-    /// A share is unclear: only the substitutions a clear hunk made and no
-    /// unclear hunk did.
-    Clear(BTreeSet<String>),
+    /// A share is unclear: only the substitutions at a range a clear hunk
+    /// made and no unclear hunk did.
+    Clear(BTreeSet<HunkRange>),
 }
 
 impl MinableHunks {
@@ -67,11 +82,10 @@ impl MinableHunks {
     /// every hunk unclear, or no clear hunk made a substitution of its own.
     pub(super) fn of(judgment: &AmendmentJudgment) -> Option<Self> {
         if judgment.share_of(AmendmentClass::Unclear) > 0.0 {
-            let held = refs_where(judgment, false);
-            let clear: BTreeSet<String> = refs_where(judgment, true)
+            let held = ranges_where(judgment, false);
+            let clear: BTreeSet<HunkRange> = ranges_where(judgment, true)
                 .into_iter()
-                .filter(|reference| !held.contains(reference))
-                .map(str::to_owned)
+                .filter(|range| !held.contains(range))
                 .collect();
             (!clear.is_empty()).then_some(Self::Clear(clear))
         } else {
@@ -79,11 +93,14 @@ impl MinableHunks {
         }
     }
 
-    /// Whether `substitution` is one this judgment lets the miner take.
-    pub(super) fn admits(&self, substitution: &Substitution) -> bool {
+    /// Whether the miner may take the substitution at `range`: the whole
+    /// window when no share is unclear, else only a range a clear hunk made
+    /// and no unclear hunk did. A substitution with no range — a
+    /// reconstructed re-diff's line pair — mines only with the whole window.
+    pub(super) fn admits(&self, range: Option<&HunkRange>) -> bool {
         match self {
             Self::Whole => true,
-            Self::Clear(refs) => refs.contains(&substitution_ref(substitution)),
+            Self::Clear(ranges) => range.is_some_and(|range| ranges.contains(range)),
         }
     }
 }

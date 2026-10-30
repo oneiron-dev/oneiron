@@ -162,8 +162,8 @@ pub(super) struct StoredJudgment {
     /// is judged again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) attempt: Option<StoredAttempt>,
-    /// Each changed hunk's label and substitution identities, in text order; empty for an
-    /// amendment judged as one region (FIX 9808).
+    /// Each changed hunk's label and located ranges, in text order; empty for an
+    /// amendment judged as one region (FIX 9808, 11344).
     pub(super) hunks: Vec<StoredHunk>,
     /// The drafting executor at revision the evidence carried when judged; absent when unknown.
     /// Routing folds and rebuilds read this stamp alone (FIX 9812).
@@ -235,7 +235,17 @@ pub(super) struct StoredAmendmentCause {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredHunk {
     pub(super) class: String,
-    pub(super) substitutions: Vec<String>,
+    pub(super) ranges: Vec<StoredHunkRange>,
+}
+
+/// One recorded change a hunk's substitution was located at (FIX 11344):
+/// the retained artifact (hex) and the change's op span.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredHunkRange {
+    pub(super) artifact: String,
+    pub(super) peer_id: u64,
+    pub(super) counter: i32,
+    pub(super) len: u32,
 }
 
 /// The amended attempt's pack receipt, and the skill its pack loaded (hex) when the evidence

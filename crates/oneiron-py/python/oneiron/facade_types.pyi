@@ -16034,6 +16034,7 @@ class ProposalDeltaSettlement(TypedDict):
     proposed_text: str
     final_text: str
     delta: NotRequired[AmendmentDeltaView | None]
+    recorded_delta: NotRequired[AmendmentDeltaView | None]
     hunks: list[SettledHunkView]
     judgment: NotRequired[AmendmentJudgmentView | None]
     edit_cost_claims: list[EntityId]
