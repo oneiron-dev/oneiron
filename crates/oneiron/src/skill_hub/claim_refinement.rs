@@ -233,9 +233,7 @@ impl Vault {
         if let Some(world) = body.world {
             candidate = candidate.with_world(world);
         }
-        if let Some(rel) = body.rel {
-            candidate = candidate.with_relationship(rel);
-        }
+        candidate = candidate.with_relationships(body.rel.clone());
         if let Some(scope) = crate::claim::without_initial_weight(body.scope.clone()) {
             candidate = candidate.with_scope(scope);
         }

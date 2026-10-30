@@ -382,7 +382,9 @@ impl Memory<'_> {
                                 confidence: body.confidence,
                                 source: "generated".to_owned(),
                                 world_ref: body.world.map(|id| id.to_hex()),
-                                relationship_ref: body.rel.map(|id| id.to_hex()),
+                                relationship_ref: body
+                                    .rel
+                                    .map(|ids| ids.iter().map(|id| id.to_hex()).collect()),
                                 scope: body
                                     .scope
                                     .map(crate::batch::export::served_messagepack_json),

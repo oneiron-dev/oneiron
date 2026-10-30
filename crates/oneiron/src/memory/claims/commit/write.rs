@@ -77,8 +77,12 @@ impl Memory<'_> {
         };
         let relationship = input
             .relationship_ref
-            .as_deref()
-            .map(|r| self.resolve_ref(r))
+            .as_ref()
+            .map(|refs| {
+                refs.iter()
+                    .map(|r| self.resolve_ref(r))
+                    .collect::<MemoryResult<std::collections::BTreeSet<EntityId>>>()
+            })
             .transpose()?;
         let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
         let now = self.vault.store.clock.now_recorded_at();
@@ -88,7 +92,7 @@ impl Memory<'_> {
             subject,
             input,
             world,
-            relationship,
+            relationship: relationship.clone(),
         };
         // OF-023: a want derived from behaviour is minted beside the stated
         // one, never over it. Only the replacing doors (commit, upsert) take
@@ -136,9 +140,7 @@ impl Memory<'_> {
             if let Some(world) = world {
                 candidate = candidate.with_world(world);
             }
-            if let Some(relationship) = relationship {
-                candidate = candidate.with_relationship(relationship);
-            }
+            candidate = candidate.with_relationships(relationship.clone());
             if let Some(scope) = scope_rmpv.clone() {
                 candidate = candidate.with_scope(scope);
             }

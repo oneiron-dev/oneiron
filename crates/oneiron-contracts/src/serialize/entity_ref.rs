@@ -43,3 +43,28 @@ pub mod sequence {
             .collect()
     }
 }
+/// An optional set of ids as an optional list of hex refs: `None` stays
+/// absent, `Some(empty)` is `[]`.
+pub mod optional_set {
+    use super::*;
+    use std::collections::BTreeSet;
+    pub fn serialize<S: Serializer>(
+        ids: &Option<BTreeSet<EntityId>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        ids.as_ref()
+            .map(|ids| ids.iter().map(EntityId::to_hex).collect::<Vec<_>>())
+            .serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<BTreeSet<EntityId>>, D::Error> {
+        Option::<Vec<String>>::deserialize(deserializer)?
+            .map(|ids| {
+                ids.iter()
+                    .map(|value| EntityId::from_hex(value).map_err(serde::de::Error::custom))
+                    .collect()
+            })
+            .transpose()
+    }
+}

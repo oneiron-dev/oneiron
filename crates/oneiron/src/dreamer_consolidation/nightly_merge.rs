@@ -263,7 +263,7 @@ impl ConsolidationExecutor<'_> {
             };
             let mut scope = Scope::default();
             scope.world = first.world;
-            scope.relationship = first.rel;
+            scope.relationship.clone_from(&first.rel);
             scope.project = Some(first.scope_project);
             // Each proposal and subject by this call's own labels (FIX
             // 7506): the claims `C<n>` in the order they render, then each
@@ -549,7 +549,7 @@ pub(super) fn exposure_groups(proposals: &[Proposal]) -> Result<Vec<Vec<&Proposa
             .entry((
                 body.world,
                 body.scope_facet,
-                body.rel,
+                body.rel.clone(),
                 body.scope_project,
                 scope_key,
             ))

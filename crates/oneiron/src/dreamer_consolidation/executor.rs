@@ -361,7 +361,7 @@ fn merged_candidate(
         &value,
         conflict.identity.world,
         conflict.identity.facet,
-        conflict.identity.rel,
+        conflict.identity.rel.as_ref(),
         conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )?;
@@ -371,9 +371,7 @@ fn merged_candidate(
         value,
         confidence,
     );
-    if let Some(rel) = conflict.identity.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(conflict.identity.rel.clone());
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }

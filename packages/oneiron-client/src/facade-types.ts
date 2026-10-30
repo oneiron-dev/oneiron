@@ -2649,7 +2649,7 @@ export type ProjectParentWitness = { project: EntityId; head: ProjectRevisionHas
 /** `oneiron_model::llm::scope::ScopeResource` */
 export type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string }
 /** `oneiron_model::llm::scope::Scope` */
-export type ScopeScope = { world: string | null; facet: string | null; relationship: string | null; project: string | null; readable: ScopeResource[]; writable: ScopeResource[] }
+export type ScopeScope = { world: string | null; facet: string | null; relationship: string[] | null; project: string | null; readable: ScopeResource[]; writable: ScopeResource[] }
 /** `oneiron::workspace_roster::project::ProjectAuthority` */
 export type ProjectAuthority = { parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice: ScopeScope; depth_limit: number; depth_remaining: number; leader: string; board: string[]; roster?: string[] | null }
 /** `oneiron::workspace_roster::project::ProjectAnchor` */
@@ -4799,7 +4799,7 @@ export type CodeFileEdit = { path: string; start: number; end: number; expected:
 /** `oneiron_contracts::claim::confidence::ConfidenceDetails` */
 export type ConfidenceDetails = { band: ConfidenceBand; basis: VerdictBasis }
 /** `oneiron::memory::claims::ClaimInput` */
-export type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null; confidence_details?: ConfidenceDetails | null }
+export type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string[] | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null; confidence_details?: ConfidenceDetails | null }
 /** `oneiron::memory::foreign_code::ForeignCodeEffect` */
 export type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: CodeFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput }
 /** `oneiron::memory::foreign_code::ForeignCodeProposal` */
@@ -7743,7 +7743,7 @@ export type ConsolidationEvidenceSource = { source_ref: string; source?: string 
 /** `oneiron::memory::consolidation::ConsolidationPromotion` */
 export type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] }
 /** `oneiron::memory::consolidation_frontier::ConsolidationRootBucket` */
-export type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string | null; project: string }
+export type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string[] | null; project: string }
 /** `oneiron::memory::consolidation_frontier::ConsolidationReference` */
 export type ConsolidationReference = { source_id: string; claim_id?: string | null; byte_range?: [number, number] | null }
 /** `oneiron::memory::consolidation_frontier::ConsolidationRootInput` */
