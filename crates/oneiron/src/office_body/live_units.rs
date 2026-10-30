@@ -22,7 +22,10 @@
 //! A workbook's formula cells are read as an export would compute them from
 //! the cells of the same read ([`super::live_recalc`], FIX 11982), so a live
 //! edit to a formula's inputs changes the formula cell, and an ask reads the
-//! value the export of what it read lands (FIX 12052).
+//! value the export of what it read lands (FIX 12052). Each live read
+//! recalculates at the read's time in UTC; the export-frontier end of a
+//! compare against the newest export recalculates at that export's own
+//! recorded clock (FIX 12183).
 
 use super::*;
 use crate::edit_roundtrip::{CellRef, CellValue};
@@ -206,20 +209,45 @@ impl Vault {
         self.live_sheet_until(artifact, then, sheet, None)
     }
 
-    /// [`Self::live_sheet`] at the frontier `until` in place of the head when
-    /// one is given.
+    /// [`Self::live_sheet`] against the export `until` names in place of the
+    /// head: its frontier, with its record's version. The pin side
+    /// recalculates at the read's time in UTC; the export side at the
+    /// export's own recorded clock, or the read's time in UTC when the
+    /// record keeps none (FIX 12183).
     pub(crate) fn live_sheet_until(
         &self,
         artifact: &EntityId,
         then: Option<&LivePin>,
         sheet: &str,
-        until: Option<&[u8]>,
+        until: Option<(&[u8], u64)>,
     ) -> Result<Option<LiveSheet>> {
-        let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Xlsx, then, until)? else {
+        let frontier = until.map(|(frontier, _)| frontier);
+        let Some((was, now)) =
+            self.live_span(artifact, OfficeBodyKind::Xlsx, then, frontier)?
+        else {
             return Ok(None);
         };
         let mut bodies = [xlsx::read(&was)?, xlsx::read(&now)?];
-        self.live_recalc(artifact, Some(sheet), &mut bodies);
+        match until {
+            Some((_, version)) => {
+                let at = self.now_recorded_at();
+                let zone = OfficeRecalcZone::default();
+                let (export_at, export_zone) = self
+                    .office_body_export(artifact, version)?
+                    .and_then(|record| record.recalc_clock())
+                    .unwrap_or((at, OfficeRecalcZone::default()));
+                self.live_recalc_until(
+                    artifact,
+                    Some(sheet),
+                    &mut bodies,
+                    at,
+                    &zone,
+                    export_at,
+                    &export_zone,
+                );
+            }
+            None => self.live_recalc(artifact, Some(sheet), &mut bodies),
+        }
         let [was, now] = bodies;
         let named = |body: &XlsxBody| {
             body.sheets.iter().find(|entry| entry.name == sheet).map(|entry| {

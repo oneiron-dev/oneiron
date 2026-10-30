@@ -564,6 +564,7 @@ impl Vault {
                 recalc: recalc
                     .as_ref()
                     .map(|stamp| recalc_label(stamp, request.zone)),
+                recalc_zone: Some(request.zone.clone()),
                 effects,
             };
             EXPORTS.put(
