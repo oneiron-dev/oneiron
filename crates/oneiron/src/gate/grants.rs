@@ -122,6 +122,16 @@ impl<'p> ClaimReadPolicy<'p> {
 
     /// Whether `other` reads every claim as this does: the same fail-closed
     /// standing and the same scoped Grants.
+    /// The confidence and salience floors these Grants' selectors compare a
+    /// claim against: a class verdict holds for every claim whose scalars
+    /// fall on the same side of each (FIX 11915).
+    pub(crate) fn scalar_floors(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
+        self.grants.iter().filter_map(|grant| {
+            super::retrieval_filter::RetrievalPolicyFloor::from_scope(grant.scope.as_ref())
+                .map(|floor| (floor.min_confidence, floor.min_salience))
+        })
+    }
+
     pub(crate) fn reads_as(&self, other: &ClaimReadPolicy<'_>) -> bool {
         self.fails_closed == other.fails_closed && *self.grants == *other.grants
     }
