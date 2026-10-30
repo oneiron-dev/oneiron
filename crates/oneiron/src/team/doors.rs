@@ -222,6 +222,7 @@ impl From<TeamPattern> for CoordinationPatternView {
             TeamPattern::Vote => Self::Vote,
             TeamPattern::Market => Self::Market,
             TeamPattern::Rotation => Self::Rotation,
+            TeamPattern::Solo => Self::Solo,
         }
     }
 }

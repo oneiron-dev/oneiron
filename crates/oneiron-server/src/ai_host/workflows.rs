@@ -431,6 +431,16 @@ fn pump_once(
             {
                 seal(vault, &confession);
             }
+            // FIX 11532: the solo leaf's team receipt, after its own settle;
+            // a receipt failure logs and the workflow goes on.
+            if let Some((leaf, _)) = claimed
+                && progress.is_ok()
+                && leaf_completed(vault, leaf)
+            {
+                if let Err(error) = oneiron::team::record_solo_receipt(vault, leaf, now_secs()) {
+                    tracing::warn!(kind = ?error.kind(), ?leaf, "a workflow leaf's solo receipt was not recorded");
+                }
+            }
             // The held leaf waits paused; its workflow waits with it until
             // the owner resumes the hold. The notice rides the hold, and
             // goes to the owners now.
@@ -481,6 +491,13 @@ fn pump_once(
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
                                 runner.forget(step.leaf);
+                                // FIX 11532: the solo leaf's team receipt, after its
+                                // own end; a receipt failure logs and the stop stands.
+                                if let Err(error) =
+                                    oneiron::team::record_solo_receipt(vault, step.leaf, now_secs())
+                                {
+                                    tracing::warn!(kind = ?error.kind(), leaf = ?step.leaf, "a workflow leaf's solo receipt was not recorded");
+                                }
                                 tracing::warn!(?root, "a workflow step ended; its workflow stops");
                             }
                             Err(settlement) => {

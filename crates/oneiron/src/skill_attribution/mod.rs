@@ -144,7 +144,7 @@ use rmpv::Value;
 
 mod host;
 pub use host::{bind_agent_run_attribution, witness_agent_run_close};
-pub(crate) use host::{run_executor_model, run_executor_model_in_txn};
+pub(crate) use host::{is_solo_attribution, run_executor_model, run_executor_model_in_txn};
 mod judge_binding;
 pub(crate) use judge_binding::finalize_run_judge_in_txn;
 mod derivation_witness;
