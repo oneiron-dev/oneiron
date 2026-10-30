@@ -238,7 +238,7 @@ pub(crate) fn earliest_deadline_in(
         return Ok(None);
     };
     let (key, _) = row?;
-    Ok(Some(deadline_row(&prefix, key)?.0))
+    Ok(Some(deadline_row(&prefix, &key)?.0))
 }
 
 /// Each of `queue`'s waiting items whose deadline is at or before `now`,
@@ -253,7 +253,7 @@ pub(crate) fn deadlines_through_in(
     let mut items = Vec::new();
     for row in store.sync_queue.prefix_iter(txn, &prefix)? {
         let (key, _) = row?;
-        let (deadline, item) = deadline_row(&prefix, key)?;
+        let (deadline, item) = deadline_row(&prefix, &key)?;
         if deadline > now {
             break;
         }
