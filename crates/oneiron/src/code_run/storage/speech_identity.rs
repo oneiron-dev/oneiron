@@ -137,7 +137,9 @@ impl HostSelfDispatcher<'_> {
             return Ok(None);
         };
         Ok(Some(
-            crate::batch::EntityMetadataHeader::parse(&raw)?.entity_type,
+            crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("entity metadata"))?
+                .entity_type,
         ))
     }
 
