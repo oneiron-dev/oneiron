@@ -22,11 +22,17 @@
 //! validator does. Every claim write and sync replay checks a claim against a
 //! descriptor that declares a subject kind or a schema
 //! ([`check_claim_against_descriptor_in_txn`]); the family validators run
-//! unchanged beside it. The seeds declare neither.
+//! unchanged beside it. The seeds are `builtin` of any subject, except the
+//! classes the build compiles as `generic` (`comm.do_not_contact`), whose
+//! check also runs without a store
+//! ([`check_claim_against_compiled_descriptor`]).
 
 use rmpv::Value;
 
 use super::claims::{ClaimClassDescriptorRow, claim_class_descriptors};
+use super::descriptor_schema::{
+    check_schema_compiles, generic_class_seed, json_value, schema_text, value_meets_schema,
+};
 use super::records::{
     elided_string, encode_value, required_bool, required_string, validate_keys_with_optional,
     value_map,
@@ -190,6 +196,18 @@ impl ClaimSubjectKind {
         }
     }
 
+    /// Whether a claim of this class may name `subject`, read without a
+    /// store: an entity is admitted for a set type whatever type it is.
+    fn admits_without_store(&self, subject: &crate::claim::ClaimSubject) -> bool {
+        use crate::claim::ClaimSubject;
+        matches!(
+            (self, subject),
+            (Self::Any, _)
+                | (Self::Entity | Self::EntityType(_), ClaimSubject::Entity(_))
+                | (Self::Edge, ClaimSubject::Edge { .. })
+        )
+    }
+
     /// Whether a claim of this class may name `subject`. An entity of a set
     /// type that is not in the store yet (sync can carry a claim before its
     /// subject) is admitted; one stored as another type is not.
@@ -252,10 +270,13 @@ pub struct ClaimClassDescriptor {
 }
 
 impl ClaimClassDescriptor {
-    /// The compiled row as an unstamped descriptor. A seed is `builtin`, of
-    /// any subject, with no schema: its family validator checks it as before.
+    /// The compiled row as an unstamped descriptor. A class the build
+    /// compiles as `generic` carries that class's subject kind and schema;
+    /// every other seed is `builtin`, of any subject, with no schema, and its
+    /// family validator checks it.
     #[must_use]
     pub fn from_compiled(row: &ClaimClassDescriptorRow) -> Self {
+        let generic = generic_class_seed(row.predicate);
         Self {
             predicate: row.predicate.to_owned(),
             write_class: ClaimWriteClass::parse(row.write_class)
@@ -264,9 +285,13 @@ impl ClaimClassDescriptor {
             restrictive: row.restrictive,
             projector_only: row.projector_only,
             enforcement_stamp: None,
-            validator_kind: ClaimValidatorKind::Builtin,
-            subject_kind: ClaimSubjectKind::Any,
-            schema: None,
+            validator_kind: if generic.is_some() {
+                ClaimValidatorKind::Generic
+            } else {
+                ClaimValidatorKind::Builtin
+            },
+            subject_kind: generic.map_or(ClaimSubjectKind::Any, |seed| seed.subject_kind.clone()),
+            schema: generic.map(|seed| seed.schema.clone()),
         }
     }
 
@@ -294,8 +319,8 @@ impl ClaimClassDescriptor {
             hasher.update(field);
         }
         hasher.update(&[u8::from(self.restrictive), u8::from(self.projector_only)]);
-        // A descriptor that declares no validation hashes as one did before
-        // the validation fields, so the seeds keep their hashes.
+        // A descriptor that declares no validation hashes without the
+        // validation fields, so a `builtin` seed's hash is its four fields'.
         if self.declares_validation() {
             let schema = self.schema.as_ref().map(schema_text).unwrap_or_default();
             for field in [
@@ -330,7 +355,9 @@ impl ClaimClassDescriptor {
     fn validate(&self) -> Result<()> {
         crate::claim::validate_predicate(&self.predicate, false)?;
         match (self.validator_kind, &self.schema) {
-            (ClaimValidatorKind::Generic, Some(schema)) => compile_schema(schema).map(drop),
+            (ClaimValidatorKind::Generic, Some(schema)) => {
+                check_schema_compiles(&self.predicate, schema)
+            }
             (ClaimValidatorKind::Generic, None) => {
                 Err(invalid("a generic claim class declares its schema"))
             }
@@ -340,51 +367,6 @@ impl ClaimClassDescriptor {
             )),
         }
     }
-}
-
-/// A schema as the body and the semantics hash carry it.
-fn schema_text(schema: &serde_json::Value) -> String {
-    schema.to_string()
-}
-
-/// The schema compiled: Draft 2020-12 whatever it declares, local references
-/// only (the engine is built without remote resolution).
-fn compile_schema(schema: &serde_json::Value) -> Result<jsonschema::Validator> {
-    jsonschema::draft202012::new(schema)
-        .map_err(|_| invalid("a claim class's schema is not a valid JSON Schema"))
-}
-
-/// A claim value as JSON, for a schema to check. `None` for what JSON cannot
-/// hold as it is: bytes, extension types, a map key that is not a string or
-/// is repeated, a non-UTF-8 string and a number that is not finite.
-fn json_value(value: &Value) -> Option<serde_json::Value> {
-    Some(match value {
-        Value::Nil => serde_json::Value::Null,
-        Value::Boolean(flag) => serde_json::Value::Bool(*flag),
-        Value::Integer(number) => match number.as_u64() {
-            Some(unsigned) => unsigned.into(),
-            None => number.as_i64()?.into(),
-        },
-        Value::F32(number) => serde_json::Number::from_f64(f64::from(*number))?.into(),
-        Value::F64(number) => serde_json::Number::from_f64(*number)?.into(),
-        Value::String(text) => text.as_str()?.into(),
-        Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(json_value).collect::<Option<Vec<_>>>()?)
-        }
-        Value::Map(entries) => {
-            let mut map = serde_json::Map::new();
-            for (key, item) in entries {
-                if map
-                    .insert(key.as_str()?.to_owned(), json_value(item)?)
-                    .is_some()
-                {
-                    return None;
-                }
-            }
-            serde_json::Value::Object(map)
-        }
-        Value::Binary(_) | Value::Ext(..) => return None,
-    })
 }
 
 /// Checks `body` against its class's descriptor where the descriptor
@@ -414,13 +396,55 @@ pub(crate) fn check_claim_against_descriptor_in_txn(
     {
         let value = json_value(&body.value)
             .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
-        if !compile_schema(schema)?.is_valid(&value) {
+        if !value_meets_schema(&body.predicate, schema, &value)? {
             return Err(invalid(
                 "the claim's value does not meet its class's schema",
             ));
         }
     }
     Ok(())
+}
+
+/// Checks `body` against the class the build compiles as `generic` for its
+/// predicate, reading no store: the subject it names, and its value against
+/// the class's schema, compiled once. This is the descriptor check for a
+/// caller without a transaction (the stateless claim validator). A predicate
+/// the build does not compile as `generic` passes here.
+///
+/// # Errors
+/// A subject the class does not admit, a value JSON cannot hold, or one the
+/// schema refuses.
+#[allow(
+    dead_code,
+    reason = "for the stateless claim validator's registry arm in claim::core_types"
+)]
+pub(crate) fn check_claim_against_compiled_descriptor(
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    let Some(seed) = generic_class_seed(&body.predicate) else {
+        return Ok(());
+    };
+    if !seed.subject_kind.admits_without_store(&body.subject) {
+        return Err(invalid("the claim's subject is not one its class admits"));
+    }
+    let value = json_value(&body.value)
+        .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
+    if !seed.admits_value(&value)? {
+        return Err(invalid(
+            "the claim's value does not meet its class's schema",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether the build compiles `predicate`'s class as `generic`: a class
+/// [`check_claim_against_compiled_descriptor`] checks.
+#[allow(
+    dead_code,
+    reason = "for the stateless claim validator's registry arm in claim::core_types"
+)]
+pub(crate) fn is_compiled_generic_claim_predicate(predicate: &str) -> bool {
+    generic_class_seed(predicate).is_some()
 }
 
 fn compiled_row(predicate: &str) -> Option<ClaimClassDescriptorRow> {
