@@ -61,7 +61,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::ports::{DeletionMarker, TombstoneStoreRead, WindowAddress, WindowDeletionRows};
 use crate::sync::bridge::Materializer;
-use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
+use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, is_window_admission_read_fault};
 use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, WINDOW_UPDATE};
 
 fn rejected() -> Error {
@@ -123,8 +123,16 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     }
     let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
     let base = crate::sync::schema::create_window_doc("replacement", key);
+    // A fault reading this vault's own state is this vault's, never the
+    // peer's rejected snapshot (FIX 5926).
     super::validate_window_update_with_staged_worlds(vault, &base, snapshot, key, evidence)
-        .map_err(|_| rejected())?;
+        .map_err(|error| {
+            if is_window_admission_read_fault(&error) {
+                error
+            } else {
+                rejected()
+            }
+        })?;
     // A snapshot decodes into a fresh document whole, with a fresh author peer: the old
     // window's peer may hold counters the snapshot never saw.
     let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
