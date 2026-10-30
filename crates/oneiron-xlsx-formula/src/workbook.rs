@@ -1118,13 +1118,8 @@ pub(crate) fn external_formulas(package: &Package) -> Result<BTreeMap<(String, S
             .filter(|(_, node)| node.is(MAIN, "c"))
         {
             if let Some((_, formula)) = xml.child(index, MAIN, "f")?
-                && !route_workbook(
-                    [],
-                    [],
-                    [formula.text.as_str()],
-                    package.resources(),
-                )
-                .is_in_process()
+                && !route_workbook([], [], [formula.text.as_str()], package.resources())
+                    .is_in_process()
             {
                 let address = cell
                     .attr("r")

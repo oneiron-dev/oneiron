@@ -144,7 +144,10 @@ impl Vault {
             // engine's error (FIX 10587), never a missing snapshot.
             let snapshot = match row.as_ref().and_then(|row| row.snapshot.as_ref()) {
                 Some(_) => match self.read_blob_artifact_version_sighted_in_txn(
-                    rtxn, artifact_id, pinned, sight,
+                    rtxn,
+                    artifact_id,
+                    pinned,
+                    sight,
                 )? {
                     Some(bytes) => anchor_text(&bytes, &thread.anchor.locator, &limits)?,
                     None => None,

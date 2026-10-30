@@ -148,18 +148,17 @@ impl DeckRejectionInspection {
     /// `base` read as a deck under the transaction's own package `limits`.
     /// A resource refusal is the engine's error (FIX 10587), never unreadable.
     fn of_base(base: &[u8], limits: Limits) -> Result<Self> {
-        let package =
-            match Package::open(base, limits, &crate::office_body::document_resources()) {
-                Ok(package) => package,
-                Err(error) => {
-                    if let Some(refusal) = error.resource() {
-                        return Err(crate::office_body::document_refused(refusal));
-                    }
-                    return Ok(Self::Unreadable {
-                        reason: format!("the deck package cannot be opened: {error}"),
-                    });
+        let package = match Package::open(base, limits, &crate::office_body::document_resources()) {
+            Ok(package) => package,
+            Err(error) => {
+                if let Some(refusal) = error.resource() {
+                    return Err(crate::office_body::document_refused(refusal));
                 }
-            };
+                return Ok(Self::Unreadable {
+                    reason: format!("the deck package cannot be opened: {error}"),
+                });
+            }
+        };
         match inspect_deck(&package) {
             Ok(deck) => {
                 let parts = package.names().map(str::to_owned).collect();

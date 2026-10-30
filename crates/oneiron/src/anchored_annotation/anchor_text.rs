@@ -366,11 +366,7 @@ fn in_range(cell: &CellRef, range: A1Range) -> bool {
 
 /// Same-shaped ranges whose cells read exactly as the snapshot. A resource
 /// refusal is the engine's error (FIX 10587), never an empty offer list.
-fn find_in_sheets(
-    bytes: &[u8],
-    text: &str,
-    limits: &TextLimits,
-) -> crate::Result<Vec<Locator>> {
+fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> crate::Result<Vec<Locator>> {
     let rows: Vec<Vec<&str>> = text
         .split(ROW_SEPARATOR)
         .map(|row| row.split(CELL_SEPARATOR).collect())
