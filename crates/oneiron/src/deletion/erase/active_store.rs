@@ -267,6 +267,9 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+        // A carried history read no longer stands for an erased control (FIX
+        // 4296), as a delete's deindex does; the row is still here to read.
+        crate::claim::history_seal::scatter_index_seal_for_delete(&self.store, wtxn, id)?;
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
         let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
