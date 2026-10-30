@@ -308,9 +308,23 @@ impl<'v> ScopedRead<'v> {
         // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
         // guards the doors that find a row (search, recall, packs, graph
         // edges), and each runs it before it reads the row here.
-        if !self.is_entity_readable_held_in(txn, policy, id, filter, authority)? {
-            return Ok(None);
-        }
+        // L15 try single_admission: keep the row bytes the first admission
+        // judged, so identical revision bytes are not judged a second time.
+        let single = crate::stage_timing::try_on("single_admission");
+        let judged = if single {
+            let Some(record) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
+                return Ok(None);
+            };
+            if !self.is_entity_raw_readable_held_in(txn, policy, id, &record, filter, authority)? {
+                return Ok(None);
+            }
+            Some(record)
+        } else {
+            if !self.is_entity_readable_held_in(txn, policy, id, filter, authority)? {
+                return Ok(None);
+            }
+            None
+        };
         let raw = match self.session_view {
             Some(view) => crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
                 self.vault, view, txn, id, mode,
@@ -336,6 +350,8 @@ impl<'v> ScopedRead<'v> {
             });
         let admitted = if stable_text_scope {
             self.text_sources_readable_in(txn, policy, id, authority)?
+        } else if judged.as_deref() == Some(raw.as_slice()) {
+            true
         } else {
             self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
         };
