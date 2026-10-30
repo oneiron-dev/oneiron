@@ -5749,6 +5749,7 @@
      "notable": [
       "AuthoringCampaign",
       "AuthoringFinalization",
+      "AuthoringWinner",
       "ClaimAuthoringChoice",
       "ClaimAuthoringSkillPin",
       "TournamentStop",
@@ -5760,7 +5761,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 8,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -23514,7 +23515,7 @@
      "path": "src/critic/review.rs",
      "purpose": "Artifact-independent review fan-out and the persisted calibration feedback loop",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "re-export": 4,
@@ -23537,13 +23538,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/critic/review/outcomes.rs",
      "purpose": "Anchored review outcomes feed the shared measured-state projector",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -23554,7 +23555,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -24981,7 +24982,7 @@
      "path": "src/dreamer_consolidation/assembly.rs",
      "purpose": "Store-backed mechanical inputs for the consolidation executor",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -27320,7 +27321,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 13
      }
     },
@@ -27336,6 +27337,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/apply.rs",
      "purpose": "The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849)",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -27558,7 +27560,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/policy.rs",
      "purpose": "The reviewer's policy (FIX 8075, agent-mind §3.8: \"The recipe is a skill\"): the in-force…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -28147,7 +28149,7 @@
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "const": 7,
+      "const": 8,
       "crate-vis": 3,
       "fn": 11,
       "re-export": 5,
@@ -29824,6 +29826,16 @@
       "crate-vis": 8,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/projector/erasure.rs",
+     "purpose": "Erasure and demotion of TURNs out of the projection: the rounds a removed turn gave words to are retired…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -43797,7 +43809,7 @@
      "path": "src/llm/step/public.rs",
      "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 3,
       "re-export": 2,
@@ -54454,6 +54466,16 @@
      "path": "src/pipeline/trace/mod.rs",
      "purpose": "Retrieval trace recording and deterministic replay fork-hashing",
      "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/trace/replay_identity.rs",
+     "purpose": "Snapshot identity shared by replay-input records and retrieval fork hashes",
+     "surface": {
       "crate-vis": 3
      }
     },
@@ -56939,7 +56961,7 @@
       "const": 5,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 12,
+      "fn": 13,
       "struct": 6
      }
     },
@@ -63847,7 +63869,21 @@
      "surface": {
       "crate-vis": 5,
       "fn": 8,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MeasuredSkillPack"
+     ],
+     "path": "src/skill/pack_load/measured.rs",
+     "purpose": "The pack load of a paired eval measurement's skill arm (FIX 10677)",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -64057,6 +64093,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/decision_receipts.rs",
+     "purpose": "The decision receipts behind each attempt-lane judgment (FIX 11512): the judgment row is immutable by…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -64151,8 +64198,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 23,
-      "re-export": 20
+      "crate-vis": 24,
+      "re-export": 21
      }
     },
     {
@@ -66021,7 +66068,7 @@
      "path": "src/skill_optimize/exploration_trial/routing.rs",
      "purpose": "Load-door routing: the version an attempt loads, and the slice charge it reserves",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -66058,8 +66105,8 @@
      "path": "src/skill_optimize/gate/basis.rs",
      "purpose": "What a ruling rests on before the gate decides: the held-out split, the identity a verdict binds itself to…",
      "surface": {
-      "crate-vis": 11,
-      "fn": 11,
+      "crate-vis": 12,
+      "fn": 12,
       "static": 1,
       "struct": 2,
       "trait": 1
@@ -66121,7 +66168,7 @@
      "path": "src/skill_optimize/gate/judge_binding.rs",
      "purpose": "The judge a kept score was measured by (FIX 8846)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -66205,6 +66252,16 @@
       "enum": 1,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/rule_policy.rs",
+     "purpose": "The instructions the gate compares for a rule skill (FIX 10878): its description, then the dial seeds the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -66466,6 +66523,7 @@
       "OfferCandidate",
       "OfferCheck",
       "OfferCheckInput",
+      "OfferCheckOutcome",
       "OfferCost",
       "OfferEvidence",
       "OfferIntent",
@@ -66479,7 +66537,7 @@
      "purpose": "The training offer's snapshot shapes (OF-577): what the Coach drafts, the immutable offer the owner is…",
      "surface": {
       "crate-vis": 7,
-      "enum": 4,
+      "enum": 5,
       "fn": 1,
       "struct": 10
      }
@@ -66734,7 +66792,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 7
      }
     },
@@ -66811,6 +66869,16 @@
      "purpose": "Per-resident version bandit over independently attributed fork receipts",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/row_ids.rs",
+     "purpose": "The attempt row behind each attributed outcome (FIX 7288): the row ids a sourced held-out read names beside…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -67703,7 +67771,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GroupCommitStats"
@@ -67711,7 +67779,7 @@
      "path": "src/store/group_commit.rs",
      "purpose": "Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 23,
       "struct": 1
      }
     },
@@ -84262,7 +84330,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -84703,7 +84771,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84983,14 +85051,14 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85011,14 +85079,14 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85284,9 +85352,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 107,
+   "over_bar": 108,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5753,
+   "source_files": 5759,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87273,7 +87341,7 @@
      "path": "src/load/dream/cycle.rs",
      "purpose": "The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -101193,7 +101261,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/eval_measurement/legs.rs",
@@ -121272,6 +121340,7 @@
       "OfferCandidateSetup",
       "OfferCard",
       "OfferCheck",
+      "OfferCheckOutcome",
       "OfferConnect",
       "OfferCost",
       "OfferDraft",
@@ -123198,7 +123267,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1085,
+      "enum": 1086,
       "struct": 3305
      }
     },

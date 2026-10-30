@@ -23,9 +23,9 @@ pub enum PreferredResponse {
 }
 
 pub(super) fn validate_blind(preferences: &[BlindPreference]) -> Result<()> {
-    if preferences.is_empty() || preferences.len() > 32 {
+    if preferences.is_empty() {
         return Err(invalid(
-            "contrastive audit requires 1..=32 frozen blind preferences",
+            "contrastive audit requires frozen blind preferences",
         ));
     }
     let mut seen = BTreeSet::new();
@@ -68,6 +68,9 @@ pub struct WorldAxisScore {
 pub struct AnchorLabelScore {
     /// The judge that answers now; `None` before a swap pass named one.
     pub judge: Option<String>,
+    /// The scorer revision this score was read under: the verdict's
+    /// `judge_revision`, beside the incumbent's `model@version` above.
+    pub judge_revision: String,
     pub labels: u64,
     /// Picks between this judge's answer and another judge's.
     pub scored: u64,
@@ -77,8 +80,13 @@ pub struct AnchorLabelScore {
     pub digest: String,
 }
 
-/// Score `judge` against `labels`, the skill's anchor.
-pub(super) fn anchor_score(labels: &[JudgeLabel], judge: Option<&str>) -> AnchorLabelScore {
+/// Score `judge` against `labels`, the skill's anchor, read under
+/// `judge_revision`.
+pub(super) fn anchor_score(
+    labels: &[JudgeLabel],
+    judge: Option<&str>,
+    judge_revision: &str,
+) -> AnchorLabelScore {
     let mut hash = Sha256::new();
     hash.update(b"skill_optimize:anchor_labels:v1\0");
     hash.update(
@@ -116,6 +124,7 @@ pub(super) fn anchor_score(labels: &[JudgeLabel], judge: Option<&str>) -> Anchor
     }
     AnchorLabelScore {
         judge: judge.map(str::to_owned),
+        judge_revision: judge_revision.to_owned(),
         labels: u64::try_from(labels.len()).unwrap_or(u64::MAX),
         scored,
         agreed,
@@ -136,6 +145,10 @@ pub struct JudgeMeasurements {
     pub world_labels_digest: String,
     /// The judge against the human picks in the skill's anchor, read before scoring.
     pub anchor: AnchorLabelScore,
+    /// The pin of the judge rubric the scoring read, taken in the pre-score
+    /// transaction, beside the verdict's `judge_revision` (FIX 3585): the
+    /// rubric text's BLAKE3, lower hex; `None` while no rubric is in force.
+    pub judge_rubric_digest: Option<String>,
 }
 
 /// One held-out replay as the honesty audit reads it: the run's task inputs and
@@ -214,8 +227,9 @@ fn checked(score: f32) -> Result<f32> {
 
 /// Run both independent audits, then compare the judge's predictions to labels
 /// from the durable outcome ledger; `anchor` carries its score against the
-/// skill's human picks. No audit result is passed to the scalar scorer, and no
-/// audit result changes admission.
+/// skill's human picks, and `judge_rubric_digest` the rubric pin scored
+/// under. No audit result is passed to the scalar scorer, and no audit result
+/// changes admission.
 pub(super) fn measure(
     scorer: &dyn HeldOutReplayNotes,
     before: &HeldOutReplayCase<'_>,
@@ -223,6 +237,7 @@ pub(super) fn measure(
     outcomes: &[(String, bool)],
     blind: &[BlindPreference],
     anchor: AnchorLabelScore,
+    judge_rubric_digest: Option<String>,
 ) -> Result<JudgeMeasurements> {
     validate_blind(blind)?;
     // Coverage sees only the task identity and instructions: no responses,
@@ -284,6 +299,7 @@ pub(super) fn measure(
         world_axes,
         world_labels_digest: world_labels_digest(outcomes),
         anchor,
+        judge_rubric_digest,
     })
 }
 
@@ -324,10 +340,16 @@ pub(super) fn validate_measurements(
     if anchor.agreed > anchor.scored
         || anchor.scored > anchor.labels
         || (anchor.judge.is_none() && anchor.scored != 0)
+        || anchor.judge_revision.is_empty()
         || anchor.digest.len() != 64
         || !anchor.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(invalid("judge anchor score is malformed"));
+    }
+    if measurements.judge_rubric_digest.as_ref().is_some_and(|digest| {
+        digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err(invalid("judge rubric digest is malformed"));
     }
     for pair in [&measurements.structural, &measurements.contrastive] {
         checked(pair.before)?;
