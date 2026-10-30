@@ -4,6 +4,74 @@
 
 use super::*;
 
+/// The most envelopes one world section holds: a 1 GiB section.
+const MAX_SECTION_PARTS: usize = 128;
+
+impl SealedBundleSection {
+    pub(super) fn seal(vault_id: &[u8; 32], key: &WorldKey, payload: &[u8]) -> Result<Self> {
+        let body = encode_section_body(vault_id, key.id(), payload);
+        let count = body.len().div_ceil(CHUNK);
+        if count > MAX_SECTION_PARTS {
+            return Err(refused("the world is too large for one bundle section"));
+        }
+        let tag = section_digest(SECTION_TAG_CONTEXT, vault_id, key);
+        let params = seal_params(BUNDLE.purpose, vault_id, &tag, SECTION_RECIPIENT);
+        let kek = section_kek(vault_id, key);
+        let mut parts = Vec::with_capacity(count);
+        seal_parts(
+            &params,
+            &kek,
+            &body,
+            &even_sizes(body.len(), count),
+            |part| {
+                parts.push(part);
+                Ok(())
+            },
+        )?;
+        Ok(Self { tag, parts })
+    }
+
+    pub(super) fn open(&self, vault_id: &[u8; 32], key: &WorldKey) -> Result<OpenedBundleSection> {
+        let policy = symmetric_policy(BUNDLE.purpose, vault_id, &self.tag, SECTION_RECIPIENT);
+        let kek = section_kek(vault_id, key);
+        let body = open_parts(&policy, &kek, &self.parts)?;
+        decode_section_body(vault_id, key.id(), &body)
+    }
+
+    /// tag (32) ‖ count (2) ‖ each part `u32`-length-prefixed.
+    pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.tag);
+        let count = u16::try_from(self.parts.len()).map_err(|_| refused("too many parts"))?;
+        out.extend_from_slice(&count.to_be_bytes());
+        for part in &self.parts {
+            put_counted(out, &part.to_bytes())?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn parse(cursor: &mut Cursor<'_>, vault_id: &[u8; 32]) -> Result<Self> {
+        let malformed = || refused("malformed bundle section");
+        let tag: [u8; 32] = cursor.array().ok_or_else(malformed)?;
+        let count = usize::from(u16::from_be_bytes(cursor.array().ok_or_else(malformed)?));
+        if count == 0 || count > MAX_SECTION_PARTS {
+            return Err(malformed());
+        }
+        let mut vault = Some(vault_id.to_vec());
+        let mut parts = Vec::with_capacity(count);
+        for _ in 0..count {
+            parts.push(parse_envelope(
+                cursor,
+                BUNDLE.purpose,
+                WrapType::SymmetricKek,
+                &tag,
+                SECTION_RECIPIENT,
+                &mut vault,
+            )?);
+        }
+        Ok(Self { tag, parts })
+    }
+}
+
 impl std::fmt::Debug for SealedBundleSection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SealedBundleSection")
