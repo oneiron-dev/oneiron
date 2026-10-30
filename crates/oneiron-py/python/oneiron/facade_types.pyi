@@ -12606,6 +12606,7 @@ class OriginPublishReview(TypedDict):
     paths: int
     pages: int
     lfs_bytes: OriginPublishLfsBytes
+    lossy_paths: bool
 MirrorRefOutcome = Literal["pending", "dispatched", "applied", "observed_applied", "rejected", "unknown", "refused", "remote_moved", "paused", "covered", "held"]
 class OriginMirrorPlanRefView(TypedDict):
     ref_name: str
