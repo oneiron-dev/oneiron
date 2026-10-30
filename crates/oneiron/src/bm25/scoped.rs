@@ -101,6 +101,9 @@ where
     // the square of the vault size.
     let mut admitted = HashMap::<EntityId, bool>::new();
     let walks = crate::ports::any_pending_walk(store, rtxn)?;
+    if !walks {
+        return search_text_admitting_in_rank_order(store, rtxn, config, &terms, limit, options);
+    }
     let mut best =
         scoring::score_query_terms(store, rtxn, config, &terms, options.scope.recency, |id| {
             if let Some(admit) = admitted.get(id) {
@@ -118,4 +121,42 @@ where
         })?;
     scoring::retain_best(&mut best, limit);
     Ok(scoring::scored_entities(best))
+}
+
+/// [`search_text_bounded`]'s pass when no walk is pending: every posting is
+/// scored, then judged in rank order until `limit` are admitted. A posting's
+/// score never depends on admission (df counts every posting), so the
+/// admitted top `limit` is the list judging every posting first would keep;
+/// the postings below it are never judged.
+fn search_text_admitting_in_rank_order<F>(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    config: &Bm25Config,
+    terms: &[QueryTerm],
+    limit: usize,
+    mut options: BoundedSearchOptions<'_, F>,
+) -> Result<Vec<ScoredEntity>>
+where
+    F: FnMut(&EntityId) -> Result<bool>,
+{
+    let mut ranked =
+        scoring::score_query_terms(store, rtxn, config, terms, options.scope.recency, |_| Ok(true))?;
+    scoring::retain_best(&mut ranked, usize::MAX);
+    let mut kept = Vec::with_capacity(limit.min(ranked.len()));
+    for (id, score) in ranked {
+        if kept.len() == limit {
+            break;
+        }
+        let admit = match lexical_query_hint_scope_id(store, rtxn, &id)? {
+            None => false,
+            Some(target) => match options.category.as_mut() {
+                Some(category) => category(&target)?,
+                None => (options.scope.exact_posting_matches_scope)(&target)?,
+            },
+        };
+        if admit {
+            kept.push((id, score));
+        }
+    }
+    Ok(scoring::scored_entities(kept))
 }
