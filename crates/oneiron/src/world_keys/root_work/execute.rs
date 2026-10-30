@@ -426,12 +426,13 @@ impl Vault {
     }
 
     /// The seed `secret` names: the caller's own, or the one its kit's
-    /// pieces rebuild here.
+    /// pieces rebuild here, with this machine's own piece of the kit when it
+    /// keeps one (FIX 2063).
     fn held_seed<'a>(&self, secret: RootSecret<'a>) -> Result<HeldSeed<'a>> {
         Ok(match secret {
             RootSecret::Seed(seed) => HeldSeed::Supplied(seed),
             RootSecret::Kit { pieces, passphrase } => {
-                HeldSeed::Rebuilt(Box::new(self.kit_seed(pieces, passphrase)?))
+                HeldSeed::Rebuilt(Box::new(self.kit_seed_here(pieces, passphrase)?))
             }
         })
     }

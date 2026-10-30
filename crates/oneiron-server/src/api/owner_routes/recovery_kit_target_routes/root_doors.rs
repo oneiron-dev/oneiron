@@ -225,7 +225,7 @@ async fn issue(
     kit_target(&server, &body.target)?;
     let answer = blocking(move || -> OwnerResult<RootWorkAnswer> {
         let vault = server.vault();
-        issue_homes(&body.homes)?;
+        issue_homes(vault, &body.homes)?;
         let passphrase = Zeroizing::new(body.passphrase);
         let passphrase = passphrase.as_deref().map(passphrase_of).transpose()?;
         let issued = vault.issue_world_kit(
