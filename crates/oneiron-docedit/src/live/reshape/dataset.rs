@@ -4,15 +4,18 @@
 //! series writes into it, and, when the chart's own workbook is rebuilt,
 //! that sheet added beside the workbook's own sheets and shown first, so
 //! nothing the workbook held is lost (ARCH-0077: "Keep every zip entry with
-//! its original bytes").
+//! its original bytes"); a sheet that holds nothing but the chart's data is
+//! rewritten in place instead (FIX 9169).
 
 use super::layout::{CategorySet, Data, Wanted};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset};
 use crate::edit::xml::{self, R};
-use crate::ooxml::SPREADSHEET_MAIN as SML;
+use crate::live::held::C;
+use crate::ooxml::{SPREADSHEET_MAIN as SML, XmlTree};
 use crate::retained_opc::{Limits, Package};
 use crate::xlsx_body::{
-    XlsxChange, XlsxSheetPlan, XlsxSheetVisibility, XlsxValue, project_xlsx, read_xlsx_cells,
+    XlsxChange, XlsxSheetPlan, XlsxSheetVisibility, XlsxValue, parse_a1, project_xlsx,
+    read_xlsx_cells,
 };
 use std::collections::BTreeSet;
 
@@ -182,27 +185,78 @@ fn sheets(package: &Package) -> Option<(String, Vec<(String, Option<String>)>)> 
     Some((book, sheets))
 }
 
-/// The name the rebuilt data takes in the chart's own workbook `bytes`:
-/// the first of `Sheet1`, `Sheet2`, … no sheet of it holds, in any case.
-/// `None` when the workbook does not read: the rebuild starts afresh.
-pub(super) fn free_sheet(
+/// The sheet and the far corner of the cells every reference of the chart
+/// part `chart` names: `None` when they name more than one sheet, another
+/// workbook, or something other than a range.
+fn referenced(chart: &XmlTree) -> Option<(String, (u32, u32))> {
+    let mut found: Option<(String, (u32, u32))> = None;
+    for node in chart.nodes.iter().filter(|node| node.is(C, "f")) {
+        let text = node.text.trim();
+        if text.contains('[') {
+            return None;
+        }
+        let (sheet, area) = text.rsplit_once('!')?;
+        let sheet = match sheet.strip_prefix('\'') {
+            Some(quoted) => quoted.strip_suffix('\'')?.replace("''", "'"),
+            None => sheet.to_owned(),
+        };
+        let (from, to) = area.split_once(':').unwrap_or((area, area));
+        let (from, to) = (parse_a1(from)?, parse_a1(to)?);
+        let corner = (from.0.max(to.0), from.1.max(to.1));
+        found = match found {
+            None => Some((sheet, corner)),
+            Some((held, far)) if held.eq_ignore_ascii_case(&sheet) => {
+                Some((held, (far.0.max(corner.0), far.1.max(corner.1))))
+            }
+            Some(_) => return None,
+        };
+    }
+    found
+}
+
+/// The sheet the rebuilt data takes in the chart's own workbook `bytes`:
+/// the one visible sheet every reference of the chart part `chart` names,
+/// where it holds nothing but the chart's data (no formula, table or locked
+/// range, and no cell past the cells those references reach), rewritten in
+/// place (FIX 9169); else a new one, the first of `Sheet1`, `Sheet2`, … no
+/// sheet of it holds, in any case. `None` when the workbook does not read:
+/// the rebuild starts afresh.
+pub(super) fn data_sheet(
     bytes: &[u8],
+    chart: &XmlTree,
     limits: Limits,
     resources: &crate::resource::Resources,
 ) -> Option<String> {
     let package = Package::open(bytes, limits, resources).ok()?;
     let (_, sheets) = sheets(&package)?;
+    if let Some((name, (cols, rows))) = referenced(chart)
+        && let Ok(book) = read_xlsx_cells(bytes, limits, resources)
+        && let Some(held) = book
+            .sheets
+            .iter()
+            .find(|held| held.name.eq_ignore_ascii_case(&name))
+        && held.visibility == XlsxSheetVisibility::Visible
+        && held.tables.is_empty()
+        && held.locked.is_empty()
+        && held.cells.iter().all(|cell| {
+            cell.formula.is_none() && cell.locked.is_none() && cell.col <= cols && cell.row <= rows
+        })
+    {
+        return Some(held.name.clone());
+    }
     let taken: BTreeSet<String> = sheets.iter().map(|(name, _)| name.to_lowercase()).collect();
     (1_u64..)
         .map(|n| format!("Sheet{n}"))
         .find(|name| !taken.contains(&name.to_lowercase()))
 }
 
-/// The chart's own workbook `source` with the rebuilt `dataset` on a new
-/// sheet `sheet` after its own, which it shows first (the workbook's active
-/// tab, the one selected tab): every other sheet, name, table, style and
-/// formula keeps its bytes, but for the selection moved off the sheets
-/// that held it. `None` when the workbook editor refuses it.
+/// The chart's own workbook `source` with the rebuilt `dataset` on sheet
+/// `sheet`, a new one after its own, or its own data sheet
+/// ([`data_sheet`]) rewritten in place, each cell the data no longer fills
+/// cleared (FIX 9169), which it shows first (the workbook's active tab, the
+/// one selected tab): every other sheet, name, table, style and formula
+/// keeps its bytes, but for the selection moved off the sheet that held
+/// it. `None` when the workbook editor refuses it.
 pub(super) fn beside(
     source: &[u8],
     dataset: &Dataset,
@@ -211,21 +265,26 @@ pub(super) fn beside(
     resources: &crate::resource::Resources,
 ) -> Option<Vec<u8>> {
     let book = read_xlsx_cells(source, limits, resources).ok()?;
-    let mut layout: Vec<XlsxSheetPlan> = book
-        .sheets
-        .iter()
-        .map(|held| XlsxSheetPlan {
-            name: held.name.clone(),
-            source: Some(held.name.clone()),
-            visibility: held.visibility,
-        })
-        .collect();
-    layout.push(XlsxSheetPlan {
-        name: sheet.to_owned(),
-        source: None,
-        visibility: XlsxSheetVisibility::Visible,
-    });
-    let mut changes = vec![XlsxChange::Sheets { sheets: layout }];
+    let own = book.sheets.iter().find(|held| held.name == sheet);
+    let mut changes = Vec::new();
+    if own.is_none() {
+        let mut layout: Vec<XlsxSheetPlan> = book
+            .sheets
+            .iter()
+            .map(|held| XlsxSheetPlan {
+                name: held.name.clone(),
+                source: Some(held.name.clone()),
+                visibility: held.visibility,
+            })
+            .collect();
+        layout.push(XlsxSheetPlan {
+            name: sheet.to_owned(),
+            source: None,
+            visibility: XlsxSheetVisibility::Visible,
+        });
+        changes.push(XlsxChange::Sheets { sheets: layout });
+    }
+    let mut filled: BTreeSet<(u32, u32)> = BTreeSet::new();
     let header = dataset
         .columns
         .iter()
@@ -238,11 +297,25 @@ pub(super) fn beside(
                 Cell::Number(value) => XlsxValue::Number(value),
                 Cell::Text(text) | Cell::Date(text) => XlsxValue::Text(text),
             };
+            let (col, row) = (u32::try_from(col + 1).ok()?, u32::try_from(row + 1).ok()?);
+            filled.insert((col, row));
             changes.push(XlsxChange::Cell {
                 sheet: sheet.to_owned(),
-                col: u32::try_from(col + 1).ok()?,
-                row: u32::try_from(row + 1).ok()?,
+                col,
+                row,
                 value,
+                formula: None,
+                style: None,
+            });
+        }
+    }
+    for cell in own.iter().flat_map(|own| &own.cells) {
+        if !filled.contains(&(cell.col, cell.row)) {
+            changes.push(XlsxChange::Cell {
+                sheet: sheet.to_owned(),
+                col: cell.col,
+                row: cell.row,
+                value: XlsxValue::Blank,
                 formula: None,
                 style: None,
             });
