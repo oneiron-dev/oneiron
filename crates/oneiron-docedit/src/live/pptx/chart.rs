@@ -345,6 +345,8 @@ pub enum SeriesField {
     Name,
     Values,
     Family,
+    /// Both sides moved it to different plots of its family (FIX 12255).
+    Plot,
     X,
     BubbleSize,
     #[serde(rename = "bubble_3d")]
@@ -434,9 +436,140 @@ pub(super) fn check(payload: &NodePayload) -> Result<(), LiveError> {
     Ok(())
 }
 
+/// The plot of its family that draws one series: its family and its
+/// ordinal among the family's plots (`None` the only one).
+fn plot_key(family: ChartKind, line: &ChartSeries) -> (ChartKind, u32) {
+    (line.family.unwrap_or(family), line.plot.unwrap_or(0))
+}
+
+/// Where one side of a fork moved the series `id` to, among its base
+/// plots (FIX 12255): the base ordinals of the plot it drew it in, or an
+/// empty list for a plot of its own; `None` where it stayed in its base
+/// plot. A move-aware compare, never a plain field one: settlement
+/// renumbers ordinals when a plot goes, so the series counts as moved only
+/// where it left its base plot-mates: beside series of another base plot,
+/// or alone while a mate it left behind stayed put. A series with its
+/// mates, one whose mates are gone, and one whose family changed (placed
+/// by settlement, not moved) never count as moved.
+fn plot_moved(
+    base_family: ChartKind,
+    base_series: &[ChartSeries],
+    side_family: ChartKind,
+    side_series: &[ChartSeries],
+    id: NodeId,
+) -> Option<Vec<u32>> {
+    let base = base_series.iter().find(|line| line.id == Some(id))?;
+    let side = side_series.iter().find(|line| line.id == Some(id))?;
+    let (family, ordinal) = plot_key(base_family, base);
+    if side.family.unwrap_or(side_family) != family {
+        return None;
+    }
+    let known: BTreeSet<NodeId> = base_series.iter().filter_map(|line| line.id).collect();
+    let base_key = |other: NodeId| -> Option<(ChartKind, u32)> {
+        base_series
+            .iter()
+            .find(|was| was.id == Some(other))
+            .map(|was| plot_key(base_family, was))
+    };
+    let (_, at) = plot_key(side_family, side);
+    // Its side plot's base series, drawn in its family there as in the
+    // base: a new series never moves it, and a series that changed family
+    // is judged by that field instead.
+    let mut targets: Vec<u32> = Vec::new();
+    let mut present = false;
+    for line in side_series {
+        let Some(other) = line.id else {
+            continue;
+        };
+        if other == id || !known.contains(&other) {
+            continue;
+        }
+        if plot_key(side_family, line) != (family, at) {
+            continue;
+        }
+        let Some((kind, nth)) = base_key(other) else {
+            continue;
+        };
+        if kind != family {
+            continue;
+        }
+        if nth == ordinal {
+            present = true;
+        } else {
+            targets.push(nth);
+        }
+    }
+    if !targets.is_empty() {
+        // Beside series of another base plot: moved, unless its mates are
+        // beside it too (they joined it there).
+        if present {
+            return None;
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        return Some(targets);
+    }
+    // Its surviving mates drawn elsewhere: moved to a plot of its own only
+    // where it sits alone and a mate it left behind stayed put.
+    let left: Vec<NodeId> = base_series
+        .iter()
+        .filter_map(|line| line.id)
+        .filter(|&other| {
+            other != id
+                && base_key(other) == Some((family, ordinal))
+                && side_series.iter().any(|line| line.id == Some(other))
+                && !side_series.iter().any(|line| {
+                    line.id == Some(other) && plot_key(side_family, line) == (family, at)
+                })
+        })
+        .collect();
+    if left.is_empty() || present {
+        return None;
+    }
+    let last = side_series
+        .iter()
+        .filter(|line| line.family.unwrap_or(side_family) == family)
+        .map(|line| line.plot.unwrap_or(0))
+        .max();
+    for other in left {
+        let Some(mate) = side_series.iter().find(|line| line.id == Some(other)) else {
+            continue;
+        };
+        let (_, place) = plot_key(side_family, mate);
+        let mut company = false;
+        let mut foreign = false;
+        for line in side_series {
+            let Some(next) = line.id else {
+                continue;
+            };
+            if next == other || !known.contains(&next) {
+                continue;
+            }
+            if plot_key(side_family, line) != (family, place) {
+                continue;
+            }
+            let Some((kind, nth)) = base_key(next) else {
+                continue;
+            };
+            if kind != family {
+                continue;
+            }
+            company = true;
+            foreign |= nth != ordinal;
+        }
+        // A mate drawn with no series of another base plot stayed put; one
+        // alone in the family's last plot moved to a plot of its own.
+        if !foreign && (company || Some(place) != last) {
+            return Some(Vec::new());
+        }
+    }
+    None
+}
+
 /// The conflicts of a chart both sides of a fork wrote, when the base, the
 /// head and the proposal all hold a chart: one series' name, values, family,
 /// x values or draw of categories both sides wrote differently, one series
+/// both sides moved to different plots of its family (FIX 12255), one series
 /// both sides moved to different places (among the series all three hold),
 /// or one series one side deleted and the other wrote
 /// ([`Conflict::SeriesVsSeries`]); one category point of the chart's set or
@@ -590,6 +723,26 @@ pub(crate) fn conflicts(
                     &before(proposal_series, id),
                 ) {
                     out.push(series(SeriesField::Order));
+                }
+                // Both sides moved it to different plots of its family.
+                let head_plot = plot_moved(
+                    *base_family,
+                    base_series,
+                    *head_family,
+                    head_series,
+                    id,
+                );
+                let proposal_plot = plot_moved(
+                    *base_family,
+                    base_series,
+                    *proposal_family,
+                    proposal_series,
+                    id,
+                );
+                if let (Some(head_plot), Some(proposal_plot)) = (head_plot, proposal_plot)
+                    && head_plot != proposal_plot
+                {
+                    out.push(series(SeriesField::Plot));
                 }
             }
             (None, Some(written)) | (Some(written), None) if written != *was => {
