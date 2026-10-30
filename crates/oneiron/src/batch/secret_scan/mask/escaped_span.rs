@@ -22,9 +22,22 @@ pub(super) fn escaped_occurrences(leaf: &[u8], value: &[u8]) -> Vec<Range<usize>
         return Vec::new();
     }
     let bytes = inner.as_bytes();
-    leaf.windows(bytes.len())
-        .enumerate()
-        .filter(|(_, window)| *window == bytes)
-        .map(|(at, _)| at..at + bytes.len())
-        .collect()
+    // Only a place that opens with the escaped form's first byte is
+    // compared whole (speed, FIX 12211).
+    let Some(&first) = bytes.first() else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    let mut from = 0;
+    while let Some(rest) = leaf.get(from..).filter(|rest| rest.len() >= bytes.len()) {
+        let Some(offset) = rest.iter().position(|&byte| byte == first) else {
+            break;
+        };
+        let at = from + offset;
+        from = at + 1;
+        if leaf.get(at..at + bytes.len()) == Some(bytes) {
+            spans.push(at..at + bytes.len());
+        }
+    }
+    spans
 }

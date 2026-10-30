@@ -118,10 +118,12 @@ pub(crate) use stale::world_registered_to_pact_in;
 
 pub use self::coreference::{
     COREFERENCE_LINK_WEIGHT, CoreferenceStatus, coreference_share_consent,
-    coreference_shared_for_pact, put_coreference_link, unlink_coreference_link,
+    coreference_shared_for_pact, put_coreference_link, unlink_consolidated_same_as,
+    unlink_coreference_link,
 };
 pub(crate) use self::coreference::{
-    coreference_share_consent_as_owner, put_coreference_link_as_owner,
+    ConsolidatedSameAs, check_consolidated_same_as, coreference_share_consent_as_owner,
+    put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
 };
 pub use self::grant::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,

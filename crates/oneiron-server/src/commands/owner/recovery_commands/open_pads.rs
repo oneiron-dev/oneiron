@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner, PadReopenReport};
-use oneiron::world_keys::{HybridSecretKey, VaultKeyUnlock, existing_machine_secret};
+use oneiron::world_keys::{HybridSecretKey, existing_machine_secret};
 use oneiron_keystore::DeviceKeystore;
 use serde::Serialize;
 
@@ -60,13 +60,9 @@ pub(super) fn open_pads(
     let key =
         match vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
             Some(key) => key,
-            None => opened(match &keystore {
-                Some(keystore) => {
-                    CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
-                        .map(|key| key.trusting_device(Arc::clone(keystore)))
-                }
-                None => CheckpointKey::unlock_on_this_device(backup, &config.vault_path),
-            })?,
+            // With no keystore this device unlock refuses, naming the platform
+            // backend (FIX 12225): this host holds no device keys.
+            None => opened(CheckpointKey::unlock_on_this_device(backup, keystore.as_ref()))?,
         };
     let mut pad_machine_note = None;
     let machine: Option<(oneiron::EntityId, HybridSecretKey)> = match &args.pad_machine {
@@ -76,11 +72,11 @@ pub(super) fn open_pads(
             let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
                 anyhow::anyhow!("the vault has no authority genesis yet: no machine key names it")
             })?;
+            // With no keystore `--pad-machine` refuses (FIX 12225): this host
+            // holds no machine key.
             let keystore = match &keystore {
                 Some(keystore) => Arc::clone(keystore),
-                None => {
-                    oneiron_keystore::default_platform_keystore(&[config.vault_path.as_path()])?
-                }
+                None => return Err(vault_key::no_keystore_for_pad_machine().into()),
             };
             let secret = existing_machine_secret(keystore.as_ref(), vault_id, *machine.as_bytes())?;
             if secret.is_none() {

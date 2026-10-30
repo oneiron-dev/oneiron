@@ -120,7 +120,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/weave_lens.rs` | src | m | 4 crate-vis | — | The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST… |
 | `src/ai_host/workers.rs` | src | s | 3 crate-vis | — | The workers a started host runs on its seats: the Dreamer and the workflow pump, and the MACRO declaration… |
 | `src/ai_host/workflows.rs` | src | m | 5 crate-vis | — | The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it… |
-| `src/api/ai/chat.rs` | src | m | 17 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat |
+| `src/api/ai/chat.rs` | src | L | 17 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat |
 | `src/api/ai/chat/admission.rs` | src | m | 1 crate-vis | — | Chat turn admission and setup |
 | `src/api/ai/chat/answer.rs` | src | s | 5 crate-vis | — | Chat answer opening and request construction |
 | `src/api/ai/chat/assertions.rs` | src | s | 5 crate-vis | — | A chat reply's typed assertions (OF-063, FIX 3416, Engine ruling (a)): the records the reply cited or… |
@@ -368,7 +368,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/identity_doors.rs` | src | s | 4 crate-vis | — | PERSON identity setup, look-before-mint and saved-mention provenance |
 | `src/api/facade/identity_topology_doors.rs` | src | s | 10 crate-vis | — | Typed identity-topology host doors under the caller's own owner proof |
 | `src/api/facade/inbox_group_doors.rs` | src | s | 3 crate-vis | — | The owner inbox's group doors over both group kinds (FIX 3024, 3026): the owner's answer to one group… |
-| `src/api/facade/invocations.rs` | src | s | 9 crate-vis | — | The facade's invocation claims: one call per client-named invocation id (OF-580) |
+| `src/api/facade/invocations.rs` | src | m | 15 crate-vis | — | The facade's invocation claims: one call per client-named invocation id (OF-580) |
 | `src/api/facade/invoke.rs` | src | s | 10 crate-vis | — | How a facade row invokes its door: in the caller's room turn, on a scoped credential |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
@@ -880,7 +880,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/owner/secret_input.rs` | src | m | 2 crate-vis | — | A secret read from stdin (FIX 1490) |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
 | `src/commands/owner/transfer_commands.rs` | src | s | 2 fn | — | Export and import commands for a stopped vault |
-| `src/commands/owner/vault_key.rs` | src | m | 1 fn · 13 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |
+| `src/commands/owner/vault_key.rs` | src | m | 1 fn · 15 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |
 | `src/commands/owner/vault_key/fresh_restore.rs` | src | m | 5 crate-vis | — | `oneiron restore` where no vault is yet: the restore on a clean host, its key unlocked the way the owner… |
 | `src/commands/owner/vault_key/host_unlock.rs` | src | m | 8 crate-vis | — | What unlocks a backup's vault key, or a sealed vault's pages, on this host: the unlock the owner names, its… |
 | `src/commands/owner/vault_key/unlocked_open.rs` | src | s | 9 crate-vis | — | The one opener every owner command that opens the vault data key shares (FIX 1489, 1945, 2201, 2559): this… |
@@ -1098,14 +1098,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/http_listener.rs` | src | m | 10 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/owner_admission.rs` | src | m | 17 crate-vis | — | The owner's reserve on the shared connection pool (FIX 8274) |
 | `src/http_listener/tests.rs` | test | m | 1 crate-vis | — | The listener's admission, end to end over real sockets (C4, and the rate law of ARCH-0044 C5): headers that… |
-| `src/idempotency.rs` | src | m | 9 crate-vis | — | Durable HTTP idempotency storage and replay state |
+| `src/idempotency.rs` | src | m | 10 crate-vis | — | Durable HTTP idempotency storage and replay state |
 | `src/idempotency/body_read.rs` | src | s | 1 crate-vis | — | A keyed request's body, read up to the keyed routes' limit, and why it could not be read |
 | `src/idempotency/caller.rs` | src | s | 4 crate-vis | — | The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX… |
-| `src/idempotency/intent.rs` | src | s | 7 crate-vis | — | The intent a keyed mutation keeps before its route runs (FIX 9527, 6056) |
+| `src/idempotency/intent.rs` | src | s | 9 crate-vis | — | The intent a keyed mutation keeps before its route runs (FIX 9527, 6056) |
 | `src/idempotency/reclaim.rs` | src | s | 2 crate-vis | — | Reclaim of expired idempotency entries (FIX 5951) |
 | `src/idempotency/request.rs` | src | m | 2 crate-vis | — | HTTP request admission, keyed replay, and response capture |
 | `src/idempotency/tests.rs` | test | m | — | — | — |
 | `src/import_audience.rs` | src | m | 1 crate-vis | — | The import audience sweep (OF-492) |
+| `src/invocation_claims.rs` | src | m | 13 crate-vis | — | Durable client-named invocation claims (FIX 11889) |
 | `src/ladder_poll.rs` | src | s | 1 crate-vis | — | Polling an engine future whose decisions run on the host's ladder |
 | `src/lens_frames.rs` | src | m | 15 crate-vis | — | OF-181: the lens frames this server holds for the cards it rendered |
 | `src/lib.rs` | src | s | 3 fn · 24 mod · 1 re-export | — | Oneiron CRDT sync server library |
@@ -1120,7 +1121,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/connection.rs` | src | m | 21 crate-vis | — | Socket attachment and bounded reconnect retention |
 | `src/livequery/connection/refresh_loop.rs` | src | s | 1 crate-vis | — | The hub's refresh loop: one task per hub, driving every kept session's refresh on a short tick and, at once… |
 | `src/livequery/device_local_tests.rs` | test | m | — | — | Sol on the device-local reads (F6, R2 F1 and F8, R3 F1): a live subscription keeps the pushes it derived… |
-| `src/livequery/error.rs` | src | s | 16 crate-vis | — | The HTTP facade error body on app frames |
+| `src/livequery/error.rs` | src | s | 18 crate-vis | — | The HTTP facade error body on app frames |
 | `src/livequery/history.rs` | src | s | 7 crate-vis | — | Retained scoped app payloads live in a separate journal, not the cursor document |
 | `src/livequery/membership.rs` | src | s | 1 crate-vis | — | Insertion/edge membership checks, separate from served entity dependencies |
 | `src/livequery/production_socket_tests.rs` | test | m | 6 crate-vis | — | Full production socket + Hub + BoundSource + engine writes |

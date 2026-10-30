@@ -111,7 +111,10 @@ impl DreamerWakeDriver<'_> {
             input.host_scope.as_ref(),
             &self.deadline,
             cancel,
-        )?;
+        )?
+        // Every extraction of the wake reads its admitted hook material
+        // (FIX 10665).
+        .with_hook_material(self.hook_material.clone());
         self.run_prepared_wake_pass(input, exec, cancel, &prepared)
             .await
     }
