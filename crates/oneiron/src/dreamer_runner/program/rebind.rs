@@ -11,10 +11,12 @@
 //!
 //! A wake its turn owes and no admission has judged yet rebinds the same way
 //! (FIX 11833): named by its turn and the armed program's registration, its
-//! sealed slip is swapped on the owed row, and its admission runs at once on
-//! the new slip, as the drain after a turn runs it. A wake whose admission
-//! already refused it on the lapse keeps that refusal: it is the lapsed
-//! slip's own status.
+//! sealed slip is swapped on the owed row through the same proof, and its
+//! admission runs on the new slip in that same writer, so no concurrent
+//! admission judges or runs the old slip: a drain that read the wake before
+//! finds it admitted and admits nothing. A wake whose admission already
+//! refused it on the lapse keeps that refusal: it is the lapsed slip's own
+//! status.
 
 use serde::{Deserialize, Serialize};
 
@@ -54,8 +56,7 @@ pub struct TurnProgramRebindRequest {
 pub struct TurnProgramRebindReceipt {
     /// 32-hex id of the try: the one rebound, or the root try an owed
     /// wake's admission queued on the new slip. None when that admission
-    /// refused the wake, or could not judge it and left it for the next
-    /// drain.
+    /// refused the wake.
     pub attempt: Option<String>,
     /// 64-hex id of the admission the try runs under, or the owed wake's.
     pub admission: String,
@@ -184,10 +185,11 @@ fn rebind_try(
 
 /// An owed wake's rebind (FIX 11833): the wake `key` names, owed to this
 /// handle's actor and judged by no admission yet, is sealed on the live
-/// slip in the writer that proves the rebind; its admission then runs at
-/// once, through the one dedupe the drain admits it through. A wake that
-/// admission cannot judge stays owed for the next drain, as the drain keeps
-/// it.
+/// slip and admitted on it in ONE writer: the proof, the swap and the
+/// admission (the drain's own, `admit_in_txn`) commit together, so no
+/// admission ever judges the old slip after the swap. A drain that read the
+/// wake before this writer finds it admitted on the new slip and admits
+/// nothing; one that admitted it first leaves no owed wake here.
 fn rebind_owed_wake(
     memory: &Memory<'_>,
     successor: &InvocationSlipBinding,
@@ -195,7 +197,8 @@ fn rebind_owed_wake(
 ) -> MemoryResult<TurnProgramRebindReceipt> {
     let vault = memory.vault();
     let (actor, class) = (memory.actor(), memory.actor_class());
-    let (wake, rebind) = vault.with_write_txn_grouped(|txn| {
+    let now = vault.now_recorded_at();
+    let (admitted, rebind) = vault.with_write_txn_grouped(|txn| {
         let mut wake = WAKE.get(vault, &*txn, &key)?.ok_or(Error::EntityNotFound)?;
         if wake.key() != key
             || wake.authority.actor() != actor
@@ -211,25 +214,22 @@ fn rebind_owed_wake(
         let (authority, rebind) =
             rebound_in_txn(vault, txn, &wake.authority, successor, actor, class)?;
         wake.authority = authority;
+        // The owed row holds the rebound wake until its admission, in this
+        // writer, consumes it.
         WAKE.put(vault, txn, &key, &wake)?;
-        Ok((wake, rebind))
+        Ok((super::admit::admit_in_txn(vault, txn, &wake, now)?, rebind))
     })?;
-    let attempt = match vault.admit_turn_program(&wake, vault.now_recorded_at()) {
-        Ok(admitted) => match admitted.outcome {
-            TurnProgramAdmissionOutcome::Queued { attempt, .. } => Some(attempt),
-            TurnProgramAdmissionOutcome::Refused { .. } => None,
-        },
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                %error,
-                turn = %wake.turn.turn.to_hex(),
-                "rebound turn program wake not admitted; it waits for the next drain"
-            );
-            None
+    let attempt = match admitted.outcome {
+        TurnProgramAdmissionOutcome::Queued { attempt, .. } => {
+            // As `admit_turn_program` after its writer: the queued program
+            // is news to the attempt observers and the deadline lane.
+            vault.store.notify_attempt_observers();
+            vault.store.notify_proactivity_changes();
+            Some(attempt)
         }
+        TurnProgramAdmissionOutcome::Refused { .. } => None,
     };
-    Ok(receipt(attempt, wake.admission_id(), &rebind))
+    Ok(receipt(attempt, admitted.admission, &rebind))
 }
 
 /// `authority`, a try's or an owed wake's sealed authority, sealed instead
