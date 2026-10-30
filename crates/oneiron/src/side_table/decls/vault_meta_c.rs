@@ -353,8 +353,7 @@ side_tables! {
     CODE_SYMBOL_MANIFEST: VaultMeta b"code_symbol:manifest:v1:" Raw
         => crate::code_symbol::erase_manifest_actor_in_txn;
     /// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key:
-    /// string(repo_ref) "\x00" string(path) "\x00" string(name) "\x00" hash32(fingerprint) "\x00"
-    /// id16.
+    /// sha256(domain, repo_ref, path, name, fingerprint) "\x00" id16.
     CODE_SYMBOL_REVISION_INDEX: VaultMeta b"code_symbol:revision:v1:" Raw;
     /// Cache-hit outcome record for one view's build/verify action, keyed by view id and action key.
     /// Key: id16 + bytes32 (view id then build action key).

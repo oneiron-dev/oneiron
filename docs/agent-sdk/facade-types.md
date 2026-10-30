@@ -5256,7 +5256,7 @@ export type MergeQueueObserveRequest = { repo: EntityId; batches: string[] }
 /** `oneiron::contract_oracle::types::CommandOutput` */
 export type CommandOutput = { status: number; stdout: number[]; stderr: number[] }
 /** `oneiron::contract_oracle::types::ContractDiff` */
-export type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } }
+export type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } } | { SchemaBytesDrift: { contract: string; offset: number; before?: string | null; after?: string | null } }
 /** `oneiron::contract_oracle::types::ContractVerdict` */
 export type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] }
 /** `oneiron::merge_queue::driver_types::QueueDriveStatus` */
