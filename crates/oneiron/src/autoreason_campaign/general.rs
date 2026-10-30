@@ -67,8 +67,8 @@ pub struct BudgetLease {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DecideRules {
-    /// Require a minimum primary gain unless an independent cost/floor axis wins.
-    Dominance { min_primary_gain: f64 },
+    /// Strict dominance: better on any axis and worse on none.
+    Dominance,
     /// Delegate the fixed claim-authoring verdict to its validated report.
     Of366 { verdict_epsilon: f64 },
 }
@@ -206,14 +206,10 @@ impl CampaignConfig {
         if self.budget.max_units == 0 || self.budget.exploration_units > self.budget.max_units {
             return invalid("budget", "invalid lease ceiling or exploration share");
         }
-        let (field, threshold) = match self.decide {
-            DecideRules::Dominance { min_primary_gain } => {
-                ("decide.min_primary_gain", min_primary_gain)
-            }
-            DecideRules::Of366 { verdict_epsilon } => ("decide.verdict_epsilon", verdict_epsilon),
-        };
-        if !threshold.is_finite() || threshold < 0.0 {
-            return invalid(field, "must be finite and non-negative");
+        if let DecideRules::Of366 { verdict_epsilon } = self.decide
+            && (!verdict_epsilon.is_finite() || verdict_epsilon < 0.0)
+        {
+            return invalid("decide.verdict_epsilon", "must be finite and non-negative");
         }
         let overlap = self.knobs.merge_crossover.min_validation_overlap;
         if !overlap.is_finite() || !(0.0..=1.0).contains(&overlap) || overlap == 0.0 {
@@ -270,7 +266,7 @@ impl CampaignConfig {
         candidate: &Measurement,
     ) -> CampaignResult<Decision> {
         self.validate()?;
-        let DecideRules::Dominance { min_primary_gain } = self.decide else {
+        let DecideRules::Dominance = self.decide else {
             return invalid("decide", "OF-366 requires a validated comparison report");
         };
         for row in [incumbent, candidate] {
@@ -292,8 +288,6 @@ impl CampaignConfig {
         }
         let mut better = false;
         let mut worse = false;
-        let mut primary_win = false;
-        let mut independent_win = false;
         for axis in &self.metric_set.axes {
             // The exact-key and finite checks above ensure these lookups exist.
             let before = incumbent.scores[&axis.name];
@@ -307,13 +301,6 @@ impl CampaignConfig {
             }
             better |= delta > 0.0;
             worse |= delta < 0.0;
-            if delta > 0.0 {
-                if axis.role == MetricRole::Primary {
-                    primary_win |= delta >= min_primary_gain;
-                } else {
-                    independent_win = true;
-                }
-            }
             if axis.role == MetricRole::Floor && delta < 0.0 {
                 // A floor cannot be traded away even by escalation.
                 return Ok(Decision {
@@ -324,7 +311,7 @@ impl CampaignConfig {
         }
         let verdict = if better && worse {
             Verdict::EscalateTradeoff
-        } else if better && !worse && (independent_win || primary_win) {
+        } else if better && !worse {
             Verdict::Promote
         } else {
             Verdict::Reject

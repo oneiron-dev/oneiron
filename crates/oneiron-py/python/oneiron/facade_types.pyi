@@ -8177,7 +8177,6 @@ class BudgetLease(TypedDict):
     exploration_units: int
 class DecideRulesDominance(TypedDict):
     kind: Literal["dominance"]
-    min_primary_gain: float
 class DecideRulesOf366(TypedDict):
     kind: Literal["of366"]
     verdict_epsilon: float
