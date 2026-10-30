@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1212 facade rows, 4384 generated types.
+// UniFFI census: 1212 facade rows, 4391 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1164.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -10584,6 +10584,8 @@ pub enum RetrievalSignal {
     HydeRetry,
     #[serde(rename = "media_vector")]
     MediaVector,
+    #[serde(rename = "relevance")]
+    Relevance,
 }
 
 /// `oneiron_contracts::retrieval_telemetry::RetrievalScoreComponent`.
@@ -10926,6 +10928,8 @@ pub struct RetrievalBlendWeights {
     pub confidence: f64,
     #[serde(rename = "gravity")]
     pub gravity: f64,
+    #[serde(rename = "relevance")]
+    pub relevance: f64,
 }
 
 /// `oneiron::store::retrieval_telemetry::types::RetrievalBlendWeightDataWindow`.
@@ -10989,6 +10993,8 @@ pub enum RetrievalBlendSignal {
     Confidence,
     #[serde(rename = "gravity")]
     Gravity,
+    #[serde(rename = "relevance")]
+    Relevance,
 }
 
 /// `oneiron::store::retrieval_telemetry::types::RetrievalWeightOrigin`.
@@ -12250,6 +12256,12 @@ pub struct CallReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub credential_ref: Option<String>,
+    #[serde(
+        rename = "carrier_machine",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub carrier_machine: Option<String>,
     #[serde(rename = "outcome")]
     pub outcome: CallOutcome,
     #[serde(rename = "request_digest")]
@@ -21443,6 +21455,83 @@ pub struct ScopeScope {
     pub writable: Vec<ScopeResource>,
 }
 
+/// `oneiron::workspace_roster::project::ProjectAuthority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectAuthority {
+    #[serde(rename = "parents")]
+    pub parents: Vec<String>,
+    #[serde(
+        rename = "parent_heads",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_heads: Option<Vec<ProjectParentWitness>>,
+    #[serde(rename = "claims_scope_ref")]
+    pub claims_scope_ref: String,
+    #[serde(rename = "slice")]
+    pub slice: ScopeScope,
+    #[serde(rename = "depth_limit")]
+    pub depth_limit: u64,
+    #[serde(rename = "depth_remaining")]
+    pub depth_remaining: u64,
+    #[serde(rename = "leader")]
+    pub leader: String,
+    #[serde(rename = "board")]
+    pub board: Vec<String>,
+    #[serde(rename = "roster", default, skip_serializing_if = "Option::is_none")]
+    pub roster: Option<Vec<String>>,
+}
+
+/// `oneiron::workspace_roster::project::ProjectProofVersion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProjectProofVersion {
+    #[serde(rename = "v2")]
+    V2,
+    #[serde(rename = "v3")]
+    V3,
+}
+
+/// `oneiron::workspace_roster::project::revision::ProjectRevisionProof`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRevisionProof {
+    #[serde(rename = "slip_wire")]
+    pub slip_wire: String,
+    #[serde(rename = "holder_signature")]
+    pub holder_signature: Vec<u8>,
+    #[serde(rename = "signed_at")]
+    pub signed_at: u64,
+    #[serde(rename = "version")]
+    pub version: ProjectProofVersion,
+}
+
+/// `oneiron::workspace_roster::project::ProjectAnchorLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectAnchorLink {
+    #[serde(rename = "authority")]
+    pub authority: ProjectAuthority,
+    #[serde(rename = "proof", default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<ProjectRevisionProof>,
+}
+
+/// `oneiron::workspace_roster::project::ProjectWriteProof`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectWriteProof {
+    #[serde(rename = "slip_wire")]
+    pub slip_wire: String,
+    #[serde(rename = "holder_signature")]
+    pub holder_signature: Vec<u8>,
+    #[serde(rename = "signed_at")]
+    pub signed_at: u64,
+    #[serde(rename = "anchor")]
+    pub anchor: Vec<ProjectAnchorLink>,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<ProjectProofVersion>,
+}
+
 /// `oneiron::workspace_roster::project::mint::ProjectGoalRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -21508,7 +21597,7 @@ pub struct ProjectRecord {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub write_proof: Option<crate::WireJson>,
+    pub write_proof: Option<ProjectWriteProof>,
     #[serde(rename = "leader")]
     pub leader: String,
     #[serde(rename = "board")]
@@ -34434,6 +34523,24 @@ pub struct ClaimSettlementRevert {
     pub claim_ref: String,
 }
 
+/// `oneiron::memory::claims::settle::SettleWarningCode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SettleWarningCode {
+    #[serde(rename = "vad_pending")]
+    VadPending,
+}
+
+/// `oneiron::memory::claims::settle::SettleWarning`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SettleWarning {
+    #[serde(rename = "code")]
+    pub code: SettleWarningCode,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "detail")]
+    pub detail: String,
+}
+
 /// `oneiron::memory::claims::settle::ClaimSettlement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ClaimSettlement {
@@ -34465,6 +34572,8 @@ pub struct ClaimSettlement {
     pub claim: WireClaimView,
     #[serde(rename = "settled_at")]
     pub settled_at: u64,
+    #[serde(rename = "warnings", default, skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<SettleWarning>>,
 }
 
 /// `oneiron::actor_claims::candidate::CraftCandidatesRequest`.
@@ -51133,6 +51242,8 @@ pub enum RetryableLlmError {
         #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    #[serde(rename = "WorldRouteNotAdmitted")]
+    WorldRouteNotAdmitted,
     #[serde(rename = "ServerError")]
     ServerError,
     #[serde(rename = "Timeout")]

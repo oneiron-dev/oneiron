@@ -95,6 +95,15 @@ impl<'v> ResidenceReadContext<'v> {
         })
     }
 
+    /// This read with `worlds` withheld too, beside those kept off its
+    /// destination: a forwarded caller off its carrier (FIX 3550) reads no
+    /// world an unknown destination may not.
+    #[must_use]
+    pub fn withholding(mut self, worlds: &BTreeSet<EntityId>) -> Self {
+        self.withheld.extend(worlds);
+        self
+    }
+
     /// The machine this read serves, or `Unknown` when none stands proved.
     #[must_use]
     pub fn destination(&self) -> Destination {

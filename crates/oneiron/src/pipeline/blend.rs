@@ -66,6 +66,8 @@ pub(super) struct RetrievalChannelIndexes {
     /// Scored as a full fusion-length list of hits and non-hits, not over
     /// its hits alone (see [`fusion::retrieval_candidates_from_ranked_lists`]).
     pub(super) phonetic: Option<usize>,
+    /// The admitted PPR list whose raw score supplies graph gravity.
+    pub(super) ppr: Option<usize>,
 }
 
 pub(super) struct BlendedRetrievalScores {
@@ -119,6 +121,16 @@ pub(super) fn blended_retrieval_scores(
     } else {
         HashSet::new()
     };
+    let ppr_gravity: HashMap<EntityId, f32> = channel_indexes
+        .ppr
+        .and_then(|index| ranked_lists.get(index))
+        .map(|scores| {
+            scores
+                .iter()
+                .map(|scored| (scored.id, scored.score))
+                .collect()
+        })
+        .unwrap_or_default();
     let needs_claim_body = config.salience || config.confidence;
     let mut dampened = 0;
     for input in &mut inputs {
@@ -154,13 +166,9 @@ pub(super) fn blended_retrieval_scores(
             }
         }
 
-        if config.gravity && !cosine_ghosts.is_empty() {
-            input.gravity = if cosine_ghosts.contains(&input.id) {
-                dampened += 1;
-                0.0
-            } else {
-                1.0
-            };
+        if config.gravity {
+            input.gravity = ppr_gravity.get(&input.id).copied().unwrap_or(0.0);
+            dampened += usize::from(cosine_ghosts.contains(&input.id));
         }
     }
 

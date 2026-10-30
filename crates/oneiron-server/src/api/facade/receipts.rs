@@ -113,6 +113,7 @@ pub(super) async fn facade_call_receipt(
             actor_ref,
             actor_class,
             credential_ref: call_receipt::credential_ref(&auth),
+            carrier_machine: None,
             outcome,
             request_digest,
             result_digest,

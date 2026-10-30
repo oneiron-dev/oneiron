@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1212 facade rows, 4390 declarations.
+Census: 1212 facade rows, 4393 declarations.
 Inputs: 1140 of 1212 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1046 of 1212 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -3433,7 +3433,7 @@ class RetrievalReplayInputs(TypedDict):
     query_ref: NotRequired[str | None]
     config: Any
     corpus_snapshot_ref: NotRequired[str | None]
-RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
+RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector", "relevance"]
 class RetrievalScoreComponent(TypedDict):
     signal: RetrievalSignal
     rank: int
@@ -3541,6 +3541,7 @@ class RetrievalBlendWeights(TypedDict):
     salience: float
     confidence: float
     gravity: float
+    relevance: float
 class RetrievalBlendWeightDataWindow(TypedDict):
     run_count: int
     outcome_count: int
@@ -3555,7 +3556,7 @@ class RetrievalBlendWeightTableEntry(TypedDict):
     tuned_at: int
     provenance: dict[str, str]
     data_window: RetrievalBlendWeightDataWindow
-RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity"]
+RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity", "relevance"]
 RetrievalWeightOrigin = Literal["bootstrap", "learned", "owner_pin"]
 class RetrievalWeightRow(TypedDict):
     signal: RetrievalBlendSignal
@@ -3924,6 +3925,7 @@ class CallReceipt(TypedDict):
     actor_ref: str
     actor_class: str
     credential_ref: NotRequired[str | None]
+    carrier_machine: NotRequired[str | None]
     outcome: CallOutcome
     request_digest: str
     result_digest: NotRequired[str | None]
@@ -6971,15 +6973,20 @@ class ProjectAuthority(TypedDict):
     leader: str
     board: list[str]
     roster: NotRequired[list[str] | None]
-class ProjectAnchor(TypedDict):
-    authority: ProjectAuthority
-    proof: NotRequired[ProjectWriteProof | None]
 ProjectProofVersion = Literal["v2", "v3"]
+class ProjectRevisionProof(TypedDict):
+    slip_wire: str
+    holder_signature: list[int]
+    signed_at: int
+    version: ProjectProofVersion
+class ProjectAnchorLink(TypedDict):
+    authority: ProjectAuthority
+    proof: NotRequired[ProjectRevisionProof | None]
 class ProjectWriteProof(TypedDict):
     slip_wire: str
     holder_signature: list[int]
     signed_at: int
-    anchor: NotRequired[ProjectAnchor | None]
+    anchor: list[ProjectAnchorLink]
     version: NotRequired[ProjectProofVersion]
 class ProjectGoalRecord(TypedDict):
     project_id: str
@@ -10989,6 +10996,11 @@ ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle
 class ClaimSettlementRevert(TypedDict):
     verb: str
     claim_ref: str
+SettleWarningCode = Literal["vad_pending"]
+class SettleWarning(TypedDict):
+    code: SettleWarningCode
+    claim_ref: str
+    detail: str
 class ClaimSettlement(TypedDict):
     receipt_ref: str
     proposal_ref: str
@@ -11002,6 +11014,7 @@ class ClaimSettlement(TypedDict):
     revert: NotRequired[ClaimSettlementRevert | None]
     claim: ClaimView
     settled_at: int
+    warnings: NotRequired[list[SettleWarning]]
 class CraftCandidatesRequest(TypedDict):
     resident: NotRequired[str | None]
 class CraftCandidateView(TypedDict):
@@ -16277,7 +16290,7 @@ class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 class RetryableLlmErrorTransportFault(TypedDict):
     TransportFault: TransportFault
-RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
+RetryableLlmError = Literal["WorldRouteNotAdmitted", "ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
 BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError

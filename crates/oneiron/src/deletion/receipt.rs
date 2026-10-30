@@ -462,6 +462,8 @@ impl Vault {
         // by now in this transaction, bound by name on its receipt and never
         // changed (FIX 5844). Missing proof later reads as pending.
         let erased: Vec<EntityId> = ids.into_iter().collect();
+        // An erase reaches the archive copies kept for removed Owners (FIX-LIST 2241).
+        self.scrub_removal_exports_in_txn(wtxn, &erased)?;
         let custody_retirements = self.store.erase_custody_retirements_in_txn(wtxn, &erased)?;
         let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
             self.enqueue_hard_erase_sweep_in_txn(
