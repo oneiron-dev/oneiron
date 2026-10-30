@@ -2361,7 +2361,7 @@ export interface FacadeResults {
   "vault.notes.history_purge_receipts": Facade.NoteHistoryPurgeReceipt[];
   "vault.notes.editor.bind": Facade.ScopedReadResult<Facade.NoteEditorBinding | null>;
   "vault.notes.editor.close": Facade.NoteEditorClosed;
-  "vault.notes.edit": Facade.NoteEditOutcome;
+  "vault.notes.edit": Facade.NoteProgramEditOutcome;
   "vault.notes.seal": Facade.NoteSeal;
   "vault.notes.lifecycle": Facade.NoteLifecycleView;
   "vault.notes.set_overrides": Facade.NoteDefaultsView;

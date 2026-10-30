@@ -206,6 +206,6 @@ pub fn off_record_host_only<I, T>(_memory: &Memory<'_>, verb: &str, _input: &I) 
         format!(
             "{verb} cannot use this bare handle: the session lives in the served host's RAM; this handle binds no session manager"
         ),
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }

@@ -12,7 +12,8 @@
 //! The transition then names that request, and a receiver admits it only on
 //! it ([`kit_request_admits`]). A fault recording it leaves the push as it
 //! was, its request zero, warned: never a refusal, never a demand for a
-//! profile.
+//! profile. Its permits are measured as an install's request's are, and past
+//! one row ride in pieces the anchor signs ahead of the request (FIX 11866).
 
 use ed25519_dalek::SigningKey;
 
@@ -21,8 +22,9 @@ use super::CustodyTransition;
 use crate::Vault;
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, CustodyChange,
-    CustodyRecipientPermit, CustodyRequestAuthority, OwnerAct, OwnerActKind, OwnerWorkBody,
-    OwnerWorkRequest, RecoveryRootId, authority_entry_hash, next_sequence, sign_side_entry,
+    CustodyRecipientPermit, CustodyRequestAuthority, FrontierSigner, MAX_PARENTS, OwnerAct,
+    OwnerActKind, OwnerWorkBody, OwnerWorkRequest, RecoveryRootId, authority_entry_hash,
+    next_sequence, sign_side_entry,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -86,18 +88,30 @@ fn record_in_txn(
         ActSurface::ThisInstall,
         seen,
     );
+    let mut work = OwnerWorkBody::Custody {
+        change: CustodyChange::Rewrap,
+        generation,
+        input: None,
+        holder: None,
+        recipients: permits.to_vec(),
+        pieces: None,
+        authority: CustodyRequestAuthority::PinnedKit { root },
+    };
+    // FIX 8498 (Engine 09:31; L04 09:40 (c)): the anchor joins a frontier
+    // wider than the request names, ahead of its own row, else today's path.
+    let joiner = FrontierSigner::Anchor(anchor);
+    let joined = vault.prepare_authority_frontier_in_txn(wtxn, fold, joiner, MAX_PARENTS)?;
+    let fold = joined.as_deref().unwrap_or(fold);
+    // FIX 11866: the anchor writes permits past one row in pieces ahead of
+    // its own row too, measured as an install's request measures them, else
+    // today's path.
+    let staged = vault.stage_custody_permit_pieces_in_txn(wtxn, fold, (None, anchor), &mut work)?;
+    let fold = staged.as_deref().unwrap_or(fold);
     let request = OwnerWorkRequest {
         carrier: id,
         act,
         executor: id,
-        work: OwnerWorkBody::Custody {
-            change: CustodyChange::Rewrap,
-            generation,
-            input: None,
-            holder: None,
-            recipients: permits.to_vec(),
-            authority: CustodyRequestAuthority::PinnedKit { root },
-        },
+        work,
         privacy_basis: None,
     };
     let signer = AuthorityKey::Ed25519(anchor.verifying_key().to_bytes());
