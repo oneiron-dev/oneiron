@@ -30,6 +30,12 @@
 //! When the handle a leader took turns out to be the last, because every
 //! other holder let go while the write ran, the vault closes on a thread of
 //! its own just after.
+//!
+//! A write may carry an after-commit callback ([`DetachedWrite::after_commit`]):
+//! it runs once with whether the write's rows landed, after its group's
+//! commit or that commit's failure, never at the stage. A write whose closure
+//! failed is told `false` once its group's commit is decided, and a write lost
+//! before any group ran it is told `false` as it is said lost.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
@@ -48,16 +54,16 @@ use super::{Arrival, Callback, GroupCommit, Rows};
 /// refused or dropped.
 pub(crate) const DETACHED_WRITES_WAITING_MAX: usize = 4096;
 
-/// What runs once the group commit of a detached write's rows is decided,
-/// with whether they landed: a lease is held from that commit, not from the
-/// queueing.
+/// What runs once a detached write's group commit is decided, with whether
+/// its rows landed: `true` only when its closure kept them and the group
+/// committed. A lease is held from that commit, not from the queueing.
 pub(crate) type AfterCommit = Box<dyn FnOnce(bool) + Send>;
 
 /// A detached write's closure over the store's core.
-type CoreWrite = Box<dyn FnOnce(&StoreCore, &mut RwTxn<'_>) -> Result<Option<AfterCommit>> + Send>;
+type CoreWrite = Box<dyn FnOnce(&StoreCore, &mut RwTxn<'_>) -> Result<()> + Send>;
 
 /// A detached write's closure through the vault's own doors.
-type VaultWrite = Box<dyn FnOnce(&Vault, &mut RwTxn<'_>) -> Result<Option<AfterCommit>> + Send>;
+type VaultWrite = Box<dyn FnOnce(&Vault, &mut RwTxn<'_>) -> Result<()> + Send>;
 
 enum Closure {
     Core(CoreWrite),
@@ -75,6 +81,8 @@ pub(crate) struct DetachedWrite {
     /// the thread it queued from.
     intent: Option<IdempotencyIntent>,
     closure: Closure,
+    /// Told whether its rows landed, once that is decided.
+    after: Option<AfterCommit>,
 }
 
 impl DetachedWrite {
@@ -83,13 +91,14 @@ impl DetachedWrite {
     /// on this thread, in its own transaction (FIX 10379).
     pub(crate) fn of_core<W>(name: &'static str, write: W) -> Self
     where
-        W: FnOnce(&StoreCore, &mut RwTxn<'_>) -> Result<Option<AfterCommit>> + Send + 'static,
+        W: FnOnce(&StoreCore, &mut RwTxn<'_>) -> Result<()> + Send + 'static,
     {
         Self {
             name,
             replay_only: false,
             intent: open_intent(),
             closure: Closure::Core(Box::new(write)),
+            after: None,
         }
     }
 
@@ -99,13 +108,14 @@ impl DetachedWrite {
     /// (FIX 10379).
     pub(crate) fn of_vault<W>(name: &'static str, vault: &Arc<Vault>, write: W) -> Self
     where
-        W: FnOnce(&Vault, &mut RwTxn<'_>) -> Result<Option<AfterCommit>> + Send + 'static,
+        W: FnOnce(&Vault, &mut RwTxn<'_>) -> Result<()> + Send + 'static,
     {
         Self {
             name,
             replay_only: false,
             intent: open_intent(),
             closure: Closure::Vault(Arc::downgrade(vault), Box::new(write)),
+            after: None,
         }
     }
 
@@ -117,6 +127,16 @@ impl DetachedWrite {
     pub(crate) fn replay_only(mut self) -> Self {
         self.replay_only = true;
         self.intent = None;
+        self
+    }
+
+    /// This write with `after`, run once with whether its rows landed: after
+    /// its group's commit or that commit's failure, never at the stage, and
+    /// with `false` when the write is lost before any group ran it (FIX
+    /// 12023).
+    #[must_use]
+    pub(crate) fn after_commit(mut self, after: AfterCommit) -> Self {
+        self.after = Some(after);
         self
     }
 
@@ -195,7 +215,8 @@ pub(super) struct DetachedGroup<'v> {
     kept: usize,
     /// Of `kept`, those whose rows are only a clock floor's.
     replay_only: usize,
-    after: Vec<AfterCommit>,
+    /// Each run write's after-commit callback, with whether its rows stayed.
+    after: Vec<(AfterCommit, bool)>,
     /// The vault handles taken to run its writes.
     held: Vec<Arc<Vault>>,
 }
@@ -232,16 +253,15 @@ impl DetachedGroup<'_> {
         others_kept == 0 && self.kept > 0 && self.replay_only == self.kept
     }
 
-    fn keep(&mut self, replay_only: bool, after: Option<AfterCommit>) {
+    fn keep(&mut self, replay_only: bool) {
         self.kept += 1;
         self.replay_only += usize::from(replay_only);
-        self.after.extend(after);
     }
 
-    /// Once the group's commit is decided: each kept write's hook runs with
-    /// whether its rows landed, then the writes the group took count as
-    /// decided. A failed commit loses rows whose callers answered already:
-    /// said here, as no answer can say it.
+    /// Once the group's commit is decided: each run write's after-commit
+    /// callback is told whether its rows landed, then the writes the group
+    /// took count as decided. A failed commit loses rows whose callers
+    /// answered already: said here, as no answer can say it.
     pub(super) fn settle(&mut self, writes: &DetachedWrites, committed: &heed::Result<()>) {
         if let Err(error) = committed
             && self.kept > 0
@@ -252,8 +272,8 @@ impl DetachedGroup<'_> {
                 "a group commit failed after its detached writes queued; their rows are lost"
             );
         }
-        for after in self.after.drain(..) {
-            after(committed.is_ok());
+        for (after, staged) in self.after.drain(..) {
+            after(staged && committed.is_ok());
         }
         writes.settle(self.ran);
     }
@@ -315,10 +335,14 @@ impl GroupCommit {
             lost
         };
         self.detached.drained.notify_all();
-        for write in &lost {
+        let count = lost.len();
+        for write in lost {
             tracing::warn!(write = write.name, reason, "a detached write is lost");
+            if let Some(after) = write.after {
+                after(false);
+            }
         }
-        self.detached.settle(lost.len());
+        self.detached.settle(count);
     }
 }
 
@@ -443,6 +467,7 @@ impl StoreCore {
             replay_only,
             intent,
             closure,
+            after,
         } = write;
         // A write through the vault runs on the closing vault, or on a handle
         // taken now; `None` while the vault closes on another thread.
@@ -456,6 +481,7 @@ impl StoreCore {
                 replay_only,
                 intent,
                 closure,
+                after,
             });
         };
         group.ran += 1;
@@ -469,52 +495,60 @@ impl StoreCore {
                     "a detached write did not run: its transaction did not open"
                 );
                 group.held.extend(held);
+                group.after.extend(after.map(|after| (after, false)));
                 return None;
             }
         };
         let vault = held.as_deref().or(group.closing);
-        let ran = catch_unwind(AssertUnwindSafe(|| -> Result<Option<AfterCommit>> {
+        let ran = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
             match closure {
                 Closure::Core(write) => {
-                    let after = write(self, &mut child)?;
-                    count_on_intent(intent.as_ref(), &self.canonical_dbs(), &mut child)?;
-                    Ok(after)
+                    write(self, &mut child)?;
+                    count_on_intent(intent.as_ref(), &self.canonical_dbs(), &mut child)
                 }
                 Closure::Vault(_, write) => {
                     let vault = vault.ok_or(Error::InvariantViolation(
                         "a detached vault write ran with no vault",
                     ))?;
-                    let after = write(vault, &mut child)?;
-                    count_on_intent(intent.as_ref(), &vault.store, &mut child)?;
-                    Ok(after)
+                    write(vault, &mut child)?;
+                    count_on_intent(intent.as_ref(), &vault.store, &mut child)
                 }
             }
         }));
         group.held.extend(held);
-        match ran {
-            Ok(Ok(after)) => match child.commit() {
-                Ok(()) => group.keep(replay_only, after),
+        let staged = match ran {
+            Ok(Ok(())) => match child.commit() {
+                Ok(()) => true,
                 Err(error) => {
                     tracing::warn!(
                         write = name,
                         %error,
                         "a detached write's rows did not stage; they are rolled back"
                     );
-                    if let Some(after) = after {
-                        after(false);
-                    }
+                    false
                 }
             },
-            Ok(Err(error)) => tracing::warn!(
-                write = name,
-                %error,
-                "a detached write failed; its rows are rolled back"
-            ),
-            Err(_) => tracing::warn!(
-                write = name,
-                "a detached write panicked; its rows are rolled back"
-            ),
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    write = name,
+                    %error,
+                    "a detached write failed; its rows are rolled back"
+                );
+                false
+            }
+            Err(_) => {
+                tracing::warn!(
+                    write = name,
+                    "a detached write panicked; its rows are rolled back"
+                );
+                false
+            }
+        };
+        if staged {
+            group.keep(replay_only);
         }
+        // Told only once the group's commit is decided, never here.
+        group.after.extend(after.map(|after| (after, staged)));
         None
     }
 }
