@@ -6802,7 +6802,7 @@ export type QuestionCreateRequest = { definition: QuestionDefinitionInput }
 /** `oneiron::llm::decision::questions::records::QuestionAskerClass` */
 export type QuestionAskerClass = "human" | "agent" | "system"
 /** `oneiron::claim::scoped_read::frozen::FrozenReadLane` */
-export type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null }
+export type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null; withheld?: string[] }
 /** `oneiron::llm::decision::questions::records::QuestionRecord` */
 export type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null; read_lane: FrozenReadLane }
 /** `oneiron::receipt::questions::QuestionEditRequest` */

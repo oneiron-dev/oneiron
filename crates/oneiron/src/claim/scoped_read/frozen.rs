@@ -59,6 +59,13 @@ pub struct FrozenReadLane {
     /// The room whose signed facets the saved lane read inside (FIX 643).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     room_facets: Option<EntityId>,
+    /// The fields a narrower reader's view of this lane withheld a row from
+    /// (FIX 12171), by name: `records` when the caveat names a row that
+    /// reader does not read, `room_facets` when it does not read the room.
+    /// Empty on every saved or rebuilt lane: only [`Self::reader_view`]
+    /// fills it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    withheld: Vec<String>,
 }
 
 impl FrozenReadLane {
@@ -146,7 +153,43 @@ impl FrozenReadLane {
             records,
             worlds,
             room_facets: key.room_facets,
+            withheld: Vec::new(),
         })
+    }
+
+    /// The rows this lane names (FIX 12171): each row its records caveat
+    /// names, then the room whose facets bound it. A caveat entry that is no
+    /// entity id names no row.
+    #[must_use]
+    pub fn named_rows(&self) -> Vec<EntityId> {
+        self.records
+            .iter()
+            .filter_map(|row| EntityId::from_hex(row).ok())
+            .chain(self.room_facets)
+            .collect()
+    }
+
+    /// This lane as a narrower lane of its principal reads it (FIX 12171),
+    /// `reads` answering for each row [`Self::named_rows`] names: the
+    /// records caveat keeps the rows the reader reads, and the room stays
+    /// while the reader reads it. Each field that lost a row is named in
+    /// `withheld`, so an emptied caveat never reads as no caveat. The
+    /// credential id, the read Scope and the worlds bound the lane and name
+    /// no record row: they stay, so a narrowed lane still reads as narrowed.
+    /// The answer is a reply's view: no rebuild narrows by it.
+    #[must_use]
+    pub fn reader_view(&self, reads: impl Fn(&EntityId) -> bool) -> Self {
+        let mut lane = self.clone();
+        lane.records
+            .retain(|row| EntityId::from_hex(row).is_ok_and(|id| reads(&id)));
+        if lane.records.len() < self.records.len() {
+            lane.withheld.push("records".to_owned());
+        }
+        if lane.room_facets.is_some_and(|room| !reads(&room)) {
+            lane.room_facets = None;
+            lane.withheld.push("room_facets".to_owned());
+        }
+        lane
     }
 
     /// Whether `error` is [`Self::freeze`]'s refusal of a narrowed guest

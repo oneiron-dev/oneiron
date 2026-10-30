@@ -3416,7 +3416,7 @@ declare namespace Sdk {
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
   type QuestionCreateRequest = { definition: QuestionDefinitionInput };
   type QuestionAskerClass = "human" | "agent" | "system";
-  type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null };
+  type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null; withheld?: string[] };
   type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null; read_lane: FrozenReadLane };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinitionInput };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
