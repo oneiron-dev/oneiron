@@ -23,8 +23,9 @@
 //!   and its sealed manifest once sealing lands.
 use super::delivery_settlement::EsignDeliveryReceipt;
 use super::document_view::EsignSealTrail;
+use super::lane_scope::{self, EsignScope};
 use super::model::{DocumentStatus, EsignDocument};
-use super::outbound::{EsignOutboundCommand, EsignOutboundVerb};
+use super::outbound::{EsignActScope, EsignOutboundCommand, EsignOutboundVerb};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::outbound::{
@@ -538,9 +539,15 @@ impl Memory<'_> {
             EntityId::from_hex(principal)
                 .map_err(|_| MemoryError::bad_request("on_behalf_of is not an entity id"))?;
         }
+        let scope = self.esign_scope()?;
         let vault = self.vault();
         let (actor, class) = (self.actor(), self.actor_class());
         crate::memory::verify_actor_binding(vault, actor, class)?;
+        // FIX 6403: a narrowed caller's lane judges the document and its
+        // originals before the act is built, a void on the whole chain, and
+        // again in the gate's writer and in the act's own write.
+        let restrictive = verb == EsignOutboundVerb::Void;
+        scope.admit_signing_document(vault, document, restrictive)?;
         // FIX 6424: a call with no key is keyed on its own invocation.
         let key = super::dispatch_key::esign_dispatch_key(
             vault,
@@ -566,9 +573,28 @@ impl Memory<'_> {
             Some(_) => None,
             None => self.embedded_owner(verb.as_str()).ok(),
         };
-        let result = match self.owner_authorship().or(embedded.as_ref()) {
-            Some(owner) => vault.dispatch_esign_as_owner(request, &command, owner),
-            None => vault.dispatch_esign(request, &command, None, None),
+        let result = match (&scope, self.owner_authorship().or(embedded.as_ref())) {
+            (EsignScope::Credential(lane), owner) => vault.dispatch_esign_in_scope(
+                request,
+                &command,
+                owner,
+                EsignActScope {
+                    writer: crate::WriteActor::new(actor, class),
+                    reaches: &|txn: &heed::RoTxn<'_>| {
+                        lane_scope::reaches_signing_document(
+                            lane,
+                            vault,
+                            txn,
+                            document,
+                            restrictive,
+                        )
+                    },
+                },
+            ),
+            (EsignScope::Unrestricted, Some(owner)) => {
+                vault.dispatch_esign_as_owner(request, &command, owner)
+            }
+            (EsignScope::Unrestricted, None) => vault.dispatch_esign(request, &command, None, None),
         }
         .map_err(crate::memory::facade_error_from_outbound_dispatch)?;
         Ok(EsignDispatchView {

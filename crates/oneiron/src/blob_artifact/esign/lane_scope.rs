@@ -18,13 +18,14 @@
 //! request that would show or act on any of them refuses whole; nothing is
 //! redacted. A ceremony row judges the document its capability binds; the
 //! capability authorizes the rest, as on the public doors.
+use super::ledger::{restrictive_state_in, state_in};
 use super::model::{EsignDocument, invalid};
 use super::seal::SealedDocument;
 use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::federation::Scope;
 use crate::memory::{Memory, MemoryResult};
-use crate::{EntityId, Result};
+use crate::{EntityId, Result, Vault};
 
 /// Where one e-sign call is judged.
 pub(super) enum EsignScope<'a> {
@@ -109,6 +110,31 @@ impl EsignScope<'_> {
             }
         }
     }
+
+    /// Judges `document` and the originals its trail names now, in a
+    /// snapshot of its own, before an outbound act builds its request. A
+    /// void (`restrictive`) folds the whole chain, held events included, as
+    /// its send does. An unrestricted call is not judged and reads nothing.
+    /// # Errors
+    /// As [`Self::admit_draft_in`], or the trail's own refusal.
+    pub(super) fn admit_signing_document(
+        &self,
+        vault: &Vault,
+        document: EntityId,
+        restrictive: bool,
+    ) -> Result<()> {
+        match self {
+            Self::Unrestricted => Ok(()),
+            Self::Credential(lane) => {
+                let txn = vault.store.env.read_txn()?;
+                if reaches_signing_document(lane, vault, &txn, document, restrictive)? {
+                    Ok(())
+                } else {
+                    Err(unreached())
+                }
+            }
+        }
+    }
 }
 
 /// Whether `proof` bounds its records by the whole vault, as the e-sign rows'
@@ -159,6 +185,34 @@ pub(super) fn reaches_draft_in(
         reaches_in(lane, txn, EntityId::from_hex(&item.artifact_ref)?)?;
     }
     Ok(())
+}
+
+/// Whether `lane` reaches `document` and every original its trail folds to
+/// in `txn`, the items read again from that snapshot: the whole chain for a
+/// `restrictive` act, the chain no held event stops otherwise.
+/// # Errors
+/// The read's own failure, or the trail's refusal.
+pub(super) fn reaches_signing_document(
+    lane: &ScopedRead<'_>,
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+    restrictive: bool,
+) -> Result<bool> {
+    if !reaches(lane, txn, document)? {
+        return Ok(false);
+    }
+    let state = if restrictive {
+        restrictive_state_in(vault, txn, document)?
+    } else {
+        state_in(vault, txn, document)?
+    };
+    for item in &state.document.items {
+        if !reaches(lane, txn, EntityId::from_hex(&item.artifact_ref)?)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// One write of a narrowed call on `document`: through the document
