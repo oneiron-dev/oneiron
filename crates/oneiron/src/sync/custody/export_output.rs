@@ -6,20 +6,22 @@
 //!
 //! - Admission takes a row only whole, filed under its own request, in its
 //!   sealing month's base window, within one row's bound. A copy (or a part
-//!   set) the request's folded signed result does not name is admitted,
-//!   never kept, and leaves at the next prune (FIX 12065, 12294); whether a
-//!   copy is the one named is judged where it is kept.
+//!   set) carries the request's signed result as its witness (FIX 12312);
+//!   one whose witness does not name it, or that the folded result does not
+//!   name, is admitted, never kept, and leaves at the next prune (FIX 12065,
+//!   12294); whether a copy is the one named is judged where it is kept.
 //! - Reverse rematerialization relays each copy this vault keeps that stands
-//!   on its fold (`KeptExportOutput::stands`), and drops a row once its
-//!   request is refused here, its result names another copy, or its secret
-//!   an admitted revoke ended or an erase here fenced, or once the fold
-//!   holds the owner's mark that he imported it (FIX 12062): no install
-//!   relays a marked copy again. A row whose request or result this vault
-//!   has not folded stays, as an input row's does; any other stays until
-//!   its base window retires.
+//!   on its fold (`KeptExportOutput::stands`), with its witness, and drops a
+//!   row once its request is refused here, no signed result names it (its
+//!   witness, or the result folded here), or its secret an admitted revoke
+//!   ended or an erase here fenced, or once the fold holds the owner's mark
+//!   that he imported it (FIX 12062): no install relays a marked copy again.
+//!   A row its witness names whose request this vault has not folded stays,
+//!   as an input row's does; any other stays until its base window retires.
 //! - Every install keeps a relayed copy that stands on its fold, once,
-//!   rechecked in the writer that keeps it. Only the recipient machine opens
-//!   it; no install that keeps or relays it can.
+//!   rechecked in the writer that keeps it, with or without the request's
+//!   result folded there (FIX 12312). Only the recipient machine opens it;
+//!   no install that keeps or relays it can.
 //! - A copy past one row rides in numbered parts by these same rules, and
 //!   is joined before it is judged (FIX 12063, `parts`).
 
@@ -33,7 +35,7 @@ use super::super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::super::types::WindowKey;
 use super::{CUSTODY_MAP, admission_read_fault, commit_custody, holds_custody_map, refused};
 use crate::Vault;
-use crate::authority::{AuthorityFold, SealedWorkOutput};
+use crate::authority::AuthorityFold;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::secret_custody::holder_export::{
@@ -58,10 +60,11 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
 
 /// Admits one sealed copy under `row_key`, the map key after its prefix:
 /// one that decodes within one row's bound, filed under its own request, in
-/// its sealing month's base window. A copy the request's folded signed
-/// result does not name is admitted, never kept, and leaves at the next
-/// prune (`row_done`, FIX 12065): refusing it would refuse the whole update
-/// of a peer that has not folded the result yet.
+/// its sealing month's base window. A copy no signed result names, by its
+/// witness or the request's folded result (`KeptExportOutput::named_by`,
+/// FIX 12312), is admitted, never kept, and leaves at the next prune
+/// (`row_done`, FIX 12065): refusing it would refuse the whole update of a
+/// peer that has not folded the result yet.
 pub(super) fn admit_export_output(
     vault: &Vault,
     key: Option<&WindowKey>,
@@ -92,10 +95,7 @@ pub(super) fn admit_export_output(
     let fold = vault
         .authority_view_readonly_in_txn(&rtxn)
         .map_err(admission_read_fault)?;
-    if fold
-        .owner_work_result(&kept.request)
-        .is_some_and(|answer| !names_copy(answer.outcome.sealed_output(), &kept.sealed))
-    {
+    if !kept.named_by(&fold) {
         // Admitted, never kept: the keep path judges it against the result,
         // and the relay prune drops it (`row_done`). Refusing it would refuse
         // the whole update or snapshot of a peer that has not folded the
@@ -107,15 +107,6 @@ pub(super) fn admit_export_output(
         );
     }
     Ok(())
-}
-
-/// Whether `output`, what a signed result names, is the copy `sealed`: its
-/// digest and length.
-fn names_copy(output: Option<&SealedWorkOutput>, sealed: &[u8]) -> bool {
-    output.is_some_and(|output| {
-        output.digest == *blake3::hash(sealed).as_bytes()
-            && usize::try_from(output.bytes).is_ok_and(|bytes| bytes == sealed.len())
-    })
 }
 
 /// Relays each copy this vault keeps into window `key`, the base window of
@@ -130,7 +121,7 @@ pub(super) fn mirror_export_outputs(
     fold: &AuthorityFold,
     erased: &BTreeSet<EntityId>,
 ) -> Result<bool> {
-    let kept = held_export_outputs(vault)?;
+    let kept = held_export_outputs(vault, fold)?;
     let holds = holds_custody_map(doc);
     if kept.is_empty() && !holds {
         return Ok(false);
@@ -144,11 +135,11 @@ pub(super) fn mirror_export_outputs(
         {
             continue;
         }
-        let bytes = output.encode();
-        if bytes.len() > MAX_RELAYED_OUTPUT_BYTES {
-            wrote |= parts::mirror_parts(doc, &output, &bytes)?;
+        if KeptExportOutput::rides_in_parts(output.sealed.len() as u64) {
+            wrote |= parts::mirror_parts(doc, &output, &output.copy_frame())?;
             continue;
         }
+        let bytes = output.encode();
         let map = doc.get_map(CUSTODY_MAP);
         let row = output_row(&output.request);
         if map_get_bytes(&map, &row).as_deref() != Some(bytes.as_slice()) {
