@@ -190,7 +190,7 @@ fn bands_within(
 
 /// Whether `scope` (a credential's, or a row's position) stands inside
 /// `current` on every axis a pact narrows.
-fn within(scope: &Scope, current: &FederationDirectionScope) -> bool {
+pub(in crate::authority) fn within(scope: &Scope, current: &FederationDirectionScope) -> bool {
     scope.worlds.is_narrowing_of(&current.worlds)
         && scope.facets.is_narrowing_of(&current.facets)
         && bands_within(&scope.bands, &current.bands) == scope.bands
