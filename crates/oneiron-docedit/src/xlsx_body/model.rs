@@ -413,6 +413,13 @@ pub enum XlsxChange {
         column: String,
         name: String,
     },
+    /// The conditional formats the body added to worksheet `sheet`, in order
+    /// (FIX 3468): written after the cells, after the sheet's own, each look
+    /// added to the stylesheet's `dxfs`.
+    ConditionalFormats {
+        sheet: String,
+        formats: Vec<XlsxConditionalFormat>,
+    },
 }
 
 /// One worksheet of a sheet layout.

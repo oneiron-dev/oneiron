@@ -230,12 +230,23 @@ pub(super) fn axis(
     }
     for sheet in &mut body.sheets {
         let BodySheet {
+            key: own_key,
             name: home,
             cells,
             tables,
+            conditional,
             ..
         } = sheet;
         let home = home.as_str();
+        // Its conditional formats follow as its cells do (FIX 3468).
+        shift_conditional(
+            conditional,
+            home,
+            name,
+            edit,
+            &dropped,
+            own_key.as_str() == key,
+        );
         for (&(row, col), cell) in cells.iter_mut() {
             // An unqualified structured reference is to the table holding
             // the cell (FIX 3438).
@@ -371,10 +382,12 @@ pub(super) fn retarget(
             held.formula = formula;
         }
     }
+    retarget_conditional(body, &rewrite);
 }
 
 /// Write what differs between two typed reads of the document: cells,
-/// read-only ranges, defined names and the row and column log.
+/// read-only ranges, defined names, the row and column log and the
+/// conditional formats.
 pub(super) fn write_back(doc: &LoroDoc, before: &XlsxBody, after: &XlsxBody) -> Result<()> {
     let grids = doc.get_map(CELLS);
     for sheet in &after.sheets {
@@ -462,5 +475,5 @@ pub(super) fn write_back(doc: &LoroDoc, before: &XlsxBody, after: &XlsxBody) -> 
             .insert("axes", encode_axes(&after.axes))
             .map_err(loro)?;
     }
-    Ok(())
+    write_conditional(doc, before, after)
 }
