@@ -1,6 +1,7 @@
 //! The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8,
-//! PACK-HOOKS = A). One folder per hook: `HOOK.md`, an optional `intent.md`
-//! and `body.js`. Owner consent binds an installed pack's hooks: each becomes
+//! PACK-HOOKS = A). One folder per hook: `HOOK.md`, an optional `intent.md`,
+//! `body.js` and, for a verb hook, an optional `golden.json` its pack's test
+//! runs. Owner consent binds an installed pack's hooks: each becomes
 //! a CODE entity plus a binding claim, the row kind a connector subscription
 //! writes. The runner is L11's; nothing here executes a body.
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,12 +27,14 @@ use crate::{
 
 mod author;
 mod bindings;
+mod golden;
 mod install;
 mod proposal;
 
 pub use self::author::{FOREIGN_SKILL_PUBLISHER, HookAuthor};
 pub use self::bindings::PackHookBinding;
 pub(crate) use self::bindings::is_hook_binding;
+pub use self::golden::{HookGoldenExpect, HookGoldenInput};
 pub(super) use self::install::HookBinder;
 pub use self::proposal::{HookWidening, PackHookProposal, PackHookProposalStatus};
 pub(crate) use self::proposal::{erase_hook_proposal_in_txn, scrub_hook_proposal_actor_in_txn};
@@ -181,6 +184,9 @@ pub struct PackHook {
     pub intent: Option<String>,
     /// BLAKE3 of `body.js`: the code identity the binding names.
     pub body_hash: [u8; 32],
+    /// A verb hook's golden inputs, from its `golden.json`; empty when it
+    /// carries none.
+    pub golden: Vec<HookGoldenInput>,
 }
 
 impl PackHook {
@@ -242,7 +248,13 @@ impl PackHook {
         tokens
     }
 
-    fn parse(folder: &str, text: &str, body: &[u8], intent: Option<String>) -> Result<Self> {
+    fn parse(
+        folder: &str,
+        text: &str,
+        body: &[u8],
+        intent: Option<String>,
+        golden_json: Option<&[u8]>,
+    ) -> Result<Self> {
         let front = super::super::folder::source_frontmatter(text)?
             .ok_or_else(|| invalid("HOOK.md requires frontmatter"))?;
         let mut fields = BTreeMap::new();
@@ -354,23 +366,29 @@ impl PackHook {
                 "a hook returns only outcome kinds its phase allows",
             ));
         }
+        let selector = HookSelector {
+            verbs,
+            actors,
+            scope,
+            phase,
+            priority,
+            budget_ms,
+            blocking,
+            outcomes,
+            served,
+            render_class,
+        };
+        let golden = golden_json
+            .map(|bytes| golden::parse_golden(bytes, &selector))
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             name,
             version,
-            selector: HookSelector {
-                verbs,
-                actors,
-                scope,
-                phase,
-                priority,
-                budget_ms,
-                blocking,
-                outcomes,
-                served,
-                render_class,
-            },
+            selector,
             intent,
             body_hash: *blake3::hash(body).as_bytes(),
+            golden,
         })
     }
 }
@@ -441,9 +459,12 @@ pub(super) fn parse_source_hooks(
         let (folder, name) = relative
             .split_once('/')
             .ok_or_else(|| invalid("a hook must have a folder"))?;
-        if !matches!(name, HOOK_MANIFEST | HOOK_INTENT | HOOK_BODY) {
+        if !matches!(
+            name,
+            HOOK_MANIFEST | HOOK_INTENT | HOOK_BODY | golden::HOOK_GOLDEN
+        ) {
             return Err(invalid(
-                "a hook folder holds HOOK.md, intent.md and body.js only",
+                "a hook folder holds HOOK.md, intent.md, body.js and golden.json only",
             ));
         }
         if !manifest.hooks.contains(folder) {
@@ -478,7 +499,8 @@ pub(super) fn parse_source_hooks(
             return Err(invalid("intent.md exceeds the CODE prompt bound"));
         }
         let text = std::str::from_utf8(text).map_err(|_| invalid("HOOK.md is not UTF-8"))?;
-        hooks.push(PackHook::parse(name, text, body, intent)?);
+        let golden_json = folder.get(golden::HOOK_GOLDEN).copied();
+        hooks.push(PackHook::parse(name, text, body, intent, golden_json)?);
     }
     Ok(hooks)
 }
