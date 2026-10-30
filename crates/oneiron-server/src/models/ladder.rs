@@ -31,7 +31,8 @@ use futures_util::StreamExt;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
-    CallOutcome, KeyCustody, Payer, RunAdmission, RunCall, RunDenied, RunPermit,
+    CallOutcome, KeyCustody, Payer, RunAdmission, RunCall, RunDenied, RunPermit, offer_id,
+    offer_place,
 };
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
@@ -79,6 +80,20 @@ pub(super) struct LadderRung {
 }
 
 impl LadderRung {
+    /// The full `model@place` route id of this rung (FIX 11768 seam for
+    /// L05): its model and the place [`offer_place`] names for its
+    /// binding's locality and its route's origin, minted through
+    /// [`offer_id`] — the one producer, the same resolution the ladder's
+    /// doors judge.
+    #[must_use]
+    pub(super) fn offer_id(&self) -> String {
+        let place = offer_place(
+            self.offer.binding.locality,
+            self.offer.binding.route.origin(),
+        );
+        offer_id(&self.model, &place)
+    }
+
     /// The call as this rung sends it: its model at its route, its
     /// instruction first.
     fn bind(&self, mut request: LlmRequest) -> LlmRequest {
