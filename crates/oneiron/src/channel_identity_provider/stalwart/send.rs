@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{StalwartClient, StalwartMailbox, array, invalid, method_result, string};
+use crate::channel_identity_provider::EmailThreadHeaders;
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
 use crate::{EntityId, Result};
@@ -148,6 +149,7 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
             self.message,
             &message_id,
             &request.hygiene_headers,
+            None,
         )
     }
 }
@@ -157,13 +159,15 @@ impl StalwartClient {
     /// (OF-187), after the common dispatcher admitted it: the same draft and
     /// submission path as [`StalwartSendSink`], its Message-ID derived from
     /// `send_key`, the send's logical reference, so a retry finds its draft
-    /// and its submission rather than sending twice.
+    /// and its submission rather than sending twice. A send that answers a
+    /// message, `answered` naming that message's headers, threads on it.
     pub fn submit_served_text(
         &self,
         identity: crate::EntityId,
         message: &NativeMailMessage,
         send_key: &str,
         headers: &BTreeMap<String, String>,
+        answered: Option<&EmailThreadHeaders>,
     ) -> OutboundExecutionOutcome {
         if send_key.trim().is_empty() || message.validate().is_err() {
             return OutboundExecutionOutcome::failed("native_mail_fields_or_binding");
@@ -177,7 +181,7 @@ impl StalwartClient {
             blake3::hash(send_key.as_bytes()).to_hex(),
             self.config.domain
         );
-        self.submit(&mailbox, message, &message_id, headers)
+        self.submit(&mailbox, message, &message_id, headers, answered)
     }
 
     fn submit(
@@ -186,6 +190,7 @@ impl StalwartClient {
         message: &NativeMailMessage,
         message_id: &str,
         headers: &BTreeMap<String, String>,
+        answered: Option<&EmailThreadHeaders>,
     ) -> OutboundExecutionOutcome {
         // Draft creation is not delivery. Reuse its Message-ID after a crash;
         // an uncertain submission below is NEVER escalated to another route.
@@ -253,6 +258,12 @@ impl StalwartClient {
                     }
                     email[format!("header:{name}:asText")] = Value::String(value.clone());
                 }
+                // A reply threads on what it answers; ids that cannot
+                // thread leave it a plain message, never an unsent one.
+                if let Some((parent, references)) = answered.and_then(reply_thread) {
+                    email["inReplyTo"] = json!([parent]);
+                    email["references"] = json!(references);
+                }
                 let reply = self.call(
                     "Email/set",
                     json!({
@@ -318,6 +329,39 @@ impl StalwartClient {
                 .with_possible_delivery(),
         }
     }
+}
+
+/// The `In-Reply-To` and `References` ids of a reply to the message whose
+/// headers `answered` names (RFC 5322 3.6.4): the parent is its Message-ID,
+/// and the references are its own References, else its In-Reply-To, then the
+/// parent. Ids are bare, as JMAP sets them; `None` when one is not a
+/// msg-id.
+fn reply_thread(answered: &EmailThreadHeaders) -> Option<(String, Vec<String>)> {
+    let bare = |id: &str| -> Option<String> {
+        let id = id.trim();
+        let id = id
+            .strip_prefix('<')
+            .and_then(|id| id.strip_suffix('>'))
+            .unwrap_or(id);
+        (!id.is_empty() && !id.contains(|c: char| c.is_whitespace() || c == '<' || c == '>'))
+            .then(|| id.to_owned())
+    };
+    let parent = bare(answered.message_id.as_str())?;
+    let ancestors = if answered.references.is_empty() {
+        answered.in_reply_to.iter().collect::<Vec<_>>()
+    } else {
+        answered.references.iter().collect()
+    };
+    let mut references = Vec::with_capacity(ancestors.len() + 1);
+    for id in ancestors {
+        let id = bare(id.as_str())?;
+        if !references.contains(&id) {
+            references.push(id);
+        }
+    }
+    references.retain(|id| *id != parent);
+    references.push(parent.clone());
+    Some((parent, references))
 }
 
 fn submitted(id: &str) -> OutboundExecutionOutcome {
