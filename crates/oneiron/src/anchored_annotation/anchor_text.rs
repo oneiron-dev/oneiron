@@ -162,16 +162,20 @@ pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Opt
 
 /// The body paragraphs of a Word document: block id and visible text.
 pub(super) fn docx_blocks(bytes: &[u8], limits: &TextLimits) -> Option<Vec<(String, String)>> {
-    oneiron_docedit::preflight_with_limits(bytes, limits.docx).ok()?;
-    let document = oneiron_docedit::Document::parse(bytes).ok()?;
-    Some(
-        document
-            .read()
-            .blocks
-            .into_iter()
-            .map(|block| (block.id.to_string(), block.text))
-            .collect(),
-    )
+    // Both DOCX reads run in the host's memory (FIX 10651).
+    let resources = crate::office_body::document_resources();
+    resources.docx(|| {
+        oneiron_docedit::preflight_with_limits(bytes, limits.docx).ok()?;
+        let document = oneiron_docedit::Document::parse(bytes).ok()?;
+        Some(
+            document
+                .read()
+                .blocks
+                .into_iter()
+                .map(|block| (block.id.to_string(), block.text))
+                .collect(),
+        )
+    })
 }
 
 fn deck_view(bytes: &[u8], limits: &TextLimits) -> Option<oneiron_docedit::deck::DeckView> {
