@@ -5,22 +5,22 @@ use std::path::Path;
 use heed::EnvOpenOptions;
 
 use crate::config::VaultConfig;
-use crate::error::Result;
 #[cfg(unix)]
 use crate::error::Error;
+use crate::error::Result;
 use crate::store::VaultWriterLease;
-use crate::world_keys::{admit_new_vault, page_seal_open_error};
 #[cfg(test)]
 use crate::store::test_hooks;
+use crate::world_keys::{admit_new_vault, page_seal_open_error};
 
+#[cfg(unix)]
+use super::super::root_directory::{file_identity, named_directory_identity};
 use super::manifest_storage_gates::{
     OwnedEnv, RegisteredPath, TornCreationCleanup, vault_root_open_guard,
 };
 use super::open_create_door::preflight_named_root;
 use super::open_version_keys::{MAX_DBS, VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE};
 use super::vault_root_bind::preflight_rejected_aliased_root;
-#[cfg(unix)]
-use super::super::root_directory::{file_identity, named_directory_identity};
 
 pub(super) fn create_env(
     path: impl AsRef<Path>,
@@ -54,10 +54,7 @@ pub(super) fn create_env(
             Some(lease) => lease.environment_path(),
             None => {
                 use std::os::fd::AsRawFd;
-                std::path::PathBuf::from(format!(
-                    "/proc/self/fd/{}",
-                    bound_root_dir.as_raw_fd()
-                ))
+                std::path::PathBuf::from(format!("/proc/self/fd/{}", bound_root_dir.as_raw_fd()))
             }
         };
         #[cfg(not(target_os = "linux"))]

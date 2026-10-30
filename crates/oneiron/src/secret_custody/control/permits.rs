@@ -116,6 +116,22 @@ pub(crate) fn candidate_for(
         })
 }
 
+/// `machine`'s encryption key of exactly `suite` and `key`, when a live
+/// linked revision of it carries that key and it imports: what a holder
+/// seals a carrier key to for that machine's live ask (FIX 7402).
+pub(crate) fn live_encryption_key(
+    fold: &AuthorityFold,
+    machine: EntityId,
+    suite: u16,
+    key: &[u8],
+) -> Option<HybridPublicKey> {
+    live_revisions(fold, machine)
+        .into_iter()
+        .map(|revision| &revision.profile.encryption_key)
+        .filter(|live| live.suite == suite && live.key.as_slice() == key)
+        .find_map(|live| HybridPublicKey::from_bytes(&live.key).ok())
+}
+
 /// The key each of `permits` seals to, when every one still stands: its
 /// machine a live linked install whose live revision carries the very key
 /// permitted, and that key imports. `None` when any recipient changed.

@@ -4,13 +4,13 @@ use std::sync::MutexGuard;
 
 use heed::RwTxn;
 
-use crate::error::Result;
 #[cfg(test)]
 use crate::error::Error;
+use crate::error::Result;
 use crate::overlay_db::OverlayDb;
-use crate::store::{RawDatabases, seed_default_policy_manifest_in_txn};
 #[cfg(test)]
 use crate::store::test_hooks;
+use crate::store::{RawDatabases, seed_default_policy_manifest_in_txn};
 
 use super::create_dbs::CreatedDbs;
 use super::manifest_storage_gates::{

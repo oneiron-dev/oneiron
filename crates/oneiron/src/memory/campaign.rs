@@ -303,7 +303,7 @@ impl Memory<'_> {
         // bodies file after it. A filer failure is returned, never
         // swallowed: the program row persists, its sends fail closed, and
         // an update re-files.
-        let filer = crate::WriteActor::new(self.actor, self.actor_class);
+        let filer = self.write_actor();
         let filed_at = self.vault.store.clock.now_recorded_at();
         for step in &program.steps {
             if let Some(outbound) = step.outbound.as_ref() {
@@ -358,7 +358,7 @@ impl Memory<'_> {
             crate::campaign::surface::CAMPAIGN_PROGRAM_STEP_REFS,
         )?;
         let draft = request.draft()?;
-        let filer = crate::WriteActor::new(self.actor, self.actor_class);
+        let filer = self.write_actor();
         let filed_at = self.vault.store.clock.now_recorded_at();
         for step in &draft.steps {
             if let Some(outbound) = step.outbound.as_ref() {

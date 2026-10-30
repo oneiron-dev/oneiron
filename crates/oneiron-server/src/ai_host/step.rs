@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use oneiron::agent_def::AgentDefinition;
-use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_actor};
+use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_run_actor};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
@@ -335,7 +335,7 @@ impl StepRunner {
             ModelStep {
                 definition,
                 attempt: &step.attempt,
-                actor: agent_dispatch_actor(&step.input)?,
+                actor: agent_dispatch_run_actor(&step.input, step.attempt.id)?,
                 purpose: STEP_PURPOSE,
                 messages,
                 planner: None,

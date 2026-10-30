@@ -156,7 +156,7 @@ impl Memory<'_> {
         &self,
         input: &MessageReactionRequest,
     ) -> MemoryResult<MessageReactionReceipt> {
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         Ok(input.apply_as(self.vault(), actor)?.into())
     }
 }
