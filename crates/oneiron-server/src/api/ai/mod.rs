@@ -38,8 +38,8 @@ pub(crate) use vision::asked as ask_image_answered;
 // deletions as these routes do (DOOR-143); the OpenAPI document reads their
 // bodies.
 pub(crate) use voices::{
-    ConsentBody, PackBody, ProvisionBody, VoiceBankRefusal, evict_answer, provision_clone,
-    render_consent_answer,
+    CloneRequest, ConsentBody, PackBody, ProvisionBody, VoiceBankRefusal, clone_payer,
+    evict_answer, provision_clone, provision_clone_funded, render_consent_answer,
 };
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
