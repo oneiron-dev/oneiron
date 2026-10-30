@@ -62,6 +62,7 @@ pub use bundle_access::{
 pub use bundle_payload::RecoveryCheckpointTrust;
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
+pub(crate) use bundle_payload::sealed_bundle_awaiting_reader;
 pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};
 pub(crate) use bundle_turn::SEALED_BUNDLE_PUBLISH_LEASE_SECS;
 pub use bundle_turn::ask_sealed_bundle_turn;
