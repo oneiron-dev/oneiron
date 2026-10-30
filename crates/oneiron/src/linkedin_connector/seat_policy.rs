@@ -18,6 +18,10 @@ use super::{
 /// instant: they reset at the next UTC midnight (FIX 8791, FIX 8813).
 const LINKEDIN_SEAT_FALLBACK_CAP_DAY_SECS: u64 = 24 * 60 * 60;
 
+/// The custody record the LinkedIn pack's session connection keeps its
+/// cookie under, as a vault-scoped ref.
+const LINKEDIN_INSTALLED_SESSION_SECRET_REF: &str = "vault-secret:linkedin.session_cookie";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedInAccountRiskLimits {
     pub daily_dm_cap: u16,
@@ -219,6 +223,27 @@ impl LinkedInSeatSandboxPolicy {
             state: LinkedInSeatDispatchState::active(),
             ..Self::new(host)
         }
+    }
+
+    /// The seat facts of a LinkedIn seat served through the connector the
+    /// owner installed (FIX 10905), which keeps no sandbox state of its own:
+    /// the seat's session is the connector's, named `session_ref` when the
+    /// seat has one; its caps are the defaults the owner accepted at connect,
+    /// counted from this vault's own ledger at admission; and turning the
+    /// connector off is its kill switch, since a removed connector key routes
+    /// no call.
+    ///
+    /// # Errors
+    ///
+    /// `seat_ref` or `session_ref` is blank or too long.
+    pub fn installed_connector(seat_ref: &str, session_ref: Option<&str>) -> Result<Self> {
+        let session = session_ref.unwrap_or(LINKEDIN_CHANNEL);
+        Ok(Self::active(LinkedInSandboxHostConfig::new(
+            seat_ref,
+            session,
+            session,
+            LINKEDIN_INSTALLED_SESSION_SECRET_REF,
+        )?))
     }
 
     pub fn with_limits(mut self, limits: LinkedInAccountRiskLimits) -> Result<Self> {

@@ -1,5 +1,6 @@
 //! The served connector-event responder (OF-519): what a Dreamer pass runs
-//! when a subscribed Slack or LINE message wakes the agent it addressed.
+//! when a subscribed Slack, LINE or LinkedIn message wakes the agent it
+//! addressed.
 //!
 //! The pass only hands the reply off (FIX 2405): it queues one durable
 //! reply job for the agent and event and settles at once, so no model call
@@ -30,9 +31,10 @@ mod worker;
 pub(crate) use self::worker::run_connector_reply_job;
 
 /// The channels the served sink answers on.
-const SERVED_REPLY_CHANNELS: [&str; 2] = [
+const SERVED_REPLY_CHANNELS: [&str; 3] = [
     oneiron::channel_identity_provider::SLACK_CHANNEL,
     oneiron::channel_identity_provider::LINE_CHANNEL,
+    oneiron::linkedin_connector::LINKEDIN_CHANNEL,
 ];
 
 /// The pass-facing half of the served reply: the hand-off. The model
