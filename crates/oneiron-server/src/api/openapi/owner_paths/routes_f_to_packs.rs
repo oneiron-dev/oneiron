@@ -55,7 +55,7 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "put",
         path: "/feedback/delivery/binding",
-        summary: "Binds a publisher (`publisher_ref`) to this server's feedback destination, its channel and exact endpoint as configured now (`bound: true`), or unbinds it (`false`); binding needs a configured destination. Its content-free issue signatures go only there, and a lane that froze another destination holds as `changed_binding`, never redirected. Answers `{publisher_ref, endpoint}`.",
+        summary: "Binds a publisher (`publisher_ref`) to this server's feedback destination, its channel and exact endpoint as configured now (`bound: true`), or unbinds it (`false`); binding needs a configured destination. Its content-free issue signatures go only there. A lane that froze another destination and never entered dispatch takes the new binding in the same write and its hold clears; one offered once holds as `changed_binding` and is never redirected. Answers `{publisher_ref, endpoint}`.",
         row: None,
     },
     OwnerRoute {
@@ -91,7 +91,7 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/feedback/triage/binding",
-        summary: "The skill the Coach's feedback triage runs (OF-420): `skill` (32 hex, null until the owner binds one), the `revision` a change names as `seen` (0 while never set) and `set_at`. With no skill bound every triage run fails and its status holds `skill_unbound`.",
+        summary: "The skill the Coach's feedback triage runs (OF-420): `skill` (32 hex, null until the owner binds one), the `revision` a change names as `seen` (0 while never set) and `set_at`. With no skill bound every sweep and every queued job completes doing nothing, each revision stays unacknowledged, and its status holds `skill_unbound`.",
         row: None,
     },
     OwnerRoute {
