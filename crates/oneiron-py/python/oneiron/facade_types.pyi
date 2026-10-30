@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4392 declarations.
+Census: 1211 facade rows, 4393 declarations.
 Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -8903,6 +8903,7 @@ class OfferAnswerRecord(TypedDict):
     offer_digest: str
     intent: NotRequired[OfferIntent | None]
     at: int
+OfferCheckOutcome = Literal["held", "broken", "currency_mismatch", "promised_score_unknown", "promised_cost_unknown", "unverifiable_no_calls", "unverifiable_no_meter", "unverifiable_not_bound", "unverifiable_no_model_role", "unverifiable_mixed_model", "unverifiable_no_usage", "unverifiable_unpriced_model", "unverifiable_unknown_currency", "unverifiable_unpriced_cache", "unverifiable_mixed_currency", "unverifiable_sum_overflow", "unverifiable_unclassified"]
 class OfferCheck(TypedDict):
     id: EntityId
     offer: EntityId
@@ -8910,6 +8911,7 @@ class OfferCheck(TypedDict):
     observed_monthly_cost: NotRequired[float | None]
     observed_score: NotRequired[float | None]
     held: NotRequired[bool | None]
+    outcome: OfferCheckOutcome
     note: NotRequired[str | None]
     at: int
     source_rows: NotRequired[list[EntityId] | None]

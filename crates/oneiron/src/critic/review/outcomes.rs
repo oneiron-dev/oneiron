@@ -2,6 +2,7 @@
 use super::*;
 use crate::learning::{LearningEvidence, Observation};
 use crate::ports::EntityStore;
+use crate::side_table::{self, Raw, SideTable};
 
 /// Accept/dismiss a finding with an anchored outcome. Critic agreement never trains a cell.
 pub fn record_review_outcome(
@@ -146,4 +147,180 @@ pub fn recurring_findings(vault: &Vault, session: &EntityId) -> Result<Vec<(Stri
         }
     }
     Ok(counts.into_iter().filter(|(_, count)| *count > 1).collect())
+}
+
+/// The trust stamp of a rewritten outcome claim, the same table its producer writes.
+const OUTCOME_TRUST: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::CRITIC_REVIEW_CLAIM_TRUST);
+
+/// Applies the erase's artifact rename map to every review outcome's evidence key and
+/// to the learning rows citing those artifacts (FIX 11368): an outcome key cites its
+/// artifact, and a calibration receipt cites it again in the evidence ledger and heads.
+pub(crate) fn rewrite_outcome_artifact_ids_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    rewrite_outcome_keys_in_txn(vault, wtxn, renamed)?;
+    rewrite_learning_receipts_in_txn(vault, wtxn, renamed)?;
+    rewrite_learning_head_citations_in_txn(vault, wtxn, renamed)
+}
+
+/// Re-keys the artifact suffix of every `review.outcome` evidence key the map renames.
+fn rewrite_outcome_keys_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let mut ids = Vec::new();
+    vault.for_each_claim_with_predicate_in_txn(wtxn, "review.outcome", |id, _| {
+        ids.push(id);
+        Ok(())
+    })?;
+    for id in ids {
+        let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+            continue;
+        };
+        let Some(rmpv::Value::Map(entries)) = body.evidence.as_mut() else {
+            continue;
+        };
+        let mut changed = false;
+        for (key, value) in entries.iter_mut() {
+            if key.as_str() != Some("candidate_evidence") {
+                continue;
+            }
+            let Some(text) = value.as_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some((verdict, artifact)) = text.rsplit_once(':') else {
+                continue;
+            };
+            if let Some(new) = renamed.get(artifact) {
+                *value = rmpv::Value::from(format!("{verdict}:{new}"));
+                changed = true;
+            }
+        }
+        if !changed {
+            continue;
+        }
+        rewrite_outcome_claim_in_txn(vault, wtxn, &id, &body)?;
+    }
+    Ok(())
+}
+
+/// Writes `body` over outcome claim `id` in place, its header times kept, its trust
+/// stamp re-hashed.
+fn rewrite_outcome_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    let raw = vault
+        .get_raw_in(wtxn, id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("review claim header"))?;
+    vault.put_reserved_claim_in_txn(
+        wtxn,
+        id,
+        body,
+        crate::temporal::TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        header.learned_at,
+    )?;
+    let digest = blake3::hash(&crate::claim::encode_claim_body(body)?);
+    OUTCOME_TRUST.put(&vault.store, wtxn, id, digest.as_bytes())?;
+    Ok(())
+}
+
+/// Moves every learning evidence row whose receipt cites a renamed artifact to its
+/// re-keyed receipt (FIX 11368): the receipt is the row's key suffix.
+fn rewrite_learning_receipts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let table = crate::learning::evidence::EVIDENCE;
+    for ((digest, receipt), row) in
+        crate::skill_attribution::erase_scan_in_txn(vault, wtxn, table)?
+    {
+        let Some((prefix, artifact)) = receipt.rsplit_once(':') else {
+            continue;
+        };
+        let Some(new) = renamed.get(artifact) else {
+            continue;
+        };
+        let moved = (digest, format!("{prefix}:{new}"));
+        table.delete(&vault.store, wtxn, &(digest, receipt))?;
+        table.put(&vault.store, wtxn, &moved, &row)?;
+    }
+    Ok(())
+}
+
+/// Re-keys the artifact suffix of every learning head citation the map renames (FIX
+/// 11368): heads cite each counted receipt, calibration receipts among them.
+fn rewrite_learning_head_citations_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    for predicate in crate::learning::LEARNING_PREDICATES {
+        let mut after = None;
+        loop {
+            let page = crate::claim::claim_ids_for_predicate_page_in_txn(
+                &vault.store,
+                wtxn,
+                predicate,
+                after,
+                256,
+            )?;
+            let Some(last) = page.last().copied() else {
+                break;
+            };
+            after = Some(last);
+            for id in page {
+                let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+                    continue;
+                };
+                let Some(rmpv::Value::Array(cited)) = body.evidence.as_mut() else {
+                    continue;
+                };
+                let mut changed = false;
+                for receipt in cited.iter_mut() {
+                    let Some(text) = receipt.as_str().map(str::to_owned) else {
+                        continue;
+                    };
+                    let Some((prefix, artifact)) = text.rsplit_once(':') else {
+                        continue;
+                    };
+                    if let Some(new) = renamed.get(artifact) {
+                        *receipt = rmpv::Value::from(format!("{prefix}:{new}"));
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    continue;
+                }
+                let raw = vault
+                    .get_raw_in(wtxn, &id)?
+                    .ok_or(Error::EntityNotFound)?;
+                let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("learning head header"))?;
+                vault.put_reserved_claim_in_txn(
+                    wtxn,
+                    &id,
+                    &body,
+                    crate::temporal::TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
+                )?;
+            }
+        }
+    }
+    Ok(())
 }

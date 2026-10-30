@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4447 declarations.
+// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4448 declarations.
 // Replies: 1075 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -1762,7 +1762,8 @@ declare namespace Sdk {
   type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone";
   type OfferIntent = { switch: { seat: EvalSeat; from: OfferModelPin; to: OfferModelPin } } | { train: { seat: EvalSeat; base: OfferModelPin; recipe_ref: string; destination: ComputeDestination } };
   type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: EntityId; authentication: string; offer_digest: string; intent?: OfferIntent | null; at: number };
-  type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; note?: string | null; at: number; source_rows?: EntityId[] | null };
+  type OfferCheckOutcome = "held" | "broken" | "currency_mismatch" | "promised_score_unknown" | "promised_cost_unknown" | "unverifiable_no_calls" | "unverifiable_no_meter" | "unverifiable_not_bound" | "unverifiable_no_model_role" | "unverifiable_mixed_model" | "unverifiable_no_usage" | "unverifiable_unpriced_model" | "unverifiable_unknown_currency" | "unverifiable_unpriced_cache" | "unverifiable_mixed_currency" | "unverifiable_sum_overflow" | "unverifiable_unclassified";
+  type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; outcome: OfferCheckOutcome; note?: string | null; at: number; source_rows?: EntityId[] | null };
   type OfferView = { offer: TrainingOffer; answer?: OfferAnswerRecord | null; checks: OfferCheck[] };
   type OfferRef = { offer: EntityId };
   type OfferPassRequest = Record<string, never>;
