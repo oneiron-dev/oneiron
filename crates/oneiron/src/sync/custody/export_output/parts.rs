@@ -41,8 +41,7 @@ use crate::authority::{AuthorityFold, SealedWorkOutput};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::secret_custody::holder_export::{
-    KeptExportOutput, MAX_EXPORT_OUTPUT_WITNESS_BYTES, kept_export_output_sealed_at_in_txn,
-    witnessed_output,
+    KeptExportOutput, kept_export_output_sealed_at_in_txn, witnessed_output,
 };
 use crate::sync::carrier_parts::{PART_BYTES, Parts, join_parts, part_key, split_parts};
 use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
@@ -79,8 +78,10 @@ struct OutputPart {
 impl OutputPart {
     /// Decodes a part strictly; `None` without its label, for a short head,
     /// a zero request, a count outside two to [`MAX_EXPORT_OUTPUT_PARTS`],
-    /// an index not below it, a witness past its bound, or a run that is
-    /// empty, past one carrier part, or short of one before the last part.
+    /// an index not below it, or a run that is empty, past one carrier part,
+    /// or short of one before the last part. A witness past its bound
+    /// decodes and is judged unnamed ([`head_named`]), never a refused
+    /// update (L03 06:5x).
     fn decode(bytes: &[u8]) -> Option<Self> {
         let rest = bytes.strip_prefix(PART_LABEL)?;
         let (sealed_at, rest) = rest.split_first_chunk::<8>()?;
@@ -88,9 +89,7 @@ impl OutputPart {
         let (index, rest) = rest.split_first_chunk::<4>()?;
         let (count, rest) = rest.split_first_chunk::<4>()?;
         let (witness_len, rest) = rest.split_first_chunk::<4>()?;
-        let witness_len = usize::try_from(u32::from_be_bytes(*witness_len))
-            .ok()
-            .filter(|len| *len <= MAX_EXPORT_OUTPUT_WITNESS_BYTES)?;
+        let witness_len = usize::try_from(u32::from_be_bytes(*witness_len)).ok()?;
         let (witness, run) = rest.split_at_checked(witness_len)?;
         let index = u32::from_be_bytes(*index);
         let count = u32::from_be_bytes(*count);
