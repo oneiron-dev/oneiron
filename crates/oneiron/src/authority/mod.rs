@@ -195,9 +195,11 @@ pub use oneiron_authority::authority::{
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
-// The custody work body's own types (WILL L04 row 04).
+// The custody work body's own types (WILL L04 row 04), and its permits in
+// pieces (FIX 11866).
 pub use oneiron_authority::authority::{
-    CustodyChange, CustodyRecipientPermit, CustodyRequestAuthority,
+    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyRecipientPermit,
+    CustodyRequestAuthority,
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
