@@ -151,6 +151,12 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         })
     }
 
+    /// The pipeline holds a paced send and names its `retry_at`, which the
+    /// connector task executor re-arms at (FIX 8686).
+    fn waits_for_paced_window(&self) -> bool {
+        true
+    }
+
     fn admit_in(
         &self,
         txn: &heed::RoTxn<'_>,

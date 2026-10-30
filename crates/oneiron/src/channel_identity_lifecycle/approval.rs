@@ -362,6 +362,7 @@ impl KeptLifecycleRequest {
             identity_retiring: done.identity_retiring,
             approval_digest: None,
             request_ref: Some(request_ref),
+            paced_until: None,
         };
         Some(LifecycleApplied::Replayed(result, done.view))
     }

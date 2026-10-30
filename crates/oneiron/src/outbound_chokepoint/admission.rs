@@ -435,14 +435,15 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         _ => true,
     };
-    // FIX 8788, FIX 8686: a Linear mutation or a scoped connector call whose
+    // FIX 8788, FIX 8686: a Linear mutation, a scoped connector call, or a
+    // send whose caller holds a paced result (the dispatch pipeline's), whose
     // only full rows are count-bound windows that refuse waits for them:
     // dropping the writer leaves nothing recorded, bound or charged.
     let scoped_call = matches!(
         prepared.authorization,
         PreparedAuthorization::ScopedMcp { .. }
     );
-    if co_governance.is_some() || scoped_call {
+    if co_governance.is_some() || scoped_call || transport.waits_for_paced_window() {
         let co = co_governance.as_mut().filter(|_| co_key_distinct);
         if let Some(next_eligible_at) = rate_paced(
             vault,
@@ -521,9 +522,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     .ok_or(Error::InvariantViolation(
         "preauthorized spend changed inside admission transaction",
     ))?;
-    let spend_basis = spend.map(|(debits, basis)| {
+    let spend_basis = spend.map(|(debits, basis, rows)| {
         reserved.extend(debits);
-        basis
+        (basis, rows)
     });
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
         let (_, co_charge, exhausted) =
