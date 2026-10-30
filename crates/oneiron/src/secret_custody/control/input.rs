@@ -39,8 +39,13 @@
 //! A witness past one row's bound travels in signed numbered parts of its
 //! own, and each input row carries a signed reference to them (FIX 8088,
 //! `witness`).
+//!
+//! While the carrier wire is on, an input is sealed under its own erasable
+//! carrier key first, and the recorder retires that key once its request is
+//! answered (FIX 7402, `carrier_seal`).
 
 mod attached;
+mod carrier_seal;
 mod envelopes;
 mod surface_seal;
 mod witness;
@@ -68,6 +73,10 @@ use crate::world_keys::MachineSecret;
 pub(crate) use self::attached::{
     Attached, AttachedManifest, attach_manifest, attach_no_manifest, attach_published_manifests,
     attach_unread, split_attached,
+};
+pub(crate) use self::carrier_seal::{
+    LeafSource, input_carrier_in_txn, leaf_input_retries_in_txn, leaf_sealed,
+    retire_input_carriers_in_txn, seal_leaf_input_in_txn,
 };
 pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
 pub(crate) use self::witness::{WitnessJoin, keep_witnessed_input_in_txn, witness_joined_in_txn};
@@ -643,7 +652,7 @@ pub(crate) fn drop_inputs_for_in_txn(
     id: &EntityId,
 ) -> Result<usize> {
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-    let doomed: Vec<[u8; 32]> = INPUTS
+    let doomed: Vec<([u8; 32], Vec<u8>)> = INPUTS
         .scan(&vault.store, wtxn)?
         .into_iter()
         .filter(|(_, bytes)| {
@@ -652,9 +661,14 @@ pub(crate) fn drop_inputs_for_in_txn(
                     .is_some_and(|request| request.act.target == *id)
             })
         })
-        .map(|(key, _)| key)
         .collect();
-    for key in &doomed {
+    // Their carrier keys go with them (FIX 7402).
+    let carriers: Vec<_> = doomed
+        .iter()
+        .filter_map(|(_, bytes)| carrier_seal::row_carrier(bytes))
+        .collect();
+    retire_input_carriers_in_txn(vault, wtxn, &carriers);
+    for (key, _) in &doomed {
         INPUTS.delete(&vault.store, wtxn, key)?;
     }
     // Every witness part kept for such a request goes too (FIX 8088); a
@@ -683,7 +697,7 @@ impl Vault {
     /// relay of work still awaiting its holder. The owner work drain runs it
     /// beside the revoke settle. Returns how many rows it forgot.
     pub(crate) fn settle_custody_inputs(&self) -> Result<usize> {
-        let (done, witnesses) = {
+        let (done, carriers, witnesses) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let settled = |request: &AuthorityEntryHash| {
@@ -692,13 +706,18 @@ impl Vault {
                         .owner_work_request(request)
                         .is_none_or(|request| fold.custody_revoked(&request.act.target))
             };
-            let done: Vec<[u8; 32]> = INPUTS
+            let done: Vec<([u8; 32], Vec<u8>)> = INPUTS
                 .scan(&self.store, &txn)?
                 .into_iter()
                 .filter(|(_, bytes)| {
                     RelayedInput::decode(bytes).is_none_or(|input| settled(&input.request))
                 })
-                .map(|(key, _)| key)
+                .collect();
+            // An answered input's carrier key retires here, where its
+            // recorder minted it (FIX 7402).
+            let carriers: Vec<_> = done
+                .iter()
+                .filter_map(|(_, bytes)| carrier_seal::row_carrier(bytes))
                 .collect();
             // So does every witness part kept for one (FIX 8088); a fault
             // finding them is warned, and the next settle retries.
@@ -707,13 +726,14 @@ impl Vault {
                     tracing::warn!(kind = ?error.kind(), "settled witness parts stay owed");
                     Vec::new()
                 });
-            (done, witnesses)
+            (done, carriers, witnesses)
         };
         if done.is_empty() && witnesses.is_empty() {
             return Ok(0);
         }
-        self.with_write_txn(|txn| {
-            for key in &done {
+        let forgot = self.with_write_txn(|txn| {
+            retire_input_carriers_in_txn(self, txn, &carriers);
+            for (key, _) in &done {
                 INPUTS.delete(&self.store, txn, key)?;
             }
             if let Err(error) = witness::delete_witnesses_in_txn(self, txn, &witnesses) {
@@ -721,7 +741,11 @@ impl Vault {
                 return Ok(done.len());
             }
             Ok(done.len() + witnesses.len())
-        })
+        })?;
+        if !carriers.is_empty() {
+            self.finish_credential_retirements_after_commit();
+        }
+        Ok(forgot)
     }
 }
 

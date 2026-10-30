@@ -19,10 +19,13 @@
 //! that material stays on the device that holds it.
 
 mod anchor_push;
+mod carrier_leaf;
 mod kit_request;
 mod payload;
 mod pieces;
 mod rebind;
+
+pub(super) use self::carrier_leaf::transitions_awaiting_leaf_in_txn;
 
 #[cfg(feature = "sync")]
 pub(crate) use self::rebind::moves_custody_floor;
@@ -30,10 +33,12 @@ pub(crate) use self::rebind::moves_custody_floor;
 use ed25519_dalek::SigningKey;
 use oneiron_crypto::HybridPublicKey;
 
+use self::carrier_leaf::TransitionLeaf;
 use self::payload::{ValueBinding, seal_value, status_byte, unsigned};
 pub(crate) use self::pieces::{CustodyPieces, custody_row_key, parse_custody_row_key};
 #[cfg(feature = "sync")]
 pub(crate) use self::pieces::{completed_custody_groups_in_txn, keep_custody_piece_in_txn};
+use super::carrier_custody::CarrierRef;
 use super::codec::encode_secret_custody_body;
 use super::doors::bind_synced_name_in_txn;
 use super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
@@ -120,6 +125,9 @@ pub(crate) struct CustodyTransition {
     pub(crate) pieces: u32,
     /// Where this piece's permits start in the complete set.
     pub(crate) first: u32,
+    /// The carrier key the value is sealed under before each permit's seal
+    /// (transition v3, FIX 7402); `None` on the wire as on main.
+    pub(crate) carrier: Option<CarrierRef>,
     /// The record in the body codec, its value taken out.
     body: Vec<u8>,
     /// The value sealed to each permitted recipient, with its permit,
@@ -164,7 +172,9 @@ pub(crate) struct Enactment<'a> {
 /// `signing`, its value sealed to each permit of `enactment`, at `signed_at`,
 /// in as many pieces as the carrier's frame floors need (CALLS `Phase2
 /// custody pieces request bound`). A live record is sealed to every permit,
-/// however many, a revoked one to none.
+/// however many, a revoked one to none. With `leaf`, the carrier key minted
+/// for it, the value is sealed under that key once first, and every piece
+/// names it (transition v3, FIX 7402).
 ///
 /// # Errors
 /// The vault has no authority genesis; the record may not leave its device;
@@ -178,6 +188,7 @@ pub(crate) fn sign_custody_transition(
     record: &SecretCustodyRecord,
     enactment: Enactment<'_>,
     signed_at: u64,
+    leaf: Option<&TransitionLeaf>,
 ) -> Result<CustodyPieces> {
     let Some(vault_id) = fold.vault_id else {
         return Err(refused("this vault has no authority genesis to sign for"));
@@ -203,9 +214,13 @@ pub(crate) fn sign_custody_transition(
         status: record.status,
         request: enactment.request,
     };
+    let under = leaf
+        .map(|minted| minted.carrier.seal(&minted.leaf, None, &record.value_bytes))
+        .transpose()?;
+    let value = under.as_deref().unwrap_or(&record.value_bytes);
     let mut sealed = Vec::with_capacity(enactment.permits.len());
     for (permit, public) in enactment.permits {
-        let envelope = seal_value(&vault_id, &binding, permit, public, &record.value_bytes)?;
+        let envelope = seal_value(&vault_id, &binding, permit, public, value)?;
         sealed.push((*permit, envelope));
     }
     sealed.sort_unstable_by_key(|(permit, _)| permit.machine);
@@ -221,6 +236,7 @@ pub(crate) fn sign_custody_transition(
         piece: 0,
         pieces: 1,
         first: 0,
+        carrier: leaf.map(|minted| minted.carrier),
         body,
         sealed: Vec::new(),
         signer: signing.verifying_key().to_bytes(),
@@ -252,8 +268,10 @@ fn signed_after_held_in_txn(
 /// transaction the transition of record `id` as `record` now stands, for
 /// `enactment`'s request: every piece, each verified, or none. A transition
 /// is never optional here: no install key, or any reason
-/// [`sign_custody_transition`] refuses, refuses the transaction. Returns the
-/// pieces written.
+/// [`sign_custody_transition`] refuses, refuses the transaction. While the
+/// carrier wire is on, a live record's value is sealed under a carrier key
+/// minted here first (FIX 7402); the key of the transition it replaces
+/// retires. Returns the pieces written.
 pub(crate) fn write_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -266,7 +284,17 @@ pub(crate) fn write_custody_transition_in_txn(
         .ok_or_else(|| refused("this install has no install key to sign the custody transition"))?;
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
     let signed_at = signed_after_held_in_txn(vault, wtxn, id, record, at)?;
-    let pieces = sign_custody_transition(&fold, &signing, id, record, enactment, signed_at)?;
+    let leaf = carrier_leaf::mint_transition_leaf_in_txn(vault, wtxn, id, record)?;
+    let pieces = sign_custody_transition(
+        &fold,
+        &signing,
+        id,
+        record,
+        enactment,
+        signed_at,
+        leaf.as_ref(),
+    )?;
+    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, id)?;
     TRANSITIONS.put(&vault.store, wtxn, &HexId(id), &pieces.encode())?;
     Ok(pieces)
 }
@@ -275,7 +303,9 @@ pub(crate) fn write_custody_transition_in_txn(
 /// it supersedes the one held, so this vault relays it, and drops the
 /// carrier it supersedes from the window that carrier rides; a piece of the
 /// transition held joins its siblings, the rest still owed. An erased
-/// credential's is never kept (KS-6 part 2). Returns whether it kept it.
+/// credential's is never kept (KS-6 part 2). The carrier key of a
+/// transition it replaces retires here, when this install holds it (FIX
+/// 7402). Returns whether it kept it.
 pub(crate) fn remember_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -288,6 +318,9 @@ pub(crate) fn remember_custody_transition_in_txn(
     let held = TRANSITIONS
         .get(&vault.store, wtxn, &key)?
         .and_then(|held| CustodyPieces::decode(&held));
+    let replaces = held
+        .as_ref()
+        .is_some_and(|held| !held.lead().same_transition(transition));
     let kept = match held {
         Some(held) if held.lead().same_transition(transition) => {
             match held.with_piece(transition) {
@@ -298,6 +331,9 @@ pub(crate) fn remember_custody_transition_in_txn(
         Some(held) if !transition.supersedes(held.lead()) => return Ok(false),
         _ => CustodyPieces::single(transition.clone()),
     };
+    if replaces {
+        carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, transition.id)?;
+    }
     TRANSITIONS.put(&vault.store, wtxn, &key, &kept.encode())?;
     Ok(true)
 }
@@ -332,7 +368,8 @@ pub(crate) fn holds_sealed_carrier_in_txn(
 
 /// Drops the carrier this vault keeps of record `id` while it still seals
 /// the value: a revoke leaves at most the revoked carrier, byte-free (CALLS
-/// CUSTODY_REVOKE_ERASE). Returns whether it dropped one.
+/// CUSTODY_REVOKE_ERASE), and its carrier key retires (FIX 7402). Returns
+/// whether it dropped one.
 pub(crate) fn drop_sealed_carrier_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -341,6 +378,7 @@ pub(crate) fn drop_sealed_carrier_in_txn(
     if !holds_sealed_carrier_in_txn(vault, wtxn, id)? {
         return Ok(false);
     }
+    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, *id)?;
     TRANSITIONS.delete(&vault.store, wtxn, &HexId(*id))
 }
 

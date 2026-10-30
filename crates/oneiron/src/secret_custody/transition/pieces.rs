@@ -22,6 +22,7 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 
+use super::super::carrier_custody::CARRIER_REF_BYTES;
 use super::super::types::SecretCustodyStatus;
 use super::payload::{MAX_CARRIER_BYTES, MAX_PIECE_VALUES};
 use super::{CustodyTransition, refused};
@@ -48,11 +49,13 @@ type Identity = (
     [u8; 32],
     u32,
     [u8; 32],
+    Option<[u8; CARRIER_REF_BYTES]>,
 );
 
 impl CustodyTransition {
     /// This transition's identity, shared by every piece of it: its order,
-    /// signing second, request, set, input, signer, piece count and body.
+    /// signing second, request, set, input, signer, piece count, body and
+    /// carrier key (FIX 7402).
     pub(super) fn identity(&self) -> Identity {
         (
             self.order(),
@@ -63,6 +66,7 @@ impl CustodyTransition {
             self.signer,
             self.pieces,
             *blake3::hash(&self.body).as_bytes(),
+            self.carrier.map(|carrier| carrier.encode()),
         )
     }
 
