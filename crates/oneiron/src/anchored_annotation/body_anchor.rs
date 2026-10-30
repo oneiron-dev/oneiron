@@ -46,8 +46,20 @@ type Units = [(String, String)];
 /// A body's units by frontier, read once a pass; `None` where they did not read.
 type UnitsAt = HashMap<Vec<u8>, Option<OfficeBodyUnits>>;
 
-/// A Word version's blocks by version, read once a pass.
-type FiledAt = HashMap<u64, Option<Vec<(String, String)>>>;
+/// A Word version's file, read once a pass.
+enum Filed {
+    /// The version's blocks.
+    Blocks(Vec<(String, String)>),
+    /// No blob is filed at the version; it may still arrive by sync.
+    Missing,
+    /// A blob is filed but does not parse as Word.
+    NotWord,
+    /// The blob or limits did not read; already warned and counted.
+    Unread,
+}
+
+/// A Word version's file by version, read once a pass.
+type FiledAt = HashMap<u64, Filed>;
 
 /// One thread's next head, planned in a read and written in a write.
 struct Planned {
@@ -75,6 +87,16 @@ enum Stamp {
     Missed,
     /// A body or version did not read, or the body never held the version.
     Retry,
+}
+
+/// What following a thread's body anchor to the head found.
+enum Follow {
+    /// The thread's next head.
+    Planned(Planned),
+    /// Nothing changes, or a body did not read (already warned).
+    Idle,
+    /// Both bodies read but the edits between them do not read in order.
+    OutOfOrder,
 }
 
 impl Vault {
@@ -252,6 +274,17 @@ impl Vault {
             if !stamped && body.frontier == head && landing.is_none() {
                 continue;
             }
+            // A follow that failed on these same inputs fails again: the
+            // pass reads no body or version for it.
+            let follow_key = if stamped {
+                None
+            } else {
+                let key = FailedStampKey::new(vault, artifact, &thread, &head, latest);
+                if key.failed_before() {
+                    continue;
+                }
+                Some(key)
+            };
             self.load_units(txn, artifact, &body.frontier, &mut units, &mut unread);
             self.load_units(txn, artifact, &head, &mut units, &mut unread);
             if let Some((version, frontier)) = landing {
@@ -261,8 +294,15 @@ impl Vault {
                     self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
                 }
             }
-            let plan = plan_thread(thread, body, stamped, &head, landing, &units, &filed);
-            plans.extend(plan);
+            match plan_thread(thread, body, stamped, &head, landing, &units, &filed) {
+                Follow::Planned(plan) => plans.push(plan),
+                Follow::Idle => {}
+                Follow::OutOfOrder => {
+                    if let Some(key) = follow_key {
+                        key.remember();
+                    }
+                }
+            }
         }
         Ok((plans, unread))
     }
@@ -297,11 +337,16 @@ impl Vault {
             (None, _) => return Stamp::Retry,
             (Some(OfficeBodyUnits::Docx(blocks)), Locator::Docx { para_path, .. }) => {
                 self.load_filed(txn, artifact, anchor.version, filed, unread);
-                let Some(Some(filed)) = filed.get(&anchor.version) else {
-                    return Stamp::Retry;
-                };
-                text_of(blocks, para_path)
-                    .is_some_and(|text| text_of(filed, para_path) == Some(text))
+                match filed.get(&anchor.version) {
+                    Some(Filed::Blocks(filed)) => text_of(blocks, para_path)
+                        .is_some_and(|text| text_of(filed, para_path) == Some(text)),
+                    // A blob that is there but is not a Word file reads the
+                    // same on every pass.
+                    Some(Filed::NotWord) => return Stamp::Missed,
+                    // A missing blob may still arrive by sync; a read error
+                    // was already warned and counted.
+                    Some(Filed::Missing) | Some(Filed::Unread) | None => return Stamp::Retry,
+                }
             }
             (Some(OfficeBodyUnits::Xlsx { sheets, .. }), Locator::Xlsx { sheet, .. }) => {
                 sheets.iter().any(|(_, name)| name == sheet)
@@ -358,15 +403,18 @@ impl Vault {
         if filed.contains_key(&version) {
             return;
         }
-        let read = (|| -> Result<Option<Vec<(String, String)>>> {
+        let read = (|| -> Result<Filed> {
             let Some(bytes) = self.read_blob_artifact_version_in_txn(txn, artifact, version)? else {
-                return Ok(None);
+                return Ok(Filed::Missing);
             };
-            docx_blocks(&bytes, &self.text_limits_in_txn(txn)?)
+            match docx_blocks(&bytes, &self.text_limits_in_txn(txn)?)? {
+                Some(blocks) => Ok(Filed::Blocks(blocks)),
+                None => Ok(Filed::NotWord),
+            }
         })()
         .unwrap_or_else(|error| {
             warn_unread(artifact, &error, unread);
-            None
+            Filed::Unread
         });
         filed.insert(version, read);
     }
@@ -383,8 +431,9 @@ fn warn_unread(artifact: &EntityId, error: &crate::error::Error, unread: &mut u6
 
 /// One thread's next head: its body anchor at `body_head`, landed on
 /// the newest export when it names an older version, or detached when the
-/// body deleted its spot. `None` when nothing changes, or when the body's
-/// edits since the anchor do not read in order: the thread keeps its head.
+/// body deleted its spot. `Idle` when nothing changes or a body did not
+/// read, `OutOfOrder` when both bodies read but the edits between them do
+/// not: the thread keeps its head either way.
 fn plan_thread(
     thread: AnnotationThread,
     body: BodyAnchor,
@@ -393,16 +442,21 @@ fn plan_thread(
     landing: Option<&(u64, Vec<u8>)>,
     units: &UnitsAt,
     filed: &FiledAt,
-) -> Option<Planned> {
-    let Some(outcome) = units_at(units, &body.frontier)
-        .zip(units_at(units, body_head))
-        .and_then(|(from, to)| move_body_locator(from, to, &body.locator))
+) -> Follow {
+    let (Some(from), Some(to)) = (units_at(units, &body.frontier), units_at(units, body_head))
     else {
         tracing::warn!(
             thread = %thread.thread_id.to_hex(),
             "the body's edits since the comment's anchor do not read in order; it keeps its head",
         );
-        return None;
+        return Follow::Idle;
+    };
+    let Some(outcome) = move_body_locator(from, to, &body.locator) else {
+        tracing::warn!(
+            thread = %thread.thread_id.to_hex(),
+            "the body's edits since the comment's anchor do not read in order; it keeps its head",
+        );
+        return Follow::OutOfOrder;
     };
     let pinned = thread.anchor.version;
     let (head, effect) = match outcome {
@@ -432,7 +486,10 @@ fn plan_thread(
                 else {
                     return None;
                 };
-                let filed = filed.get(version).and_then(Option::as_deref);
+                let filed = match filed.get(version) {
+                    Some(Filed::Blocks(blocks)) => Some(blocks.as_slice()),
+                    _ => None,
+                };
                 let located = match target {
                     OfficeBodyUnits::Pptx(deck) => {
                         let head = units_at(units, body_head);
@@ -447,7 +504,7 @@ fn plan_thread(
                 locator: at_head,
             };
             if !stamped && landed.is_none() && moved == body {
-                return None;
+                return Follow::Idle;
             }
             let (version, locator, effect) = match landed {
                 Some((version, locator)) => (version, locator, Effect::Landed(version)),
@@ -467,7 +524,7 @@ fn plan_thread(
             )
         }
     };
-    Some(Planned {
+    Follow::Planned(Planned {
         thread,
         head,
         effect,
