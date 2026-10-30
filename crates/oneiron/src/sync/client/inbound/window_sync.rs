@@ -207,12 +207,9 @@ impl SyncClient {
                 Ok(responses)
             }
             window_sub_tags::UPDATE => {
-                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
-                    return Err(TransportError::FrameTooLarge {
-                        size: payload.len(),
-                        max: MAX_DECODED_PAYLOAD_BYTES,
-                    });
-                }
+                // The payload is its envelope's, joined from frames each within
+                // the floor and checked whole against the header's digest: a
+                // catch-up past one frame comes so (FIX 8247).
                 if self.config.federation_peer.is_some() {
                     self.import_federated_window_update(
                         window_key,
@@ -235,12 +232,9 @@ impl SyncClient {
                 }
             }
             window_sub_tags::REPLACEMENT => {
-                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
-                    return Err(TransportError::FrameTooLarge {
-                        size: payload.len(),
-                        max: MAX_DECODED_PAYLOAD_BYTES,
-                    });
-                }
+                // The snapshot is its envelope's payload, joined from frames each
+                // within the floor and checked whole against the header's digest
+                // (FIX 8247); the replacement's admission bounds it.
                 let evidence = self.staged_entity_evidence()?;
                 // Judged again once no demotion holds the window closed.
                 let (window, conflicts) = self

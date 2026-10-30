@@ -17,7 +17,9 @@ use crate::sync::selector::{
     revalidate_admitted_federated_claims, staged_births,
 };
 use crate::sync::transport;
-use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
+use crate::sync::transport::{
+    MAX_DECODED_PAYLOAD_BYTES, MAX_WINDOW_PAD_PAYLOAD_BYTES, TransportError, window_sub_tags,
+};
 use crate::sync::types::WindowKey;
 
 /// Trust is selected by the authenticated import context, never by claim bytes.
@@ -55,10 +57,12 @@ impl SyncClient {
         update: &[u8],
         from: PeerMachine,
     ) -> std::result::Result<(), TransportError> {
-        if update.len() > MAX_DECODED_PAYLOAD_BYTES {
+        // An update joined from its envelope's parts may pass one frame; the
+        // envelope's payload length bounds it (FIX 8247).
+        if update.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES {
             return Err(TransportError::FrameTooLarge {
                 size: update.len(),
-                max: MAX_DECODED_PAYLOAD_BYTES,
+                max: MAX_WINDOW_PAD_PAYLOAD_BYTES,
             });
         }
         let window = self.ensure_window(window_key)?;
@@ -79,7 +83,10 @@ impl SyncClient {
                 .iter()
                 .map(|(_, bytes, _)| bytes.len())
                 .sum();
-            if pending_bytes > MAX_DECODED_PAYLOAD_BYTES {
+            // An update joined from its envelope's parts may pass the bound
+            // alone (FIX 8247): it waits while nothing else does, and beside
+            // others they share the bound.
+            if pending_bytes > MAX_DECODED_PAYLOAD_BYTES && self.staged_world_updates.len() > 1 {
                 self.staged_world_updates.pop();
                 return Err(TransportError::InvalidPayload(
                     "unresolved world updates past the memory bound",

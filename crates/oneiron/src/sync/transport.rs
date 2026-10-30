@@ -30,6 +30,8 @@ pub use codec::{
     decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, encode_http_body,
     process_link_bytes,
 };
+mod unsplit_frame;
+pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
 mod window_pads;
 pub use window_pads::{
     WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly, WindowPadBinding,
