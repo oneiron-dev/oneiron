@@ -76,6 +76,11 @@ pub enum SlotKind {
     /// is the vault's live root, and a filled slot is never replaced by it
     /// (FIX-LIST 10770). The slot itself stays this device's.
     HostIssuerSeed,
+    /// The seed of this install's own Ed25519 owner signing key for one vault
+    /// (FIX 4921): made on first use, put on the roster only by the owner's
+    /// enrollment act, and used only to sign checkpoint statements as that
+    /// owner root.
+    OwnerSigning,
 }
 
 impl SlotKind {
@@ -89,6 +94,7 @@ impl SlotKind {
             Self::CheckpointSigning => "checkpoint-signing",
             Self::HostRoot => "host-root",
             Self::HostIssuerSeed => "host-issuer-seed",
+            Self::OwnerSigning => "owner-signing",
         }
     }
 }

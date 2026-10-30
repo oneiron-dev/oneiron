@@ -114,6 +114,7 @@ impl KeystoreConfig {
                 let signing = vault.prepare_install_signing_logged();
                 if signing {
                     vault.prepare_host_issuer_custody_logged();
+                    vault.hold_device_owner_signer_logged();
                 }
                 KeystoreInstall::Installed { signing }
             }
@@ -121,6 +122,7 @@ impl KeystoreConfig {
                 tracing::info!(
                     "keystore backend is off; signing and world-key doors are unavailable"
                 );
+                vault.hold_host_held_owner_signer_logged(vault_path);
                 KeystoreInstall::Off
             }
             Err(error) => {
