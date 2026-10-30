@@ -37,7 +37,7 @@ pub(crate) async fn get_core_summary_status(
 
 #[utoipa::path(post, path = "/v1/core/summaries/{summary_id}/rederive",
     params(("summary_id" = String, Path)), request_body = DagSpawnRequest,
-    responses((status = 202, body = DagSummaryQueuedResponse), (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
+    responses((status = 202, body = DagSummaryQueuedResponse), (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
 pub(crate) async fn rederive_core_scope_summary(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
