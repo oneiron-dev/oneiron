@@ -1219,7 +1219,7 @@
      "purpose": "The leased child's planned spawn (DOOR-111 S4c-1): a leased agent's `self.agents.spawn` with an ask…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -61969,6 +61969,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/held.rs",
+     "purpose": "What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -61985,7 +61995,7 @@
      "path": "src/session_overlay/overlay/mod.rs",
      "purpose": "Ephemeral in-memory write overlay for one live session (ARCH-0052, D1)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -62005,7 +62015,7 @@
      "path": "src/session_overlay/overlay/retained.rs",
      "purpose": "The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -72361,7 +72371,7 @@
      "path": "src/task_verb/consult_assignee_wait.rs",
      "purpose": "A consult whose body arrived before its ConsultAssignee fact (FIX 10697, Engine ruling (a), 30 Oct 06:36)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -72610,6 +72620,16 @@
      "purpose": "The payload of one external try on a TASK (OF-220, OF-540)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fact_link_wake.rs",
+     "purpose": "Wakes on a replicated task-authority fact's link (FIX 10697)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -72988,7 +73008,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 58,
+      "crate-vis": 59,
       "fn": 1,
       "mod": 5,
       "re-export": 30
@@ -83273,7 +83293,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "session_overlay": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83427,7 +83447,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83611,7 +83631,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5600,
+   "source_files": 5602,
    "test_files": 902
   },
   "oneiron-android": {
