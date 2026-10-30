@@ -149,6 +149,13 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        // A custody request's permit piece waits as the request it leads to
+        // (FIX 11866): for its carrier's install key, or with no carrier for
+        // its signer to be an owner anchor.
+        AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
+            Some(carrier) => vec![Grant::InstallKey(carrier, entry.signer_key().clone())],
+            None => vec![Grant::Anchor(entry.signer_key().clone())],
+        },
         // An owner answer waits for its carrier's install key (mesh PR1b).
         AuthorityOp::MachineProfile(MachineProfile {
             carrier: Some(carrier),

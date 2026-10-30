@@ -29,7 +29,9 @@
 //! every world's key to publish the vault's sealed bundle to the home its
 //! act targets. A custody change ([`OwnerWorkBody::Custody`]) asks for one
 //! change to one portable secret's custody, by its id: ids, digests and a
-//! generation only, its recipients inline (`custody`). An export secret
+//! generation only, its recipients inline (`custody`), or past one row their
+//! commitment, the recipients riding in numbered piece rows of their own
+//! ahead of it ([`CustodyPermitPiece`], FIX 11866). An export secret
 //! request ([`OwnerWorkBody::ExportSecret`], FIX 4624(b)) asks the install
 //! that holds one custody secret an owner export could not open to seal it to
 //! the recipient machine the owner chose (`export`): it carries the export's
@@ -45,6 +47,7 @@
 mod cancel;
 mod custody;
 mod export;
+mod permit_piece;
 mod result;
 mod root_basis;
 
@@ -57,10 +60,12 @@ pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CAN
 pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
-    CustodyRecipientPermit, CustodyRequestAuthority, custody_recipient_set,
+    CustodyPermitPieces, CustodyRecipientPermit, CustodyRequestAuthority, custody_recipient_set,
     custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
+pub use self::permit_piece::{CustodyPermitPiece, OP_KIND_CUSTODY_PERMIT_PIECE};
+pub(super) use self::permit_piece::{custody_permit_piece_value, decode_custody_permit_piece};
 pub use self::result::{
     CustodyRegisterCheck, CustodyUncheckedReason, OwnerWorkOutcome, OwnerWorkRefusal,
     OwnerWorkResult, SealedWorkOutput,
@@ -305,13 +310,17 @@ pub enum OwnerWorkBody {
     /// its encrypted `input` (none for a rewrap) and the `recipients` the
     /// owner permits; a revoke names none of them and its carrier executes it.
     /// `authority` says whose say-so carries it (FIX 6053): an install's, or
-    /// the owner's kit's, which no machine carries or executes.
+    /// the owner's kit's, which no machine carries or executes. Permits past
+    /// one row ride in pieces (FIX 11866): `pieces` is then their commitment,
+    /// `recipients` is empty as the entry carries it, and the fold fills it
+    /// from the [`CustodyPermitPiece`] rows in the request's causal past.
     Custody {
         change: CustodyChange,
         generation: u32,
         input: Option<[u8; 32]>,
         holder: Option<EntityId>,
         recipients: Vec<CustodyRecipientPermit>,
+        pieces: Option<CustodyPermitPieces>,
         authority: CustodyRequestAuthority,
     },
     /// One custody secret an owner export met and its exporting install
@@ -460,11 +469,14 @@ impl OwnerWorkRequest {
             input,
             holder,
             recipients,
+            pieces,
             authority,
             ..
         } = &self.work
         {
-            custody::validate_custody(self, *change, *input, *holder, recipients, *authority)?;
+            custody::validate_custody(
+                self, *change, *input, *holder, recipients, *pieces, *authority,
+            )?;
         }
         // An export secret request carries the export's own act.
         if let OwnerWorkBody::ExportSecret(work) = &self.work {
@@ -537,13 +549,14 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             input,
             holder,
             recipients,
+            pieces,
             authority,
         } => custody::custody_work_value(
             *change,
             *generation,
             *input,
             *holder,
-            recipients,
+            (recipients.as_slice(), *pieces),
             *authority,
         ),
         OwnerWorkBody::ExportSecret(work) => export::export_secret_work_value(work),
