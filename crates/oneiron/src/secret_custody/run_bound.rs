@@ -40,7 +40,7 @@ use zeroize::Zeroizing;
 use super::doors::{
     CustodyWrite, NAME_INDEX, read_secret_custody_admission_in_txn, register_custody_in_txn,
 };
-use super::reveal::{SecretRevealCause, close_secret_reveals_in_txn};
+use super::reveal::{SecretRevealCause, close_secret_reveals_in_txn, parse_secret_handle};
 use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_SCOPE_READ, SecretBinding,
     SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
@@ -399,6 +399,38 @@ impl Vault {
         admit_materialization_in_txn(&self.store, &txn, effector, None)
     }
 
+    /// Whether `holder`'s run holds run-bound `handle` for its own seat's
+    /// use now (FIX 10424): a record that run's seat found, live, whose seat
+    /// binding the floor, the door policy and revocation admit, all read
+    /// from the value-free admission projection, as
+    /// [`Vault::with_run_secret`] would admit it. A refusal, or a handle that
+    /// names no record, is `false`. It reads no value, takes no lease,
+    /// writes no use record and stamps no clock.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn holds_run_secret(&self, holder: &RunSecretHolder, handle: &str) -> Result<bool> {
+        if parse_secret_handle(handle).is_err() {
+            return Ok(false);
+        }
+        let txn = self.store.env.read_txn()?;
+        let id = match handle_record_in_txn(&self.store, &txn, handle) {
+            Ok((_, id)) => id,
+            Err(error) => return not_held(error),
+        };
+        let Some(held) = read_secret_custody_admission_in_txn(&self.store, &txn, &id)? else {
+            return Ok(false);
+        };
+        if !held.name.starts_with(&holder.seat.names(&holder.run)) {
+            return Ok(false);
+        }
+        let effector = holder.seat.effector(&holder.run);
+        match self.check_secret_at_door_in_txn(&txn, &held.name, &effector) {
+            Ok(()) => Ok(true),
+            Err(error) => not_held(error),
+        }
+    }
+
     /// Hard-erases every run-bound record `run`'s `seat` found, as the seat
     /// ends: each record and its sealed value, its short id and its name,
     /// in one transaction, each fenced and every key its id names staged to
@@ -473,6 +505,15 @@ impl Vault {
             self.finish_credential_retirements_after_commit();
         }
         Ok(erased)
+    }
+}
+
+/// A custody refusal as "not held"; any other error, a storage fault,
+/// goes on.
+fn not_held(error: Error) -> Result<bool> {
+    match error {
+        Error::Secret(_) => Ok(false),
+        error => Err(error),
     }
 }
 

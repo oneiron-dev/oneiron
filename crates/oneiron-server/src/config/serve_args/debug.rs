@@ -45,6 +45,7 @@ impl fmt::Debug for ServeArgs {
             .field("settings_file", &self.settings_file)
             .field("voice_socket", &self.voice_socket)
             .field("seal_key_file", &self.seal_key_file)
+            .field("seal_key_handle", &self.seal_key_handle)
             .field("seal_chain_file", &self.seal_chain_file)
             .field("seal_trust_file", &self.seal_trust_file)
             .field("seal_tsa_url", &self.seal_tsa_url)
