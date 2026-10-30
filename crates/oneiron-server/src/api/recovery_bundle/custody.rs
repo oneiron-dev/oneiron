@@ -25,9 +25,9 @@ use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 
 /// One page the kit asks for: the vault, the kit's root, the custody
-/// lineage, the head offset and the last log sequence number a page before
-/// reached, signed at `timestamp` with a fresh `nonce`; each in lower-case
-/// hex.
+/// lineage, the head offset, the last log sequence number a page before
+/// reached and the first one the restore needs, signed at `timestamp` with
+/// a fresh `nonce`; each in lower-case hex.
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(in crate::api) struct KitCustodyPageRequest {
@@ -44,6 +44,10 @@ pub(in crate::api) struct KitCustodyPageRequest {
     /// The page holds the frames after this log sequence number; 0 for the
     /// first page.
     after_seq: u64,
+    /// The first log sequence number the restore needs, the same on every
+    /// page: the frames start there, or right after the head where that is
+    /// earlier (FIX 12045). 1 asks for the whole log.
+    from_seq: u64,
     /// When the kit signed the request, in Unix seconds. The home takes it
     /// within 300 seconds of its own clock.
     timestamp: u64,
@@ -92,8 +96,9 @@ pub(in crate::api) struct KitCustodyPageResponse {
     /// The head's bytes from `headOffset`, in standard base64; empty once the
     /// head is whole.
     head_part: String,
-    /// The frames after the cursor's sequence number, in order and without
-    /// a gap: through the head's, then on past it as far as the home's log
+    /// The frames after the cursor's sequence number, from `fromSeq` or
+    /// right after the head where that is earlier, in order and without a
+    /// gap: through the head's, then on past it as far as the home's log
     /// runs.
     frames: Vec<KitCustodyFrame>,
     /// The cursor to sign for the next page; absent on the last, and where
@@ -113,7 +118,7 @@ pub(in crate::api) struct KitCustodyPageResponse {
     operation_id = "recovery_custody_page",
     request_body(
         content = KitCustodyPageRequest,
-        description = "One signed page request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root this home pins for the vault, over the vault, the root, the home's address (as a sealed-bundle part request signs it), the method, this path, the custody lineage's vault and namespace, the head offset, the sequence number, the time and the nonce.",
+        description = "One signed page request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root this home pins for the vault, over the vault, the root, the home's address (as a sealed-bundle part request signs it), the method, this path, the custody lineage's vault and namespace, the head offset, the sequence number, the first sequence number wanted, the time and the nonce.",
         content_type = "application/json"
     ),
     responses(
@@ -143,6 +148,7 @@ pub(in crate::api) async fn custody_page(
             .ok_or_else(|| bad("custodyVault"))?,
         head_offset: input.head_offset,
         after_seq: input.after_seq,
+        from_seq: input.from_seq,
         timestamp: input.timestamp,
         nonce: parse_slip_id(&input.nonce).map_err(|_| bad("nonce"))?,
     };

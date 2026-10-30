@@ -94,18 +94,21 @@ impl Store {
 
     /// One page of what this home holds of `lineage`, for the kit's custody
     /// fetch (FIX 5846): the head's bytes from `head_offset`, then, once the
-    /// head is whole, the log frames after `after_seq`, through the head's
-    /// and on past it as far as the home's log runs without a gap (FIX
-    /// 12020), at most `fill` bytes of all, or one frame alone where it is
-    /// larger. Read only, under the commit's own lineage lock, so the head
-    /// and the frames it names are one pair; the scan ends at the first
-    /// frame the home lacks: a gap, or the end of its log. `None` with no
-    /// head here, or an offset past the head's end.
+    /// head is whole, the log frames after `after_seq`, from `from_seq`, the
+    /// first the restore needs, or the one after the head's sequence number
+    /// where that is earlier (FIX 12045), through the head's and on past it
+    /// as far as the home's log runs without a gap (FIX 12020), at most
+    /// `fill` bytes of all, or one frame alone where it is larger. Read
+    /// only, under the commit's own lineage lock, so the head and the frames
+    /// it names are one pair; the scan ends at the first frame the home
+    /// lacks from where it starts: a gap, or the end of its log. `None` with
+    /// no head here, or an offset past the head's end.
     pub(crate) fn residence_custody_page(
         &self,
         lineage: Lineage,
         head_offset: u64,
         after_seq: u64,
+        from_seq: u64,
         fill: usize,
     ) -> Result<Option<CustodyHomePage>> {
         let root = self.residence_home()?;
@@ -130,6 +133,11 @@ impl Store {
         // The page holds no room for the next frame: the scan goes on from it.
         let mut full = false;
         if next_offset == head_len {
+            // The scan starts at the first frame the restore needs, or right
+            // after the head where that is earlier, as a head older than its
+            // anchor chains from there: a gap before it ends no scan (FIX
+            // 12045).
+            reached = reached.max(from_seq.saturating_sub(1).min(head_seq));
             // Past the head's sequence number too: a head older than its
             // anchor chains to the anchor through the frames after it (FIX
             // 12020).

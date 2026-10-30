@@ -9,11 +9,13 @@
 //! the part fetches' own.
 //!
 //! The custody comes in pages read only under the lineage's lock: the head
-//! in slices, then the log frames after the cursor's sequence number,
-//! through the head's and on past it as far as the home's log runs without
-//! a gap (FIX 12020), each page at most `KIT_CUSTODY_PAGE_BYTES` of all, or
-//! one frame alone where it is larger. A page that is not the last names
-//! its cursor: the head offset and the last sequence number it reached.
+//! in slices, then the log frames after the cursor's sequence number, from
+//! the first the request wants, or the one after the head where that is
+//! earlier (FIX 12045), through the head's and on past it as far as the
+//! home's log runs without a gap (FIX 12020), each page at most
+//! `KIT_CUSTODY_PAGE_BYTES` of all, or one frame alone where it is larger.
+//! A page that is not the last names its cursor: the head offset and the
+//! last sequence number it reached.
 //! Every answer stays within the residence RPC result bound once base64 is
 //! added ([`KIT_CUSTODY_REPLY_MAX`]). Sealed bytes only: the home opens
 //! nothing.
@@ -56,6 +58,10 @@ pub struct KitCustodyFetch {
     pub head_offset: u64,
     /// The page holds the frames after this log sequence number.
     pub after_seq: u64,
+    /// The first log sequence number the restore needs (FIX 12045): the
+    /// frames start there, or after the head's where that is earlier. 1
+    /// asks for the whole log.
+    pub from_seq: u64,
     /// The signer's wall clock, in seconds.
     pub timestamp: u64,
     pub nonce: [u8; KIT_BUNDLE_FETCH_NONCE_BYTES],
@@ -80,6 +86,7 @@ impl KitCustodyFetch {
         out.extend_from_slice(self.lineage.namespace.as_bytes());
         out.extend_from_slice(&self.head_offset.to_be_bytes());
         out.extend_from_slice(&self.after_seq.to_be_bytes());
+        out.extend_from_slice(&self.from_seq.to_be_bytes());
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         out.extend_from_slice(&self.nonce);
         out
@@ -93,9 +100,10 @@ impl KitCustodyFetch {
 }
 
 /// One page of the custody this home holds of `fetch`'s lineage, from
-/// `fetch`'s cursor (FIX 5846). `signature` is the anchor of the recovery
-/// root this home pins for the vault, over [`KitCustodyFetch::transcript`];
-/// a request for another root is refused before any custody is read.
+/// `fetch`'s cursor and the first frame it wants (FIX 5846, FIX 12045).
+/// `signature` is the anchor of the recovery root this home pins for the
+/// vault, over [`KitCustodyFetch::transcript`]; a request for another root is
+/// refused before any custody is read.
 ///
 /// # Errors
 ///
@@ -132,6 +140,7 @@ pub fn kit_custody_page(
             fetch.lineage,
             fetch.head_offset,
             fetch.after_seq,
+            fetch.from_seq,
             KIT_CUSTODY_PAGE_BYTES,
         )?
         .ok_or_else(denied)
