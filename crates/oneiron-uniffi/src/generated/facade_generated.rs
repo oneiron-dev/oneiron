@@ -2461,6 +2461,11 @@ export_facade! {
     let output = client.vault_legal_holds_lift_and_erase(&input)?;
     crate::codec::lift_record("vault.legal_holds.lift_and_erase", &output)
 };
+"vault.legal_holds.withdraw_erase" => fn vault_legal_holds_withdraw_erase(&self, input: LegalHoldWithdrawEraseRequest) -> LegalHoldErasesWithdrawn = |client| {
+    let input: oneiron::task_verb::sdk::LegalHoldWithdrawEraseRequest = crate::codec::lower_record("vault.legal_holds.withdraw_erase", input)?;
+    let output = client.vault_legal_holds_withdraw_erase(&input)?;
+    crate::codec::lift_record("vault.legal_holds.withdraw_erase", &output)
+};
 "vault.courtesy_delete.send" => fn vault_courtesy_delete_send(&self, input: CourtesyDeleteSendRequest) -> CourtesyDeleteSent = |client| {
     let input: oneiron::task_verb::sdk::CourtesyDeleteSendRequest = crate::codec::lower_record("vault.courtesy_delete.send", input)?;
     let output = client.vault_courtesy_delete_send(&input)?;

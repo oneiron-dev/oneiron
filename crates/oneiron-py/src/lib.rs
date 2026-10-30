@@ -4760,6 +4760,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_legal_holds_withdraw_erase(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.legal_holds.withdraw_erase")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.legal_holds.withdraw_erase", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_courtesy_delete_send(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.courtesy_delete.send")?;
         let output = py

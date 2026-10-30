@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4392 declarations.
-Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1212 facade rows, 4396 declarations.
+Inputs: 1140 of 1212 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1046 of 1212 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -9652,8 +9652,8 @@ class LegalHold(TypedDict):
 class LegalHoldWidenRequest(TypedDict):
     hold_id: EntityId
     targets: list[LegalHoldTarget]
-LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_confirmed", "erase_completed", "lifted"]
-LegalHoldReason = Literal["owner_placed", "host_placed", "legal_order", "scope_widened", "scope_narrowed_by_erase", "end_date_changed", "held_record", "privacy_erase_kept", "owner_confirmed", "completion_pending", "receipt_completed", "authority_released", "order_ended", "host_released", "secrecy_ended"]
+LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_confirmed", "erase_withdrawn", "erase_completed", "lifted"]
+LegalHoldReason = Literal["owner_placed", "host_placed", "legal_order", "scope_widened", "scope_narrowed_by_erase", "end_date_changed", "held_record", "privacy_erase_kept", "owner_confirmed", "owner_withdrew", "completion_pending", "receipt_completed", "authority_released", "order_ended", "host_released", "secrecy_ended"]
 class LegalHoldEvent(TypedDict):
     hold_id: EntityId
     kind: LegalHoldKind
@@ -9713,6 +9713,14 @@ class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
     changed: NotRequired[LiftAndEraseShownState | None]
+class LegalHoldWithdrawEraseRequest(TypedDict):
+    records: list[EntityId]
+EraseWithdrawal = Literal["withdrawn", "not_waiting", "under_way"]
+class LegalHoldWithdrawnErase(TypedDict):
+    record: EntityId
+    status: EraseWithdrawal
+class LegalHoldErasesWithdrawn(TypedDict):
+    records: list[LegalHoldWithdrawnErase]
 class CourtesyDeleteSendRequest(TypedDict):
     pact: str
     worlds: NotRequired[list[str]]

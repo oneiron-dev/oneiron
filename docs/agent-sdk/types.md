@@ -2654,6 +2654,8 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
+        def withdraw_erase(self, spec: Facade.LegalHoldWithdrawEraseRequest) -> Facade.LegalHoldErasesWithdrawn:
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
     class _VaultCourtesyDeleteVerbs:
         def send(self, spec: Facade.CourtesyDeleteSendRequest) -> Facade.CourtesyDeleteSent:
             """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""

@@ -463,11 +463,13 @@ impl Vault {
     /// its request asked: an explicit lift-and-erase hard, an owner's plain
     /// delete under its own reason (FIX 1465), and in a shared vault with
     /// two or more Owners an explicit one only once its own `erase` act
-    /// completed (FIX 9781). A failed one stays for the next pass. One
+    /// completed (FIX 9781); an explicit one whose act never started has it
+    /// started first (FIX 10401). A failed one stays for the next pass. One
     /// whose request went or was replaced before its writer ran is
     /// cancelled: nothing erased, counted or dropped (FIX 6337). A released
     /// gate-decision partition runs it too.
     pub(crate) fn run_due_legal_hold_erases(&self) -> Result<u64> {
+        self.start_missing_erase_acts()?;
         // What a released hold kept from an erase's scrubs goes first,
         // whether or not an erase waits (FIX 6280, 6386, 7993, 7994): then
         // an erase it kept from completing completes (FIX 5844).

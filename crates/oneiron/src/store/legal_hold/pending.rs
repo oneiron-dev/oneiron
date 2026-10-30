@@ -77,7 +77,9 @@ pub(crate) fn put_pending_erase_in_txn(
 }
 
 /// Names the `erase` act the waiting erase of `record` at `generation`
-/// waits out (FIX 9781). False when that request no longer waits.
+/// waits out (FIX 9781). False when that request no longer waits, or
+/// already names an act: the first act named is the one it waits out (FIX
+/// 10401).
 pub(crate) fn set_pending_veto_act_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -88,12 +90,28 @@ pub(crate) fn set_pending_veto_act_in_txn(
     let Some(mut pending) = PENDING_ERASES.get(dbs, txn, record)? else {
         return Ok(false);
     };
-    if pending.generation != *generation {
+    if pending.generation != *generation || pending.veto_act.is_some() {
         return Ok(false);
     }
     pending.veto_act = Some(act);
     PENDING_ERASES.put(dbs, txn, record, &pending)?;
     Ok(true)
+}
+
+/// The explicit lift-and-erase requests that wait with no `erase` act named
+/// (FIX 10401): each one whose act never started, as when the confirm's
+/// writer committed and its act start did not follow.
+pub(crate) fn erases_without_act_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<Vec<(EntityId, PendingErase)>> {
+    Ok(PENDING_ERASES
+        .scan(dbs, txn)?
+        .into_iter()
+        .filter(|(_, pending)| {
+            pending.kind == PendingEraseKind::LiftAndErase && pending.veto_act.is_none()
+        })
+        .collect())
 }
 
 /// The waiting erase of `record`, when one waits.

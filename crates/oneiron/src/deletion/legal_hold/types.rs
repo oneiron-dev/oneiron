@@ -159,7 +159,7 @@ impl LegalHold {
     }
 }
 
-/// The seven hold events (C3).
+/// The eight hold events (C3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldEventKind {
@@ -171,6 +171,10 @@ pub enum LegalHoldEventKind {
     /// accepted: erase confirmed, completion pending, no hold lifted (FIX
     /// 1465).
     EraseConfirmed,
+    /// The owner withdrew an erase they confirmed that still waited: nothing
+    /// of the record is erased by it, and no hold is placed again (FIX
+    /// 10401).
+    EraseWithdrawn,
     EraseCompleted,
     Lifted,
 }
@@ -197,6 +201,8 @@ pub enum LegalHoldReason {
     PrivacyEraseKept,
     /// The owner confirmed "Lift the hold and erase?".
     OwnerConfirmed,
+    /// The owner withdrew their waiting erase (FIX 10401).
+    OwnerWithdrew,
     /// The owner's erase waits on a host order: completion pending.
     CompletionPending,
     /// The ARCH-0038 receipt's signed final row is appended: its hard purge,
@@ -297,6 +303,21 @@ pub enum ErasePendingReason {
     /// erase waits out the vault's `erase` veto window first, through the
     /// record's own `erase` act, and runs once that act completes (FIX 9781).
     VetoWindow,
+}
+
+/// What the owner's withdrawal did to one record's waiting erase (FIX
+/// 10401).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EraseWithdrawal {
+    /// The erase that waited is withdrawn: nothing of the record is erased
+    /// by it. A hold its confirm lifted stays lifted.
+    Withdrawn,
+    /// No erase of the record waits.
+    NotWaiting,
+    /// Its erase has begun: it runs to its end, and reads as its confirm's
+    /// status does.
+    UnderWay,
 }
 
 /// The owner's one confirm's result.
