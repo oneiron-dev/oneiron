@@ -24,6 +24,7 @@ use oneiron::campaign::enrollment::{
     elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
 };
 use oneiron::campaign::sender::CampaignChannelSender;
+use oneiron::channel_identity_provider::stalwart::StalwartClient;
 use oneiron::saved_query::{
     QueryScope, SavedQueryEvaluator, SavedQueryRecord, WakeEvaluationReport, read_saved_query,
     sweep_owner_read,
@@ -40,6 +41,10 @@ const PUMP_ATTEMPTS: usize = 32;
 const LEASE_OWNER: &str = "oneiron-server-campaign-enrollment";
 /// Recorded on an attempt whose reason does not fit the queue's bound.
 const FAILED: &str = "the campaign enrollment attempt failed";
+/// The built-in native mail pack connection whose checked credential opens
+/// the host's Stalwart client for a campaign send (FIX 11642).
+const NATIVE_MAIL_PACK: &str = "oneiron.native_mail";
+const NATIVE_MAIL_CONNECTION: &str = "mail-server";
 
 /// One bounded wake of `record` over `page` under the sweep's `evaluator`. A
 /// query that active campaigns' programs name as their audience detects and
@@ -227,16 +232,23 @@ async fn execute(
 }
 
 /// Runs the outward leg of `attempt` on the campaign channel sender
-/// (FIX 2636, FIX 11513). `None` when the designation moved before the
-/// send: the row stays leased for the new home node. A Gate hold waits on
-/// the owner's press and fails the attempt with its digest, as a review
-/// hold does.
+/// (FIX 2636, FIX 11513, FIX 11642). `None` when the designation moved
+/// before the send: the row stays leased for the new home node. A Gate hold
+/// waits on the owner's press and fails the attempt with its digest, as a
+/// review hold does.
 fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Settlement> {
     let vault = server.vault();
-    let mut sender = CampaignChannelSender::new(
+    let sender = CampaignChannelSender::new(
         Arc::clone(server.vault()),
         server.config.line.monthly_push_allowance(),
     );
+    // FIX 11642: the stalwart branch sends through the host-owned client
+    // built here per send; without one it fails closed, and every other
+    // channel flows as before.
+    let mut sender = match campaign_stalwart_client(server) {
+        Some(client) => sender.with_stalwart(client),
+        None => sender,
+    };
     let now_ms = crate::runtime::wall_clock_ms();
     let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
     Some(match drive {
@@ -251,6 +263,47 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
         // the vault.
         Err(error) => Settlement::Fail(error.to_string()),
     })
+}
+
+/// The host-owned Stalwart client for one campaign send (FIX 11642), or
+/// none when native mail is unconfigured, unchecked, or unreachable. Any
+/// failure fails closed: the sender's stalwart branch answers
+/// InvalidRequest without a client, and gmail/slack/line sends flow
+/// untouched. Built per send inside the credential door, as the pack's own
+/// connection check builds it (`builtin_host::checks`): the stored value is
+/// the whole `Authorization` header or a bare bearer token, and the token
+/// bytes never leave the closure. The pump runs on a blocking thread, so
+/// the session discovery and domain read are safe here.
+fn campaign_stalwart_client(server: &SyncServer) -> Option<StalwartClient> {
+    let placement = server.config.native_mail.as_ref()?.stalwart().ok()?;
+    let secret = server
+        .vault()
+        .verified_pack_connection_secret(NATIVE_MAIL_PACK, NATIVE_MAIL_CONNECTION)
+        .ok()?;
+    let mut connected = None;
+    server
+        .vault()
+        .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
+            let value = std::str::from_utf8(value)
+                .map_err(|_| {
+                    oneiron::Error::InvalidConfig("the stored credential is not text".to_owned())
+                })?
+                .trim();
+            let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
+                value.to_owned()
+            } else {
+                format!("Bearer {value}")
+            };
+            let header = reqwest::header::HeaderValue::from_str(&header).map_err(|_| {
+                oneiron::Error::InvalidConfig(
+                    "the stored credential is not a header value".to_owned(),
+                )
+            })?;
+            connected = StalwartClient::connect(placement.clone(), header).ok();
+            Ok(())
+        })
+        .ok()?;
+    connected
 }
 
 /// How one executed attempt settles.

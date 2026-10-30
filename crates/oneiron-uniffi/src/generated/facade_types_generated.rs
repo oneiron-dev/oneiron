@@ -13092,6 +13092,8 @@ pub struct CampaignProgramOutboundSpec {
     pub payload: String,
     #[serde(rename = "idempotency_supported")]
     pub idempotency_supported: bool,
+    #[serde(rename = "subject", default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 /// `oneiron::campaign::surface::program::CampaignProgramStepSpec`.
