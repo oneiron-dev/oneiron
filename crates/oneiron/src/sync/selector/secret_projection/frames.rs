@@ -133,7 +133,7 @@ impl SyncSecretProjection {
                 // is rebuilt (FIX 10794): one that carries nothing marked goes
                 // as it is. One this device cannot read (it does not hold the
                 // update's dependencies) has unknown contents: withheld, owed.
-                let Some(scratch) = with_update(context, encoded) else {
+                let Some((scratch, cut)) = with_update(context, encoded) else {
                     return Err(Error::InvariantViolation(UNMASKABLE));
                 };
                 if !readable_from(&scratch, &input.partial_start_vv) {
@@ -147,6 +147,8 @@ impl SyncSecretProjection {
                 if carried.changed.is_empty() && carried.preserving {
                     // Its registers are not rebuilt, so a re-authored copy
                     // rides along without meeting a rekeyed one (FIX 10729).
+                    // The window copy holding the update is the one already
+                    // made, never cut again (FIX 10599).
                     return match context.filter(|_| home) {
                         Some(window) => self.reauthored(
                             store,
@@ -154,6 +156,7 @@ impl SyncSecretProjection {
                             window.peer_id(),
                             encoded,
                             spans_of(&input),
+                            cut.is_some().then_some(scratch),
                         ),
                         None => Ok(None),
                     };
@@ -234,7 +237,7 @@ impl SyncSecretProjection {
                 Ok(WindowAdmission::Admit(Cow::Owned(joined(&parts)?)))
             }
             EncodedBlobMode::Updates => {
-                let Some(scratch) = with_update(context, encoded) else {
+                let Some((scratch, cut)) = with_update(context, encoded) else {
                     return as_sent();
                 };
                 let mut json =
@@ -248,8 +251,13 @@ impl SyncSecretProjection {
                 if translated.sources.is_empty() {
                     return as_sent();
                 }
-                // A proven copy edit is never admitted untranslated.
-                let Some(target) = isolated(context) else {
+                // A proven copy edit is never admitted untranslated. The
+                // window's cut is read again, never made again (FIX 10599).
+                let target = match &cut {
+                    Some(cut) => cut.copy(),
+                    None => isolated(context),
+                };
+                let Some(target) = target else {
                     return Err(Error::InvariantViolation(UNMASKABLE));
                 };
                 let status = target
@@ -568,19 +576,40 @@ fn decode(context: &'static str) -> impl FnOnce(loro::LoroError) -> Error {
     move |source| Error::Sync(SyncError::CrdtDecodeError { context, source })
 }
 
-/// An isolated copy of `context`, through the checkpoint so a shallow root
-/// stays one, or as a plain snapshot when the checkpoint does not take it
-/// (FIX 10794); a fresh document without one. `None` when neither copy
-/// reads.
+/// One cut of a window: the snapshot an isolated copy of it is read from,
+/// made once and read into each copy one release or admission takes (FIX
+/// 10599).
+struct WindowCut(Vec<u8>);
+
+impl WindowCut {
+    /// `context` cut through the checkpoint so a shallow root stays one, or
+    /// as a plain snapshot when the checkpoint does not take it (FIX 10794),
+    /// with its first isolated copy. `None` when neither copy reads.
+    fn of(context: &LoroDoc) -> Option<(Self, LoroDoc)> {
+        let read = |bytes: Vec<u8>| {
+            LoroDoc::from_snapshot(&bytes)
+                .ok()
+                .map(|doc| (Self(bytes), doc))
+        };
+        parts_of(context)
+            .and_then(|parts| joined(&parts).ok())
+            .and_then(read)
+            .or_else(|| context.export(ExportMode::Snapshot).ok().and_then(read))
+    }
+
+    /// Another isolated copy of the cut window.
+    fn copy(&self) -> Option<LoroDoc> {
+        LoroDoc::from_snapshot(&self.0).ok()
+    }
+}
+
+/// An isolated copy of `context` ([`WindowCut::of`]); a fresh document
+/// without one. `None` when neither copy reads.
 pub(super) fn isolated(context: Option<&LoroDoc>) -> Option<LoroDoc> {
     let Some(context) = context else {
         return Some(LoroDoc::new());
     };
-    let read = |bytes: Vec<u8>| LoroDoc::from_snapshot(&bytes).ok();
-    parts_of(context)
-        .and_then(|parts| joined(&parts).ok())
-        .and_then(read)
-        .or_else(|| context.export(ExportMode::Snapshot).ok().and_then(read))
+    WindowCut::of(context).map(|(_, doc)| doc)
 }
 
 /// Whether every operation `doc` holds from `start` on is still history,
@@ -592,10 +621,11 @@ fn readable_from(doc: &LoroDoc, start: &VersionVector) -> bool {
         .all(|(peer, counter)| start.get(peer).copied().unwrap_or(0) >= *counter)
 }
 
-/// An isolated copy of `context` holding the update `encoded` as well;
-/// `None` when the update does not import whole on it (a dependency it does
-/// not hold).
-fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<LoroDoc> {
+/// An isolated copy of `context` holding the update `encoded` as well, with
+/// the window's cut when the copy was made from the window rather than a
+/// fresh document; `None` when the update does not import whole on it (a
+/// dependency it does not hold).
+fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<(LoroDoc, Option<WindowCut>)> {
     let input = meta(encoded);
     // A self-contained update (a detached selector document's) imports on a
     // fresh document first, so it never merges into the window's own state.
@@ -610,8 +640,12 @@ fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<LoroDoc> {
         tries.push(context);
     }
     for context in tries {
-        let Some(scratch) = isolated(context) else {
-            continue;
+        let (scratch, cut) = match context {
+            Some(window) => match WindowCut::of(window) {
+                Some((cut, scratch)) => (scratch, Some(cut)),
+                None => continue,
+            },
+            None => (LoroDoc::new(), None),
         };
         let Ok(status) = scratch.import(encoded) else {
             continue;
@@ -624,7 +658,7 @@ fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<LoroDoc> {
                 .all(|(peer, end)| held.get(peer).is_some_and(|held| held >= end))
         });
         if status.pending.is_none() && complete {
-            return Some(scratch);
+            return Some((scratch, cut));
         }
     }
     None

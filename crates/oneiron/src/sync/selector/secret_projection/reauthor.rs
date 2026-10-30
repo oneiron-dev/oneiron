@@ -50,7 +50,9 @@ struct Reauthor {
 impl SyncSecretProjection {
     /// `encoded`, an update `local`'s window `context` sends its home and
     /// that otherwise goes as it is (its `spans`), with each marked snapshot
-    /// ASSET's current copy written again under a fresh id. `None` when the
+    /// ASSET's current copy written again under a fresh id. `made` is the
+    /// isolated window copy already holding the update, when the release
+    /// made one (FIX 10599); otherwise one is made here. `None` when the
     /// window holds every such operation already, or when the update does
     /// not import whole on a copy of the window: the blob goes as it came.
     ///
@@ -63,21 +65,28 @@ impl SyncSecretProjection {
         local: PeerID,
         encoded: &[u8],
         mut spans: Vec<IdSpan>,
+        made: Option<LoroDoc>,
     ) -> Result<Option<Vec<u8>>> {
         let wanted = self.reauthors(store, context, local);
         if wanted.is_empty() {
             return Ok(None);
         }
-        let Some(target) = isolated(Some(context)) else {
-            return Ok(None);
+        let target = match made {
+            Some(target) => target,
+            None => {
+                let Some(target) = isolated(Some(context)) else {
+                    return Ok(None);
+                };
+                if target
+                    .import(encoded)
+                    .ok()
+                    .is_none_or(|status| status.pending.is_some())
+                {
+                    return Ok(None);
+                }
+                target
+            }
         };
-        if target
-            .import(encoded)
-            .ok()
-            .is_none_or(|status| status.pending.is_some())
-        {
-            return Ok(None);
-        }
         let rows = target.get_map(ROWS);
         let mut written = false;
         for Reauthor { peer, key, row } in wanted {
