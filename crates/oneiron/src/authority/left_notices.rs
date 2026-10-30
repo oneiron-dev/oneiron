@@ -280,8 +280,7 @@ impl Vault {
         let copies = match slip.transferred_bounds() {
             None => self.removal_exports_in_txn(&txn, person, now)?,
             Some(bounds) => {
-                let admits = transferred_admission(bounds, now);
-                self.projected_removal_exports_in_txn(&txn, person, now, &admits)?
+                self.transferred_exports_in_txn(&mut txn, slip, person, None, now, bounds)?
             }
         };
         txn.commit()?;
@@ -312,13 +311,55 @@ impl Vault {
         let now = self.store.clock.now_recorded_at();
         let copy = match slip.transferred_bounds() {
             None => self.removal_export_in_txn(&txn, person, receipt_id, now)?,
-            Some(bounds) => {
-                let admits = transferred_admission(bounds, now);
-                self.projected_removal_export_in_txn(&txn, person, receipt_id, now, &admits)?
-            }
+            Some(bounds) => self
+                .transferred_exports_in_txn(&mut txn, slip, person, Some(receipt_id), now, bounds)?
+                .pop(),
         };
         txn.commit()?;
         Ok(copy)
+    }
+
+    /// The copies a transferred holder's `bounds` take at `now` of
+    /// `person`'s archives (the one `receipt_id` names, else every one),
+    /// each cut down to what they admit. A one-shot transfer is served once
+    /// (FIX-LIST 10773): a slip any door already consumed, or one an archive
+    /// door already served, takes nothing, and the first answer that takes
+    /// anything spends it on every archive of `person`, in this writer.
+    fn transferred_exports_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        slip: &CapabilitySlip,
+        person: EntityId,
+        receipt_id: Option<EntityId>,
+        now: u64,
+        bounds: Result<super::slip::TransferredBounds>,
+    ) -> Result<Vec<RemovalExportCopy>> {
+        let single_use = bounds
+            .as_ref()
+            .is_ok_and(super::slip::TransferredBounds::single_use);
+        let slip_id = slip.claims.slip_id;
+        if single_use
+            && (self
+                .authority_view_readonly_in_txn(txn)?
+                .slips
+                .consumed
+                .contains(&slip_id)
+                || self.removal_archive_slip_spent_in_txn(txn, person, &slip_id)?)
+        {
+            return Ok(Vec::new());
+        }
+        let admits = transferred_admission(bounds, now);
+        let copies = match receipt_id {
+            Some(receipt_id) => self
+                .projected_removal_export_in_txn(txn, person, receipt_id, now, &admits)?
+                .into_iter()
+                .collect(),
+            None => self.projected_removal_exports_in_txn(txn, person, now, &admits)?,
+        };
+        if single_use && !copies.is_empty() {
+            self.spend_removal_archive_slip_in_txn(txn, person, slip_id)?;
+        }
+        Ok(copies)
     }
 
     /// The person whose slip, minted here whatever its standing since, the
