@@ -5,6 +5,7 @@
 use heed::RwTxn;
 
 use super::super::{SecretScanMode, scan_batch_ops, secret_scan_mode_in_txn};
+use super::changed_scan;
 use super::known_note;
 use super::text_log::TextLog;
 use super::wipe::PlanOps;
@@ -85,8 +86,14 @@ pub(in crate::batch) fn mask_batch_ops(
     if plan.found.is_empty() && plan.file_ids.is_empty() && !plan.placed_known {
         return refusal.map_or_else(|| Ok((MaskedFiles::default(), Vec::new())), Err);
     }
-    // A hit no span places is still in the copy, and refuses as before.
-    scan_screened(store, wtxn, &plan.kept, &planned)?;
+    // A hit no span places is still in the copy, and refuses as before. A
+    // copy of a batch the first scan read clean, with no value kept, is read
+    // again only where the plan changed it (FIX 12212).
+    if refusal.is_none() && plan.kept.is_empty() {
+        changed_scan::scan_changed_ops(store, &*wtxn, &planned, ops)?;
+    } else {
+        scan_screened(store, wtxn, &plan.kept, &planned)?;
+    }
     drop(planned);
     let kept = std::mem::take(&mut plan.kept);
     let files = std::mem::take(&mut plan.files);
