@@ -1,6 +1,7 @@
 //! Steady state: debounced multiplex loop over WS, local updates, shutdown.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
@@ -20,6 +21,59 @@ use super::session::{
     MACHINE_HISTORY_RETRY_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS,
 };
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
+
+/// How long a run that ends waits, in all, for the blocking writes its
+/// upkeep started (FIX 12247). A call: canon names no number. A write still
+/// running after it is logged by kind, and lands when it ends.
+const SHUTDOWN_BLOCKING_WRITE_WAIT: Duration = Duration::from_secs(30);
+
+/// The blocking writes a run's residence upkeep started (FIX 12247): owner
+/// work, the custody re-seal and the tombstone retry run on the blocking
+/// pool, where an abort cannot stop them, so their handles stay with the run
+/// and it waits for each before it ends. None is cancelled half-way.
+#[derive(Clone, Default)]
+struct BlockingWrites(Arc<Mutex<Vec<(&'static str, tokio::task::JoinHandle<()>)>>>);
+
+impl BlockingWrites {
+    /// Runs `write` on the blocking pool as `kind`, its handle kept here;
+    /// its result, or `None` when it panicked.
+    async fn run<T: Send + 'static>(
+        &self,
+        kind: &'static str,
+        write: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        let (sent, result) = tokio::sync::oneshot::channel();
+        let handle = tokio::task::spawn_blocking(move || {
+            let _ = sent.send(write());
+        });
+        {
+            let mut writes = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            writes.retain(|(_, kept)| !kept.is_finished());
+            writes.push((kind, handle));
+        }
+        result.await.ok()
+    }
+
+    /// Waits for every write kept and each of `more`, up to
+    /// [`SHUTDOWN_BLOCKING_WRITE_WAIT`] in all, and logs by kind each one
+    /// still running after it.
+    async fn finish(
+        &self,
+        more: impl IntoIterator<Item = (&'static str, tokio::task::JoinHandle<()>)>,
+    ) {
+        let writes = std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner));
+        let due = Instant::now() + SHUTDOWN_BLOCKING_WRITE_WAIT;
+        for (kind, mut write) in writes.into_iter().chain(more) {
+            if tokio::time::timeout_at(due, &mut write).await.is_err() {
+                tracing::warn!(
+                    kind,
+                    wait_secs = SHUTDOWN_BLOCKING_WRITE_WAIT.as_secs(),
+                    "a blocking upkeep write is still running after the sync run ended"
+                );
+            }
+        }
+    }
+}
 
 impl SyncConnection {
     /// Steady-state event loop: multiplexes WS reads, local updates, and debounce.
@@ -61,6 +115,8 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
+        // The blocking writes those rounds start, kept past an abort.
+        let blocking_writes = BlockingWrites::default();
         // The committed pad tombstones no postcommit published (FIX 3849): one
         // retry at a time on the same tick, every lane, federation's included.
         let mut tombstone_task: Option<tokio::task::JoinHandle<()>> = None;
@@ -298,6 +354,7 @@ impl SyncConnection {
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
+                        let writes = blocking_writes.clone();
                         sealed_task = Some(tokio::spawn(async move {
                             let _batch = sealed_batch;
                             // An opened machine's windows carry only the
@@ -341,33 +398,33 @@ impl SyncConnection {
                             // The owner work those rows name this machine to
                             // do (a world's key work) runs once they are in.
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match tokio::task::spawn_blocking(move || vault.run_pending_owner_work(|| true)).await {
-                                Ok(Ok(_)) => {}
-                                Ok(Err(error)) => {
+                            match writes.run("owner work", move || vault.run_pending_owner_work(|| true)).await {
+                                Some(Ok(_)) => {}
+                                Some(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
                                         "Owner work pickup failed: {error}"
                                     )));
                                 }
-                                Err(error) => {
-                                    let _ = events.send(SyncEvent::Error(format!(
-                                        "Owner work pickup stopped: {error}"
-                                    )));
+                                None => {
+                                    let _ = events.send(SyncEvent::Error(
+                                        "Owner work pickup stopped: it panicked".to_owned(),
+                                    ));
                                 }
                             }
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match tokio::task::spawn_blocking(move || vault.reseal_custody_for_roster()).await {
-                                Ok(Ok(_)) => {}
-                                Ok(Err(error)) => {
+                            match writes.run("custody re-seal", move || vault.reseal_custody_for_roster()).await {
+                                Some(Ok(_)) => {}
+                                Some(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
                                         "Custody re-seal failed: {error}"
                                     )));
                                 }
-                                Err(error) => {
-                                    let _ = events.send(SyncEvent::Error(format!(
-                                        "Custody re-seal stopped: {error}"
-                                    )));
+                                None => {
+                                    let _ = events.send(SyncEvent::Error(
+                                        "Custody re-seal stopped: it panicked".to_owned(),
+                                    ));
                                 }
                             }
                             // The vault's sealed bundle: erase's rewrite of every
@@ -488,21 +545,21 @@ impl SyncConnection {
         };
         // FIX 12037: the run ends with its residence upkeep ended, so none of
         // its writes lands after it (a reap's export waits on this): the
-        // async rounds are aborted, and each task, the blocking tombstone
-        // retry included, is waited for.
+        // async rounds are aborted and waited for. FIX 12247: the blocking
+        // writes they started, and the tombstone retry, cannot be aborted,
+        // so each is waited for to its end, within one bound.
         if let Some(task) = &sealed_task {
             task.abort();
         }
         for task in &machine_history_tasks {
             task.abort();
         }
-        for task in sealed_task
-            .into_iter()
-            .chain(tombstone_task)
-            .chain(machine_history_tasks)
-        {
+        for task in sealed_task.into_iter().chain(machine_history_tasks) {
             let _ = task.await;
         }
+        blocking_writes
+            .finish(tombstone_task.map(|task| ("pending tombstone retry", task)))
+            .await;
         exit
     }
 
