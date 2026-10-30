@@ -134,9 +134,8 @@ pub(crate) struct CarrierPart {
 
 /// The nonces of one carrier's numbered parts: a base drawn once at random,
 /// each part's own the base with its index folded into its last four
-/// bytes. The same part sealed again is the same bytes, so a door that
-/// reads its input twice, once for the digest and once to keep it, keeps
-/// what it digested; only the kept pass's bytes ever leave it.
+/// bytes, so no two parts under the one key share a nonce. The door reads
+/// its input once and keeps what it digested (FIX 12177).
 #[derive(Clone, Copy)]
 pub(crate) struct CarrierPartNonces([u8; NONCE_BYTES]);
 

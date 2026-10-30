@@ -15,13 +15,18 @@
 //! input past one row, the request's digest over theirs, so a row not yet
 //! here keeps the request pending.
 //!
-//! The door reads the input twice, for the digest its request names and to
-//! keep it: the part nonces are drawn once ([`CarrierPartNonces`]), so both
-//! passes seal the same bytes. The holder reads the parts in order, opens
-//! each whole before any of its bytes go on, and opens the surface's input
-//! from them as one kept as it lies: every part must open at its place, and
-//! none may be missing or left over.
+//! The door reads the input once (FIX 12177, [`read_leaf_rows_in_txn`]): it
+//! stages each row of the parts as it seals them, digests each row as it is
+//! staged, and digests the input's own bytes, which the same input sent
+//! again is found by, as they go by. The head row, which carries that
+//! digest, is held until the input is read through.
+//!
+//! The holder reads the parts in order, opens each whole before any of its
+//! bytes go on, and opens the surface's input from them as one kept as it
+//! lies: every part must open at its place, and none may be missing or left
+//! over.
 
+use std::cell::Cell;
 use std::io::{self, Read};
 
 use zeroize::Zeroizing;
@@ -29,8 +34,11 @@ use zeroize::Zeroizing;
 use super::super::super::super::carrier_custody::{
     CARRIER_SEAL_BYTES, CarrierPart, CarrierPartNonces, CarrierRef,
 };
-use super::super::stream::open_framed;
-use super::super::{Attached, InputBinding, PART_BYTES, refused};
+use super::super::door_rows::{DoorInput, RowStage, StreamedDigest};
+use super::super::stream::{open_framed, read_part};
+use super::super::{Attached, InputBinding, PART_BYTES, SealedFrame, refused};
+use super::{LEAF_HEAD_BYTES, LEAF_RETRY_AT};
+use crate::Vault;
 use crate::error::Result;
 use crate::store::CredentialLeaf;
 use crate::world_keys::MachineSecret;
@@ -54,6 +62,10 @@ pub(crate) struct LeafParts {
     count: u32,
     /// The surface's input's length.
     plain: u64,
+    /// The surface's input's own digest, taken as its last read went
+    /// through it: what the same input sent again is found by (CALLS
+    /// CUSTODY_RETRY, FIX 12177).
+    retry: Cell<Option<[u8; 32]>>,
 }
 
 /// The part count a surface's input of `len` bytes seals into.
@@ -86,6 +98,7 @@ impl LeafParts {
             nonces: CarrierPartNonces::draw(),
             count,
             plain,
+            retry: Cell::new(None),
         }
     }
 
@@ -96,8 +109,9 @@ impl LeafParts {
     }
 
     /// Its bytes from its start, each part sealed as `input`, the surface's
-    /// input, is read.
+    /// input, is read, and that input's own digest taken as it goes by.
     pub(crate) fn reader<'a>(&'a self, input: impl Read + 'a) -> impl Read + 'a {
+        self.retry.set(None);
         self.head.as_slice().chain(SealingParts {
             parts: self,
             input,
@@ -105,6 +119,7 @@ impl LeafParts {
             left: self.plain,
             sealed: Vec::new(),
             at: 0,
+            retry: Some(StreamedDigest::new(self.plain)),
         })
     }
 }
@@ -121,6 +136,8 @@ struct SealingParts<'a, R> {
     /// The part being read out, and how far.
     sealed: Vec<u8>,
     at: usize,
+    /// The input's own digest, until it is read through.
+    retry: Option<StreamedDigest>,
 }
 
 impl<R: Read> Read for SealingParts<'_, R> {
@@ -134,6 +151,14 @@ impl<R: Read> Read for SealingParts<'_, R> {
             let mut run = vec![0; take];
             self.input.read_exact(&mut run)?;
             self.left -= take as u64;
+            if let Some(retry) = &mut self.retry {
+                retry.update(&run);
+            }
+            if self.left == 0
+                && let Some(retry) = self.retry.take()
+            {
+                self.parts.retry.set(Some(retry.finish()));
+            }
             let part = CarrierPart {
                 index: self.next,
                 count: self.parts.count,
@@ -151,6 +176,44 @@ impl<R: Read> Read for SealingParts<'_, R> {
         self.at += read;
         Ok(read)
     }
+}
+
+/// Reads the surface's input `frame` once, as the door keeps it under
+/// `parts` (FIX 12177): each row of its numbered carrier parts is staged in
+/// `wtxn` as it is sealed and digested as it is staged, while the input's
+/// own digest is taken as it goes by. The head row is held until the input
+/// is read through, the input's own digest set in it, then staged last.
+///
+/// # Errors
+/// A fault reading the input from its file; one past the part list's
+/// bound; storage errors.
+pub(super) fn read_leaf_rows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    frame: SealedFrame<'_>,
+    parts: &LeafParts,
+) -> Result<DoorInput<'static>> {
+    let mut left = parts.sealed_len();
+    let mut stage = RowStage::new(&parts.carrier.encode(), left)?;
+    let mut reader = frame.under_leaf_parts(parts).reader()?;
+    let mut head = Vec::new();
+    read_part(&mut reader, &mut head, &mut left)?;
+    let mut index = 0_u32;
+    while left > 0 {
+        let mut row = Vec::new();
+        read_part(&mut reader, &mut row, &mut left)?;
+        index += 1;
+        stage.stage_in_txn(vault, wtxn, index, row)?;
+    }
+    let retry = parts
+        .retry
+        .get()
+        .ok_or_else(|| refused("the custody input was not read through"))?;
+    head.get_mut(LEAF_RETRY_AT..LEAF_HEAD_BYTES)
+        .ok_or_else(|| refused("the custody input's head outgrows its first row"))?
+        .copy_from_slice(&retry);
+    stage.stage_in_txn(vault, wtxn, 0, head)?;
+    Ok(DoorInput::Staged(stage.finish()))
 }
 
 /// The body the parts layer of `len` bytes read from `rows` holds, with
