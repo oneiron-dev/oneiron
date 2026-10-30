@@ -5,9 +5,15 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use std::collections::BTreeSet;
+
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
-    ChannelIdentityState, DelegatedGrant, DelegatedProvisionRequest, SelfHeldShape,
+    ChannelIdentityState, DelegatedGrant, DelegatedProvisionRequest,
+    PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE, PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
+    PREDICATE_CHANNEL_IDENTITY_CHANNEL, SelfHeldShape,
+    channel_identity_correctable_head_ids_in_txn,
 };
 use crate::channel_identity_lifecycle::{
     BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
@@ -186,12 +192,48 @@ impl Memory<'_> {
             .vault
             .channel_identity_facts(&id)?
             .ok_or_else(|| MemoryError::not_found("channel identity has no live facts"))?;
+        // A correction written in a world this reader cannot see stays
+        // unseen: its fact shows as the row seeded it (FIX 9933).
+        let corrected = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            channel_identity_correctable_head_ids_in_txn(&self.vault.store, &txn, &id)?
+        };
+        self.produced_from(corrected.values().copied());
+        let mut withheld = BTreeSet::new();
+        for (predicate, head) in &corrected {
+            if self.get_entity(&head.to_hex())?.value.is_none() {
+                withheld.insert(*predicate);
+            }
+        }
+        let channel = if withheld.contains(PREDICATE_CHANNEL_IDENTITY_CHANNEL) {
+            row.channel().to_owned()
+        } else {
+            facts.channel
+        };
+        let address_or_handle = if withheld.contains(PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE) {
+            row.address_or_handle().to_owned()
+        } else {
+            facts.address_or_handle
+        };
+        let binding = if withheld.contains(PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE)
+            || withheld.contains(PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET)
+            || withheld.contains(PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF)
+        {
+            row.binding()
+        } else {
+            facts.binding
+        };
         Ok(ChannelIdentityView {
             identity_ref: id,
-            channel: facts.channel,
-            address_or_handle: facts.address_or_handle,
+            channel,
+            address_or_handle,
             shape: facts.shape,
-            binding: facts.binding,
+            binding,
             custody: if row.is_delegated() {
                 ChannelIdentityCustody::Delegated
             } else {
