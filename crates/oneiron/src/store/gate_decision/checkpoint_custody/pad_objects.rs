@@ -31,7 +31,7 @@ use crate::sync::residence::{
     CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMembership,
     capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
     generations_an_install_retires_in_txn, install_captured_pad_objects_in_txn,
-    read_back_captured_in_txn,
+    read_back_captured_in_txn, read_back_put_back_in_txn,
 };
 
 /// A bundle part key's generation, in hex, after its table prefix.
@@ -391,8 +391,9 @@ pub(crate) fn install_source_pad_objects_in_txn(
 /// Puts `baseline`, a store's own pad objects as an install read them, back
 /// over what that install wrote (`installed`), in a savepoint of `wtxn`, when
 /// the install did not read back once committed: each as the store held it,
-/// whole or not, and read back against `baseline` (FIX 11825). Whether they
-/// are back and read back in it.
+/// whole or not, with its grant rows and the admission outbox, and read back
+/// against `baseline`'s own rows, never the put-back's revision (FIX 11825,
+/// 12142). Whether they are back and read back in it.
 #[cfg(feature = "sync")]
 pub(crate) fn put_back_pad_objects_in_txn(
     store: &Store,
@@ -451,13 +452,16 @@ fn install_in_savepoint(
     let mut savepoint = store.env.nested_write_txn(wtxn)?;
     let retiring =
         generations_an_install_retires_in_txn(store, &savepoint, expected, captured, membership)?;
+    // The outbox keys the install adds, which a put-back takes out (FIX
+    // 12142).
     let baseline = capture_current_pad_objects_in_txn(
         store,
         &savepoint,
         expected.vault_id,
         expected.home,
         |generation| retiring.contains(generation),
-    )?;
+    )?
+    .noting_outbox_added_by(captured);
     let landing = match install_captured_pad_objects_in_txn(
         store,
         &mut savepoint,
@@ -466,7 +470,15 @@ fn install_in_savepoint(
         membership,
     )? {
         PadObjectInstall::Installed(after) => {
-            if read_back_captured_in_txn(store, &savepoint, &after, captured)? {
+            let read_back = match membership {
+                PadObjectMembership::SourceKeepRuleProvesRetired => {
+                    read_back_captured_in_txn(store, &savepoint, &after, captured)?
+                }
+                PadObjectMembership::StoreOwnPutBack => {
+                    read_back_put_back_in_txn(store, &savepoint, captured)?
+                }
+            };
+            if read_back {
                 PadObjectsLanding::Installed { after, baseline }
             } else {
                 PadObjectsLanding::NotReadBack

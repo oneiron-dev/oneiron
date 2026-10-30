@@ -51,7 +51,7 @@ pub(crate) use bundle::{
     PadObjectRefillSource, capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
     current_pad_objects_in_txn, generations_an_install_retires_in_txn, index_in,
     install_captured_pad_objects_in_txn, pad_objects_identity_in_txn, read_back_captured_in_txn,
-    refill_pad_object,
+    read_back_put_back_in_txn, refill_pad_object,
 };
 pub(crate) use bundle::{held_pad_object, holds_sealed_bundle, read_back_generation_in};
 pub use bundle_access::{

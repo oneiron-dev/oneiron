@@ -43,12 +43,22 @@ impl<'v> ScopedRead<'v> {
     /// one by one admits them all at one instant (FIX 7645).
     pub fn refs_readable_each(&self, sets: &[Vec<EntityId>]) -> Result<Vec<bool>> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.live_policy_manifest_in(&rtxn)?;
+        self.refs_readable_each_in(&rtxn, sets)
+    }
+
+    /// [`Self::refs_readable_each`] in the caller's snapshot `rtxn`, opened
+    /// as [`Self::grant_read_txn`] opens one.
+    pub(super) fn refs_readable_each_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        sets: &[Vec<EntityId>],
+    ) -> Result<Vec<bool>> {
+        let policy = self.live_policy_manifest_in(rtxn)?;
         let mut each = Vec::with_capacity(sets.len());
         for ids in sets {
             let mut readable = true;
             for id in ids {
-                if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
+                if !self.is_ref_readable_with_policy_in(rtxn, &policy, id)? {
                     readable = false;
                     break;
                 }
