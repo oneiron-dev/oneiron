@@ -65,6 +65,14 @@ pub struct EmailProviderInbound {
     /// the named-address door (`Vault::enqueue_inbound_email`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_headers: Option<EmailThreadHeaders>,
+    /// The `Subject` header as the provider decoded it, when it read one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// The message's plain-text body as the provider decoded it, up to the
+    /// provider's bound, when it read one. What the sender wrote: foreign
+    /// inbound data, never instructions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_body: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
     pub received_at: u64,
@@ -85,6 +93,8 @@ impl EmailProviderInbound {
             envelope_from: envelope_from.into(),
             header_mailbox: None,
             thread_headers: None,
+            subject: None,
+            text_body: None,
             payload_ref: None,
             received_at,
         }

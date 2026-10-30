@@ -24,6 +24,10 @@ use crate::{EntityId, Error, Result, Vault};
 
 const INBOX_PAGE_SIZE: usize = 100;
 
+/// How much of a message's decoded plain-text body the vault keeps on its
+/// provider event; the server cuts the rest.
+const NATIVE_MAIL_TEXT_BODY_MAX_BYTES: u64 = 16 * 1024;
+
 /// Host-owned progress. Persist only a successfully returned cursor. A mailbox,
 /// instance or placement change invalidates it. A changed query resumes from
 /// the server's changes since the cursor's state; a server that cannot
@@ -77,7 +81,8 @@ pub struct StalwartInboxStop {
 }
 
 /// Raw inbound bytes are host quarantine, not agent instructions. The host
-/// retains this directory alongside its MTA; vault events carry references only.
+/// retains this directory alongside its MTA; vault events carry references,
+/// never the raw bytes.
 #[derive(Debug, Clone)]
 pub struct StalwartQuarantine {
     root: PathBuf,
@@ -299,8 +304,11 @@ impl StalwartClient {
                     "accountId": &mailbox.account_id, "ids": ids,
                     "properties": [
                         "id", "blobId", "mailboxIds", "from", "receivedAt",
-                        "messageId", "inReplyTo", "references"
-                    ]
+                        "messageId", "inReplyTo", "references",
+                        "subject", "textBody", "bodyValues"
+                    ],
+                    "fetchTextBodyValues": true,
+                    "maxBodyValueBytes": NATIVE_MAIL_TEXT_BODY_MAX_BYTES
                 }),
             )?;
             let messages = array(&reply, "list")?;
@@ -451,12 +459,13 @@ impl StalwartClient {
 
     /// Quarantines one listed message and hands it to the mail ingress door.
     /// Its bytes stream from the server into the quarantine file, so memory
-    /// never holds the message whole; the vault keeps its metadata and
-    /// quarantine reference as its provider event. A capture that leaves the quarantine's
-    /// disk below `[limits] code_result_disk_floor_bytes` asks that row's
-    /// question and keeps the message. Threading headers take it to its
-    /// thread (`Vault::enqueue_inbound_email`); without them it takes the
-    /// generic door.
+    /// never holds the message whole; the vault keeps its metadata, its
+    /// subject and bounded plain-text body as the server decoded them, and
+    /// its quarantine reference as its provider event. A capture that leaves
+    /// the quarantine's disk below `[limits] code_result_disk_floor_bytes`
+    /// asks that row's question and keeps the message. Threading headers take
+    /// it to its thread (`Vault::enqueue_inbound_email`); without them it
+    /// takes the generic door.
     #[allow(clippy::too_many_arguments)]
     fn admit_message(
         &self,
@@ -508,6 +517,11 @@ impl StalwartClient {
         )
         .with_payload_ref(payload_ref);
         inbound.thread_headers = thread_headers(message);
+        inbound.subject = message
+            .get("subject")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        inbound.text_body = text_body(message);
         archive_native_mail_inbound(vault, &mut inbound, now)?;
         let thread = inbound.thread_headers.clone();
         let input = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
@@ -557,4 +571,26 @@ fn thread_headers(message: &Value) -> Option<EmailThreadHeaders> {
     let in_reply_to = parents.next();
     references.extend(parents);
     Some(EmailThreadHeaders::new(message_id, references, in_reply_to))
+}
+
+/// The message's first plain-text body part, as the server decoded it and
+/// cut to [`NATIVE_MAIL_TEXT_BODY_MAX_BYTES`].
+fn text_body(message: &Value) -> Option<String> {
+    let part = message
+        .get("textBody")?
+        .as_array()?
+        .iter()
+        .find(|part| {
+            part.get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("text/plain"))
+        })?
+        .get("partId")?
+        .as_str()?;
+    message
+        .get("bodyValues")?
+        .get(part)?
+        .get("value")?
+        .as_str()
+        .map(str::to_owned)
 }
