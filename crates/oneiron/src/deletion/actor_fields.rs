@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::secret_custody::EraseOwnerAct;
 use crate::side_table::ActorScrub;
 
 use super::tombstone::HARD_DELETE_MARKER;
@@ -26,11 +27,15 @@ const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_
 /// permanent hard-delete marker, the dispatch text the actor owns leaves the
 /// attempt payloads too (FIX 7076), and the planned intents' declared scrub
 /// leaves each intent it asked or whose plan seats it in its erased form
-/// (Engine 10-22); a delete writes no marker and keeps the text.
+/// (Engine 10-22); a delete writes no marker and keeps the text. Under
+/// `act`, the owner act the erase carries out, the blocked reports' rows go
+/// first, so each custody record their scrub revokes is carried to his other
+/// machines (FIX 11883); their declared scrub then finds none.
 pub(super) fn erase_actor_fields_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
+    act: Option<&EraseOwnerAct<'_>>,
 ) -> Result<()> {
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
@@ -41,6 +46,11 @@ pub(super) fn erase_actor_fields_in_txn(
     if hard {
         let erased = BTreeSet::from([*actor]);
         crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+    }
+    if act.is_some() {
+        crate::self_heal::blocked_reports::erase_blocked_source_actor_as_in_txn(
+            vault, wtxn, actor, act,
+        )?;
     }
     scrub_actor_fields_in_txn(vault, wtxn, actor)?;
     if hard {

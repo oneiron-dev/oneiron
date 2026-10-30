@@ -23,6 +23,9 @@ const VERSION: u8 = 2;
 pub(super) const TAG_LEN: usize = 9;
 const BODY_LEN: usize = 38 + TAG_LEN;
 const CODE_LEN: usize = BODY_LEN + 3;
+/// What this machine's key slots keep of its own piece: the body and check. The
+/// export's magic and home are implied by the slots (FIX 2063).
+pub(super) const SLOT_LEN: usize = CODE_LEN;
 const HOME_LEN: usize = 18;
 const EXPORT_LEN: usize = MAGIC.len() + HOME_LEN + CODE_LEN;
 const CODE_SYMBOLS: usize = CODE_LEN * 8 / 5;
@@ -195,6 +198,22 @@ impl KitPiece {
         }
         let point = decode_code_bytes(&bytes[..])?;
         Ok(Self { home: None, point })
+    }
+    /// The bytes this machine's key slots keep of the piece (`SLOT_LEN`).
+    pub(super) fn slot_bytes(&self) -> Zeroizing<[u8; SLOT_LEN]> {
+        self.code_bytes()
+    }
+    /// A piece read back from this machine's key slots, checked as an import is;
+    /// its home is this machine.
+    pub(super) fn from_slot_bytes(bytes: &[u8]) -> Result<Self, KitError> {
+        if bytes.len() != SLOT_LEN {
+            return Err(KitError::InvalidPiece);
+        }
+        let point = decode_code_bytes(bytes)?;
+        Ok(Self {
+            home: Some(PieceHome::ThisMachine),
+            point,
+        })
     }
     fn code_bytes(&self) -> Zeroizing<[u8; CODE_LEN]> {
         let point = &self.point;

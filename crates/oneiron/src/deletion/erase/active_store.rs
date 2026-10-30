@@ -48,13 +48,17 @@ impl Vault {
     /// Returns whether local state existed, plus the citing NOTE documents
     /// whose pins the erasure rewrote, for the caller's post-commit notice.
     /// `erase` is set for a hard reason: only an erase destroys a world's
-    /// keys; a soft delete's purge of headerless residue keeps them.
+    /// keys; a soft delete's purge of headerless residue keeps them. `act`
+    /// is the owner act an erase carries out, when its door bound one: the
+    /// custody revokes its actor sweep makes reach his other machines under
+    /// it (FIX 11883).
     pub(in crate::deletion) fn purge_entity_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         request_id: Option<&[u8; 16]>,
         erase: bool,
+        act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(bool, Vec<EntityId>)> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
@@ -157,7 +161,7 @@ impl Vault {
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
         if erase {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, act)?;
         }
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;

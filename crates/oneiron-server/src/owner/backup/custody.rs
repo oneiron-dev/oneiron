@@ -21,6 +21,7 @@
 mod anchor_client;
 mod anchor_credentials;
 mod anchor_transport;
+mod home_fetch;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,6 +37,7 @@ use serde::Serialize;
 
 use self::anchor_client::HttpAnchor;
 pub(crate) use self::anchor_credentials::CustodyAnchorCredentials;
+pub(crate) use self::home_fetch::custody_from_home;
 use super::{BackupOutcome, BackupPlan, take};
 use crate::config::BackupConfig;
 use crate::owner::schedule::OwnerHost;
