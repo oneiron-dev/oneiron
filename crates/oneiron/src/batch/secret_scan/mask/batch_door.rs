@@ -37,6 +37,16 @@ pub(in crate::batch) fn mask_batch_ops(
     masks: bool,
     at: u64,
 ) -> Result<(MaskedFiles, Vec<(EntityId, ClaimCandidate)>)> {
+    let refusal = match scan_batch_ops(store, &*wtxn, ops) {
+        // A clean batch that is replayed, or that holds no put, claim or
+        // text for a pass to read, places nothing whatever custody knows:
+        // the index is not loaded (speed).
+        Ok(()) if !masks || ops.iter().all(|op| op_record(op).is_none()) => {
+            return Ok((MaskedFiles::default(), Vec::new()));
+        }
+        Ok(()) => None,
+        Err(refusal) => Some(refusal),
+    };
     // A value custody already holds keeps its own handle wherever it comes
     // back, shape or none (OF-560 C). A replayed batch reads only what it
     // wrote before.
@@ -45,11 +55,9 @@ pub(in crate::batch) fn mask_batch_ops(
     } else {
         None
     };
-    let refusal = match scan_batch_ops(store, &*wtxn, ops) {
-        Ok(()) if known.is_none() => return Ok((MaskedFiles::default(), Vec::new())),
-        Ok(()) => None,
-        Err(refusal) => Some(refusal),
-    };
+    if refusal.is_none() && known.is_none() {
+        return Ok((MaskedFiles::default(), Vec::new()));
+    }
     // A value the owner ruled no secret in a record is no hit there.
     let kept = KeptValues::for_records_in_txn(store, &*wtxn, ops.iter().filter_map(op_record))?;
     if known.is_none() && !kept.is_empty() && scan_screened(store, wtxn, &kept, ops).is_ok() {
