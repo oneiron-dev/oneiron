@@ -30,8 +30,8 @@ use super::super::claims::{
 use super::super::graph_objects::{RepoProjectionRelease, copy_repo_projection_objects};
 use super::super::recipient::RepoProjectionRevealBinding;
 use super::{
-    RepoGitProjection, RepoGitProjectionRoots, graph_dir, projection_of, publish_copy_refs,
-    record_projection, require_store_not_erased, standing_projection,
+    RepoGitProjection, RepoGitProjectionRoots, building_dir, closure_marks_stand_in_txn, land_copy,
+    require_store_not_erased, standing_projection,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -96,7 +96,9 @@ impl RepoGitReleasePlan {
         self.files.is_empty()
     }
 
-    fn release(&self) -> RepoProjectionRelease {
+    /// Each released file's exact byte path and ORIGINAL blob, sorted:
+    /// what its copy is keyed by.
+    pub(crate) fn release(&self) -> RepoProjectionRelease {
         self.files
             .iter()
             .map(|file| (file.path.clone(), file.blob.clone()))
@@ -209,7 +211,8 @@ pub(crate) fn plan_repo_git_release(
 /// Makes the granted sibling of the masked copy `masked` that `plan`
 /// releases, or loads the one that already stands for it (module docs);
 /// `None` when the masked copy's sources moved, which the caller answers
-/// with the masked copy's own admission.
+/// with the masked copy's own admission. It is built and lands as a masked
+/// copy does, under the masked copy's closure marks.
 ///
 /// # Errors
 /// An erased store, an object the canonical store lacks, a failed git
@@ -256,17 +259,18 @@ pub(crate) fn materialize_recipient_git_graph(
     }
     let facts = {
         let txn = vault.store.env.read_txn()?;
-        RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?
+        let facts = RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?;
+        if !closure_marks_stand_in_txn(vault, &txn, &masked.graph, &facts)? {
+            return Ok(None);
+        }
+        facts
     };
-    if facts.ids()? != *marks {
-        return Ok(None);
+    let building = building_dir(vault, store_id, graph.graph)?;
+    // A building directory is an interrupted copy: it starts over.
+    if building.exists() {
+        std::fs::remove_dir_all(&building)?;
     }
-    let dir = graph_dir(vault, store_id, graph.graph)?;
-    // A directory no graph claim stands behind is an interrupted copy.
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)?;
-    }
-    let copy_store = wire.init_projection_store(&dir)?;
+    let copy_store = wire.init_projection_store(&building)?;
     let release = plan.release();
     let copy = copy_repo_projection_objects(
         vault,
@@ -277,11 +281,8 @@ pub(crate) fn materialize_recipient_git_graph(
         &facts,
         store_id,
         Some(&release),
-        now,
     )?;
-    publish_copy_refs(wire, &copy_store, &roots, &copy, now)?;
-    record_projection(vault, &graph, &roots, &copy)?;
-    Ok(Some(projection_of(graph, &copy_store, &roots, &copy)))
+    land_copy(vault, wire, &building, &graph, store_id, &roots, &copy, now).map(Some)
 }
 
 /// The CODE anchor a recipient's reads of the canonical store `canonical`

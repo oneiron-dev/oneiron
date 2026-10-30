@@ -15,19 +15,25 @@
 //! beside the served stores, one directory per canonical store and graph.
 //! Its value-free records are `repo.secret_projection` claims. It is bound
 //! to its sources (CALL P3): it stands only while its graph claim stands
-//! and the readable marks are the ones it was made under, and it is
-//! admitted again before any byte of it is released. No TTL, size or count
-//! ends it. A vault with no readable mark, or roots whose closure no mark
-//! touches, gets no copy at all: the caller keeps the canonical path, and
-//! nothing is written. Nothing in this slice calls it; every route,
-//! fetch, checkout and receive is unchanged.
+//! and the readable marks naming a blob of its closure are the ones it was
+//! made under (FIX 9105: a mark on another blob or store keeps it), and it
+//! is admitted again before any byte of it is released. No TTL, size or
+//! count ends it. A vault with no readable mark, or roots whose closure no
+//! mark touches, gets no copy at all: the caller keeps the canonical path,
+//! and nothing is written.
+//!
+//! A copy is built in its own building directory, its graph id unknown
+//! until its walk has found its closure's marks; its records land next,
+//! the graph's first and the rest in bounded transactions (FIX 9106), then
+//! the directory moves to the graph's and its refs are published. A reader
+//! admits only a copy whose refs stand, so it never reads a partial one.
 
 #![allow(
     dead_code,
     reason = "FIX 7608: the exact-source proof and some accessors wait for later slices"
 )]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use heed::RoTxn;
 
@@ -42,8 +48,13 @@ use crate::git_wire::{
     GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire, GitWireRepo,
 };
 
+mod closure;
+mod landing;
 pub(crate) mod recipient;
 
+use self::closure::{closure_marks, graph_record_with, same_base};
+pub(crate) use self::closure::{closure_marks_stand_in_txn, masked_sibling};
+use self::landing::land_copy;
 pub(crate) use self::recipient::{
     RepoGitReleasePlan, materialize_recipient_git_graph, plan_repo_git_release,
     recipient_repo_anchor,
@@ -203,14 +214,20 @@ pub(crate) fn repo_secret_projection_root(vault: &Vault) -> Result<PathBuf> {
     Ok(root.canonicalize()?)
 }
 
-/// What one materialization is keyed by, read once.
+/// The prefix of a copy's building directory, beside its store's copies;
+/// never a graph id, so no graph's sweep takes it.
+const BUILDING_DIR_PREFIX: &str = "building-";
+
+/// What one materialization is keyed by, read once: the masked graph
+/// record `roots` would be made under with its marks still empty (they are
+/// its closure's, FIX 9105), and the readable marks.
 struct ProjectionInputs {
-    graph: RepoProjectionClaim,
+    base: RepoProjectionRecord,
     store_id: EntityId,
     facts: RepoMarkFacts,
 }
 
-/// The graph record `roots` of `canonical` would be made under now; `None`
+/// The inputs `roots` of `canonical` would be copied under now; `None`
 /// when no mark is readable, which needs no copy.
 fn projection_inputs(
     vault: &Vault,
@@ -226,7 +243,7 @@ fn projection_inputs(
     }
     let store_identity = canonical.identity().as_hex();
     let store_id = lfs_repo_id(&store_identity)?;
-    let graph = RepoProjectionClaim::graph(RepoProjectionRecord::Graph {
+    let base = RepoProjectionRecord::Graph {
         store_identity,
         store_id,
         roots: roots
@@ -235,11 +252,11 @@ fn projection_inputs(
             .map(|(name, original)| (name.as_str().to_owned(), original.clone()))
             .collect(),
         private_root: roots.private_root.clone(),
-        marks: facts.ids()?,
+        marks: Vec::new(),
         audience: RepoProjectionAudience::Masked,
-    })?;
+    };
     Ok(Some(ProjectionInputs {
-        graph,
+        base,
         store_id,
         facts,
     }))
@@ -269,6 +286,78 @@ fn graph_dir(vault: &Vault, store_id: EntityId, graph: EntityId) -> Result<PathB
         .join(graph.to_hex()))
 }
 
+/// The directory the copy keyed by `key` (its graph id, or a masked copy's
+/// base id while its marks are unknown) is built in before it lands.
+fn building_dir(vault: &Vault, store_id: EntityId, key: EntityId) -> Result<PathBuf> {
+    Ok(repo_secret_projection_root(vault)?
+        .join(store_id.to_hex())
+        .join(format!("{BUILDING_DIR_PREFIX}{}", key.to_hex())))
+}
+
+/// The directory every copy of the canonical store `store_id` would live
+/// under, made by nothing here.
+pub(crate) fn existing_projection_store_dir(vault: &Vault, store_id: EntityId) -> PathBuf {
+    vault
+        .store
+        .env
+        .path()
+        .join(REPO_SECRET_PROJECTION_DIR)
+        .join(store_id.to_hex())
+}
+
+/// The id a copy directory's strict 32-hex name is, or `None` for anything
+/// else (a private ingress root, a building directory, a file).
+pub(crate) fn projection_dir_id(path: &Path) -> Option<EntityId> {
+    if !path.is_dir() {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?;
+    if name.len() != 32 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    EntityId::from_hex(name).ok()
+}
+
+/// The masked copy of `base` that stands now, found among its store's copy
+/// directories by their graph records (FIX 9105): its graph id names its
+/// closure's marks, which only its walk learns, so it is never derived
+/// ahead of one.
+///
+/// # Errors
+/// A directory that cannot be listed, a store failure, or a record that
+/// does not decode.
+fn standing_for_base(
+    vault: &Vault,
+    wire: &GitWire<'_>,
+    base: &RepoProjectionRecord,
+    store_id: EntityId,
+    roots: &RepoGitProjectionRoots,
+) -> Result<Option<RepoGitProjection>> {
+    let Ok(entries) = std::fs::read_dir(existing_projection_store_dir(vault, store_id)) else {
+        return Ok(None);
+    };
+    let mut candidates = Vec::new();
+    {
+        let txn = vault.store.env.read_txn()?;
+        for entry in entries {
+            let Some(graph) = projection_dir_id(&entry?.path()) else {
+                continue;
+            };
+            if let Some(claim) = RepoProjectionClaim::load_graph_in_txn(vault, &txn, &graph)?
+                && same_base(&claim.record, base)
+            {
+                candidates.push(claim);
+            }
+        }
+    }
+    for claim in candidates {
+        if let Some(standing) = standing_projection(vault, wire, &claim, store_id, roots)? {
+            return Ok(Some(standing));
+        }
+    }
+    Ok(None)
+}
+
 /// Makes the masked copy of `roots` of the canonical store `canonical`,
 /// or loads the one that already stands for them (module docs). `None`
 /// when no readable mark touches the closure: the caller keeps the
@@ -288,16 +377,16 @@ pub(crate) fn materialize_masked_git_graph(
         return Ok(None);
     };
     require_store_not_erased(vault, inputs.store_id)?;
-    if let Some(standing) = standing_projection(vault, wire, &inputs.graph, inputs.store_id, roots)?
-    {
+    if let Some(standing) = standing_for_base(vault, wire, &inputs.base, inputs.store_id, roots)? {
         return Ok(Some(standing));
     }
-    let dir = graph_dir(vault, inputs.store_id, inputs.graph.graph)?;
-    // A directory no graph claim stands behind is an interrupted copy.
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)?;
+    let key = RepoProjectionClaim::graph(inputs.base.clone())?.graph;
+    let building = building_dir(vault, inputs.store_id, key)?;
+    // A building directory is an interrupted copy: it starts over.
+    if building.exists() {
+        std::fs::remove_dir_all(&building)?;
     }
-    let copy_store = wire.init_projection_store(&dir)?;
+    let copy_store = wire.init_projection_store(&building)?;
     let copy = copy_repo_projection_objects(
         vault,
         wire,
@@ -307,15 +396,28 @@ pub(crate) fn materialize_masked_git_graph(
         &inputs.facts,
         inputs.store_id,
         None,
-        now,
     )?;
     if !copy.changed_any() {
-        std::fs::remove_dir_all(&dir)?;
+        std::fs::remove_dir_all(&building)?;
         return Ok(None);
     }
-    publish_copy_refs(wire, &copy_store, roots, &copy, now)?;
-    record_projection(vault, &inputs.graph, roots, &copy)?;
-    Ok(Some(projection_of(inputs.graph, &copy_store, roots, &copy)))
+    let marks = closure_marks(&inputs.facts, &copy)?;
+    let graph = RepoProjectionClaim::graph(graph_record_with(
+        &inputs.base,
+        marks,
+        RepoProjectionAudience::Masked,
+    ))?;
+    land_copy(
+        vault,
+        wire,
+        &building,
+        &graph,
+        inputs.store_id,
+        roots,
+        &copy,
+        now,
+    )
+    .map(Some)
 }
 
 /// The masked copy that stands for `roots` of `canonical` now, admitted
@@ -331,7 +433,7 @@ pub(crate) fn load_repo_git_projection(
     roots: &RepoGitProjectionRoots,
 ) -> Result<Option<RepoGitProjection>> {
     match projection_inputs(vault, canonical, roots)? {
-        Some(inputs) => standing_projection(vault, wire, &inputs.graph, inputs.store_id, roots),
+        Some(inputs) => standing_for_base(vault, wire, &inputs.base, inputs.store_id, roots),
         None => Ok(None),
     }
 }
@@ -339,8 +441,9 @@ pub(crate) fn load_repo_git_projection(
 /// Whether `projection` still stands in `txn`: its graph claim is there,
 /// approved and unchanged, its canonical store was not erased (FIX 10274:
 /// the owner's erase, carried out, whatever its marks still say), and the
-/// readable marks are exactly the ones it was made under. A copy is
-/// admitted again here before any byte of it is released.
+/// readable marks naming a blob of its closure are exactly the ones it was
+/// made under (FIX 9105). A copy is admitted again here before any byte of
+/// it is released.
 ///
 /// # Errors
 /// A store failure, or a record that does not decode.
@@ -353,17 +456,14 @@ pub(crate) fn admit_repo_git_projection_in_txn(
     else {
         return Ok(false);
     };
-    let RepoProjectionRecord::Graph {
-        marks, store_id, ..
-    } = &stored.record
-    else {
+    let RepoProjectionRecord::Graph { store_id, .. } = &stored.record else {
         return Ok(false);
     };
     if stored != projection.graph || vault.local_hard_delete_marker_exists_in_txn(txn, store_id)? {
         return Ok(false);
     }
     let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;
-    Ok(facts.ids()? == *marks)
+    closure_marks_stand_in_txn(vault, txn, &stored, &facts)
 }
 
 /// The masked copy the graph record `graph` names, reopened from its own
@@ -543,70 +643,6 @@ fn publish_copy_refs(
         ));
     }
     wire.publish_projection_refs(copy_store, publications, now)
-}
-
-/// Every record of one copy, in one transaction: the graph first, so each
-/// record about it has it to stand on.
-fn record_projection(
-    vault: &Vault,
-    graph: &RepoProjectionClaim,
-    roots: &RepoGitProjectionRoots,
-    copy: &RepoProjectionCopy,
-) -> Result<()> {
-    let id = graph.graph;
-    vault.with_write_txn(|wtxn| {
-        let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-        graph.put_in_txn(vault, wtxn, at)?;
-        for object in &copy.objects {
-            RepoProjectionClaim::of(
-                id,
-                RepoProjectionRecord::Object {
-                    original: object.original.clone(),
-                    copy: object.copy.clone(),
-                    kind: object.kind,
-                    signature_not_preserved: object.signature_not_preserved,
-                    marks: object.marks.clone(),
-                    occurrence: object.occurrence.clone(),
-                },
-            )
-            .put_in_txn(vault, wtxn, at)?;
-        }
-        for (name, original) in &roots.published {
-            RepoProjectionClaim::of(
-                id,
-                RepoProjectionRecord::Ref {
-                    name: name.as_str().to_owned(),
-                    original: original.clone(),
-                    copy: copy.copy_of(original),
-                },
-            )
-            .put_in_txn(vault, wtxn, at)?;
-        }
-        if let Some(original) = &roots.private_root {
-            RepoProjectionClaim::of(
-                id,
-                RepoProjectionRecord::PrivateRoot {
-                    original: original.clone(),
-                    copy: copy.copy_of(original),
-                },
-            )
-            .put_in_txn(vault, wtxn, at)?;
-        }
-        for link in &copy.links {
-            RepoProjectionClaim::of(
-                id,
-                RepoProjectionRecord::Link {
-                    parent: link.parent.clone(),
-                    parent_occurrence: link.parent_occurrence.clone(),
-                    place: link.place.clone(),
-                    child_original: link.child_original.clone(),
-                    child_copy: link.child_copy.clone(),
-                },
-            )
-            .put_in_txn(vault, wtxn, at)?;
-        }
-        Ok(())
-    })
 }
 
 fn projection_of(
