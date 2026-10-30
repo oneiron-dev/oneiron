@@ -64,10 +64,12 @@ use super::*;
 
 pub(crate) use self::root_basis::{RootBasisCheck, check_root_basis_in_txn};
 
-/// One admitted request, as its entry carried it.
+/// One admitted request, as its entry carried it. The body rides in an
+/// `Arc` the folded view shares, so a view build clones no permit set
+/// (FIX 12013).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct WorkRequest {
-    request: OwnerWorkRequest,
+    request: Arc<OwnerWorkRequest>,
     /// The install key that signed it.
     key: [u8; 32],
     /// Each chain that admitted the carrier under the key at the request's
@@ -115,10 +117,11 @@ pub(super) struct OwnerWorkState {
     permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
 }
 
-/// One admitted request as this install reads it.
+/// One admitted request as this install reads it. The body is the fold
+/// state's shared `Arc`, not a copy (FIX 12013).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct FoldedWorkRequest {
-    request: OwnerWorkRequest,
+    request: Arc<OwnerWorkRequest>,
     /// It counts at full strength here: its carrier's removal race passes.
     counts: bool,
 }
@@ -161,7 +164,7 @@ impl AuthorityFold {
         self.owner_work
             .requests
             .get(hash)
-            .map(|folded| &folded.request)
+            .map(|folded| folded.request.as_ref())
     }
 
     /// The admitted request signed as entry `hash` when it counts here,
@@ -175,7 +178,7 @@ impl AuthorityFold {
             .requests
             .get(hash)
             .filter(|folded| folded.counts)
-            .map(|folded| &folded.request)
+            .map(|folded| folded.request.as_ref())
     }
 
     /// The one result of the request signed as entry `request`.
@@ -216,9 +219,9 @@ impl AuthorityFold {
                     && folded.request.kit_root().is_none()
                     && folded.request.executor == executor
                     && !self.owner_work.results.contains_key(*hash)
-                    && !cancel::closed(&self.owner_work, hash, &folded.request)
+                    && !cancel::closed(&self.owner_work, hash, folded.request.as_ref())
             })
-            .map(|(hash, folded)| (*hash, &folded.request))
+            .map(|(hash, folded)| (*hash, folded.request.as_ref()))
     }
 
     /// Owner work requests and results that are valid without effect.
@@ -406,7 +409,7 @@ fn apply_request(
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: request.into_owned(),
+            request: Arc::new(request.into_owned()),
             key,
             marks,
             narrow_only,
@@ -520,7 +523,8 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
 }
 
 /// The fold's view of every request and result, under this install's pin and
-/// holds.
+/// holds. Each view request shares the fold state's `Arc` body, so a view
+/// build copies no permit set (FIX 12013).
 pub(super) fn folded_owner_work(
     state: &FoldState,
     pin: Option<&PinnedRoot>,
@@ -584,7 +588,7 @@ pub(super) fn counted_request<'s>(
                 &folded.marks,
                 StandingView::Install,
             ));
-    counts.then_some(&folded.request)
+    counts.then_some(folded.request.as_ref())
 }
 
 /// The requests `machine` carried that have no result yet, for its next
@@ -605,7 +609,7 @@ pub(super) fn pending_carried_by(
             folded.request.kit_root().is_none()
                 && folded.request.carrier == machine
                 && !fold.owner_work.results.contains_key(*hash)
-                && !cancel::closed(&fold.owner_work, hash, &folded.request)
+                && !cancel::closed(&fold.owner_work, hash, folded.request.as_ref())
         })
         .map(|(hash, _)| *hash)
 }
