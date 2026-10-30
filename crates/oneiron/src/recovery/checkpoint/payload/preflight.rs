@@ -21,9 +21,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::LazyLock;
 
+use super::super::{StorageTier, storage_tier};
 use super::keep_owner_parts;
 use super::rows::{self, Class, DbClass};
-use super::super::{StorageTier, storage_tier};
 use crate::batch::EntityMetadataHeader;
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
@@ -376,10 +376,11 @@ impl Preflight {
                 gaps.push((name, kind));
             }
         }
-        self.gaps.extend(gaps.into_iter().map(|(name, kind)| RegistryGap {
-            place: Place::Database(name),
-            kind,
-        }));
+        self.gaps
+            .extend(gaps.into_iter().map(|(name, kind)| RegistryGap {
+                place: Place::Database(name),
+                kind,
+            }));
     }
 
     /// Every registry gap, in the order the preflight found them.
@@ -428,6 +429,8 @@ impl Preflight {
         if self.families.is_empty() && self.entity_kinds.is_empty() {
             return captured;
         }
-        keep_owner_parts(captured, &|db, key, value| self.compartments(db, key, value))
+        keep_owner_parts(captured, &|db, key, value| {
+            self.compartments(db, key, value)
+        })
     }
 }

@@ -9,35 +9,34 @@
 
 use std::collections::BTreeSet;
 
-use super::super::routing::IMPORTS;
+use super::join::ReportImportJoin;
 use crate::edit_distance::publisher::PublisherActor;
 use crate::{EntityId, Result, Vault};
 
 impl Vault {
-    /// The ACTOR `publisher_ref` published `artifact` as. `None` for an
-    /// artifact with no publisher actor (the owner's own or local packs) and
-    /// for one shipped through more than one hub: its delivery names no comm
-    /// counterparty, and none is invented.
+    /// The ACTOR `publisher_ref` published `artifact` as, read on the
+    /// run's import join. `None` for an artifact with no publisher actor
+    /// (the owner's own or local packs) and for one shipped through more
+    /// than one hub: its delivery names no comm counterparty, and none is
+    /// invented.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub(super) fn report_publisher_actor(
+    pub(super) fn report_publisher_actor_in(
         &self,
+        join: &ReportImportJoin,
         publisher_ref: &str,
         artifact: EntityId,
     ) -> Result<Option<PublisherActor>> {
         let artifact = artifact.to_hex();
         let mut hubs = BTreeSet::new();
-        let txn = self.store.env.read_txn()?;
-        for row in IMPORTS.iter_from(&self.store, &txn, &[])? {
-            let (_, receipt) = row?;
+        for receipt in &join.receipts {
             if receipt.publisher.as_deref() == Some(publisher_ref) && receipt.entity == artifact {
                 hubs.extend(EntityId::from_hex(&receipt.hub_id).ok());
             }
         }
-        drop(txn);
-        for pack in self.installed_packs()? {
+        for pack in &join.packs {
             if pack.publisher == publisher_ref && pack.skills.contains(&artifact) {
                 hubs.extend(EntityId::from_hex(&pack.hub_id).ok());
             }

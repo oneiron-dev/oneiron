@@ -28241,7 +28241,7 @@
      "purpose": "The digest's urgent breakthrough (OF-194 L3; ARCH-0026: \"urgent breakthrough only when waiting would harm…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 8,
       "struct": 7
      }
@@ -32047,7 +32047,7 @@
       "const": 6,
       "crate-vis": 12,
       "enum": 3,
-      "fn": 9,
+      "fn": 10,
       "re-export": 10,
       "struct": 4,
       "trait": 2
@@ -35290,13 +35290,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/join.rs",
+     "purpose": "One IMPORTS + installed-packs snapshot per delivery run (FIX 11632)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ReportPublisherMetadata"
      ],
      "path": "src/feedback/report/delivery/metadata.rs",
      "purpose": "The historical ED-08 metadata a report's subject names (OF-420, FIX 739)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -35422,7 +35432,7 @@
      "purpose": "Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the…",
      "surface": {
       "const": 7,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 2,
       "re-export": 5,
@@ -35436,7 +35446,7 @@
      "path": "src/feedback/triage/erased.rs",
      "purpose": "The `erased` end of a feedback triage revision (FIX 7551)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -40039,9 +40049,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConversionChainStatus",
       "DivergenceCase",
       "JudgeConversion",
       "TakeoverVerdict"
@@ -40050,7 +40061,7 @@
      "purpose": "Judge swaps as projections (ARCH-0079 #model-swaps, ARCH-0003 #learning)",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 2,
       "fn": 5,
       "struct": 2
      }
@@ -57003,9 +57014,9 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
-      "const": 5,
+      "const": 6,
       "crate-vis": 5,
-      "fn": 22,
+      "fn": 23,
       "struct": 1
      }
     },
@@ -65812,7 +65823,7 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 8,
       "struct": 5
@@ -65825,7 +65836,7 @@
      "path": "src/skill_optimize/eval_set/cohort/space_probe.rs",
      "purpose": "The space probes' cohort metadata (FIX 6744; ARCH-0053 `#eval-exposure`), kept in the ledger's own family…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -66022,7 +66033,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 14,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -66229,11 +66240,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "TradeoffCapacityCrossing"
+     ],
      "path": "src/skill_optimize/gate/tradeoff_capacity.rs",
      "purpose": "Tradeoff rule counts against the resolved policy limits (FIX 8771, 8847)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -84352,7 +84367,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85271,7 +85286,7 @@
    },
    "over_bar": 107,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5752,
+   "source_files": 5753,
    "test_files": 902
   },
   "oneiron-android": {
@@ -101248,7 +101263,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/feedback_triage/parts.rs",
@@ -114192,7 +114207,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 27,
       "fn": 12,
       "re-export": 1,
       "struct": 1
@@ -114483,7 +114498,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1,
       "re-export": 15,
       "struct": 2
