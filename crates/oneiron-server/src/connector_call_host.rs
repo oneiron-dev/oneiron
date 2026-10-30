@@ -56,7 +56,7 @@ use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
     RemoteTaskHandle,
 };
-use oneiron::secret_custody::{KeptSentValue, SentPresentation, SentValue};
+use oneiron::secret_custody::{KeptSentValue, RunSecretHolder, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use oneiron::task_verb::sdk::ConnectorAnswerAction;
 use oneiron::{EntityId, Vault};
@@ -132,6 +132,8 @@ pub struct ServedConnectorCallHost {
     credential: Option<EntityId>,
     /// The secret grant a lease-aware `self.use` call redeems at each send.
     grant: Option<SecretGrantRef>,
+    /// The use's own run, when its seat found that record (FIX 8334).
+    run: Option<RunSecretHolder>,
     /// The server's live connector questions, shared by every host it
     /// builds and read by `connector.answer`.
     elicitations: Arc<ConnectorElicitationRegistry>,
@@ -191,6 +193,7 @@ impl ServedConnectorCallHost {
             reply: None,
             credential: None,
             grant: None,
+            run: None,
             elicitations,
             caller: None,
             awaiting: None,
@@ -335,9 +338,11 @@ impl ConnectorCallHost for ServedConnectorCallHost {
         &mut self,
         credential: Option<EntityId>,
         grant: Option<SecretGrantRef>,
+        run: Option<RunSecretHolder>,
     ) -> bool {
         self.credential = credential;
         self.grant = grant;
+        self.run = run;
         true
     }
 

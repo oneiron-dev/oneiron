@@ -32,5 +32,6 @@ pub use self::publisher_signature::PublisherSignatureAuthorization;
 pub(crate) use self::publisher_signature::validate_publisher_signature_in_txn;
 pub(crate) use self::request_binding::FrozenDispatchIdentity;
 pub(super) use self::retry_after::PROVIDER_RETRY_AFTER_FIELD;
+pub(crate) use self::retry_after::provider_retry_after_secs;
 pub(super) use crate::channel_identity::enrich_dispatch_channel_identity;
 pub(crate) use crate::channel_identity::resolve_channel_identity_ref_for_connector;

@@ -13,7 +13,8 @@
 //! * input v2 ([`CUSTODY_INPUT_WIRE_VERSION`]): the recorder mints the key
 //!   before any byte is sealed and seals the whole input under it once,
 //!   then seals that to the holder and splits it as before; a surface's own
-//!   seal is sealed under the key on top (`control::input::carrier_seal`);
+//!   seal that fits one row is sealed under the key on top
+//!   (`control::input::carrier_seal`);
 //! * transition v3 ([`CUSTODY_TRANSITION_WIRE_VERSION`]): the executor
 //!   seals the value under the key once, then to each permit
 //!   (`transition::carrier_leaf`);
@@ -106,6 +107,10 @@ const CUSTODY_LIVE_LEAF_RELEASE: CustodyLiveLeafRelease =
 
 const CARRIER_AAD_DOMAIN: &[u8] = b"oneiron/custody-carrier/v1\0";
 const NONCE_BYTES: usize = 12;
+
+/// What a carrier's seal adds to the bytes it seals: its nonce, then the
+/// AEAD's 16-byte tag.
+pub(crate) const CARRIER_SEAL_BYTES: usize = NONCE_BYTES + 16;
 
 /// A carrier reference's bytes: its kind's tag, the credential, the
 /// instance, the generation and the role.

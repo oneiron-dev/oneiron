@@ -34,7 +34,7 @@ use ed25519_dalek::SigningKey;
 use oneiron_crypto::HybridPublicKey;
 
 use self::carrier_leaf::TransitionLeaf;
-use self::payload::{ValueBinding, seal_value, status_byte, unsigned};
+use self::payload::{status_byte, unsigned};
 pub(crate) use self::pieces::{CustodyPieces, custody_row_key, parse_custody_row_key};
 #[cfg(feature = "sync")]
 pub(crate) use self::pieces::{completed_custody_groups_in_txn, keep_custody_piece_in_txn};
@@ -131,7 +131,8 @@ pub(crate) struct CustodyTransition {
     /// The record in the body codec, its value taken out.
     body: Vec<u8>,
     /// The value sealed to each permitted recipient, with its permit,
-    /// ascending by machine; none once revoked.
+    /// ascending by machine, a value too large for one carrier in numbered
+    /// envelopes, each beside its permit (FIX 7953); none once revoked.
     sealed: Vec<(CustodyRecipientPermit, Vec<u8>)>,
     /// The Ed25519 key that signed.
     pub(crate) signer: [u8; 32],
@@ -148,7 +149,7 @@ impl std::fmt::Debug for CustodyTransition {
             .field("signed_at", &self.signed_at)
             .field("piece", &self.piece)
             .field("pieces", &self.pieces)
-            .field("recipients", &self.sealed.len())
+            .field("recipients", &self.permits().count())
             .finish_non_exhaustive()
     }
 }
@@ -179,8 +180,8 @@ pub(crate) struct Enactment<'a> {
 /// # Errors
 /// The vault has no authority genesis; the record may not leave its device;
 /// it is live but an admitted revoke names its id, which nothing brings
-/// back; the permits do not fit its status; one sealed value outgrows one
-/// carrier.
+/// back; the permits do not fit its status; its body leaves a carrier no
+/// room for a value.
 pub(crate) fn sign_custody_transition(
     fold: &AuthorityFold,
     signing: &SigningKey,
@@ -208,23 +209,17 @@ pub(crate) fn sign_custody_transition(
     let mut bare = record.clone();
     zeroize::Zeroize::zeroize(&mut bare.value_bytes);
     let body = encode_secret_custody_body(&bare)?;
-    let binding = ValueBinding {
-        id,
-        generation: record.rotation_generation,
-        status: record.status,
-        request: enactment.request,
-    };
+    let mut permits: Vec<CustodyRecipientPermit> = enactment
+        .permits
+        .iter()
+        .map(|(permit, _)| *permit)
+        .collect();
+    permits.sort_unstable_by_key(|permit| permit.machine);
+    // Sealed under the carrier key once, whole, before it is split into
+    // envelopes and pieces (FIX 7402, 7953).
     let under = leaf
         .map(|minted| minted.carrier.seal(&minted.leaf, None, &record.value_bytes))
         .transpose()?;
-    let value = under.as_deref().unwrap_or(&record.value_bytes);
-    let mut sealed = Vec::with_capacity(enactment.permits.len());
-    for (permit, public) in enactment.permits {
-        let envelope = seal_value(&vault_id, &binding, permit, public, value)?;
-        sealed.push((*permit, envelope));
-    }
-    sealed.sort_unstable_by_key(|(permit, _)| permit.machine);
-    let permits: Vec<CustodyRecipientPermit> = sealed.iter().map(|(permit, _)| *permit).collect();
     let template = CustodyTransition {
         id,
         generation: record.rotation_generation,
@@ -242,7 +237,13 @@ pub(crate) fn sign_custody_transition(
         signer: signing.verifying_key().to_bytes(),
         signature: [0; 64],
     };
-    pieces::sign_pieces(&vault_id, signing, template, sealed)
+    pieces::sign_pieces(
+        &vault_id,
+        signing,
+        template,
+        enactment.permits,
+        under.as_deref().unwrap_or(&record.value_bytes),
+    )
 }
 
 /// The second a new transition of record `id` is signed at: `at`, or just

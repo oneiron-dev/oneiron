@@ -111,7 +111,7 @@ pub(crate) use self::cloud_registration::{
 };
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
-pub use self::control::input::{CustodyInputBinding, seal_custody_input};
+pub use self::control::input::{CustodyInputBinding, SealedInput, seal_custody_input};
 #[cfg(feature = "sync")]
 pub(crate) use self::control::input::{
     RelayedInput, WitnessPart, held_input_in_txn, held_inputs, held_witness_in_txn, held_witnesses,
@@ -129,7 +129,7 @@ pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
-    restore_secret_custody_in_txn,
+    restore_secret_custody_in_txn, revoke_side_row_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored schema-2 form, its value sealed under its custody key.
@@ -140,7 +140,7 @@ pub use self::found_keys::{
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
     found_key_notices_due_in_txn, note_found_keys_in_txn, raise_found_key_notices_in_txn,
-    ruled_no_secret_in_txn, settle_found_key_in_txn,
+    raise_found_key_notices_page, ruled_no_secret_in_txn, settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};
@@ -212,7 +212,9 @@ pub use self::use_handle::{
     SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
     SentValue,
 };
-pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser, handle_record_in_txn};
+pub(crate) use self::use_handle::{
+    SecretUseConsumed, SecretUseContext, SecretUser, handle_record_in_txn,
+};
 // The holder's manifest judgment an enacted register's result signs (FIX
 // 5334), which `CustodyManifestCheck::Judged` and the owner work receipt carry.
 pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};

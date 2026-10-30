@@ -244,6 +244,10 @@ pub struct StepReplayCapsule {
     pub request_hash: [u8; 32],
     /// The hash of its messages, which the answering rung is matched by.
     pub messages_digest: [u8; 32],
+    /// Every row the captured request was read from; `None` when any
+    /// constituent is unknown (FIX 7104). Older capsules keep unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
     pub exposures: Vec<ExposureSlot>,
     /// The sampling seed the request carried, if any.
     pub seed: Option<u64>,
@@ -318,6 +322,8 @@ pub(crate) struct StepCapture<'a> {
     /// The task the request carries, which `exposures` index into.
     pub(crate) task: &'a str,
     pub(crate) exposures: &'a [TaskExposure],
+    /// Every row the request was read from, or `None` when any is unknown.
+    pub(crate) source_rows: Option<Vec<EntityId>>,
     /// An executor step's run state and config; `None` for a workflow step.
     pub(crate) start: Option<StepStartCapture<'a>>,
 }
@@ -484,6 +490,7 @@ pub fn capture_workflow_step(
     lease_generation: u32,
     actor: WriteActor,
     request: &LlmRequest,
+    source_rows: Option<Vec<EntityId>>,
 ) {
     let Ok(run) = EntityId::from_bytes(*attempt.as_bytes()) else {
         return;
@@ -500,6 +507,7 @@ pub fn capture_workflow_step(
             request,
             task: "",
             exposures: &[],
+            source_rows,
             start: None,
         },
     );

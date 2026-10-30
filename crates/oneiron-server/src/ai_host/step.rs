@@ -627,7 +627,7 @@ impl StepRunner {
         let run = self
             .models
             .funded_run(run_id, guard, payer)
-            .sourced(sources);
+            .sourced(sources.clone());
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.
@@ -637,6 +637,7 @@ impl StepRunner {
             attempt.attempt_count,
             actor,
             &request,
+            sources,
         );
         let may_send = || {
             live.book_and_revise();
