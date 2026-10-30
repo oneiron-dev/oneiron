@@ -422,7 +422,8 @@ pub(super) fn restate_birth(doc: &LoroDoc) {
 }
 
 /// Persisted operation attribution resolved through the existing peer binding
-/// ladder. A commit message alone never authenticates its claimed actor.
+/// ladder. A commit message alone never authenticates its claimed actor; its
+/// stamp token resolves to the actor its claim names (FIX 10930).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextChange {
     pub actor: Option<WriteActor>,
@@ -449,18 +450,7 @@ impl crate::Vault {
                 let at =
                     u64::try_from(meta.timestamp).map_err(|_| invalid("document timestamp"))?;
                 let actor = match parse_stamp(meta.message.as_deref()) {
-                    Stamped::Live(actor) => {
-                        if crate::edit_distance::peer_actor_stamp_is_honored(
-                            self,
-                            meta.id.peer,
-                            at,
-                            &actor,
-                        )? {
-                            Some(actor)
-                        } else {
-                            crate::edit_distance::peer_actor_at(self, meta.id.peer, at)?
-                        }
-                    }
+                    Stamped::Live(stamp) => stamped_writer(self, meta.id.peer, at, stamp)?,
                     // An erased stamp names no one, and no binding of its
                     // peer speaks for it.
                     Stamped::Erased => None,
@@ -478,10 +468,33 @@ impl crate::Vault {
     }
 }
 
+/// Who a live stamp's change is attributed to: the actor its token resolves
+/// to, when the writing peer's binding vouches for that actor, else the
+/// peer's own binding. A token nothing here resolves names no one, as an
+/// erased stamp does: its actor was erased (FIX 10930).
+fn stamped_writer(
+    vault: &crate::Vault,
+    peer: u64,
+    at: u64,
+    stamp: ActorStamp,
+) -> Result<Option<WriteActor>> {
+    let Some(actor) = crate::provenance::resolve_actor_stamp(vault, &stamp.token)? else {
+        return Ok(None);
+    };
+    if actor.actor_class() == stamp.class
+        && crate::edit_distance::peer_actor_stamp_is_honored(vault, peer, at, &actor)?
+    {
+        return Ok(Some(actor));
+    }
+    crate::edit_distance::peer_actor_at(vault, peer, at)
+}
+
 /// What one commit message says of its actor (FIX 6072, Engine R2).
 pub(super) enum Stamped {
-    /// A live actor's engine stamp.
-    Live(WriteActor),
+    /// An engine stamp naming its writer's token and class (FIX 10930),
+    /// which the token's claim resolves to the actor, or to no one once the
+    /// actor is erased.
+    Live(ActorStamp),
     /// An engine stamp whose actor was erased: no one.
     Erased,
     /// No engine stamp: the peer binding may name the actor.
@@ -498,23 +511,23 @@ pub(super) fn parse_stamp(message: Option<&str>) -> Stamped {
         return Stamped::Erased;
     }
     match (EntityId::from_hex(id), stamp_class(tail)) {
-        (Ok(id), Some(class)) => Stamped::Live(WriteActor::new(id, class)),
+        (Ok(token), Some(class)) => Stamped::Live(ActorStamp { token, class }),
         _ => Stamped::NotStamped,
     }
 }
 
-/// The actor class a stamp names after its id: `.<class>`, to the next
+/// The actor class a stamp names after its token: `.<class>`, to the next
 /// space.
 fn stamp_class(tail: &str) -> Option<crate::EdgeActorClass> {
     let class = tail.strip_prefix('.')?.split(' ').next()?;
     crate::edit_distance::actor_class_from_token(class)
 }
 
-/// `message` cut around its actor id, when it is an engine stamp spelled
-/// as [`stamp`] writes it (`oneiron.entity_doc.v1 <verb> actor=<id>.<class>
-/// op=...`, single spaced, then its receipt): the message before the id, the
-/// id (an actor's, or [`ERASED_CALL_IDENTITY`]), and the rest from the class
-/// on.
+/// `message` cut around its actor token, when it is an engine stamp spelled
+/// as [`stamp`] writes it (`oneiron.entity_doc.v1 <verb> actor=<token>.<class>
+/// op=...`, single spaced, then its receipt): the message before the token,
+/// the token (an actor's, spelled as an id, or [`ERASED_CALL_IDENTITY`]), and
+/// the rest from the class on.
 pub(super) fn cut_stamp(message: &str) -> Option<(&str, &str, &str)> {
     let rest = message.strip_prefix(STAMP)?.strip_prefix(' ')?;
     let (verb, rest) = rest.split_once(' ')?;

@@ -9,11 +9,14 @@
 //! The envelope says what the engine knows: the writing actor and its class,
 //! the engine operation that wrote the change ([`engine_process`]), the rows
 //! a writer named as read for it, and the commit time. It names no model,
-//! prompt or trigger the engine did not see. A message alone authenticates
-//! nothing: a receipt is read only where the writing peer's binding vouches
-//! for its actor, as the attribution reader asks. A commit with none (an
-//! unstamped, erased, malformed or unvouched one) reads as unknown
-//! provenance, never as refused text.
+//! prompt or trigger the engine did not see. The stamp and the envelope name
+//! the actor by its opaque stamp token (FIX 10930), which its claim resolves
+//! here; a reader hands back the envelope naming the resolved actor. A
+//! message alone authenticates nothing: a receipt is read only where the
+//! writing peer's binding vouches for its actor, as the attribution reader
+//! asks. A commit with none (an unstamped, erased, malformed or unvouched
+//! one, or one whose token resolves to no one) reads as unknown provenance,
+//! never as refused text.
 //!
 //! Canonical recovery replays a document into fresh operations, whose
 //! writers are gone. Each replayed commit restates the row's birth instead
@@ -160,11 +163,12 @@ fn commit_receipts(
 }
 
 /// One commit's receipt, over a nonempty span. A replayed commit's is the
-/// row's surviving `birth` (FIX 10929). Any other's message carries one whose
-/// actor its live stamp names, whose class that actor may hold, whose time is
+/// row's surviving `birth` (FIX 10929). Any other's message carries one that
+/// names its live stamp's token, whose token resolves here to an actor of the
+/// stamp's class (FIX 10930), whose class that actor may hold, whose time is
 /// the commit's, whose trigger, if it names one, has its record here, that
 /// names no absent prompt, and whose actor the writing peer's binding vouches
-/// for at that time.
+/// for at that time. It is handed back naming the resolved actor.
 fn receipt_of(
     vault: &crate::Vault,
     document: EntityId,
@@ -185,15 +189,15 @@ fn receipt_of(
     if meta.message.as_deref() == Some(ROW_BIRTH_RESTATED) {
         return Ok(birth.cloned().map(receipt));
     }
-    let Some((stamped, made_by)) = meta.message.as_deref().and_then(decode) else {
+    let Some((stamped, mut made_by)) = meta.message.as_deref().and_then(decode) else {
         return Ok(None);
     };
-    let Stamped::Live(actor) = parse_stamp(Some(stamped)) else {
+    let Stamped::Live(stamp) = parse_stamp(Some(stamped)) else {
         return Ok(None);
     };
     let states = made_by.process.class == MadeByClass::Stated;
-    if made_by.process.actor != actor.entity_ref()
-        || (states && actor.actor_class() != EdgeActorClass::Human)
+    if made_by.process.actor != stamp.token
+        || (states && stamp.class != EdgeActorClass::Human)
         || !made_by.process.is_valid()
         || u64::try_from(meta.timestamp).ok() != Some(made_by.at)
         || !trigger_recorded(vault, made_by.trigger.as_ref())?
@@ -205,8 +209,15 @@ fn receipt_of(
             return Ok(None);
         }
     }
+    // An unresolved token names no one: no receipt (FIX 10930).
+    let Some(actor) = crate::provenance::resolve_actor_stamp(vault, &stamp.token)?
+        .filter(|actor| actor.actor_class() == stamp.class)
+    else {
+        return Ok(None);
+    };
     let vouched =
         crate::edit_distance::peer_actor_stamp_is_honored(vault, meta.id.peer, made_by.at, &actor)?;
+    made_by.process.actor = actor.entity_ref();
     Ok(vouched.then(|| receipt(made_by)))
 }
 
