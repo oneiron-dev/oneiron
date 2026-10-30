@@ -1,6 +1,6 @@
 //! Pack hook bindings: the stored row, its read doors and the owner's bind
 //! and enable switches.
-//! Entry: `PackHookBinding`. Defines its own items; the binding scan and install stay in `hooks`.
+//! Entry: `PackHookBinding`. Defines its own items; the binding scan stays in `hooks`, its writes in `install`.
 
 use super::*;
 
@@ -77,17 +77,18 @@ impl PackHookBinding {
     pub fn author_id(&self) -> EntityId {
         match &self.author {
             HookAuthor::Owner => self.owner,
+            HookAuthor::Agent { agent } => *agent,
             HookAuthor::ForeignActor { actor, .. } => *actor,
         }
     }
 
-    /// That actor's class: the owner is a person; a publisher acts as an
-    /// agent, at its own Grant.
+    /// That actor's class: the owner is a person; a resident agent acts as
+    /// itself, and a publisher as an agent, at its own Grant.
     #[must_use]
     pub const fn author_class(&self) -> HookActorClass {
         match self.author {
             HookAuthor::Owner => HookActorClass::Human,
-            HookAuthor::ForeignActor { .. } => HookActorClass::Agent,
+            HookAuthor::Agent { .. } | HookAuthor::ForeignActor { .. } => HookActorClass::Agent,
         }
     }
 }
