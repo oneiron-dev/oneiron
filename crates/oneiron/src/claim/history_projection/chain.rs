@@ -334,7 +334,9 @@ pub(crate) fn machine_history_for_restriction(
 
 /// Whether a local write of `incoming` to `target` is a restriction staged on
 /// a held history: the whole history projects it, and it keeps the live row's
-/// approval or rejects it, so no approval projects from a held carrier.
+/// approval, rejects it, or lapses a granted row back to `Proposed` (a
+/// critical confirm's `ConfirmLapse`, as the non-held path admits it), so no
+/// approval projects from a held carrier.
 pub(crate) fn restricts_held_machine_history(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -356,7 +358,9 @@ pub(crate) fn restricts_held_machine_history(
         raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(bad)?,
         true,
     )?;
+    use super::super::ClaimApprovalStatus::{Approved, Auto, Proposed, Rejected};
     Ok(project_machine_claim(&projection) == *incoming
         && (incoming.approval == live.approval
-            || incoming.approval == super::super::ClaimApprovalStatus::Rejected))
+            || incoming.approval == Rejected
+            || (incoming.approval == Proposed && matches!(live.approval, Auto | Approved))))
 }
