@@ -19736,6 +19736,7 @@ class OfficeBodyExportRecord(TypedDict):
     artifact: EntityId
     version: int
     frontier: list[int]
+    rebind_frontier: NotRequired[list[int] | None]
     source_version: int
     actor: BodyActor
     author: str

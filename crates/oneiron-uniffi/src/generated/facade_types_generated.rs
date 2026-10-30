@@ -61248,6 +61248,12 @@ pub struct OfficeBodyExportRecord {
     pub version: u64,
     #[serde(rename = "frontier")]
     pub frontier: Vec<u8>,
+    #[serde(
+        rename = "rebind_frontier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rebind_frontier: Option<Vec<u8>>,
     #[serde(rename = "source_version")]
     pub source_version: u64,
     #[serde(rename = "actor")]
