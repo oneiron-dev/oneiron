@@ -7,7 +7,9 @@
 //! writes `cgroup.kill`, which kills them all at once. No PID is polled and
 //! nothing is counted. An empty cell is removed as soon as it can be; one
 //! whose last processes are still being reaped is removed at the next
-//! start or end.
+//! start or end. At its first organ start the engine also ends and removes
+//! the cells of engines that are gone, which a crash leaves behind; a live
+//! engine's cells are left alone (FIX 10579).
 //!
 //! Where the engine's cgroup is not delegated to it, or on a platform with
 //! no cgroups, no cell is made and the organ runs on its process group: its
@@ -31,11 +33,61 @@ struct Fence {
 
 fn here() -> &'static Fence {
     static FENCE: OnceLock<Fence> = OnceLock::new();
-    FENCE.get_or_init(|| Fence {
-        dir: own_cgroup(),
-        next: AtomicU64::new(0),
-        stale: Mutex::new(Vec::new()),
+    FENCE.get_or_init(|| {
+        let dir = own_cgroup();
+        let stale = match &dir {
+            Ok(dir) => sweep(dir),
+            Err(_) => Vec::new(),
+        };
+        Fence {
+            dir,
+            next: AtomicU64::new(0),
+            stale: Mutex::new(stale),
+        }
     })
+}
+
+/// Ends the cells under `parent` that engines now gone left behind, named
+/// for a pid that is neither this process nor alive, and removes them: the
+/// ones whose processes are still being reaped come back, to be removed at
+/// the next start or end. No failure here refuses or stops anything.
+fn sweep(parent: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let own = std::process::id();
+    let mut stale = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("oneiron-organ-"))
+            .and_then(|rest| rest.split_once('-'))
+            .filter(|(_, n)| n.parse::<u64>().is_ok())
+            .and_then(|(pid, _)| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == own || alive(pid) {
+            continue;
+        }
+        let dir = entry.path();
+        let _ = std::fs::write(dir.join("cgroup.kill"), b"1");
+        if !removed(&dir) {
+            stale.push(dir);
+        }
+    }
+    stale
+}
+
+/// Whether `pid` may name a live process: only `ESRCH` says it does not.
+fn alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return true;
+    };
+    // SAFETY: kill(2) with signal 0 sends nothing; it only looks the pid up.
+    let looked = unsafe { libc::kill(pid, 0) };
+    looked == 0 || errno() != libc::ESRCH
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
