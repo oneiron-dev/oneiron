@@ -6,20 +6,39 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::super::args::ManagedArgs;
+use super::super::restore::CheckedRecipients;
 
 /// Seals the vault's held data key to the node's managed escrow recipient
 /// and the owner's break-glass recipient, each named by the supervisor.
 /// A wrap is labelled by its recipient's fingerprint, so a restart adds
 /// nothing, and a recipient of a new epoch gets a wrap of its own.
+/// `checked` is a cold restore's begin-check bytes (FIX 11988): those seal
+/// as read and verified, never the files again.
 pub(super) fn escrow_vault_key(
     vault: &oneiron::Vault,
     managed: &ManagedArgs,
+    checked: Option<&CheckedRecipients>,
 ) -> anyhow::Result<()> {
     let present = vault.vault_key_wraps()?;
-    for (role, path) in [
-        ("managed", &managed.escrow_recipient),
-        ("break-glass", &managed.break_glass_recipient),
+    let (verified_managed, verified_break_glass) = match checked {
+        Some(checked) => (checked.managed.as_deref(), checked.break_glass.as_deref()),
+        None => (None, None),
+    };
+    for (role, path, verified) in [
+        ("managed", &managed.escrow_recipient, verified_managed),
+        (
+            "break-glass",
+            &managed.break_glass_recipient,
+            verified_break_glass,
+        ),
     ] {
+        // The begin-check read and verified these bytes: seal them rather
+        // than the file again, which a swap in between would have replaced
+        // unchecked.
+        if let Some(verified) = verified {
+            seal_escrow_recipient(vault, &present, role, verified)?;
+            continue;
+        }
         let Some(path) = path else {
             continue;
         };
@@ -62,13 +81,16 @@ pub(super) fn seal_escrow_recipient(
 /// data key its supervisor delivered: a sealed vault's, reopened from the
 /// mirror beside it; a new one where no vault is yet and `maximum_tier`
 /// (`--maximum-tier`, else the settings file's) opted in; none for a plain
-/// vault, which stays plain (no converter).
+/// vault, which stays plain (no converter). A sealed creation a crash left
+/// unfinished served nothing: it is removed first, and opens as a first open
+/// that creates it again (FIX 2546).
 pub(super) fn managed_page_seal(
     managed: &ManagedArgs,
     maximum_tier: bool,
     dek: &[u8; 32],
 ) -> anyhow::Result<Option<oneiron::VaultPageSeal>> {
     let path = &managed.data_dir;
+    oneiron::world_keys::remove_unfinished_sealed_creation(path)?;
     if oneiron::world_keys::vault_is_sealed(path)? {
         return Ok(Some(oneiron::world_keys::reopen_delivered_page_seal(
             path, dek,

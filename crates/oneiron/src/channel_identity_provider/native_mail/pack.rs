@@ -1,7 +1,7 @@
 //! Native mail pack runtime: one Stalwart instance, both run modes, one gate.
 use std::collections::BTreeMap;
 
-use super::NativeMailAdapter;
+use super::{NativeMailAdapter, mailbox_local_part};
 use crate::channel_identity::ChannelIdentityState;
 use crate::channel_identity_lifecycle::{
     ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor, ChannelIdentityLifecycleIntent,
@@ -125,6 +125,13 @@ impl NativeMailPack {
             ));
         }
         let provision = self.adapter.provision(intent, fulfilled_at)?;
+        // The MTA holds the mailbox now; the record lets every door know a
+        // named address is a native mailbox.
+        vault.record_native_mailbox(
+            intent.identity_id,
+            &provision.address_or_handle,
+            fulfilled_at,
+        )?;
         let lifecycle = vault.fulfill_channel_identity(ChannelIdentityFulfillmentInput {
             actor,
             identity_id: intent.identity_id,
@@ -133,11 +140,15 @@ impl NativeMailPack {
         Ok((provision, lifecycle))
     }
 
+    /// The intent's own address, derived or named, must be a mailbox on this
+    /// instance's domain.
     fn validate_intent(&self, intent: &ProvisionIntent) -> Result<()> {
+        let address = intent.identity.address_or_handle();
+        mailbox_local_part(self.client.config().domain(), intent.identity_id, address)?;
         validate_provision_intent(
             intent,
             "email",
-            &self.adapter.address_for_identity(intent.identity_id),
+            address,
             crate::channel_identity::ChannelIdentityFulfillment::Api,
         )
     }
@@ -176,7 +187,16 @@ impl NativeMailPack {
         prepared: PreparedNativeMailSend,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         vault.require_builtin_channel_pack("native_mail")?;
-        let mut sink = StalwartSendSink::new(&self.client, &prepared.message)?;
+        // The sink sends from the identity's own address, read from its facts.
+        let sender = prepared
+            .request
+            .channel_identity_ref
+            .ok_or_else(|| Error::InvalidConfig("native mail send lacks an identity".into()))?;
+        let address = vault
+            .channel_identity_facts(&sender)?
+            .ok_or(Error::EntityNotFound)?
+            .address_or_handle;
+        let mut sink = StalwartSendSink::new(&self.client, &prepared.message, sender, &address)?;
         self.adapter
             .dispatch_send(vault, prepared.request, &mut sink)
     }

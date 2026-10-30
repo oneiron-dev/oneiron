@@ -48,7 +48,7 @@ pub use self::transfer_commands::{export, import};
 pub use self::vault_key::vault_key;
 pub(super) use self::vault_key::{
     HostUnlock, ensure_page_seal_wrapped, prepare_page_seal, read_secret_file,
-    refuse_orphaned_page_seal,
+    refuse_orphaned_page_seal, wrap_sealed_vault,
 };
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
@@ -223,13 +223,15 @@ pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
 
 /// Creates `out` (owner-only, never over an existing file) and fills it with
 /// `write`. A failed write removes the partial file, so the same `--out` can
-/// be retried.
+/// be retried. The file is open for reading too: the export writes its
+/// archive through a `Read + Write + Seek` sink that reads back what it
+/// wrote, and a write-only handle fails it with EBADF (FIX 12027).
 pub(super) fn write_new_file(
     out: &Path,
     write: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
 ) -> anyhow::Result<()> {
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.read(true).write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

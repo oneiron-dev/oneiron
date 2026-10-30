@@ -329,10 +329,13 @@ fn export_scope_references(body: &crate::claim::ClaimBody, exported: &mut Export
             "scopeFacetId" => body.scope_facet,
             "scopeProjectId" => body.scope_project,
             "scopeRelationshipId" => {
-                if let Some(rel) = body.rel {
-                    *value = ExportValue::Array(vec![ExportValue::EntityReference(
-                        rel.as_bytes().to_vec(),
-                    )]);
+                if let Some(relationships) = &body.rel {
+                    *value = ExportValue::Array(
+                        relationships
+                            .iter()
+                            .map(|rel| ExportValue::EntityReference(rel.as_bytes().to_vec()))
+                            .collect(),
+                    );
                 }
                 continue;
             }

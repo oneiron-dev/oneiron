@@ -511,13 +511,8 @@ impl Vault {
                 desired.insert(id);
             }
         }
-        let existing = self.filtered_edge_peers(
-            &txn,
-            EdgeDirection::Out,
-            note,
-            EdgeKind::Mentions,
-            None,
-        )?;
+        let existing =
+            self.filtered_edge_peers(&txn, EdgeDirection::Out, note, EdgeKind::Mentions, None)?;
         let mut adds = Vec::new();
         for id in &desired {
             if !existing.contains(id) {

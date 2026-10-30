@@ -31,11 +31,13 @@
 //! Calls block, as every host call does: run them off any async runtime.
 
 mod binding;
+mod custody_keys;
 mod fetch;
 mod file_keys;
 mod observe;
 mod verify;
 
+pub use custody_keys::CustodySealKeys;
 pub use file_keys::{FileSealKeys, pem_certificates};
 
 use std::path::{Path, PathBuf};

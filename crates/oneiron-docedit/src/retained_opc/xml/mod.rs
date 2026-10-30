@@ -3,5 +3,5 @@ mod ffi;
 mod patch;
 mod retained;
 
+pub(in crate::retained_opc) use patch::PartBudget;
 pub(in crate::retained_opc) use retained::ValidatedXmlPart;
-pub use retained::XmlLimits;

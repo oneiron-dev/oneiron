@@ -9,14 +9,24 @@ use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
 use std::collections::BTreeSet;
 
+/// The entity type a channel actor is minted as. A channel actor is
+/// plumbing, not a someone: it carries `actor_class` `system`, no identity
+/// routes to it, and its `provider_key` makes it the row the provider's
+/// confidence prior (the channel's reputation) resolves to.
+const CHANNEL_ACTOR_ENTITY_TYPE: u8 = crate::registry::ENTITY_TYPE_MACHINE;
+
 /// Host-controlled channel registration. Authentication secrets are deliberately absent.
 #[derive(Debug, Clone)]
 pub struct ChannelActorRegistration {
+    /// The identity to register, bound to the recipient its inbound events
+    /// route to; registration keeps that binding.
     pub identity: ChannelIdentity,
     pub provider_key: String,
     pub scope: Scope,
     /// Public half of a throwaway holder key; the private half never enters the vault.
     pub binding_key: [u8; 32],
+    /// The credential lifetime asked for. The slip runs for this or the
+    /// vault's credential-lifetime ceiling, whichever is shorter.
     pub lifetime_secs: u64,
     pub confidence_prior: f32,
     pub prior_evidence: String,
@@ -48,7 +58,7 @@ impl Vault {
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Err(Error::CorruptedIndex("channel actor header"));
         };
-        if header.entity_type != crate::registry::ENTITY_TYPE_PERSON {
+        if header.entity_type != CHANNEL_ACTOR_ENTITY_TYPE {
             return Ok(None);
         }
         let Value::Map(entries) =
@@ -66,9 +76,16 @@ impl Vault {
             .then_some(actor))
     }
 
-    /// Atomically registers one channel actor, its identity route, budget key,
+    /// Atomically registers one channel actor, its identity, budget key,
     /// confidence prior and actual log-backed Scope credential. Sends still
     /// pass the existing effector gate; this is not a dispatch permit.
+    ///
+    /// The identity keeps the binding the caller asked for, so inbound events
+    /// reach that recipient; the channel actor rides on it as its reputation
+    /// and credential holder. The actor is a MACHINE; when the binding names
+    /// a PERSON or ORG, its `actor.subject_ref` anchors to that subject. The
+    /// credential's ceiling is the vault's `credential_lifetimes` policy,
+    /// resolved in the mint transaction.
     pub fn register_channel_actor(
         &self,
         issuer: &HostSlipIssuer,
@@ -76,7 +93,6 @@ impl Vault {
     ) -> Result<RegisteredChannelActor> {
         registration.identity.validate()?;
         if registration.lifetime_secs == 0
-            || registration.lifetime_secs > 365 * 24 * 60 * 60
             || !registration.confidence_prior.is_finite()
             || !(0.0..=1.0).contains(&registration.confidence_prior)
             || registration.prior_evidence.is_empty()
@@ -88,9 +104,14 @@ impl Vault {
         self.verified_host_root_slip(issuer)?;
         let mut txn = self.store.env.write_txn()?;
         validate_axes(self, &txn, &registration.scope)?;
+        // The requested lifetime selects within the vault's ceiling, read in
+        // this transaction as the pairing and OAuth mints read theirs.
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let lifetime_secs = registration.lifetime_secs.min(ceiling.initial_owner_secs);
         // A provider name identifies one channel actor. A second claimant may
-        // not steal the existing actor's reputation or key lineage.
-        for kind in [crate::registry::ENTITY_TYPE_PERSON] {
+        // not steal the existing actor's reputation or key lineage, whether
+        // that actor is a channel actor or a provider actor a prior minted.
+        for kind in crate::provider_confidence::PROVIDER_ACTOR_ENTITY_TYPES {
             for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
                 &self.store,
                 &txn,
@@ -119,8 +140,7 @@ impl Vault {
         let connector_key_ref = EntityId::now();
         let now = self.instant_in_txn(&txn)?.secs();
         let mut identity = registration.identity;
-        let route_target = identity.binding().actor_ref();
-        identity.bind_to_channel_actor(actor_ref);
+        identity.set_channel_actor(actor_ref);
         let actor_body = Value::Map(vec![
             (
                 Value::from("provider_key"),
@@ -132,10 +152,6 @@ impl Vault {
             ),
             (Value::from("channel"), Value::from(identity.channel())),
             (Value::from("actor_class"), Value::from("system")),
-            (
-                Value::from("route_target_ref"),
-                route_target.map_or(Value::Nil, |id| Value::from(id.to_hex())),
-            ),
         ]);
         let mut actor_bytes = Vec::new();
         rmpv::encode::write_value(&mut actor_bytes, &actor_body)
@@ -147,7 +163,7 @@ impl Vault {
             &mut txn,
             vec![BatchOp::Put {
                 id: actor_ref,
-                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                entity_type: CHANNEL_ACTOR_ENTITY_TYPE,
                 occurred: TimeRange {
                     start: now,
                     end: now,
@@ -163,6 +179,24 @@ impl Vault {
             false,
             true,
         )?;
+        // A PERSON or ORG the identity is bound to stands behind the channel
+        // actor, so the actor anchors itself to it as the system writer it
+        // is. Any other binding leaves the actor unanchored plumbing.
+        if let Some(subject) = identity.binding().actor_ref()
+            && matches!(
+                self.get_entity_type_in_txn(&txn, &subject)?,
+                Some(crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_ORG)
+            )
+        {
+            crate::subject_model::ensure_actor_subject_in_txn(
+                self,
+                &mut txn,
+                actor_ref,
+                subject,
+                crate::WriteActor::new(actor_ref, crate::EdgeActorClass::System),
+                now,
+            )?;
+        }
         admit_channel_identity_transition_in_txn(
             &self.store,
             &txn,
@@ -196,7 +230,7 @@ impl Vault {
             .vault_id
             .ok_or(Error::InvalidClaimBody("channel has no authority root"))?;
         let expires_at = now
-            .checked_add(registration.lifetime_secs)
+            .checked_add(lifetime_secs)
             .ok_or(Error::ArithmeticOverflow("channel slip expiry"))?;
         let slip = self.mint_slip_in_txn(
             &mut txn,
@@ -210,7 +244,7 @@ impl Vault {
                 scope: registration.scope,
                 issued_at: now,
                 expires_at,
-                ttl_secs: registration.lifetime_secs,
+                ttl_secs: lifetime_secs,
                 single_use: false,
                 records: BTreeSet::new(),
                 channels: BTreeSet::new(),

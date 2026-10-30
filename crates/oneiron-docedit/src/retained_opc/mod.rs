@@ -5,7 +5,6 @@ mod package;
 mod xml;
 
 pub use package::{Editability, Limits, Package, Relationship, rels_name};
-pub use xml::XmlLimits;
 
 /// An archive or edit that cannot be proven safe to retain, or work the
 /// machine's memory or a deadline stopped.

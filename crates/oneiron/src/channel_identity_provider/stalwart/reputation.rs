@@ -3,6 +3,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::{StalwartClient, invalid};
+use crate::channel_identity_provider::native_mail::mailbox_local_part;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::identity_reputation::{
     EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation,
@@ -168,7 +169,8 @@ impl StalwartClient {
         .ok_or(crate::Error::EntityNotFound)?;
         if facts.channel != "email"
             || identity.is_delegated()
-            || facts.address_or_handle != self.address_for_identity(identity_ref)
+            || mailbox_local_part(&self.config.domain, identity_ref, &facts.address_or_handle)
+                .is_err()
         {
             return Err(invalid(
                 "native mail reputation names another instance's identity",

@@ -17,7 +17,7 @@
 //! The note never changes what the page is answered.
 
 use super::Pipe;
-use crate::{BrowserError, DestinationRefusal};
+use crate::{BrowserError, DestinationRefusal, SpooledResponse};
 use oneiron_container::{EgressRelay, HttpRequest, HttpResponse};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -35,6 +35,22 @@ pub(super) struct Answered {
     loader: Option<String>,
 }
 
+/// A paused request's answer, whole on today's path or piece-readable where
+/// the host's handler explicitly provides one.
+pub(super) enum PausedResponse {
+    Whole(HttpResponse),
+    Spooled(SpooledResponse),
+}
+
+impl PausedResponse {
+    fn status(&self) -> u16 {
+        match self {
+            Self::Whole(response) => response.status,
+            Self::Spooled(response) => response.status,
+        }
+    }
+}
+
 impl Pipe {
     /// Performs `request`, paused by page `session` in `event`: through the
     /// host's handler where the session has one, else through `relay`. Its
@@ -45,11 +61,19 @@ impl Pipe {
         session: &str,
         event: &Value,
         request: HttpRequest,
-    ) -> Option<HttpResponse> {
+    ) -> Option<PausedResponse> {
         let answered = match self.custody.handler() {
-            None => relay.fetch(request).ok(),
+            None => relay.fetch(request).ok().map(PausedResponse::Whole),
+            Some(handler) if handler.provides_spooled() => match handler.fetch_spooled(request) {
+                Ok(response) => Some(PausedResponse::Spooled(response)),
+                Err(BrowserError::DestinationRefused(refusal)) => {
+                    self.custody.refuse(refusal);
+                    None
+                }
+                Err(_) => None,
+            },
             Some(handler) => match handler.fetch(request) {
-                Ok(response) => Some(response),
+                Ok(response) => Some(PausedResponse::Whole(response)),
                 Err(BrowserError::DestinationRefused(refusal)) => {
                     self.custody.refuse(refusal);
                     None
@@ -58,7 +82,7 @@ impl Pipe {
             },
         };
         if let Some(response) = &answered {
-            self.note_document(session, event, response.status);
+            self.note_document(session, event, response.status());
         }
         answered
     }

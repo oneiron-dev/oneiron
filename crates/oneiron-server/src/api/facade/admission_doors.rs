@@ -125,8 +125,8 @@ pub(crate) fn call_verb<'a>(
             collector,
             super::host_doors::support::carrying_calling_run(worker),
         ))
-            .await
-            .map_err(|_| super::host_doors::support::internal("admission"))?
+        .await
+        .map_err(|_| super::host_doors::support::internal("admission"))?
     });
     Box::pin(super::secret_body::with_custody_secret(secret, admitted))
 }

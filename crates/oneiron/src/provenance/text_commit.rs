@@ -31,6 +31,9 @@ pub struct RowProvenance {
 impl RowProvenance {
     /// Call with the complete commit traversal, including absent receipts.
     /// Any gap, duplicate/overlapping span, or foreign document excludes the row.
+    /// A trigger stands on the first commit only, or on a later one that
+    /// restates the first commit's envelope, as a replayed document's commits
+    /// all restate its row's birth (FIX 10929).
     #[must_use]
     pub fn fold(
         document: EntityId,
@@ -47,7 +50,9 @@ impl RowProvenance {
                 || receipt.end <= receipt.start
                 || !receipt.made_by.process.is_valid()
                 || (receipt.made_by.trigger.is_some()
-                    && (!commits.is_empty()
+                    && (commits
+                        .first()
+                        .is_some_and(|first: &TextCommitReceipt| first.made_by != receipt.made_by)
                         || !receipt
                             .made_by
                             .inputs

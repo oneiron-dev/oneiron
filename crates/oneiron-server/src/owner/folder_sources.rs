@@ -59,7 +59,9 @@ pub(crate) fn attach(
 ) -> OwnerResult<AttachedFolder> {
     let folder = canonical_folder(Path::new(path))
         .map_err(|error| OwnerError::Invalid(error.to_string()))?;
-    let source = vault.attach_folder_source(owner, &folder, include, kind).map_err(invalid)?;
+    let source = vault
+        .attach_folder_source(owner, &folder, include, kind)
+        .map_err(invalid)?;
     let rescan = rescanned(vault, owner, &source);
     Ok(AttachedFolder { source, rescan })
 }

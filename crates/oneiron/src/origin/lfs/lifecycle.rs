@@ -130,12 +130,21 @@ pub(crate) fn is_lfs_chunk_asset_in_txn(
 impl Vault {
     /// Owner-facing deletion. The standing tombstone-first door prevents replay
     /// resurrection; the OID marker also blocks new manifests with new chunking.
+    /// The absence check and the tombstone are one write, which publication
+    /// serializes with by re-reading the tombstone in its own: an object
+    /// published before it takes the checked deletion and its chunks are
+    /// reclaimed (FIX 9997).
     pub fn delete_lfs_object(&self, oid: LfsOid) -> Result<bool> {
-        let Some(object) = self.lfs_object(oid)? else {
-            self.with_write_txn_grouped(|txn| {
-                DELETED.put(&self.store, txn, &oid, &())?;
-                Ok(())
-            })?;
+        let object = self.with_write_txn_grouped(|txn| {
+            if !DELETED.contains(&self.store, txn, &oid)?
+                && let Some(record) = super::store::OBJECTS.get(&self.store, txn, &oid)?
+            {
+                return Ok(Some(record.with_oid(oid)));
+            }
+            DELETED.put(&self.store, txn, &oid, &())?;
+            Ok(None)
+        })?;
+        let Some(object) = object else {
             return Ok(false);
         };
         let deleted = self.delete_entity_with_options(

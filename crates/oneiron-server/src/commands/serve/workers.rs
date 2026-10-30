@@ -58,7 +58,8 @@ pub(crate) struct DesktopWorkers {
 /// until every call it made has settled (FIX 7303). Without it, embedded
 /// serve's, tagging is aborted with the other workers: the app never waits
 /// on a model call to stop, and a marker it left leased is tagged again at
-/// the next start.
+/// the next start. On plain serve the background passes stop at the vault's
+/// deletion (FIX 11979, FIX 12008); embedded serve admits every pass as today.
 pub(crate) async fn start_desktop_workers(
     sync_server: SyncServer,
     config: &ServeConfig,
@@ -85,19 +86,40 @@ pub(crate) async fn start_desktop_workers(
     if !config.hooks {
         sync_server.vault().suppress_verb_hooks();
     }
+    // The vault's deletion gate over plain serve's background passes (FIX
+    // 11979, FIX 12008): once the marker is present each gated pass is refused,
+    // logged once, while the backup schedule and custody publication run
+    // on; embedded serve keeps every pass admitted as today.
+    let deletion = Arc::new(crate::server::DeletionMarker::default());
+    let deletion_vault = Arc::clone(sync_server.vault());
+    let plain_serve = drain_tagging;
+    let admitted = || -> crate::server::HousekeepingAdmission {
+        if !plain_serve {
+            return crate::server::admit_every_pass();
+        }
+        deletion.gate(&deletion_vault, crate::server::admit_every_pass())
+    };
     // The owner's own Dreamer pause works on a plain host too, held in
     // memory (FIX 11573); managed serve installs its reap freeze instead.
+    // On plain serve the Dreamer's passes stop at the vault's deletion.
+    let mut dreamer_control = crate::ai_host::DreamerControl::local();
+    if plain_serve {
+        dreamer_control.admission =
+            deletion.gate(&deletion_vault, dreamer_control.admission.clone());
+    }
     let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
         sync_server,
         config.models.as_ref(),
         device,
-        Some(crate::ai_host::DreamerControl::local()),
+        Some(dreamer_control),
     )
     .await;
     let sync_server = Arc::new(sync_server);
     // A managed vault's attested owner's queued work is judged by this
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
+    // Served sends reach this host's provider APIs and mail server (FIX 4435).
+    crate::builtin_host::install_served_transports(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
@@ -107,13 +129,21 @@ pub(crate) async fn start_desktop_workers(
     let oversight = sync_server
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
-    // The `[linear]` mirror, every pass admitted.
+    // The `[linear]` mirror; its passes stop at the vault's deletion.
     let linear_handle = crate::linear_host::spawn_configured(
         sync_server.clone(),
-        crate::server::admit_every_pass(),
+        admitted(),
     )
     .await?;
-    let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admission());
+    // The lifecycle's passes stop at the vault's deletion on plain serve;
+    // the caller's admission, and its awake hold, is kept inside the gate.
+    let lifecycle_admit = lifecycle_admission();
+    let lifecycle_admit = if plain_serve {
+        deletion.gate(&deletion_vault, lifecycle_admit)
+    } else {
+        lifecycle_admit
+    };
+    let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admit);
     // An answered code consent wait's effect runs on this server, whatever
     // hooks or models it serves, before the connector settler starts
     // (DOOR-079 1a).
@@ -123,21 +153,26 @@ pub(crate) async fn start_desktop_workers(
     let (mut workers, tagging) = if drain_tagging {
         // The slot workers `spawn_slot_workers` starts, in its order, with
         // tagging's own handle kept apart: it stops on serve's stop.
-        let embedding = sync_server.spawn_embedding_worker();
+        let embedding = sync_server.spawn_embedding_worker_admitted(admitted());
         let mut tagging_stopped = stopped.clone();
         let tagging = sync_server.spawn_tagging_worker_until(
-            crate::server::PassControl::unpaused(crate::server::admit_every_pass()),
+            crate::server::PassControl::unpaused(admitted()),
             async move {
                 let _ = tagging_stopped.wait_for(|stop| *stop).await;
             },
         );
         let slots = [
             embedding,
-            sync_server.spawn_media_embedding_worker(),
-            sync_server.spawn_resident_pump(),
+            sync_server.spawn_media_embedding_worker_admitted(admitted()),
+            // Each pass stops at the vault's deletion; a run is the owner's
+            // foreground work and stays admitted, as on a managed host.
+            sync_server.spawn_resident_pump_admitted(
+                admitted(),
+                crate::server::admit_every_pass(),
+            ),
             // The official CLIs' runs, on the person's own runtime (FIX 4552).
             sync_server.spawn_seat_host(),
-            Some(sync_server.spawn_connector_settler()),
+            Some(sync_server.spawn_connector_settler_admitted(admitted())),
         ];
         let tagging = tagging.map(|handle| (handle, stopping.clone()));
         (slots.into_iter().flatten().collect::<Vec<_>>(), tagging)
@@ -147,114 +182,111 @@ pub(crate) async fn start_desktop_workers(
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
-    workers.push(crate::wire_health::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
-    ));
+    workers.push(crate::wire_health::spawn(&sync_server, admitted()));
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
-    workers.push(crate::import_audience::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
-    ));
+    workers.push(crate::import_audience::spawn(&sync_server, admitted()));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
-        workers.push(crate::decision_graph::spawn(
-            &sync_server,
-            crate::server::admit_every_pass(),
-        ));
+        workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
         // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
-        workers.push(crate::ai_host::home_digests::spawn(
-            &sync_server,
-            crate::server::admit_every_pass(),
-        ));
+        workers.push(crate::ai_host::home_digests::spawn(&sync_server, admitted()));
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
-    workers.push(crate::saved_query_sweep::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
-    ));
+    workers.push(crate::saved_query_sweep::spawn(&sync_server, admitted()));
     // Queued campaign enrollments land on the campaign's home node (ARCH-0059).
-    workers.push(crate::campaign_enrollment::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
-    ));
+    workers.push(crate::campaign_enrollment::spawn(&sync_server, admitted()));
     // Uncertain identities are decided, or asked of the person (OF-123).
-    workers.push(crate::ai_host::identity::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
-    ));
+    workers.push(crate::ai_host::identity::spawn(&sync_server, admitted()));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(
         &sync_server,
         publisher_candidates,
-        crate::server::admit_every_pass(),
+        admitted(),
     ));
     // The nightly Coach jobs that need the host's model or rules (OF-420).
-    workers.push(crate::ai_host::coach_host::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
-    ));
+    workers.push(crate::ai_host::coach_host::spawn(&sync_server, admitted()));
     // Queued browser program admissions run as their source caller (CUA E8b).
-    workers.push(crate::ai_host::browser_program_admission::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
-    ));
+    workers.push(crate::ai_host::browser_program_admission::spawn(&sync_server, admitted()));
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
-    workers.extend(crate::decision_host::spawn_person_threshold(&sync_server));
-    // Failure signals reach the deployment's publisher (OF-380).
+    workers.extend(crate::decision_host::spawn_person_threshold_admitted(
+        &sync_server,
+        admitted(),
+    ));
+    // Failure signals reach the deployment's publisher (OF-380). The
+    // private endpoint's bearer (FIX 5013): a named vault secret wins, and
+    // reads as none when it does not resolve; without one the env token,
+    // as today. Its passes stop at the vault's deletion.
+    let failure_signals_bearer = if config.failure_signals.key_secret.is_some() {
+        config.failure_signals.bearer_from_secret(sync_server.vault())
+    } else {
+        std::env::var("ONEIRON_FAILURE_SIGNALS_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty())
+            .map(zeroize::Zeroizing::new)
+    };
     workers.push(crate::ai_host::failure_signals::spawn(
         &sync_server,
         crate::ai_host::failure_signals::FailureSignalHost::new(
             &config.failure_signals,
             config.privacy_posture == oneiron::HostingPrivacyPosture::Hosted,
-            std::env::var("ONEIRON_FAILURE_SIGNALS_TOKEN")
-                .ok()
-                .filter(|token| !token.is_empty())
-                .map(zeroize::Zeroizing::new),
+            failure_signals_bearer,
         ),
-        crate::server::admit_every_pass(),
+        admitted(),
     ));
     // The owner's model-graded detectors read the retrieval telemetry (OF-418).
     workers.extend(crate::ai_host::self_heal_detectors::spawn(
         &sync_server,
         &config.self_heal,
-        crate::server::admit_every_pass(),
+        admitted(),
     ));
-    workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
+    workers.push(sync_server.spawn_connector_event_worker(admitted()));
     // Approved sends leave through the connector executor (OF-187).
-    workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
+    workers.push(sync_server.spawn_connector_send_worker(admitted()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
-    workers.push(sync_server.spawn_connector_reply_worker(crate::server::admit_every_pass()));
-    // Checked built-in channels and their provider webhooks (OF-519).
-    workers.push(crate::builtin_host::spawn(
-        &sync_server,
-        crate::server::admit_every_pass(),
+    workers.push(sync_server.spawn_connector_reply_worker(admitted()));
+    // Installed ICS feeds poll on their own cadence (FIX 7846).
+    workers.push(crate::calendar_host::spawn_ics_feed_polls(
+        Arc::clone(&sync_server),
+        admitted(),
     ));
+    // A transcript upload that met an open session lands once it closes (FIX 9654).
+    workers.push(crate::calendar_host::spawn_pending_transcript_drain(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
+    // Checked built-in channels and their provider webhooks (OF-519).
+    workers.push(crate::builtin_host::spawn(&sync_server, admitted()));
+    // Past the vault's deletion these two run on, to let its backups go at
+    // their deadline (FIX 11979): every pass admitted, as today.
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     // The custody head beside the backups, and its anchor (KS-4A1).
     workers.extend(sync_server.spawn_custody_publication());
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
-    workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(
-        &sync_server,
-    )));
-    workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(
-        &sync_server,
-    )));
+    workers.push(crate::api::spawn_esign_seal_worker_admitted(
+        Arc::clone(&sync_server),
+        admitted(),
+        crate::api::EsignSealConfig::from_env(),
+    ));
+    workers.push(crate::api::spawn_esign_hold_worker_admitted(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Authorized e-sign mail goes to the host's sender through its outbox;
     // without `--esign-delivery-outbox-dir` none runs (OF-415).
     workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
         crate::api::spawn_esign_delivery_outbox(
             Arc::clone(&sync_server),
-            crate::server::admit_every_pass(),
+            admitted(),
             dir,
         )
     }));
     // The publisher training outbox, only with its flag (OF-420), and the
     // self-host shipper's descriptor fetch with it, only with its own (TL-6).
-    workers.extend(crate::conversation_training::spawn_self_host(
+    workers.extend(crate::conversation_training::spawn_self_host_admitted(
         &sync_server,
         config,
+        admitted(),
     ));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
@@ -265,11 +297,7 @@ pub(crate) async fn start_desktop_workers(
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
         workers.extend(
-            spawn_fact_hooks(
-                &sync_server,
-                crate::server::admit_every_pass(),
-                stopped.clone(),
-            )
+            spawn_fact_hooks(&sync_server, admitted(), stopped.clone())
             .await,
         );
     }
@@ -279,14 +307,23 @@ pub(crate) async fn start_desktop_workers(
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
     // The server's own voice loop (OF-410): off unless `[models.voice]`
-    // names its socket.
+    // names its socket. A call is the owner's foreground work: one in flight
+    // runs on, but no new call is admitted past the vault's deletion
+    // (FIX 12039), as on a managed host.
     #[cfg(unix)]
     let voice = crate::voice_host::VoiceBoot::start(
         &sync_server,
         config.models.as_ref().map(|models| &models.voice),
         None,
-        crate::server::admit_every_pass(),
+        admitted(),
     );
+    // A public live voice session (`ai.voice.start`) on plain serve: a new
+    // one takes the deletion-gated admission, as a voice loop call does
+    // (FIX 12053); one in flight runs on. Embedded serve admits every
+    // session as today. Bound before anything serves.
+    if plain_serve {
+        sync_server.live_voice.admit_with(admitted());
+    }
     let tagger = sync_server
         .tagger
         .as_ref()
