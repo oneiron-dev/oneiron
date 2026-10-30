@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1207 facade rows, 4364 declarations.
-Inputs: 1135 of 1207 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1041 of 1207 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1209 facade rows, 4379 declarations.
+Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -3576,15 +3576,47 @@ class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
     delivery: NotRequired[ExportDelivery | None]
+    secrets_recipient: NotRequired[EntityId | None]
+OwnerWorkRefusal = Literal["stale_revision", "owner_not_live", "world_not_live", "executor_not_reader", "home_not_linked", "secret_not_portable", "secret_not_active", "recipient_changed", "invalid_input", "custody_conflict", "wider_than_floor", "root_revision_mismatch"]
+class OwnerWorkStatusRecordedAwaitingHolder(TypedDict):
+    state: Literal["recorded_awaiting_holder"]
+class OwnerWorkStatusEnacted(TypedDict):
+    state: Literal["enacted"]
+class OwnerWorkStatusRefused(TypedDict):
+    state: Literal["refused"]
+    reason: OwnerWorkRefusal
+class OwnerWorkStatusCancelled(TypedDict):
+    state: Literal["cancelled"]
+class OwnerWorkStatusSuperseded(TypedDict):
+    state: Literal["superseded"]
+OwnerWorkStatus = OwnerWorkStatusRecordedAwaitingHolder | OwnerWorkStatusEnacted | OwnerWorkStatusRefused | OwnerWorkStatusCancelled | OwnerWorkStatusSuperseded
+HolderExportUnassigned = Literal["no_owner_act", "owner_not_live", "no_recipient", "recipient_not_linked", "no_holder", "no_carrier"]
+class HolderExportStateRecorded(TypedDict):
+    kind: Literal["recorded"]
+    request: str
+    holder: EntityId
+    status: OwnerWorkStatus
+class HolderExportStateUnassigned(TypedDict):
+    kind: Literal["unassigned"]
+    reason: HolderExportUnassigned
+class HolderExportStateUnrecorded(TypedDict):
+    kind: Literal["unrecorded"]
+HolderExportState = HolderExportStateRecorded | HolderExportStateUnassigned | HolderExportStateUnrecorded
+class HolderExportRequest(TypedDict):
+    secret: EntityId
+    generation: int
+    state: HolderExportState
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
+    holder_requests: NotRequired[list[HolderExportRequest]]
 class ExportTransfer(TypedDict):
     transfer_ref: str
     format: str
     bytes: int
     digest: str
+    holder_requests: NotRequired[list[HolderExportRequest]]
 ExportAnswer = MemoryExport | ExportTransfer
 class ExportTransferReadRequest(TypedDict):
     transfer_ref: str
@@ -6594,6 +6626,50 @@ class MeshMachineRevoked(TypedDict):
 class MeshDialRequest(TypedDict):
     address: MeshMachineAddress
     alpn: list[int]
+VmOutboxKind = Literal["escrow", "custody", "esign", "training", "recipients", "backup", "backup_stage_ack"]
+VmOutboxSide = Literal["guest", "host"]
+OutboxDivergedAnswer = Literal["keep", "remove"]
+class OutboxMemberStatusDivergedUnagreed(TypedDict):
+    status: Literal["diverged_unagreed"]
+    kind: VmOutboxKind
+    member: str
+    held_by: VmOutboxSide
+    held: str
+    length: int
+    retired: NotRequired[str | None]
+    answer: NotRequired[OutboxDivergedAnswer | None]
+class OutboxMemberStatusSourceDigestMismatch(TypedDict):
+    status: Literal["source_digest_mismatch"]
+    kind: VmOutboxKind
+    member: str
+    recorded: str
+    read: str
+OutboxMemberStatus = OutboxMemberStatusDivergedUnagreed | OutboxMemberStatusSourceDigestMismatch
+OutboxCardKind = Literal["outbox_diverged", "outbox_source_damaged"]
+class OutboxCardAction(TypedDict):
+    label: str
+    answer: OutboxDivergedAnswer
+    route: str
+class OutboxOwnerCard(TypedDict):
+    kind: OutboxCardKind
+    headline: str
+    body: str
+    actions: list[OutboxCardAction]
+OutboxDivergedMember = dict[str, Any]
+class OutboxDivergedPage(TypedDict):
+    carrier: bool
+    members: list[OutboxDivergedMember]
+class OutboxDivergedAnswerRequest(TypedDict):
+    kind: VmOutboxKind
+    member: str
+    held: str
+    answer: OutboxDivergedAnswer
+class OutboxDivergedAnswerReceipt(TypedDict):
+    kind: VmOutboxKind
+    member: str
+    held: str
+    answer: OutboxDivergedAnswer
+    queued: bool
 class InspectionResolveRequest(TypedDict):
     handle: str
 LensBackingTargetKind = Literal["entity", "claim"]
@@ -9254,20 +9330,7 @@ class HandoffAlarmRequest(TypedDict):
     signer: str
 class RootRequestCancelRequest(TypedDict):
     request: str
-OwnerWorkKind = Literal["world_key", "root", "publish_bundle", "custody"]
-OwnerWorkRefusal = Literal["stale_revision", "owner_not_live", "world_not_live", "executor_not_reader", "home_not_linked", "secret_not_portable", "secret_not_active", "recipient_changed", "invalid_input", "custody_conflict", "wider_than_floor", "root_revision_mismatch"]
-class OwnerWorkStatusRecordedAwaitingHolder(TypedDict):
-    state: Literal["recorded_awaiting_holder"]
-class OwnerWorkStatusEnacted(TypedDict):
-    state: Literal["enacted"]
-class OwnerWorkStatusRefused(TypedDict):
-    state: Literal["refused"]
-    reason: OwnerWorkRefusal
-class OwnerWorkStatusCancelled(TypedDict):
-    state: Literal["cancelled"]
-class OwnerWorkStatusSuperseded(TypedDict):
-    state: Literal["superseded"]
-OwnerWorkStatus = OwnerWorkStatusRecordedAwaitingHolder | OwnerWorkStatusEnacted | OwnerWorkStatusRefused | OwnerWorkStatusCancelled | OwnerWorkStatusSuperseded
+OwnerWorkKind = Literal["world_key", "root", "publish_bundle", "custody", "export_secret"]
 OwnerWorkUnassigned = Literal["no_eligible_reader", "target_is_recorder", "target_not_linked", "no_bundle_holder", "no_custody_holder"]
 CustodyUncheckedReason = Literal["none_named", "none_published", "unread", "other_manifest", "disagrees"]
 class CustodyRegisterCheckChecked(TypedDict):
@@ -16527,9 +16590,10 @@ class ConnectorCallReplyAwaitingInput(TypedDict):
     live_until_ms: int
     reasons: NotRequired[list[str]]
 ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
+LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply
 class LiveVoiceToolReply(TypedDict):
     processed: LiveVoiceProcessed
-    reply: ConnectorCallReply
+    reply: LiveVoiceToolCallReply
 class LiveVoiceSessionRequest(TypedDict):
     session_ref: str
 AnonymousChatRequestTarget = Literal["house_mind", "plain_model"]

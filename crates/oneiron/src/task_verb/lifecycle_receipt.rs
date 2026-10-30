@@ -346,14 +346,16 @@ fn project(
 }
 
 /// Drops every lifecycle receipt naming `id` as its TASK or its parked
-/// proposal, in the transaction that erases it; a no-op for any other
-/// entity, as the report journal's erase is. The table keys on the receipt
-/// id, so its rows are found by what each one names.
+/// proposal, and the review a TASK kept for its settlement, in the
+/// transaction that erases it; a no-op for any other entity, as the report
+/// journal's erase is. The table keys on the receipt id, so its rows are
+/// found by what each one names.
 pub(crate) fn erase_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> crate::Result<()> {
+    super::settlement_anchor::erase_in_txn(store, txn, id)?;
     let hex = id.to_hex();
     for (key, row) in RECEIPTS.scan(store, txn)? {
         if row.trigger_ref.as_deref() == Some(hex.as_str())

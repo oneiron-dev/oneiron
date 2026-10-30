@@ -292,6 +292,11 @@ pub(super) struct StoredLaunch {
     /// Shipped default rows the admission read in place of rows missing
     /// from the vault manifest.
     shipped_policy_rows: Vec<String>,
+    /// The requester a held ask was admitted under (FIX 11691): the agent
+    /// dispatches its release queues keep it, as the asker's own surface
+    /// would have. `None` for a wave, and for an ask no credential caller
+    /// made.
+    requester: Option<crate::agent_dispatch::QueuedRequester>,
 }
 
 impl StoredLaunch {
@@ -638,6 +643,7 @@ pub(super) fn admit_wave_launch_in(
         denied: false,
         choice_receipt_ref: None,
         shipped_policy_rows: gate.governed.shipped_rows.clone(),
+        requester: None,
     };
     let admission = admit_fanout_with_history(
         &plan,

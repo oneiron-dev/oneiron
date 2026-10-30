@@ -22,7 +22,7 @@ pub(crate) async fn vault_packs_preview(
 ) -> MemoryResult<PackImportPreview> {
     let owner = owner_proof(auth, server, "vault.packs.preview")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::pack_preview_as_owner(server.vault(), &owner, input)
     })
     .await

@@ -437,10 +437,38 @@ pub(crate) fn put_stored_custody_in_txn(
     )
 }
 
+/// What the owner archive takes of one custody record's value (FIX
+/// 4624(b)): the two ways it goes as its handle stay apart, so only a value
+/// the archive carries that did not open here asks its holder for it.
+pub(crate) enum ArchiveCustodyValue {
+    /// Opened from current custody: its plaintext DTO body.
+    Opened(Zeroizing<Vec<u8>>),
+    /// The archive's own rule leaves it out (secrets left out, not active,
+    /// a cloud slot, a device-bound value off its device).
+    Excluded,
+    /// The archive carries it, and it did not open on this install: warned.
+    Unopened,
+}
+
+impl ArchiveCustodyValue {
+    /// The opened body, when the value opened.
+    pub(crate) fn into_opened(self) -> Option<Zeroizing<Vec<u8>>> {
+        match self {
+            Self::Opened(body) => Some(body),
+            Self::Excluded | Self::Unopened => None,
+        }
+    }
+
+    /// Whether the archive carries the value and it did not open here.
+    pub(crate) fn is_unopened(&self) -> bool {
+        matches!(self, Self::Unopened)
+    }
+}
+
 /// The owner archive's plaintext DTO of stored body `body`, record `id`
 /// (CALLS `KS-6 archive form`): its value opened explicitly from current
-/// custody when `with_value`, else none. A value that does not open is
-/// warned and goes as none: the record then travels as its handle, to
+/// custody when `with_value`, else excluded. A value that does not open is
+/// warned and is unopened: the record then travels as its handle, to
 /// re-enter after import, as a value the export withholds does. The caller
 /// reads `txn`'s rows under the custody read guard, or accepts a key an
 /// erase destroys mid-read as one that does not open.
@@ -449,11 +477,11 @@ pub(crate) fn archive_custody_body(
     id: &EntityId,
     body: &[u8],
     with_value: impl FnOnce(&SecretCustodyRecord) -> bool,
-) -> Result<(SecretCustodyRecord, Option<Zeroizing<Vec<u8>>>)> {
+) -> Result<(SecretCustodyRecord, ArchiveCustodyValue)> {
     let stored = decode_stored_custody_body(body)?;
     let record = stored.record.clone();
     if !with_value(&record) {
-        return Ok((record, None));
+        return Ok((record, ArchiveCustodyValue::Excluded));
     }
     let plain = open_stored(store, id, stored).and_then(|mut opened| {
         let body = super::codec::encode_secret_custody_body(&opened).map(Zeroizing::new);
@@ -461,13 +489,13 @@ pub(crate) fn archive_custody_body(
         body
     });
     match plain {
-        Ok(body) => Ok((record, Some(body))),
+        Ok(body) => Ok((record, ArchiveCustodyValue::Opened(body))),
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
                 "a credential's value did not open for the owner archive; it goes as its handle"
             );
-            Ok((record, None))
+            Ok((record, ArchiveCustodyValue::Unopened))
         }
     }
 }

@@ -87,7 +87,7 @@ async fn vault_graph_ask_answer(
     input.validate()?;
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<GraphAskOutcome> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<GraphAskOutcome> {
         let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
         let units = match input.select {
             Some(select) => select_graph_units_by_type(&lane, select.entity_type, select.limit)?,
@@ -147,7 +147,7 @@ async fn vault_graph_admit_answer(
     input.validate()?;
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<GraphAskOutcome> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<GraphAskOutcome> {
         let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
         let mut answerer = AdmittedAnswerer {
             decision: Some(input.decision),
@@ -227,7 +227,7 @@ async fn vault_questions_create_answer(
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionRecord> {
         saved_lane::create_under_caller_lane(&server, &auth, asker, definition, VERB)
     })
     .await
@@ -261,7 +261,7 @@ async fn vault_questions_edit_answer(
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionRecord> {
         saved_lane::edit_under_caller_lane(
             &server,
             &auth,
@@ -298,7 +298,7 @@ async fn vault_questions_pause_answer(
     const VERB: &str = "vault.questions.pause";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionPaused> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionPaused> {
         pause_question(server.vault(), principal, input.id, input.paused)?;
         Ok(QuestionPaused {
             id: input.id,
@@ -333,7 +333,7 @@ async fn vault_questions_backfill_answer(
     const VERB: &str = "vault.questions.backfill";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<ScheduledBackfill> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<ScheduledBackfill> {
         let now = oneiron_vault_contract::now_ts();
         Ok(schedule_backfill(
             server.vault(),
@@ -372,7 +372,7 @@ async fn vault_questions_read_answer(
     const VERB: &str = "vault.questions.read";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Option<QuestionRecord>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Option<QuestionRecord>> {
         Ok(read_question(
             server.vault(),
             principal,
@@ -406,7 +406,7 @@ async fn vault_questions_outcome_windows_answer(
     const VERB: &str = "vault.questions.outcome_windows";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<OutcomeWindowClose>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<OutcomeWindowClose>> {
         Ok(closed_outcome_windows(server.vault(), principal, input.id)?)
     })
     .await
@@ -445,7 +445,7 @@ async fn vault_questions_refresh_answer(
     const VERB: &str = "vault.questions.refresh";
     let asker = asker(auth, server, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
         let vault = server.vault();
         let now = oneiron_vault_contract::now_ts();
         let bands = server.decision_host().bands();
@@ -532,7 +532,7 @@ async fn vault_questions_outcomes_answer(
     // (mesh PR2b).
     let destination = auth.destination();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionOutcomes> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionOutcomes> {
         let vault = server.vault();
         Ok(QuestionOutcomes {
             labels: outcome_labels(vault, principal, input.id, &destination)?,
@@ -568,7 +568,7 @@ async fn vault_questions_outcomes_project_answer(
     const VERB: &str = "vault.questions.outcomes.project";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionOutcomesProjected> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionOutcomesProjected> {
         Ok(QuestionOutcomesProjected {
             id: input.id,
             projected: project_bound_outcomes(server.vault(), principal, input.id)?,
@@ -602,7 +602,7 @@ async fn vault_questions_schedule_answer(
     const VERB: &str = "vault.questions.schedule";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Option<QuestionScheduleHead>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Option<QuestionScheduleHead>> {
         Ok(read_question_schedule(server.vault(), principal, input.id)?)
     })
     .await
