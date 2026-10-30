@@ -25,6 +25,11 @@ pub(super) struct DispatchMarker {
     pub(super) binding: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_act: Option<OwnerSendAct>,
+    /// The act's ledger identity when its dispatch named one apart from its
+    /// intent ref (FIX 6644): the ref its OF-327 row and its press are
+    /// keyed by, which its deliveries look the admitted call up under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) ledger_identity_ref: Option<String>,
 }
 /// The vault owner's act an admitted e-sign act records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,12 +58,16 @@ impl RawValue for DispatchMarker {
 /// `request` carries, as the ledger row that admission committed records it:
 /// call 0 of the act's dispatch attempt, on the e-sign channel, for this
 /// act's verb, target and command `binding`. `None` when no press released
-/// it. The proof is the gate's alone; no caller supplies it.
+/// it. The proof is the gate's alone; no caller supplies it. FIX 6644 (L10
+/// 09:41, Engine 10:13): the row and the pinned send ref are the act's
+/// `ledger_identity` when its dispatch named one, else its intent ref, as
+/// the pin is `ledger_identity_ref.unwrap_or(intent_ref)`.
 fn admitted_owner_press_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     request: &OutboundExecutionRequest<'_>,
     binding: &str,
+    ledger_identity: Option<&str>,
 ) -> Result<Option<OwnerSendAct>> {
     #[derive(Deserialize)]
     struct Bound {
@@ -70,7 +79,8 @@ fn admitted_owner_press_in(
         #[serde(default)]
         approval_send_ref: Option<String>,
     }
-    let attempt = crate::outbound::outbound_dispatch_attempt_id(request.intent_ref)
+    let identity = ledger_identity.unwrap_or(request.intent_ref);
+    let attempt = crate::outbound::outbound_dispatch_attempt_id(identity)
         .map_err(|_| invalid("dispatch attempt id"))?;
     let record =
         crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(vault, txn, attempt, 0)
@@ -93,7 +103,7 @@ fn admitted_owner_press_in(
         || frozen.target != request.intent.target
         || frozen.content_ref.as_deref() != Some(binding)
         // FIX 6424: the one send the press approved is this act's own.
-        || frozen.approval_send_ref.as_deref() != Some(request.intent_ref)
+        || frozen.approval_send_ref.as_deref() != Some(identity)
     {
         return Ok(None);
     }
@@ -162,6 +172,8 @@ struct EsignSink<'a> {
     /// A narrowed act's own store, writer or lane-read failure in its
     /// write: the dispatch's error, never a changed state (FIX 6403).
     error: Option<crate::Error>,
+    /// The dispatch's ledger identity, when it names one (FIX 6644).
+    ledger_identity: Option<String>,
 }
 /// A narrowed caller's ceiling on one outbound e-sign act (FIX 6403,
 /// `lane_scope`).
@@ -217,14 +229,19 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         decision_ref: owner.decision_id().to_hex(),
                     })
                 }
-                None if self.command.verb != EsignOutboundVerb::Void => {
-                    admitted_owner_press_in(self.vault, txn, request, binding)?
-                }
+                None if self.command.verb != EsignOutboundVerb::Void => admitted_owner_press_in(
+                    self.vault,
+                    txn,
+                    request,
+                    binding,
+                    self.ledger_identity.as_deref(),
+                )?,
                 None => None,
             };
             let recorded = DispatchMarker {
                 binding: binding.to_owned(),
                 owner_act,
+                ledger_identity_ref: self.ledger_identity.clone(),
             };
             if self.automated
                 && !super::principals::automated_outbound_allowed(
@@ -263,7 +280,13 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         self.now,
                     )?;
                     // FIX 6219: the act its staged notices go out under.
-                    super::notice_send_act::record_send_act_in_txn(self.vault, txn, id, request)?;
+                    super::notice_send_act::record_send_act_in_txn(
+                        self.vault,
+                        txn,
+                        id,
+                        request,
+                        self.ledger_identity.as_deref(),
+                    )?;
                     state
                         .document
                         .recipients
@@ -579,6 +602,7 @@ impl Vault {
             owner,
             scope,
             error: None,
+            ledger_identity: request.ledger_identity_ref.clone(),
         };
         let result = match owner {
             Some(owner) => self.dispatch_outbound_intent_as_owner(request, owner, &mut sink),
