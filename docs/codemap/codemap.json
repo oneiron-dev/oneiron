@@ -54466,6 +54466,16 @@
      "path": "src/pipeline/trace/mod.rs",
      "purpose": "Retrieval trace recording and deterministic replay fork-hashing",
      "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/trace/replay_identity.rs",
+     "purpose": "Snapshot identity shared by replay-input records and retrieval fork hashes",
+     "surface": {
       "crate-vis": 3
      }
     },
@@ -84761,7 +84771,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85344,7 +85354,7 @@
    },
    "over_bar": 108,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5758,
+   "source_files": 5759,
    "test_files": 902
   },
   "oneiron-android": {
