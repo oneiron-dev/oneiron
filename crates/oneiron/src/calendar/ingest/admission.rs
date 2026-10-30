@@ -1,5 +1,6 @@
 //! Diff-to-claim admission path and its test module.
 
+mod import_claim;
 mod preflight;
 mod recurrence;
 use super::ingest;
@@ -19,16 +20,15 @@ use crate::calendar::passport::{
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::CALENDAR_ICS_IMPORT_ACTOR;
-use crate::ingest::{
-    ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
-    ImportedEvidenceScreen,
-};
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
+use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+pub(in crate::calendar) use import_claim::admit_calendar_import_claim;
+pub(crate) use import_claim::ensure_ics_import_actor;
+pub use import_claim::ics_import_actor_id;
+use import_claim::{admit_calendar_import_claim_screened, imported_screen};
 
 #[cfg(test)]
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
@@ -663,23 +663,6 @@ fn attachment_text(raw_component: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// The evidence entry of a screen that ran; `None` when the dial was off.
-fn imported_screen(
-    verdict: &super::safeguard::CalendarScreenVerdict,
-) -> Option<ImportedEvidenceScreen> {
-    use super::safeguard::CalendarScreenVerdict;
-    let reason_codes = match verdict {
-        CalendarScreenVerdict::Skipped => return None,
-        CalendarScreenVerdict::Clear => Vec::new(),
-        CalendarScreenVerdict::Flagged { reason_codes } => reason_codes.clone(),
-        CalendarScreenVerdict::Indeterminate { reason_code } => vec![reason_code.clone()],
-    };
-    Some(ImportedEvidenceScreen {
-        verdict: verdict_token(verdict).to_owned(),
-        reason_codes,
-    })
-}
-
 /// The EVENT's display name: SUMMARY, with a UID fallback.
 fn event_name(event: &ParsedVEvent) -> &str {
     event
@@ -687,97 +670,6 @@ fn event_name(event: &ParsedVEvent) -> &str {
         .as_deref()
         .filter(|summary| !summary.is_empty())
         .unwrap_or(event.uid.as_str())
-}
-
-/// Admits one typed-value claim through the Gate-backed imported-evidence
-/// door and returns the new claim id. The write actor is the adapter's own
-/// MACHINE entity, ensured on first use.
-pub(in crate::calendar) fn admit_calendar_import_claim(
-    vault: &Vault,
-    event_ref: &EntityId,
-    predicate: &str,
-    value: rmpv::Value,
-    source_record_id: &str,
-    recorded_at: u64,
-) -> crate::Result<EntityId> {
-    admit_calendar_import_claim_screened(
-        vault,
-        event_ref,
-        predicate,
-        value,
-        source_record_id,
-        recorded_at,
-        None,
-    )
-}
-
-/// [`admit_calendar_import_claim`] with the screen the admission ran under,
-/// kept on the claim's evidence.
-fn admit_calendar_import_claim_screened(
-    vault: &Vault,
-    event_ref: &EntityId,
-    predicate: &str,
-    value: rmpv::Value,
-    source_record_id: &str,
-    recorded_at: u64,
-    screen: Option<ImportedEvidenceScreen>,
-) -> crate::Result<EntityId> {
-    let actor = ensure_ics_import_actor(vault, recorded_at)?;
-    let claim_id = vault.store.clock.entity_id()?;
-    let mut admission = ImportedEvidenceAdmission::proposed(
-        ICS_FEED_SOURCE_ID,
-        claim_id,
-        ImportedEvidenceEntityResolution::subject(*event_ref),
-        WriteActor::new(actor, crate::edge::EdgeActorClass::System),
-        TimeRange {
-            start: recorded_at,
-            end: recorded_at,
-        },
-        recorded_at,
-    );
-    if let Some(screen) = screen {
-        admission = admission.with_screen(screen);
-    }
-    crate::ingest::admit_imported_evidence_claim_typed_for_machine(
-        vault,
-        predicate,
-        value,
-        source_record_id,
-        &admission,
-    )?;
-    Ok(claim_id)
-}
-
-/// The adapter's write actor: one deterministic MACHINE entity, minted on
-/// first use. Imported claims attribute to it as `EdgeActorClass::System`.
-pub fn ics_import_actor_id() -> crate::Result<EntityId> {
-    EntityId::derive(CALENDAR_ICS_IMPORT_ACTOR, &[])
-}
-
-pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
-    let id = ics_import_actor_id()?;
-    if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("name"),
-                rmpv::Value::from("calendar ICS feed importer"),
-            )]),
-        )
-        .map_err(|_| crate::Error::InvariantViolation("actor body did not encode"))?;
-        vault.put_entity(
-            &id,
-            ENTITY_TYPE_MACHINE,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-            &body,
-        )?;
-    }
-    Ok(id)
 }
 
 fn list_event_ids(vault: &Vault) -> Result<Vec<EntityId>, CalendarError> {
