@@ -19,7 +19,9 @@
 //!   bytes in place. Edges, tombstones and side-map keys follow the alias.
 //! - **One read per pass.** The marks, each copy, its spans and its stamp
 //!   are read once ([`SyncSecretProjection::read_in_txn`]) through slice 3's
-//!   [`RepoIndexMarks`]; nothing here detects, masks or diffs on its own.
+//!   [`RepoIndexMarks`]; nothing here detects, masks or diffs on its own. A
+//!   copy whose stored bytes, holding and spans read the same as at the last
+//!   pass is taken again rather than made again ([`cache`], FIX 10599).
 //! - **A copy's generation is its stamp, not a version vector.** The
 //!   generation a release carries ([`SyncSecretProjection::generation`])
 //!   commits to every copy it projects; a peer, cache or queue item bound to
@@ -46,6 +48,7 @@
     reason = "FIX 7608 slice 4, part 1: the release and inbound adapters call these when they activate together"
 )]
 
+mod cache;
 mod documents;
 mod frames;
 mod held;
@@ -55,6 +58,7 @@ mod release;
 mod rows;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use heed::RoTxn;
 
@@ -102,12 +106,15 @@ pub(crate) struct RepoSyncProjectionId {
 struct BlobCopy {
     id: RepoSyncProjectionId,
     /// The stored bytes, when this vault still holds them: what an incoming
-    /// edit of the copy is translated against. Never released.
+    /// edit of the copy is translated against. Never released, never kept
+    /// past the pass.
     stored: Option<Vec<u8>>,
     /// Exactly the bytes a peer gets.
-    copy: Vec<u8>,
+    copy: Arc<[u8]>,
+    /// The BLAKE3 of `copy`.
+    copy_hash: [u8; 32],
     /// The spans `copy` overwrites; `None` for the sealed-file placeholder.
-    places: Option<KeyPlaces>,
+    places: Option<Arc<KeyPlaces>>,
     /// The slice-3 stamp fingerprint: source, marks, actual copy bytes,
     /// kind and rules.
     stamp: [u8; 32],
@@ -173,6 +180,7 @@ impl SyncSecretProjection {
     /// to the stored bytes.
     pub(crate) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
         let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
+        let mut kept = cache::PassCopies::open(vault);
         let mut projection = Self {
             blobs: BTreeMap::new(),
             unread: BTreeMap::new(),
@@ -185,12 +193,10 @@ impl SyncSecretProjection {
                 source,
                 copy: copy_id(&source)?,
             };
-            match blob_copy_in_txn(vault, txn, &marks, id, hash) {
+            match blob_copy_in_txn(vault, txn, &marks, &mut kept, id, hash) {
                 Ok(None) => continue,
                 Ok(Some(blob)) => {
-                    projection
-                        .copy_bodies
-                        .insert(*blake3::hash(&blob.copy).as_bytes(), hash);
+                    projection.copy_bodies.insert(blob.copy_hash, hash);
                     projection.blobs.insert(hash, blob);
                 }
                 Err(error) => {
@@ -204,6 +210,7 @@ impl SyncSecretProjection {
             projection.sources.insert(source, hash);
             projection.copies.insert(id.copy, source);
         }
+        kept.close();
         Ok(projection)
     }
 
@@ -257,12 +264,12 @@ impl SyncSecretProjection {
                 Some(_) if self.copy_bodies.get(&hash) == Some(&marked) => ItemCopy::Unmarked,
                 Some(key) => ItemCopy::Copy {
                     key,
-                    bytes: blob.copy.as_slice(),
+                    bytes: &blob.copy[..],
                 },
                 None => ItemCopy::Copy {
                     key: blob.id.copy,
                     bytes: if hash == marked {
-                        blob.copy.as_slice()
+                        &blob.copy[..]
                     } else {
                         REPO_OPAQUE_FILE_BYTES
                     },
@@ -272,7 +279,7 @@ impl SyncSecretProjection {
         match (self.blobs.get(&hash), self.unread.contains_key(&hash)) {
             (Some(blob), _) => ItemCopy::Copy {
                 key: *id,
-                bytes: blob.copy.as_slice(),
+                bytes: &blob.copy[..],
             },
             (None, true) => ItemCopy::Unread { key: *id },
             (None, false) => ItemCopy::Unmarked,
@@ -343,7 +350,9 @@ impl SyncSecretProjection {
 }
 
 /// The copy of the marked blob `hash`, whose snapshot ASSET is `id.source`;
-/// `None` when its marks leave it exact.
+/// `None` when its marks leave it exact. A copy `kept` holds under the same
+/// stored bytes, holding and spans is taken again (FIX 10599); any other is
+/// made and kept.
 ///
 /// # Errors
 /// A store failure, or this blob's own marks or mask row not reading.
@@ -351,6 +360,7 @@ fn blob_copy_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     marks: &RepoIndexMarks,
+    kept: &mut cache::PassCopies,
     id: RepoSyncProjectionId,
     hash: [u8; 32],
 ) -> Result<Option<BlobCopy>> {
@@ -359,22 +369,44 @@ fn blob_copy_in_txn(
         .port_entity_raw(txn, &id.source)?
         .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
         .filter(|body| blake3::hash(body).as_bytes() == &hash);
-    // Without its stored bytes the projector answers the sealed-file
-    // placeholder: never an exact fallback.
-    let input = marks.source_input_in_txn(vault, txn, &hash, stored.clone().unwrap_or_default())?;
-    let Some(stamp) = input.stamp().cloned() else {
-        return Ok(None);
+    // What the copy is made over: the spans the marks and mask row place now,
+    // read for stored bytes only (the placeholder takes none).
+    let placed = match &stored {
+        Some(_) => marks.copy_places_in_txn(vault, txn, &hash)?,
+        None => None,
     };
-    let places = match (&stored, stamp.kind) {
-        (Some(_), RepoIndexCopyKind::Masked) => marks.copy_places_in_txn(vault, txn, &hash)?,
-        _ => None,
+    let present = stored.is_some();
+    let copy = match kept.take(&hash, present, placed.as_ref()) {
+        Some(copy) => copy,
+        None => {
+            // Without its stored bytes the projector answers the sealed-file
+            // placeholder: never an exact fallback.
+            let input =
+                marks.source_input_in_txn(vault, txn, &hash, stored.clone().unwrap_or_default())?;
+            let Some(stamp) = input.stamp().cloned() else {
+                return Ok(None);
+            };
+            let places = match (present, stamp.kind) {
+                (true, RepoIndexCopyKind::Masked) => placed.clone(),
+                _ => None,
+            };
+            kept.keep(
+                hash,
+                present,
+                placed,
+                input.into_bytes(),
+                places,
+                stamp.fingerprint(),
+            )
+        }
     };
     Ok(Some(BlobCopy {
         id,
         stored,
-        copy: input.into_bytes(),
-        places,
-        stamp: stamp.fingerprint(),
+        copy: Arc::clone(&copy.copy),
+        copy_hash: copy.copy_hash,
+        places: copy.places.clone(),
+        stamp: copy.stamp,
     }))
 }
 

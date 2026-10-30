@@ -143,12 +143,12 @@ enum Translated {
 
 /// `submitted`, a peer's body on `blob`'s copy, over its stored bytes.
 fn translate_body(blob: &BlobCopy, stored: &[u8], submitted: &[u8]) -> Result<Translated> {
-    if submitted == blob.copy.as_slice() {
+    if *submitted == *blob.copy {
         return Ok(Translated::Body(stored.to_vec()));
     }
     let copy = match &blob.places {
         Some(places) => RepoProjectedFileCopy::Masked {
-            copy: &blob.copy,
+            copy: &blob.copy[..],
             places,
         },
         None => RepoProjectedFileCopy::Opaque,
