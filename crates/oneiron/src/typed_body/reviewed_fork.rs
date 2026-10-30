@@ -118,15 +118,17 @@ pub(crate) fn merge_reviewed_fork_in_txn(
         .export(ExportMode::updates(&before))
         .map_err(|_| invalid("typed body fork export"))?;
     import(&live, &updates)?;
+    let at = vault.now_recorded_at();
     head.frontier = live.oplog_frontiers().encode();
     let whole = proposal.oplog_vv() == reviewed_vv;
     head.commits += if whole { record.commits } else { landed };
+    head.landed_at = Some(at);
     DOCS.put(&vault.store, txn, entity, &snapshot(&live)?)?;
     HEADS.put(&vault.store, txn, entity, &head)?;
     if whole {
         record.state = TypedForkState::Merged {
             by: BodyActor::Actor(actor.entity_ref()),
-            at: vault.now_recorded_at(),
+            at,
             head: head.frontier.clone(),
         };
         FORKS.put(&vault.store, txn, &key, &record)?;

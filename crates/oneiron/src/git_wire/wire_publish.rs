@@ -1,7 +1,6 @@
 //! Journaled ref publication: the one transactional path and its finishing rules.
 
 use super::argv::FrozenGitArgv;
-use super::config::GIT_WIRE_MAX_PUBLICATIONS;
 use super::failure::{invalid, uncertain};
 use super::record::{
     StoredGitWireRecord, finish_state, new_record, observed_from_stored, publications_from_stored,
@@ -14,6 +13,7 @@ use super::{
     GitWireResult, ObservedGitRef, lock_repository,
 };
 use crate::error::Result;
+use crate::scan_check::EngineScan;
 
 impl GitWire<'_> {
     /// Publishes refs through the one transactional path, under the repository
@@ -29,6 +29,7 @@ impl GitWire<'_> {
         now: u64,
     ) -> GitWireResult<GitWireCommitOutcome> {
         validate_publications(&publications)?;
+        self.count_wire_rows(repo, EngineScan::GitWirePublications, publications.len())?;
         let _guard = lock_repository(&repo.common_dir)?;
         let key = ref_record_key(repo.identity(), &publications);
         if let Some(outcome) = self.replay_terminal(repo, &key)? {
@@ -455,17 +456,15 @@ impl GitWire<'_> {
     }
 }
 
+/// A non-empty set naming each ref once, however many: one Git transaction
+/// moves them all or none (FIX 8784).
 fn validate_publications(publications: &[GitRefPublication]) -> Result<()> {
-    if publications.is_empty() || publications.len() > GIT_WIRE_MAX_PUBLICATIONS {
-        return Err(invalid(
-            "git wire publication set must be non-empty and bounded",
-        ));
+    if publications.is_empty() {
+        return Err(invalid("git wire publication set must be non-empty"));
     }
-    for (index, publication) in publications.iter().enumerate() {
-        if publications[..index]
-            .iter()
-            .any(|earlier| earlier.name == publication.name)
-        {
+    let mut names = std::collections::BTreeSet::new();
+    for publication in publications {
+        if !names.insert(publication.name.as_str()) {
             return Err(invalid("git wire publication set names one ref twice"));
         }
         // A publication states what it was decided against: an unconditional

@@ -259,12 +259,9 @@ pub fn project_review_dissent(vault: &Vault, result: &ReviewResult, at: u64) -> 
             .min_by_key(|pair| (pair.outcome.occurred_at, pair.outcome.fact))
         else {
             if state.settled_fact.take().is_some() {
-                crate::learning::withdraw_evidence(
-                    vault,
-                    &stored.calibration,
-                    &outcomes::calibration_receipt(&result.verdict_claim, &stored.artifact_id),
-                    at,
-                )?;
+                // The critique's standing outcome takes its receipt back in
+                // the same write (FIX 12219).
+                outcomes::withdraw_fact_evidence(vault, &result.verdict_claim, &stored, at)?;
                 save_dissent(vault, &result.verdict_claim, &state)?;
             }
             continue;

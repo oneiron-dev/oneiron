@@ -88,6 +88,37 @@ pub(crate) fn mark_carrier_text_in_txn(
     Ok(CarrierText::Minted(reason))
 }
 
+/// Whether [`mark_carrier_text_in_txn`] places each key in `text`, a
+/// carrier's stored text with a hit no mark covers, by the door's file
+/// rules: judged in a reader, so nothing is minted and nothing is marked
+/// (FIX 8996). A key only custody's known values place reads as unplaced
+/// here.
+pub(crate) fn carrier_text_placeable(text: &[u8]) -> Result<bool> {
+    let origin = EntityId::derive(CARRIER_ORIGIN, &[b"placeable".as_slice()])?;
+    let mut plan = Masker {
+        mints: true,
+        at: Some((origin, "carrier".to_owned())),
+        ..Masker::default()
+    };
+    Ok(plan
+        .mark_file(origin, text)?
+        .is_some_and(|copy| write_payload_hit(&copy).is_none()))
+}
+
+/// What a reader other than the owner reads in place of a string that
+/// still holds a hit the write door finds once each lifted key reads as its
+/// handle: the door's placeholder, which holds no value (FIX 8996).
+const UNPLACED: &str = "[secret redacted]";
+
+/// Each string in `value` the write door still finds a hit in, read whole
+/// as [`UNPLACED`]: a key no mark places, masked for a reader other than
+/// the owner (FIX 8996). `true` when one changed.
+pub(crate) fn mask_unplaced_json(value: &mut serde_json::Value) -> bool {
+    each_string(value, &|text| {
+        write_payload_hit(text.as_bytes()).map(|_| UNPLACED.to_owned())
+    })
+}
+
 impl CarrierText {
     /// The two outcomes of one row's texts as one: a hit left unplaced
     /// first, then a key marked now, then one marked before.

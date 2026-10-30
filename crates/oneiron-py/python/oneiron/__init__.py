@@ -554,6 +554,9 @@ class Oneiron:
             """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
             return json.loads(_translate(lambda: self._client.vault_message_stream_partial(json.dumps(spec))))
         @property
+        def message_streams(self) -> "Oneiron._VaultMessageStreamsVerbs":
+            return Oneiron._VaultMessageStreamsVerbs(self._client)
+        @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs":
             return Oneiron._VaultMessagesVerbs(self._client)
         def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
@@ -1284,6 +1287,12 @@ class Oneiron:
         def resume(self, spec):
             """The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."""
             return json.loads(_translate(lambda: self._client.vault_runners_seats_resume(json.dumps(spec))))
+    class _VaultMessageStreamsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def refused(self, spec=None):
+            """Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."""
+            return json.loads(_translate(lambda: self._client.vault_message_streams_refused(json.dumps({} if spec is None else spec))))
     class _VaultMessagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4171,7 +4180,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def enqueue(self, spec):
-            """Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
+            """Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_enqueue(json.dumps(spec))))
         def stage(self, spec):
             """Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."""

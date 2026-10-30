@@ -427,6 +427,7 @@ mod intent;
 mod reclaim;
 mod request;
 
+pub(crate) use self::intent::{REPLY_NOT_KEPT_STATE, run_under_intent, run_under_intent_owned};
 pub(crate) use self::request::{idempotency_for_mutating_form, idempotency_middleware};
 
 #[cfg(test)]
