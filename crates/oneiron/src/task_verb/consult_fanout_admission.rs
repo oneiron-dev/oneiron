@@ -538,25 +538,6 @@ impl Memory<'_> {
         Ok(actor)
     }
 
-    /// [`Self::reauthenticate_fanout_owner`] in the resume's own write
-    /// transaction (FIX 11354): no read transaction opens while it is open,
-    /// and the owner is judged in the snapshot the resume commits in. The
-    /// door's preflight before it stays.
-    pub(super) fn reauthenticate_fanout_owner_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        owner: &AuthenticatedOwner,
-    ) -> MemoryResult<EntityId> {
-        let actor = owner.revalidate_in_txn(self.vault(), txn)?;
-        crate::memory::verify_actor_binding_in_txn(
-            self.vault(),
-            txn,
-            actor,
-            crate::EdgeActorClass::Human,
-        )?;
-        Ok(actor)
-    }
-
     pub(super) fn require_fanout_ceiling(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
         if task_actor_ceiling(self.vault(), txn, self.actor(), self.actor_class())?
             != PolicyApprovalCeiling::Auto

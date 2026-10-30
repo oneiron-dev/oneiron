@@ -24,6 +24,20 @@ use crate::outbound_chokepoint::{
 };
 
 impl Memory<'_> {
+    /// [`Self::reauthenticate_fanout_owner`] in a resume's own write
+    /// transaction (FIX 11354): no read transaction opens while it is open,
+    /// and the owner is judged in the snapshot the resume commits in. The
+    /// door's preflight before it stays.
+    pub(super) fn reauthenticate_fanout_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+    ) -> MemoryResult<EntityId> {
+        let actor = owner.revalidate_in_txn(self.vault(), txn)?;
+        verify_actor_binding_in_txn(self.vault(), txn, actor, crate::EdgeActorClass::Human)?;
+        Ok(actor)
+    }
+
     /// Reads the durable run, including a denial parked across restart.
     pub fn consult_fanout_status(
         &self,
