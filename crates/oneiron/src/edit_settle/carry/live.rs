@@ -91,11 +91,11 @@ pub(super) fn sheet_row_reason(
 
 /// The newest export of an artifact since a held answer's base, when its
 /// answers were read on the live body (FIX 12017).
-pub(super) struct ExportSpan {
+pub(crate) struct ExportSpan {
     /// The frontier the export's record names: the body its version holds.
-    pub(super) frontier: Vec<u8>,
+    pub(crate) frontier: Vec<u8>,
     /// The export version's bytes, when versions landed after it.
-    pub(super) bytes: Option<Vec<u8>>,
+    pub(crate) bytes: Option<Vec<u8>>,
 }
 
 /// The withdraw reason a live unit's change gives.
@@ -216,7 +216,7 @@ impl Vault {
 
     /// The newest export of `artifact` after `base`, up to `head`, for
     /// answers read on the live body at `judged_live`; none for others.
-    pub(super) fn export_span(
+    pub(crate) fn export_span(
         &self,
         artifact: &EntityId,
         judged_live: Option<&LivePin>,
