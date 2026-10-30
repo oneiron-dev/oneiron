@@ -308,6 +308,14 @@ side_tables! {
     /// store-minted order id, the row learned_at it was taken against and the scopes that consumed
     /// it. Key: id16(turn).
     DREAMER_TURN_REDIRTY: VaultMeta b"dreamer:turn-redirty:v1:" Named;
+    /// FIX 5735: each turn program admission by its waking actor, written with the admission.
+    /// Key: id16(actor) + hash32(admission).
+    DREAMER_TURN_PROGRAM_ACTOR_ADMISSION: VaultMeta b"dreamer:turn_program:actor_admission:v1:"
+        Named Engine;
+    /// FIX 5735: each turn program attempt by the actor its stamp names, written with the stamp.
+    /// Key: id16(actor) + id16(attempt).
+    DREAMER_TURN_PROGRAM_ACTOR_ATTEMPT: VaultMeta b"dreamer:turn_program:actor_attempt:v1:"
+        Named Engine;
     /// DOOR-141: one turn program admission: the sealed wake, its Gate receipt, and the attempt it
     /// queued or why it was refused. Key: hash32(actor, registration, revision, turn).
     DREAMER_TURN_PROGRAM_ADMISSION: VaultMeta b"dreamer:turn_program:admission:v1:" Named;

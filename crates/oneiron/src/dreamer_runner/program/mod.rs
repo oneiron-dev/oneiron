@@ -31,6 +31,7 @@ mod arm;
 mod authority;
 mod bodies;
 mod erase;
+mod index;
 mod lease;
 mod read;
 mod rebind;

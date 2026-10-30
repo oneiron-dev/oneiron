@@ -90,6 +90,7 @@ fn admit_in_txn(
     };
     // The stamp the queue row takes reads this row, so it lands first.
     ADMISSION.put(vault, txn, &admission, &record)?;
+    super::index::index_admission_in_txn(vault, txn, wake.authority.actor(), &admission)?;
     if refused.is_none() {
         let attempt = queue_in_txn(vault, txn, &admission, now)?;
         record.attempt = Some(attempt);
