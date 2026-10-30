@@ -221,6 +221,7 @@ fn judge_rejection_cause_in_txn(
         attempt_receipt: None,
         judge: trace.revision,
         judge_model: trace.model,
+        receipts: trace.receipts,
         actor: Some(rejection.actor),
         skill: rejection.skill,
         rejected: true,

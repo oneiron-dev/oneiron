@@ -24,7 +24,7 @@ async fn as_owner<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let owner = super::owner_binding::facade_owner(server, auth, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&server, &owner).map_err(MemoryError::from))
+    super::clock_ingress::run_blocking(move || act(&server, &owner).map_err(MemoryError::from))
         .await
         .map_err(|_| internal(verb))?
 }
@@ -84,7 +84,7 @@ pub(crate) async fn vault_gate_policy_put(
         Err(refusal) => Err(refusal),
         Ok((proof, owner)) => {
             let server = Arc::clone(server);
-            tokio::task::spawn_blocking(move || {
+            super::clock_ingress::run_blocking(move || {
                 let vault = server.vault();
                 let put = if owner {
                     policy_manifest_doors::put_policy_manifest_as_owner(vault, &proof, input)

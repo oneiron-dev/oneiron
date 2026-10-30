@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
 
 const MAX_SCRIPT_BYTES: usize = 256 * 1024;
-const MAX_AST_NODES: usize = 8192;
 const MAX_DEPTH: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +73,9 @@ impl AnalyzedScript {
             source: source.as_bytes(),
             bindings: BTreeMap::new(),
             effects: Vec::new(),
-            remaining: MAX_AST_NODES,
+            // The walk charges each tree node at most once, so the tree's own
+            // node count bounds it and a valid script never exhausts it.
+            remaining: tree.root_node().descendant_count(),
             allowed_calls,
             module_bindings: BTreeSet::new(),
             function_nesting: 0,

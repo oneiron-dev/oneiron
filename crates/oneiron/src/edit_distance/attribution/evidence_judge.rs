@@ -366,6 +366,9 @@ fn persist_amendment_split(
         attempt_receipt: evidence.attempt_receipt.clone(),
         judge: judge.and_then(|trace| trace.revision.clone()),
         judge_model: judge.and_then(|trace| trace.model.clone()),
+        receipts: judge
+            .map(|trace| trace.receipts.clone())
+            .unwrap_or_default(),
         actor: Some(evidence.actor),
         skill: evidence.skill,
         rejected: false,
@@ -473,6 +476,7 @@ pub(super) fn judgment_row(judgment: &AmendmentJudgment) -> StoredJudgment {
         actor: judgment.actor.map(|id| id.to_hex()),
         skill: judgment.skill.map(|id| id.to_hex()),
         rejected: judgment.rejected,
+        receipts: judgment.receipts.clone(),
     }
 }
 
@@ -637,6 +641,7 @@ fn judgment_from_row(
         attempt_receipt: row.attempt.map(|join| join.receipt),
         judge: row.judge,
         judge_model: row.judge_model,
+        receipts: row.receipts,
         actor: optional_entity(row.actor.as_deref())?,
         skill: optional_entity(row.skill.as_deref())?,
         rejected: row.rejected,

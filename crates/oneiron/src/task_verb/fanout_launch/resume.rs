@@ -418,7 +418,12 @@ impl Memory<'_> {
                 effect,
                 ..
             } => {
-                let asker = self.vault().memory(actor, class);
+                // FIX 11691: its dispatches keep the requester the ask was
+                // admitted under, judged again when each is claimed.
+                let asker = self
+                    .vault()
+                    .memory(actor, class)
+                    .with_kept_requester(launch.requester.clone());
                 let task_refs = asker.release_held_ask_in(
                     txn,
                     *group_ref,

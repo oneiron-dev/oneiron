@@ -953,6 +953,7 @@ class OneironError(RuntimeError):
     resets_at: tuple[int, ...] | None
     # The refusal's stable reason codes, in its producer's order (FIX 7398).
     reason_codes: tuple[str, ...] | None
+    legal_hold: Facade.LegalHoldNotice | None
     def __init__(
         self,
         code: str,
@@ -963,6 +964,7 @@ class OneironError(RuntimeError):
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
+        legal_hold: Facade.LegalHoldNotice | None = None,
     ) -> None: ...
 
 class Oneiron:
@@ -1151,6 +1153,8 @@ class Oneiron:
         def slim(self) -> "Oneiron._VaultSlimVerbs": ...
         @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
+        @property
+        def outbox(self) -> "Oneiron._VaultOutboxVerbs": ...
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs": ...
         @property
@@ -2077,11 +2081,11 @@ class Oneiron:
             """The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."""
     class _VaultPacksSetupVerbs:
         def prepare(self, spec: Facade.PackSetupRequest) -> Facade.PackSetupReceipt:
-            """The owner opens, or resumes, a pack's guided setup; opening grants nothing."""
+            """The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing."""
         def get(self, spec: Facade.PackSetupRequest) -> Facade.PackSetupReceipt:
-            """A pack's guided setup as it stands, for the owner."""
+            """A pack's guided setup as it stands, for the owner or an agent acting for the owner."""
         def answer(self, spec: Facade.PackSetupAnswerRequest) -> Facade.PackSetupReceipt:
-            """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
+            """One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here."""
         def verify(self, spec: Facade.PackSetupVerifyRequest) -> Facade.PackSetupReceipt:
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
     class _VaultProjectsVerbs:
@@ -2221,6 +2225,14 @@ class Oneiron:
             """Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."""
         def dial(self, spec: Facade.MeshDialRequest) -> Facade.MeshPathReceipt:
             """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
+    class _VaultOutboxVerbs:
+        @property
+        def diverged(self) -> "Oneiron._VaultOutboxDivergedVerbs": ...
+    class _VaultOutboxDivergedVerbs:
+        def list(self, spec: Facade.EmptyRequest) -> Facade.OutboxDivergedPage:
+            """The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."""
+        def answer(self, spec: Facade.OutboxDivergedAnswerRequest) -> Facade.OutboxDivergedAnswerReceipt:
+            """The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."""
     class _VaultInspectionVerbs:
         def resolve(self, spec: Facade.InspectionResolveRequest) -> Facade.InspectionResolved:
             """Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."""

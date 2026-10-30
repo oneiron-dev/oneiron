@@ -9,8 +9,8 @@ use rmpv::Value;
 use super::super::MAINTENANCE_QUEUE_KIND;
 use super::admission::{Admit, admitted_in_txn, dreamer_reader};
 use super::{
-    ASKS, Answer, CURSOR, EXCERPT_BYTES, IDENTITY_RECHECK_FACET, IdentityAsk, IdentityAskReason,
-    MAX_OPEN_ASKS, MAX_TERMS, MIN_TERM_CHARS, SCAN_TURNS, STOP_WORDS, ask_key, dreamer_seal,
+    ASKS, Answer, CURSOR, IDENTITY_RECHECK_FACET, IdentityAsk, IdentityAskReason, MAX_OPEN_ASKS,
+    MAX_TERMS, MIN_TERM_CHARS, SCAN_TURNS, STOP_WORDS, ask_key, dreamer_seal,
     entity_of_kind_in_txn, hinted_in_txn, settle_undo,
 };
 use crate::claim::ClaimSource;
@@ -51,20 +51,6 @@ pub(super) fn context_terms(text: &str, start: usize, end: usize, name: &str) ->
         }
     }
     terms
-}
-
-/// The text around a span, cut on character boundaries.
-fn excerpt(text: &str, start: usize, end: usize) -> String {
-    let half = EXCERPT_BYTES / 2;
-    let mut from = start.saturating_sub(half).min(text.len());
-    while from > 0 && !text.is_char_boundary(from) {
-        from -= 1;
-    }
-    let mut to = end.saturating_add(half).min(text.len());
-    while to < text.len() && !text.is_char_boundary(to) {
-        to += 1;
-    }
-    text.get(from..to).unwrap_or_default().to_owned()
 }
 
 /// Whether the link in `turn` is an uncertain person: two or more
@@ -157,6 +143,7 @@ pub(super) fn ask_for_mention_in_txn(
     let Some(found) = uncertain_in_txn(vault, txn, *turn, &mention.link, name)? else {
         return Ok(None);
     };
+    let _ = vault.measure_limit(EngineLimit::IdentityExcerptBytes, text.len() as u64);
     Ok(Some(IdentityAsk {
         kind: found.kind,
         name: name.to_owned(),
@@ -167,7 +154,7 @@ pub(super) fn ask_for_mention_in_txn(
         candidates: found.candidates,
         provisional: found.provisional,
         context: context_terms(text, mention.start, mention.end, name),
-        excerpt: excerpt(text, mention.start, mention.end),
+        excerpt: text.to_owned(),
         reason,
         opened_at: now,
         retry_at: 0,

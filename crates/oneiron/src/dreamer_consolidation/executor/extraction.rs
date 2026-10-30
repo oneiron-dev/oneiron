@@ -49,6 +49,7 @@ impl ConsolidationExecutor<'_> {
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
+        let keyless = call.inference.selected_keyless();
         let prompt: ExtractionPrompt = serde_json::from_str(include_str!("extraction_prompt.json"))
             .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))?;
         let text = |role, text: String| LlmMessage {
@@ -86,6 +87,7 @@ impl ConsolidationExecutor<'_> {
                 // the claim fields. The reply meets the contract here instead.
                 response_format: ResponseFormat::Text,
                 locality,
+                host_keyless: keyless,
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),

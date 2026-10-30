@@ -25,7 +25,7 @@ pub(crate) async fn vault_research_create_child(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::research_create_child_as_owner(server.vault(), &owner, input)
     })
     .await
@@ -47,7 +47,7 @@ pub(crate) async fn vault_evals_inventory(
     let server = Arc::clone(server);
     // The inventory contains metadata only. Its receipt and ledger rows are
     // not core entity rows; no case content or sealed membership is served.
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::eval_inventory_as_owner(server.vault(), &owner, input)
     })
     .await
@@ -73,7 +73,7 @@ pub(crate) async fn vault_evals_cohorts_setup(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::eval_cohorts_setup_as_owner_listing(server.vault(), &owner, input)
     })
     .await

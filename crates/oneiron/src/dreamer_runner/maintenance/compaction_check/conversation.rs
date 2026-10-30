@@ -201,8 +201,9 @@ pub(super) async fn run_conversation_check(
         }
     };
     let locality = judge_locality(&model)?;
+    let keyless = model.inference.selected_keyless();
     let input = judge_input(&declaration, &summary, &evidence);
-    let request = judge_request(&model, &input, locality)?;
+    let request = judge_request(&model, &input, locality, keyless)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -216,6 +217,7 @@ pub(super) async fn run_conversation_check(
         evidence: &cited,
         state: &input,
         locality,
+        keyless,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
@@ -327,6 +329,7 @@ fn judge_request(
     model: &CompactionCheckModel<'_>,
     input: &serde_json::Value,
     locality: crate::llm::ModelLocality,
+    keyless: bool,
 ) -> Result<LlmRequest> {
     let schema = serde_json::json!({
         "type": "object", "additionalProperties": false,
@@ -344,7 +347,7 @@ fn judge_request(
             "reason": {"type": "string"}
         }
     });
-    judge_call(model, schema, input, locality)
+    judge_call(model, schema, input, locality, keyless)
 }
 
 /// What the judge reads: the span's length in turns, the summary and the

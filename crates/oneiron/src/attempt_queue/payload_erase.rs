@@ -29,6 +29,7 @@
 //! instructions staying (`asker`).
 
 mod asker;
+mod requester;
 mod response;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -287,14 +288,18 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
                 reply_jobs.push(record.id);
                 rewrites.push((raw.into_owned(), record));
             }
-        } else if dispatch_payload_actor(&record).is_some_and(|actor| owners.contains(&actor))
-            && erase_dispatch_payload_text(&mut record, TextOwner::Target)?
-        {
-            rewrites.push((raw.into_owned(), record));
-        } else if asker::asker_owned(&record, actors, &asker_intents)
-            && erase_dispatch_payload_text(&mut record, TextOwner::Asker)?
-        {
-            rewrites.push((raw.into_owned(), record));
+        } else {
+            // An erased requester's standing leaves as its marker, whoever
+            // the dispatch's target or asker is (FIX 11689).
+            let mut changed = requester::erase_dispatch_requester(&mut record, actors)?;
+            if dispatch_payload_actor(&record).is_some_and(|actor| owners.contains(&actor)) {
+                changed |= erase_dispatch_payload_text(&mut record, TextOwner::Target)?;
+            } else if asker::asker_owned(&record, actors, &asker_intents) {
+                changed |= erase_dispatch_payload_text(&mut record, TextOwner::Asker)?;
+            }
+            if changed {
+                rewrites.push((raw.into_owned(), record));
+            }
         }
     }
     erase_program_admission_payloads_in_txn(store, txn, actors, &mut rewrites)?;
@@ -695,6 +700,8 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
         scrub_hard_erased_task_copy_in_txn(store, txn, record);
         return;
     }
+    // An erased requester writes back no standing (FIX 11689).
+    requester::scrub_erased_requester_in_txn(store, txn, record);
     let Some(actor) = dispatch_payload_actor(record) else {
         return;
     };

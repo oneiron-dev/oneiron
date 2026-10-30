@@ -15,9 +15,9 @@ use crate::store::{
     BackupWriteClass, Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, validate_embedding_model_id,
 };
 
-/// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
-/// a pathological prefix scans a very large sync_state database. Deletion's
-/// window update-key read through the window-row port keeps the same cap.
+/// Advisory threshold row for the sync-state and sync-queue prefix scans and
+/// deletion's window update-key read: past it the scan raises one check and
+/// reads on (rule 5). It bounds no result.
 #[cfg(feature = "sync")]
 pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
@@ -556,7 +556,8 @@ impl Vault {
     }
 
     /// Lists all keys with the given prefix in sync_state for sync integration
-    /// tests and diagnostics.
+    /// tests and diagnostics, however many: past the advisory threshold row
+    /// the scan raises one check and reads on (rule 5).
     ///
     /// Production bridge code uses direct transactional access so multi-key
     /// sync-state updates stay atomic. `prefix` must overlap a declared
@@ -569,17 +570,20 @@ impl Vault {
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start_at(
+            crate::scan_check::EngineScan::PackQuarantineRows,
+            prefix.as_bytes(),
+            MAX_SYNC_STATE_KEYS as u64,
+        );
         let mut keys = Vec::new();
-        let iter = self.store.sync_state.prefix_iter(&rtxn, prefix)?;
-        for entry in iter {
-            // Cap check BEFORE push — matches scan_edges semantics.
-            if keys.len() >= MAX_SYNC_STATE_KEYS {
-                return Err(Error::IndexOverflow("sync_state_keys_with_prefix"));
-            }
+        for entry in self.store.sync_state.prefix_iter(&rtxn, prefix)? {
+            count.row();
             let (k, _) = entry?;
             crate::side_table::host_declared_sync_state(&k)?;
             keys.push(k.to_string());
         }
+        drop(rtxn);
+        count.finish(self);
         Ok(keys)
     }
 
@@ -609,7 +613,9 @@ impl Vault {
 
     /// Lists `sync_queue` rows with the given key prefix for sync
     /// integration tests and diagnostics (e.g. the `h:{seq:8BE}` hard-erase
-    /// sweep family a replayed remote hard tombstone must enqueue).
+    /// sweep family a replayed remote hard tombstone must enqueue), however
+    /// many: past the advisory threshold row the scan raises one check and
+    /// reads on (rule 5).
     ///
     /// Production code uses direct transactional access so multi-key
     /// updates stay atomic.
@@ -617,15 +623,19 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_queue_rows_with_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let rtxn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start_at(
+            crate::scan_check::EngineScan::PackQuarantineRows,
+            prefix,
+            MAX_SYNC_STATE_KEYS as u64,
+        );
         let mut rows = Vec::new();
         for entry in self.store.sync_queue.prefix_iter(&rtxn, prefix)? {
-            // Cap check BEFORE push — matches scan_edges semantics.
-            if rows.len() >= MAX_SYNC_STATE_KEYS {
-                return Err(Error::IndexOverflow("sync_queue_rows_with_prefix"));
-            }
+            count.row();
             let (k, v) = entry?;
             rows.push((k.to_vec(), v.to_vec()));
         }
+        drop(rtxn);
+        count.finish(self);
         Ok(rows)
     }
 

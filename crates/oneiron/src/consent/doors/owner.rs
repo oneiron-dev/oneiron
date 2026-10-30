@@ -224,3 +224,23 @@ fn own_full_slip(
     }
     Ok(())
 }
+
+impl AuthenticatedOwner {
+    /// The slip this proof is bound to, for a persisted delegation that
+    /// rechecks it at redemption (a Slack install): its slip id, or `None`
+    /// for a proof bound to no credential.
+    pub(crate) fn credential_slip_id_for_persist(&self) -> Option<[u8; 32]> {
+        self.credential
+            .as_ref()
+            .map(|credential| credential.claims().slip_id)
+    }
+
+    /// The host action this proof was authenticated from, for a persisted
+    /// delegation: its owner and its root slip id (`None` for the dev
+    /// mode), or `None` for a proof with no host action.
+    pub(crate) fn host_action_for_persist(&self) -> Option<(Option<[u8; 32]>, EntityId)> {
+        self.host_action
+            .as_ref()
+            .map(|action| (action.root_slip_id(), action.owner()))
+    }
+}

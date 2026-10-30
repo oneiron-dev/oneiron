@@ -64,9 +64,9 @@ impl Vault {
         };
         owner.revalidate(self)?;
         let imported = match source {
-            ShapeSkillSource::Library { subtree } => {
-                self.import_default_hub_skill_expecting(subtree, skill_id, version, occurred, now)
-            }
+            ShapeSkillSource::Library { subtree } => self.import_default_hub_skill_expecting(
+                owner, subtree, skill_id, version, occurred, now,
+            ),
             ShapeSkillSource::Hub {
                 hub,
                 folder,
