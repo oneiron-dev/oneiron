@@ -36,7 +36,7 @@ mod window_pads;
 pub use window_pads::{
     WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly, WindowPadBinding,
     WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadReadiness, WindowPadReceipt,
-    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member,
+    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member, window_pad_frame_id,
     window_pad_frame_payload, window_pad_part_id, window_pad_refs_digest,
 };
 mod documents;
