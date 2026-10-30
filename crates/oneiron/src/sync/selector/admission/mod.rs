@@ -21,6 +21,7 @@ use crate::error::SyncError;
 #[cfg(test)]
 use crate::error::RecordError;
 
+mod birth_scope;
 mod blobs;
 mod revalidate;
 mod routing;
@@ -260,6 +261,7 @@ fn admit_window_update(
     for (part, part_key) in routes.keys.iter().enumerate() {
         let admitted = create_admission_doc(part_key, update, role, guest)?;
         copy_admitted_entities(vault, &policy, &remote, &admitted, grading, &routes, part)?;
+        birth_scope::copy_birth_scopes(&remote, &admitted, routes.guest_copy(), grading)?;
         let edges = routes.edges_of(&remote, part)?;
         let early = copy_admitted_edges(
             vault,

@@ -197,6 +197,7 @@ pub(super) fn scrub_local_only_carriers(
     }
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        super::birth_scope::drop_orphan_birth_scopes(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -332,6 +333,7 @@ pub(super) fn scrub_local_claim_carriers(
     removed |= delete_edges_touching_entities(&edges, &ids)?;
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        super::birth_scope::drop_orphan_birth_scopes(doc)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, ids)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
@@ -435,6 +437,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         map_delete(&entities, raw_key)?;
     }
     crate::sync::row_birth::drop_orphan_births(doc)?;
+    super::birth_scope::drop_orphan_birth_scopes(doc)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(pin)
@@ -480,6 +483,7 @@ pub(super) fn scrub_redacted_attribution_carriers(
     }
     if !keys.is_empty() {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        super::birth_scope::drop_orphan_birth_scopes(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(!keys.is_empty())
@@ -736,6 +740,7 @@ fn replay_mirrors(
             if crate::sync::row_birth::mirror_local_birth(vault, doc, id)? {
                 wrote_edges = true;
             }
+            wrote_edges |= super::birth_scope::mirror_local_birth_scope(vault, doc, id)?;
             if wrote_edges {
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
                 replayed += 1;
@@ -782,6 +787,7 @@ fn replay_mirrors(
         }
         // Rule A: the birth rides in the same bridge commit as its row.
         crate::sync::row_birth::mirror_local_birth(vault, doc, id)?;
+        super::birth_scope::mirror_local_birth_scope(vault, doc, id)?;
 
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 

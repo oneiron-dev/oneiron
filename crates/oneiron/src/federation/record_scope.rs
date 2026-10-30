@@ -19,6 +19,8 @@ use std::collections::BTreeSet;
 
 mod asset_body;
 pub(crate) mod asset_text;
+// FIX 3656: the birth scope a replicated row travels with.
+mod birth_carrier;
 mod delete;
 mod export;
 pub(crate) mod note_world;
@@ -29,6 +31,9 @@ mod stamping;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::birth_carrier::{
+    carried_birth_scope, guest_birth_scope, stamp_carried_birth_scope_in_txn,
+};
 pub(crate) use self::stamping::{
     restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth, settle_source_birth,
     stage_session_position, stamp_blob_project, stamp_import_audience_birth, stamp_leader_project,

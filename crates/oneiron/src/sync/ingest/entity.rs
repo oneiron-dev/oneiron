@@ -21,6 +21,7 @@ use crate::sync::quarantine::{
 use crate::sync::quota;
 use crate::vault::Vault;
 
+mod birth_scope;
 mod withdrawn;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
@@ -239,6 +240,7 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
                 doc,
                 &id,
             )?;
+            birth_scope::stamp_carried_birth_scope_in_txn(ctx.vault, &mut savepoint, doc, &id)?;
         }
         // What the promotion owes a TURN it brings back lands with the row.
         if landed && let (Some(id), Some(blob)) = (step.written(), value) {

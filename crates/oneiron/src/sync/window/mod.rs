@@ -23,6 +23,8 @@ use crate::ports::{WindowAddress, WindowDeletionRows};
 use loro::{LoroDoc, Subscription};
 
 mod admission;
+// FIX 3656: the birth scope carrier beside each replicated row.
+pub(in crate::sync) mod birth_scope;
 mod device_only;
 mod egress;
 mod forward;
