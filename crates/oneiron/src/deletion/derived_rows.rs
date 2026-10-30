@@ -57,6 +57,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::persona_snapshot::erase_in_txn,
     // FIX 9598: an erased claim's owed VAD consolidation.
     crate::store::settle_claim_vad_in_txn,
+    // FIX 12093: an erased skill's frozen callable cases, and every case naming the erased row.
+    crate::skill::erase_callable_cases_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.
