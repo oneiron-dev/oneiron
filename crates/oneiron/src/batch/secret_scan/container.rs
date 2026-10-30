@@ -23,6 +23,8 @@
 //! outside its central directory's entries) are read by the scans alone
 //! (FIX 2470): a release door and a masked read of an unmarked file read
 //! them, and the rebuilt copy leaves them out, so no mark is placed there.
+//! An unmarked container whose only key sits in them at its root is served
+//! its copy rebuilt at the root without them (FIX 11553, 12268).
 //!
 //! A container is known by its leading bytes, never by its name, and text
 //! with a container's leading bytes is one only when it parses as one (FIX
@@ -505,6 +507,18 @@ pub(crate) fn served_masked_copy(
 ) -> Result<Vec<u8>> {
     masked_copy_in(bytes, places, Some(handles), Budget::new().with_root_digest(digest))
         .map_err(withheld)
+}
+
+/// The copy a serving door's masked reader may be served of `bytes`, a
+/// container no mark covers whose write-door scan hits (FIX 11553, 12268):
+/// the container encoded again at its root by its own reader around every
+/// member as it is, as a marked file's copy is, so the bytes no reader shows
+/// at its root are left out. `None` when the walk reads `bytes` as no
+/// container, or the rebuild stops: the file stays refused as its scan read
+/// it. The copy is served only once the write door's scan reads it clean.
+pub(crate) fn root_rebuilt_copy(bytes: &[u8]) -> Option<Vec<u8>> {
+    let container = classify(bytes)?;
+    retained_iterative::rebuild_root(container, bytes, &mut Budget::new()).ok()
 }
 
 /// [`masked_copy`] of a retained repository blob, under its whole read

@@ -329,14 +329,7 @@ impl Open {
         let mut each = |step: MemberStep, _: &[u8], _: &mut Budget| -> Walked<Option<Vec<u8>>> {
             Ok(built.next_if(|(at, _)| *at == step).map(|(_, copy)| copy))
         };
-        let copy = match self.container {
-            Kind::Zip => archive::rebuilt(&self.copy, budget, &mut each),
-            Kind::Gzip => gzip::rebuilt(&self.copy, budget, &mut each),
-            // FIX 2471: a tar or xz container is rebuilt around its masked members.
-            Kind::Tar => tar::rebuilt(&self.copy, budget, &mut each),
-            Kind::Xz => xz::rebuilt(&self.copy, budget, &mut each),
-            Kind::Pdf => pdf::rebuilt(&self.copy, budget, &mut each),
-        }?;
+        let copy = reader_rebuilt(self.container, &self.copy, budget, &mut each)?;
         if built.next().is_some() {
             return Err(Stop::Fail(Error::InvariantViolation(
                 "a container's second read passed a built member by",
@@ -347,6 +340,40 @@ impl Open {
         }
         Ok(copy)
     }
+}
+
+/// `bytes`, a `container`, read again by its reader and encoded around each
+/// member `each` hands back, a member it hands back none for kept as read.
+fn reader_rebuilt(
+    container: Kind,
+    bytes: &[u8],
+    budget: &mut Budget,
+    each: &mut dyn FnMut(MemberStep, &[u8], &mut Budget) -> Walked<Option<Vec<u8>>>,
+) -> Walked<Vec<u8>> {
+    match container {
+        Kind::Zip => archive::rebuilt(bytes, budget, each),
+        Kind::Gzip => gzip::rebuilt(bytes, budget, each),
+        // FIX 2471: a tar or xz container is rebuilt around its masked members.
+        Kind::Tar => tar::rebuilt(bytes, budget, each),
+        Kind::Xz => xz::rebuilt(bytes, budget, each),
+        Kind::Pdf => pdf::rebuilt(bytes, budget, each),
+    }
+}
+
+/// `bytes`, a `container`, encoded again by its own reader around every
+/// member as read, no member entered (FIX 11553, 12268): what its reader
+/// reads as no member (a PDF's superseded revisions, a ZIP's bytes outside
+/// its central directory's entries) is left out, as it is from a marked
+/// file's copy. The copy is held to the byte floor as every rebuilt copy
+/// is.
+pub(super) fn rebuild_root(container: Kind, bytes: &[u8], budget: &mut Budget) -> Walked<Vec<u8>> {
+    let mut keep =
+        |_: MemberStep, _: &[u8], _: &mut Budget| -> Walked<Option<Vec<u8>>> { Ok(None) };
+    let copy = reader_rebuilt(container, bytes, budget, &mut keep)?;
+    if budget.copy_over(copy.len()) {
+        return Err(over_budget());
+    }
+    Ok(copy)
 }
 
 /// Hands each member `container`'s reader reads in `bytes` to `each`.
