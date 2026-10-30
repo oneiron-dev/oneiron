@@ -194,9 +194,9 @@ impl SyncConnection {
     }
 
     /// Local half of the re-bootstrap, shared by the convergence and
-    /// queue-overflow paths: clear the queue FIRST (`q:`/`e:` rows only —
-    /// the `h:`/`m:`/`x:` families and delete-bearing rows + `d:` markers
-    /// survive per ARCH-0038/ONE-1135), then drop the
+    /// queue-overflow paths: clear the queue FIRST (`q:` rows only — the
+    /// `h:`/`m:`/`x:`/`e:` families and delete-bearing rows + `d:` markers
+    /// survive per ARCH-0038/ONE-1135, FIX 8884), then drop the
     /// in-memory Docs and produce fresh Phase 1-2 sync frames. If the queue
     /// clear fails, the docs are left intact and the error propagates —
     /// nothing is half-dropped.
