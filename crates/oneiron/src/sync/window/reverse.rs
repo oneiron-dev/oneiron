@@ -470,6 +470,8 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            wrote_any |= map_contains_binary(&entities_map, &hex_id)
+                && super::birth_scope::mirror_local_birth_scope(vault, doc, id)?;
             // OF-522: a TURN's room row rides beside its carrier the same
             // way, and is refreshed when only the row changed.
             if window_key.world().is_none()
