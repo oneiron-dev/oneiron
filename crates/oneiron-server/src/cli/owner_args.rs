@@ -627,6 +627,68 @@ pub struct SecretAnchorSignArgs {
     pub serve: ServeArgs,
 }
 
+/// Remove an installed pack from a stopped vault.
+#[derive(Subcommand, Clone, Debug)]
+pub enum PacksCommand {
+    /// Remove an installed pack: its receipt leaves the Active catalog and
+    /// every hook binding of it stops. Reads nothing from stdin.
+    Remove(Box<PackRemoveArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct PackRemoveArgs {
+    /// The installed pack's name.
+    pub pack: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// An agent's subscriptions to a built-in channel's messages.
+#[derive(Subcommand, Clone, Debug)]
+pub enum SubscriptionsCommand {
+    /// Subscribe the agent to the messages the channel routes to it.
+    Put(Box<SubscriptionPutArgs>),
+    /// The agent's subscriptions, standing and revoked.
+    List(Box<SubscriptionListArgs>),
+    /// Stop a subscription: it wakes nothing more. Reads nothing from stdin.
+    Revoke(Box<SubscriptionRevokeArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SubscriptionPutArgs {
+    /// The agent that answers, as 32 hex.
+    #[arg(long)]
+    pub agent: String,
+
+    /// `slack` or `line`.
+    #[arg(long)]
+    pub channel: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SubscriptionListArgs {
+    /// The agent whose subscriptions to show, as 32 hex.
+    #[arg(long)]
+    pub agent: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SubscriptionRevokeArgs {
+    /// The subscription to stop, as 32 hex.
+    #[arg(long)]
+    pub subscription: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
 #[derive(Subcommand, Clone, Debug)]
 pub enum ImportCommand {
     /// A ChatGPT export: the zip, its `conversations.json`, or the unzipped folder.
