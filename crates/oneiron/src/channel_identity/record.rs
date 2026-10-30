@@ -20,20 +20,19 @@ use super::codec::{
 use super::custody::{Custody, DelegatedCustodyProof, DelegatedGrant, InboundDisposition};
 
 use super::keys::{
-    CHANNEL_IDENTITY_CLAIM_PREDICATES, DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
-    MAX_ADDRESS_OR_HANDLE_BYTES, MAX_CHANNEL_BYTES, PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
-    PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF, PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE,
-    PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET, PREDICATE_CHANNEL_IDENTITY_CHANNEL,
-    PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF, PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT,
-    PREDICATE_CHANNEL_IDENTITY_QUARANTINE_UNTIL, PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF,
-    PREDICATE_CHANNEL_IDENTITY_SHAPE, PREDICATE_CHANNEL_IDENTITY_STATE,
-    PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
+    CHANNEL_IDENTITY_CLAIM_PREDICATES, MAX_ADDRESS_OR_HANDLE_BYTES, MAX_CHANNEL_BYTES,
+    PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE, PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
+    PREDICATE_CHANNEL_IDENTITY_CHANNEL, PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF,
+    PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT, PREDICATE_CHANNEL_IDENTITY_QUARANTINE_UNTIL,
+    PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF, PREDICATE_CHANNEL_IDENTITY_SHAPE,
+    PREDICATE_CHANNEL_IDENTITY_STATE, PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
 };
 
 use super::auth_mode::ChannelAuthMode;
 use super::keys::PREDICATE_CHANNEL_IDENTITY_AUTH_MODE;
 use super::lifecycle::{
-    ChannelIdentityState, ChannelIdentityStep, IdentityEdge, SelfHeldLifecycle,
+    ChannelIdentityState, ChannelIdentityStep, IdentityEdge, QuarantineWindow, SelfHeldLifecycle,
 };
 
 use super::shape::{ChannelIdentityShape, SelfHeldShape};
@@ -417,30 +416,26 @@ impl ChannelIdentity {
     /// when this row is delegated, when the act is not on its state's table, or
     /// when the stamp moves backwards.
     pub fn step(&self, step: ChannelIdentityStep, state_changed_at: u64) -> Result<Self> {
-        self.step_with_wait(
-            step,
-            state_changed_at,
-            DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
-        )
+        self.step_with_wait(step, state_changed_at, QuarantineWindow::SHIPPED)
     }
 
-    /// [`Self::step`] with the vault's RESOLVED quarantine floor.
+    /// [`Self::step`] with the vault's RESOLVED quarantine window.
     ///
     /// A door that holds a manifest snapshot resolves
     /// [`WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE`](super::keys::WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE)
-    /// and calls this; [`Self::step`] is the same act under the floor the
-    /// default manifest ships, which is the fail-closed answer for a caller
-    /// that has no snapshot to resolve against.
+    /// and calls this; [`Self::step`] is the same act under the window the
+    /// default manifest ships, for a caller that has no snapshot to resolve
+    /// against.
     ///
     /// # Errors
     ///
-    /// As [`Self::step`], with the window checked against
-    /// `min_quarantine_secs`.
+    /// As [`Self::step`], with the quarantine window checked against both
+    /// bounds of `window`.
     pub fn step_with_wait(
         &self,
         step: ChannelIdentityStep,
         state_changed_at: u64,
-        min_quarantine_secs: u64,
+        window: QuarantineWindow,
     ) -> Result<Self> {
         if self.custody.is_delegated() {
             return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
@@ -451,7 +446,7 @@ impl ChannelIdentity {
         self.step_edge(
             IdentityEdge::SelfHeld(step.self_held_edge()),
             state_changed_at,
-            min_quarantine_secs,
+            window,
         )
     }
 
@@ -470,15 +465,13 @@ impl ChannelIdentity {
         &self,
         edge: IdentityEdge<'_>,
         state_changed_at: u64,
-        min_quarantine_secs: u64,
+        window: QuarantineWindow,
     ) -> Result<Self> {
         if state_changed_at < self.state_changed_at {
             return Err(invalid_identity());
         }
         let next = Self {
-            custody: self
-                .custody
-                .step(edge, state_changed_at, min_quarantine_secs)?,
+            custody: self.custody.step(edge, state_changed_at, window)?,
             state_changed_at,
             ..self.clone()
         };
