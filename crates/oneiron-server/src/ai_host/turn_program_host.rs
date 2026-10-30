@@ -176,23 +176,31 @@ impl TurnProgramRuntime for ServerTurnPrograms {
             }
         };
         // Born once on the program's code run, as an engine-native run's
-        // seat is, from the program's own task.
-        let seat = run_seat(vault, provider.as_ref(), code_run, None, |facet| SeatTask {
-            kind: SeatKind::Attempt,
-            warm_scope: format!("turn-program:{}", code_run.to_hex()),
-            task: config.task.clone(),
-            purpose: oneiron::CallPurpose::Other {
-                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+        // seat is, from the program's own task. No read scope is threaded
+        // here: the birth inherits (FIX 11768).
+        let seat = run_seat(
+            vault,
+            provider.as_ref(),
+            code_run,
+            None,
+            Vec::new(),
+            |facet| SeatTask {
+                kind: SeatKind::Attempt,
+                warm_scope: format!("turn-program:{}", code_run.to_hex()),
+                task: config.task.clone(),
+                purpose: oneiron::CallPurpose::Other {
+                    name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+                },
+                facet: facet.to_owned(),
+                required: Vec::new(),
+                min_context_tokens: 1,
+                locality: config.model_locality,
+                override_model: None,
+                override_effort: None,
+                listed: Vec::new(),
+                worlds: Vec::new(),
             },
-            facet: facet.to_owned(),
-            required: Vec::new(),
-            min_context_tokens: 1,
-            locality: config.model_locality,
-            override_model: None,
-            override_effort: None,
-            listed: Vec::new(),
-            worlds: Vec::new(),
-        });
+        );
         // Its refusal's text can quote the vault: it is not logged.
         let Ok(seat) = seat else {
             tracing::warn!(code_run = %code_run.to_hex(), "a turn program's run is not seated; it parks");
