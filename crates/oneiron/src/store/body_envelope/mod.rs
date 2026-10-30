@@ -70,8 +70,8 @@ pub(crate) use self::retention::{
     release_body_in_txn, settle_inline_asset_in_txn,
 };
 pub(crate) use self::rows::{
-    BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
-    remember_body_instances_in_txn, retire_body_key_in_txn,
+    BODY_INSTANCES, BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
+    remember_body_instances_in_txn, remembered_body_instances_in_txn, retire_body_key_in_txn,
 };
 pub(crate) use self::spill::{
     BodySpill, SpilledBody, StagedBodyKey, keep_promoted_body_key_in_txn,

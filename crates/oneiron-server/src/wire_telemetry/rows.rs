@@ -225,6 +225,9 @@ impl LimitRow {
         Self::Engine(EngineLimit::ConnectorCharterCaps),
         Self::Engine(EngineLimit::ConnectorCatalogVerbs),
         Self::Engine(EngineLimit::ConnectorDispatchBatch),
+        Self::Engine(EngineLimit::IdentityDecisionStateBytes),
+        Self::Engine(EngineLimit::IdentityExcerptBytes),
+        Self::Engine(EngineLimit::CommunityCacheBytes),
         Self::Engine(EngineLimit::ConnectorManifestEntries),
     ];
     /// The config key that sets the row, or, for the memory the embedder

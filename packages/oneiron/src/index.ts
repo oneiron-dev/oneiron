@@ -1199,11 +1199,11 @@ export class Oneiron {
         },
       },
       setup: {
-        /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
+        /** The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing. */
         prepare: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as Facade.PackSetupReceipt),
-        /** A pack's guided setup as it stands, for the owner. */
+        /** A pack's guided setup as it stands, for the owner or an agent acting for the owner. */
         get: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupGet(input) as Facade.PackSetupReceipt),
-        /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
+        /** One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here. */
         answer: (input: Facade.PackSetupAnswerRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as Facade.PackSetupReceipt),
         /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),
@@ -1336,6 +1336,14 @@ export class Oneiron {
       revoke_machine: (input: Facade.MeshMachineRevokeRequest): Facade.MeshMachineRevoked => this.#call(() => this.#client.vaultMeshRevokeMachine(input) as Facade.MeshMachineRevoked),
       /** Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream. */
       dial: (input: Facade.MeshDialRequest): Facade.MeshPathReceipt => this.#call(() => this.#client.vaultMeshDial(input) as Facade.MeshPathReceipt),
+    },
+    outbox: {
+      diverged: {
+        /** The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source. */
+        list: (input: Facade.EmptyRequest): Facade.OutboxDivergedPage => this.#call(() => this.#client.vaultOutboxDivergedList(input) as Facade.OutboxDivergedPage),
+        /** The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn. */
+        answer: (input: Facade.OutboxDivergedAnswerRequest): Facade.OutboxDivergedAnswerReceipt => this.#call(() => this.#client.vaultOutboxDivergedAnswer(input) as Facade.OutboxDivergedAnswerReceipt),
+      },
     },
     inspection: {
       /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */

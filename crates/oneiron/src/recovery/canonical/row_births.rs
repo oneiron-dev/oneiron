@@ -69,7 +69,11 @@ pub(super) fn capture(
         });
     }
     if let Some(overrun) = overrun {
-        tracing::warn!(%overrun, "canonical recovery measured row births past its budget");
+        tracing::warn!(
+            required = overrun.required,
+            limit = overrun.limit,
+            "canonical recovery measured row births past its budget"
+        );
     }
     Ok(())
 }

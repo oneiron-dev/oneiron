@@ -663,6 +663,9 @@ class Oneiron:
         def mesh(self) -> "Oneiron._VaultMeshVerbs":
             return Oneiron._VaultMeshVerbs(self._client)
         @property
+        def outbox(self) -> "Oneiron._VaultOutboxVerbs":
+            return Oneiron._VaultOutboxVerbs(self._client)
+        @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs":
             return Oneiron._VaultInspectionVerbs(self._client)
         @property
@@ -2211,13 +2214,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def prepare(self, spec):
-            """The owner opens, or resumes, a pack's guided setup; opening grants nothing."""
+            """The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_prepare(json.dumps(spec))))
         def get(self, spec):
-            """A pack's guided setup as it stands, for the owner."""
+            """A pack's guided setup as it stands, for the owner or an agent acting for the owner."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_get(json.dumps(spec))))
         def answer(self, spec):
-            """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
+            """One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_answer(json.dumps(spec))))
         def verify(self, spec):
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
@@ -2456,6 +2459,21 @@ class Oneiron:
         def dial(self, spec):
             """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
             return json.loads(_translate(lambda: self._client.vault_mesh_dial(json.dumps(spec))))
+    class _VaultOutboxVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def diverged(self) -> "Oneiron._VaultOutboxDivergedVerbs":
+            return Oneiron._VaultOutboxDivergedVerbs(self._client)
+    class _VaultOutboxDivergedVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_list(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_answer(json.dumps(spec))))
     class _VaultInspectionVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

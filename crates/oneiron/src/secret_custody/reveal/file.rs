@@ -44,7 +44,7 @@
 use super::agent::{file_ask_in_txn, standing};
 use super::{
     FileSight, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAsker,
-    RevealAuthority, RevealRow, SecretRevealState, checked_text, covering_grant, reveal_bound,
+    RevealAuthority, RevealGrantScope, RevealRow, SecretRevealState, checked_text, reveal_class,
 };
 use crate::consent::{
     ApproveOnceAuthorization, StandingConsentGrant, approve_once_authorization_in_txn,
@@ -122,8 +122,9 @@ enum GroupPlan {
 
 /// How a ready group's read goes out.
 enum Ready {
-    /// A standing grant covers it: the grant's registry ref.
-    Covered(String),
+    /// A standing grant covers it: the grant's reach (none for a repo file
+    /// read's own scopes) and its registry ref.
+    Covered(Option<RevealGrantScope>, String),
     /// The owner approved its ask once: the ask, and its marker, not spent.
     Once(Box<RevealRow>, ApproveOnceAuthorization),
 }
@@ -333,7 +334,7 @@ impl Vault {
         for group in &read.groups {
             let ask = read.ask_in_txn(self, txn, group, now)?;
             let plan = match read.covering_grant(group, &grants)? {
-                Some(grant_ref) => GroupPlan::Ready(Ready::Covered(grant_ref)),
+                Some((scope, grant_ref)) => GroupPlan::Ready(Ready::Covered(scope, grant_ref)),
                 None => asked_plan_in_txn(self, txn, &ask, now)?,
             };
             match plan {
@@ -353,7 +354,7 @@ impl Vault {
         let mut delivered = Vec::with_capacity(ready.len());
         for (group, ask, plan) in ready {
             match plan {
-                Ready::Covered(grant_ref) => {
+                Ready::Covered(scope, grant_ref) => {
                     // Each read under a grant is its own receipt.
                     let reveal = self.store.clock.entity_id()?;
                     let mut row = read.row(group, now, SecretRevealState::Covered);
@@ -361,6 +362,7 @@ impl Vault {
                     row.once_digest = Some(*digest.as_bytes());
                     let used = self.record_standing_grant_use_in_txn(txn, &grant_ref, digest)?;
                     row.answered_by = Some(standing(&grant_ref));
+                    row.scope = scope;
                     row.decision = Some(used.decision_id());
                     deliver_file_in_txn(self, txn, &reveal, row)?;
                     delivered.push(reveal);
@@ -380,8 +382,9 @@ impl Vault {
 
 impl KeyRead<'_> {
     /// The id `group` of this read asks under at `now`: its ask's id
-    /// ([`file_ask_id`]), or past each delivered or answered row of it, the
-    /// next in its sequence ([`open_ask_id_in_txn`]).
+    /// ([`file_ask_id`]), or past each delivered or answered row of it and
+    /// each row that asked for another effect, the next in its sequence
+    /// ([`open_ask_id_in_txn`]).
     fn ask_in_txn(
         &self,
         vault: &Vault,
@@ -391,31 +394,37 @@ impl KeyRead<'_> {
     ) -> Result<EntityId> {
         let base = file_ask_id(
             self.asker,
+            self.artifact,
             &self.hash,
             self.per_class.then_some(group.class),
         )?;
-        open_ask_id_in_txn(vault, txn, base, now)
+        let current = self.row(group, now, SecretRevealState::Asked);
+        open_ask_id_in_txn(vault, txn, base, &current, now)
     }
 
-    /// The registry ref of the standing grant covering `group` of this read
-    /// now: the reveal's own bound, or a repo read's under any scope the
-    /// owner granted it ([`RepoFileRevealTarget::covering_grant`]).
+    /// The standing grant covering `group` of this read now, with its reach:
+    /// the reveal's own under any reach (FIX 2354), or a repo read's under
+    /// any scope the owner granted it
+    /// ([`RepoFileRevealTarget::covering_grant`]), which names no reach.
     fn covering_grant(
         &self,
         group: &ReadGroup,
         grants: &[StandingConsentGrant],
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<(Option<RevealGrantScope>, String)>> {
         let connection = self.asker.connection();
-        let project = self.asker.project;
         match self.repo {
             Some(target) => {
                 let run = self.asker.run.as_deref();
-                target.covering_grant(&connection, group.class, project, run, grants)
+                let project = self.asker.project;
+                Ok(target
+                    .covering_grant(&connection, group.class, project, run, grants)?
+                    .map(|grant_ref| (None, grant_ref)))
             }
-            None => {
-                let bound = reveal_bound(&connection, group.class, project.as_ref())?;
-                covering_grant(&bound, project, grants)
-            }
+            None => Ok(self
+                .asker
+                .reach()
+                .covering_grant(&connection, &reveal_class(group.class), grants)?
+                .map(|(scope, grant_ref)| (Some(scope), grant_ref))),
         }
     }
 
@@ -450,6 +459,11 @@ impl KeyRead<'_> {
                 siblings: self.siblings(group),
                 repo: self.repo.cloned(),
             }),
+            notices: Vec::new(),
+            closed: None,
+            task: self.asker.task.clone(),
+            attempt: self.asker.attempt,
+            scope: None,
         }
     }
 
@@ -520,21 +534,24 @@ fn asked_plan_in_txn(
 }
 
 /// The id a read whose ask's id is `base` asks under at `now` (FIX 6623,
-/// 6737): `base` until its row is kept ([`kept_row`]), then the first id of
-/// its sequence, each hashed from the one before under
-/// [`FILE_REASK_DOMAIN`], whose row is not. A delivered read and an owner's
-/// answer keep their row and their id; the next ask, its answer and its
-/// delivery are another row's.
+/// 6737): `base` until its row is kept ([`kept_row`]) or asked for another
+/// effect than `current`, the read now (FIX 7992), then the first id of its
+/// sequence, each hashed from the one before under [`FILE_REASK_DOMAIN`],
+/// whose row is neither. A delivered read and an owner's answer keep their
+/// row and their id; the next ask, its answer and its delivery are another
+/// row's. An approval once of another reason or provider keeps its row and
+/// its unspent marker, so it is never spent on this read.
 fn open_ask_id_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     base: EntityId,
+    current: &RevealRow,
     now: u64,
 ) -> Result<EntityId> {
     let mut ask = base;
     while REVEALS
         .get(&vault.store, txn, &ask)?
-        .is_some_and(|row| kept_row(&row, now))
+        .is_some_and(|row| kept_row(&row, now) || !row.asks_as(current, &ask))
     {
         ask = crate::codebase::entity_id_from_hash_material(
             FILE_REASK_DOMAIN,
@@ -552,9 +569,22 @@ fn open_ask_id_in_txn(
 /// unanswered ask past its window is asked again under its own id.
 fn kept_row(row: &RevealRow, now: u64) -> bool {
     match row.state {
-        SecretRevealState::Delivered | SecretRevealState::ApprovedStanding => true,
+        SecretRevealState::Delivered
+        | SecretRevealState::ApprovedStanding
+        | SecretRevealState::Unavailable => true,
         SecretRevealState::ApprovedOnce | SecretRevealState::Denied => now >= row.expires_at,
         SecretRevealState::Asked | SecretRevealState::Covered | SecretRevealState::Expired => false,
+    }
+}
+
+impl RevealRow {
+    /// Whether this row, at `ask`, asked for exactly the effect `current`
+    /// would: every fact its digest binds, the reason and the provider among
+    /// them, read under this row's own window (FIX 7992).
+    fn asks_as(&self, current: &Self, ask: &EntityId) -> bool {
+        let mut current = current.clone();
+        current.expires_at = self.expires_at;
+        self.once_digest == Some(*current.ask_digest(ask).as_bytes())
     }
 }
 
@@ -663,13 +693,15 @@ fn typed_read_hash(
     *hasher.finalize().as_bytes()
 }
 
-/// The one ask an agent's reads of a file file: by the agent, the read's
-/// hash (the stored bytes', or a typed body read's fingerprint), the project
-/// and the run, and the keys' class for a group of a typed body or of a file
-/// whose keys span classes. The one ask of a file of one class names no
-/// class.
+/// The one ask an agent's reads of a file file: by the agent, the artifact
+/// it reads (FIX 7992: two artifacts with the same bytes ask apart), the
+/// read's hash (the stored bytes', or a typed body read's fingerprint), the
+/// project and the run, and the keys' class for a group of a typed body or
+/// of a file whose keys span classes. The one ask of a file of one class
+/// names no class.
 fn file_ask_id(
     asker: &RevealAsker,
+    artifact: &EntityId,
     hash: &[u8; 32],
     class: Option<CustodyClass>,
 ) -> Result<EntityId> {
@@ -678,15 +710,16 @@ fn file_ask_id(
         .map(|project| project.to_hex())
         .unwrap_or_default();
     let class = class.map_or("", CustodyClass::as_str);
-    let parts: [&[u8]; 5] = [
+    let parts: [&[u8]; 6] = [
         asker.agent.as_bytes(),
+        artifact.as_bytes(),
         hash,
         project.as_bytes(),
         asker.run.as_deref().unwrap_or_default().as_bytes(),
         class.as_bytes(),
     ];
     let parts = if class.is_empty() {
-        &parts[..4]
+        &parts[..5]
     } else {
         &parts[..]
     };

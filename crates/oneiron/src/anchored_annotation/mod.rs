@@ -50,8 +50,8 @@ mod anchor_text;
 mod codec;
 mod comment_parts;
 mod conversation;
-mod model;
 mod docx_settle;
+mod model;
 mod pptx_reanchor;
 mod pptx_settle;
 #[cfg(test)]

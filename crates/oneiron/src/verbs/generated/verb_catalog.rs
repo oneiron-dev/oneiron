@@ -312,6 +312,8 @@ pub enum AgentVerb {
     VaultMeshSetAlpnGrant,
     VaultMeshRevokeMachine,
     VaultMeshDial,
+    VaultOutboxDivergedList,
+    VaultOutboxDivergedAnswer,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
@@ -1544,6 +1546,8 @@ impl AgentVerb {
         Self::VaultMeshSetAlpnGrant,
         Self::VaultMeshRevokeMachine,
         Self::VaultMeshDial,
+        Self::VaultOutboxDivergedList,
+        Self::VaultOutboxDivergedAnswer,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
@@ -2779,6 +2783,8 @@ impl AgentVerb {
             Self::VaultMeshSetAlpnGrant => "vault.mesh.set_alpn_grant",
             Self::VaultMeshRevokeMachine => "vault.mesh.revoke_machine",
             Self::VaultMeshDial => "vault.mesh.dial",
+            Self::VaultOutboxDivergedList => "vault.outbox.diverged.list",
+            Self::VaultOutboxDivergedAnswer => "vault.outbox.diverged.answer",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
@@ -4041,6 +4047,8 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedList
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -5302,6 +5310,8 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedList
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -6694,6 +6704,8 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedList
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -7730,6 +7742,7 @@ impl AgentVerb {
                 | Self::VaultMeshSetAlpnGrant
                 | Self::VaultMeshRevokeMachine
                 | Self::VaultMeshDial
+                | Self::VaultOutboxDivergedAnswer
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -8631,6 +8644,8 @@ impl AgentVerb {
             Self::VaultMeshSetAlpnGrant => &["spec"],
             Self::VaultMeshRevokeMachine => &["spec"],
             Self::VaultMeshDial => &["spec"],
+            Self::VaultOutboxDivergedList => &["spec"],
+            Self::VaultOutboxDivergedAnswer => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -9864,6 +9879,8 @@ impl AgentVerb {
             Self::VaultMeshSetAlpnGrant => &["spec"],
             Self::VaultMeshRevokeMachine => &["spec"],
             Self::VaultMeshDial => &["spec"],
+            Self::VaultOutboxDivergedList => &["spec"],
+            Self::VaultOutboxDivergedAnswer => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -11644,11 +11661,13 @@ impl AgentVerb {
                 "The owner stops one connector event subscription; the agent's key for the channel stays."
             }
             Self::VaultPacksSetupPrepare => {
-                "The owner opens, or resumes, a pack's guided setup; opening grants nothing."
+                "The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing."
             }
-            Self::VaultPacksSetupGet => "A pack's guided setup as it stands, for the owner.",
+            Self::VaultPacksSetupGet => {
+                "A pack's guided setup as it stands, for the owner or an agent acting for the owner."
+            }
             Self::VaultPacksSetupAnswer => {
-                "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."
+                "One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here."
             }
             Self::VaultPacksSetupVerify => {
                 "Checks one pack connection with the engine's fixed read-only provider call for its declared check."
@@ -11703,6 +11722,12 @@ impl AgentVerb {
             }
             Self::VaultMeshDial => {
                 "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."
+            }
+            Self::VaultOutboxDivergedList => {
+                "The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."
+            }
+            Self::VaultOutboxDivergedAnswer => {
+                "The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."
             }
             Self::VaultInspectionResolve => {
                 "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."

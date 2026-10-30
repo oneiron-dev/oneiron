@@ -3,6 +3,7 @@
 //! Shared report vocabulary stays in `highway_report`.
 
 use super::*;
+use crate::task_verb::settlement_anchor::anchor_kept_review_in_txn;
 
 impl Memory<'_> {
     /// The five work reports, each: fence, any question or ask outside the
@@ -528,6 +529,25 @@ impl Memory<'_> {
         // Done under another key names it (FIX 3272).
         if settled && let Some(id) = &receipt.receipt_ref {
             lifecycle_receipt::mark_settled_in(self.vault(), wtxn, id)?;
+        }
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement, unless this surface keeps no record.
+        if settled && self.keeps_lifecycle() {
+            anchor_kept_review_in_txn(
+                self.vault(),
+                wtxn,
+                task_ref,
+                attempt.map(|handle| handle.attempt_ref),
+            )?;
+        }
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11807).
+        if settled {
+            crate::edit_distance::routing::refold_task_outcomes_in_txn(
+                self.vault(),
+                wtxn,
+                task_ref,
+            );
         }
         if let Some(identity) = journal {
             report_journal::put_in(self.vault(), wtxn, identity, &receipt)?;

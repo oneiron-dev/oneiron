@@ -1732,7 +1732,7 @@ async fn tasks_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke_born(
@@ -2598,7 +2598,7 @@ async fn tasks_update(
         &["task_ref"],
     )?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke(
@@ -2670,7 +2670,7 @@ async fn tasks_redo(
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke_born(
@@ -9666,6 +9666,74 @@ async fn vault_mesh_dial(
     let ran = async {
         let (output, listed) =
             super::host_doors::vault_mesh_dial(server, auth, facade_door_input(&mut hooks)?).await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_outbox_diverged_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.outbox.diverged.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.outbox.diverged.list", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_outbox_diverged_list(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_outbox_diverged_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.outbox.diverged.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.outbox.diverged.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_outbox_diverged_answer(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
@@ -38751,6 +38819,8 @@ async fn call_verb_row(
         "vault.mesh.set_alpn_grant" => vault_mesh_set_alpn_grant(server, call, input).await,
         "vault.mesh.revoke_machine" => vault_mesh_revoke_machine(server, call, input).await,
         "vault.mesh.dial" => vault_mesh_dial(server, call, input).await,
+        "vault.outbox.diverged.list" => vault_outbox_diverged_list(server, call, input).await,
+        "vault.outbox.diverged.answer" => vault_outbox_diverged_answer(server, call, input).await,
         "vault.inspection.resolve" => vault_inspection_resolve(server, call, input).await,
         "vault.shared.propose_delete" => vault_shared_propose_delete(server, call, input).await,
         "vault.shared.propose_transfer" => vault_shared_propose_transfer(server, call, input).await,

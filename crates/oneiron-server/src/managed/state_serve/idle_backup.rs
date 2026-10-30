@@ -382,10 +382,11 @@ impl ManagedState {
         // drain starts past it either (FIX 11066).
         let waited_out = waited_out
             || (background_drained && idle.deadline(id).is_some_and(|at| Instant::now() >= at));
-        // A drain under way is not cut at the deadline: dropping it mid-way
-        // would strand its lease-expiry job and skip every later sweep
-        // (FIX 11066, FIX line).
-        let outcome = self.drain_export(at_freeze, !waited_out).await;
+        // A drain still under way at the deadline is cut there, and the
+        // export answers at once, as the waited-out path does (FIX 11742).
+        let outcome = self
+            .drain_export(at_freeze, !waited_out, idle.deadline(id))
+            .await;
         let prepared = match outcome {
             Ok(prepared) => prepared,
             Err(error) => {
