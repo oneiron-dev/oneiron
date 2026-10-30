@@ -10,8 +10,8 @@
 //! into a store whose image kept older objects, installs them over that
 //! store's own while it still holds what the caller saw there, the
 //! generations it keeps first brought to the source's ([`membership`],
-//! [`install_captured_pad_objects_in_txn`]), and reads them back after the
-//! commit ([`read_back_pad_objects_in_txn`]).
+//! [`install_captured_pad_objects_in_txn`]), and reads them back as the
+//! capture carries them ([`read_back_captured_in_txn`]).
 //! A kept pad object whose parts are missing takes its bytes again from a
 //! current provider's capture or a machine's upload of that same object
 //! ([`refill_pad_object`]); an erase's rewrite keeps the replace door.
@@ -587,33 +587,6 @@ pub(crate) fn install_captured_pad_objects_in_txn(
         expected.vault_id,
         expected.home,
     )?))
-}
-
-/// Whether the store holds `installed` in `txn`, a read after the install
-/// committed: the same revision, and every kept pad object whole.
-///
-/// # Errors
-///
-/// An entry or a part key that does not decode; storage errors.
-#[allow(dead_code, reason = "02A2 wires the object copy (L02)")]
-pub(crate) fn read_back_pad_objects_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    installed: &CurrentPadObjects,
-) -> Result<bool> {
-    let held = current_pad_objects_in_txn(store, txn, installed.vault_id, installed.home)?;
-    if held.retained_revision != installed.retained_revision {
-        return Ok(false);
-    }
-    for meta in &held.entries {
-        let parts = pad_parts(&meta.entry.generation, |family, prefix| {
-            txn_rows(store, txn, family, prefix)
-        })?;
-        if whole(&meta.entry, &parts).is_err() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 /// Whether the store holds what an install of `captured` wrote, in `txn`, a
