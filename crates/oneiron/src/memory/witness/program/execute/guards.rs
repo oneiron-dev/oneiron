@@ -135,6 +135,6 @@ impl Memory<'_> {
             person_author,
             None,
             thread.as_ref(),
-        )?
+        )
     }
 }
