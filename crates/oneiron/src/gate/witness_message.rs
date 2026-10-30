@@ -603,6 +603,10 @@ pub(crate) fn canonical_witness_message_body_for_test(
 /// before it ever reaches this door, so a healthy vault replaying its own
 /// mirror is untouched.
 ///
+/// A row whose put carries an own-device lane that vouches for it meets
+/// [`validate_own_device_witness_message_body`] instead (FIX 9600). This door
+/// stays every other replay's: federated, recovered, or from no proven sender.
+///
 /// # Errors
 ///
 /// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody), always. `sync::quarantine` classifies
@@ -626,6 +630,65 @@ pub(crate) fn validate_replicated_witness_message_body(body: &[u8]) -> Result<()
             ))
         }
     })
+}
+
+/// The REPLICATED MESSAGE door for a row one of the owner's own machines sent
+/// (FIX 9600).
+///
+/// Its caller holds the row's own-device lane (`sync::ingest::own_device`): a
+/// machine on this vault's own roster, still standing on the key its
+/// connection proved, sent these exact bytes at this id, and no federation
+/// peer's import brought them. That proof covers the connection and the bytes
+/// and names no actor, so a bucket passes only where this store itself binds
+/// its author:
+///
+/// * `user` — the vault owner's own words, bound when this is a personal vault
+///   whose embedded owner PERSON is live: the one person who speaks as `user`
+///   there. A shared vault holds several people who may, and the row names
+///   none of them, so its row stays refused.
+/// * `companion` — its actor is named only by the row's `AuthoredBy` edge and
+///   carried birth. The lane covers neither, and the edge lands in a later
+///   pass than the body, so nothing here binds the row to a live agent or
+///   person of this vault: refused.
+/// * `system` — the engine's own voice: refused on every replay.
+///
+/// # Errors
+///
+/// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody)
+/// when the bytes are no canonical envelope, and for each bucket refused above.
+pub(crate) fn validate_own_device_witness_message_body(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &[u8],
+) -> Result<()> {
+    let reason = match validate_canonical_witness_message_body(body)? {
+        WitnessMessageBodyAuthor::User if personal_owner_is_live(store, txn)? => return Ok(()),
+        WitnessMessageBodyAuthor::User => {
+            "an own machine's user MESSAGE binds to no single live owner of this vault"
+        }
+        WitnessMessageBodyAuthor::Companion => {
+            "an own machine's companion MESSAGE names no actor this vault can verify"
+        }
+        WitnessMessageBodyAuthor::System => {
+            "a replicated MESSAGE may not claim the unattributed system author"
+        }
+    };
+    Err(Error::Record(RecordError::InvalidWitnessMessageBody(
+        reason,
+    )))
+}
+
+/// Whether this is a personal vault whose embedded owner PERSON is live in
+/// `txn`: the one person whose words its `user` bucket holds.
+fn personal_owner_is_live(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(
+        crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?.is_none()
+            && crate::consent::person_is_live_for_store_in_txn(
+                store,
+                txn,
+                &crate::vault::embedded_owner_actor_id()?,
+            )?,
+    )
 }
 
 /// A bounded, printable type token: ASCII alphanumerics plus the separators
