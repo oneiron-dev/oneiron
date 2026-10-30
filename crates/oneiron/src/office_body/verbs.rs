@@ -446,12 +446,9 @@ impl Memory<'_> {
             return Ok(read.view);
         }
         let keys = read.keys;
-        if input.at.is_none() {
-            return self.lifted_view(read.view, || Ok(keys));
-        }
-        // At an earlier frontier, a text that still shows a key no mark
-        // places reads as the door's placeholder to a masked reader, its
-        // owner's proposal filed (FIX 8996).
+        // A text that still shows a key no mark places reads as the door's
+        // placeholder to a masked reader, its owner's proposal filed, at an
+        // earlier frontier and at the head of a live body (FIX 8996, FIX 12233).
         if !self.reads_lifted_keys_masked()? {
             return Ok(read.view);
         }
