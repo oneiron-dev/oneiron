@@ -7,6 +7,10 @@ use crate::store::{BackupWriteClass, Callback, Rows};
 #[cfg(feature = "sync")]
 use crate::sync::federation_burst::check_active_in_txn as check_federation_imports_in_txn;
 
+/// How many owed claim VADs one write door pass pays after its commit
+/// (FIX 11923, L01 12:1x).
+const WRITE_DOOR_OWED_VAD_DRAIN: u64 = 16;
+
 /// A build without sync runs no federation import, so a write has no
 /// import authority to recheck (FIX 4248).
 #[cfg(not(feature = "sync"))]
@@ -170,7 +174,41 @@ impl Vault {
                 self.consolidate_claim_vad_now(&id, now)?;
             }
         }
+        // Another commit's debt never fails this durable write.
+        if let Err(error) = self.drain_owed_claim_vads_after_commit() {
+            tracing::warn!(
+                error = %error,
+                "the owed claim VAD drain after a commit failed; the housekeeping sweep retries it"
+            );
+        }
         Ok(result)
+    }
+
+    /// Pays up to [`WRITE_DOOR_OWED_VAD_DRAIN`] owed claim VADs after a
+    /// commit, so a debt an earlier commit left is paid by a later one (FIX
+    /// 11923, L01 12:1x). A pass that tries debts and settles none records
+    /// the owed count, and writes skip the drain while that count stands: a
+    /// new debt, or one the housekeeping sweep settles, changes it.
+    fn drain_owed_claim_vads_after_commit(&self) -> crate::error::Result<()> {
+        use std::sync::atomic::Ordering;
+        let owed = {
+            let txn = self.store.env.read_txn()?;
+            crate::store::owed_claim_vad_count_in_txn(&self.store, &txn)?
+        };
+        if owed == 0 || owed == self.owed_vad_drain_stalled_at.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let mut tried = 0_u64;
+        let (settled, failed, _) =
+            self.drain_owed_claim_vads(self.store.clock.now_recorded_at(), || {
+                let stop = tried >= WRITE_DOOR_OWED_VAD_DRAIN;
+                tried = tried.saturating_add(1);
+                stop
+            })?;
+        let stalled = if settled == 0 && failed > 0 { owed } else { 0 };
+        self.owed_vad_drain_stalled_at
+            .store(stalled, Ordering::Release);
+        Ok(())
     }
 
     /// Whether a write through the door with nothing of its own would still
@@ -193,6 +231,15 @@ impl Vault {
             // rederive_changed_in_txn, unless this thread defers it
             !crate::scope_summary::rederive_deferred()
                 && crate::scope_summary::rederive_owed_in_txn(self, &txn)?,
+            // drain_owed_claim_vads_after_commit (FIX 11858, 11923)
+            {
+                let owed = crate::store::owed_claim_vad_count_in_txn(&self.store, &txn)?;
+                owed > 0
+                    && owed
+                        != self
+                            .owed_vad_drain_stalled_at
+                            .load(std::sync::atomic::Ordering::Acquire)
+            },
         ];
         Ok(due.contains(&true))
     }

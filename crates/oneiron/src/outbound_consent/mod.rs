@@ -32,6 +32,7 @@ mod result_scrub;
 mod scope;
 pub mod tool_call;
 mod tool_schema;
+mod zeroizing_wire;
 
 #[cfg(test)]
 mod tests;
@@ -85,6 +86,7 @@ pub use self::scope::{
     evaluate_scoped_mcp_call, evaluate_scoped_mcp_calls,
 };
 pub use self::tool_call::FrozenToolCallView;
+pub use self::zeroizing_wire::{ZeroizingBufReader, zeroize_json, zeroizing_json_body};
 
 // The flat outbound_consent.rs module used to provide these names to the
 // sibling test module through `use super::*`: its own private crate import

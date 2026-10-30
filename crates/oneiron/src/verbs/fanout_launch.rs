@@ -143,7 +143,7 @@ pub fn resume_fanout_launch_holder(
 ) -> MemoryResult<FanoutLaunchView> {
     resume_fanout_launch_as_holder(
         memory,
-        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        &memory.write_actor(),
         input,
     )
 }

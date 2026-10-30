@@ -284,13 +284,23 @@ impl AttemptQueue<'_> {
         kind: &str,
         max_scanned: usize,
     ) -> Result<Vec<AttemptRecord>> {
+        let txn = self.store.env.read_txn()?;
+        self.list_kind_bounded_in_txn(&txn, kind, max_scanned)
+    }
+
+    /// [`Self::list_kind_bounded`] in the caller's snapshot (FIX 11864).
+    pub(crate) fn list_kind_bounded_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+        max_scanned: usize,
+    ) -> Result<Vec<AttemptRecord>> {
         use std::ops::Bound;
         let mut count = ScanCount::start_at(
             EngineScan::AttemptKindRows,
             kind.as_bytes(),
             u64::try_from(max_scanned).unwrap_or(u64::MAX),
         );
-        let txn = self.store.env.read_txn()?;
         let boundary = &crate::attempt_queue::OWNER_RETAINED_RANGE_START[..];
         let retained = crate::attempt_queue::owner_retained_kind(kind);
         let range: (Bound<&[u8]>, Bound<&[u8]>) = if retained {
@@ -299,7 +309,7 @@ impl AttemptQueue<'_> {
             (Bound::Unbounded, Bound::Excluded(boundary))
         };
         let mut records = Vec::new();
-        for row in self.store.attempt_records.range(&txn, &range)? {
+        for row in self.store.attempt_records.range(txn, &range)? {
             count.row();
             let (key, raw) = row?;
             let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
@@ -307,7 +317,6 @@ impl AttemptQueue<'_> {
                 records.push(record);
             }
         }
-        drop(txn);
         count.defer(self.store);
         records.sort_by(attempt_record_order);
         Ok(records)

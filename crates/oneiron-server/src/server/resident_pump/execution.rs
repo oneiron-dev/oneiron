@@ -11,7 +11,7 @@ use super::{
     ProjectConversationSkills, ReadSetProducer, ReaderSeats, RunCompaction, RunHostDoor,
     SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask, SpawnHostSeat, SpendScopeId, SyncServer,
     TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE, Vault, WINDOW_FULL_TRIES,
-    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_actor, browser_workflow, child_pin, craft,
+    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor, browser_workflow, child_pin, craft,
     ensure_listed, enter_engine_native_run, finalize_step_captures, fork_executor_run,
     note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
     run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
@@ -30,7 +30,9 @@ pub(super) fn run_bound(
 ) -> Result<BoundRun, EngineRunError> {
     let vault = server.vault();
     let status = &claimed.status;
-    let actor = agent_dispatch_actor(&status.input).map_err(text)?;
+    // The run's writes are bound to its attempt, so the Gate meets its live
+    // delegation chain at each (FIX 10537, L09 s50 10:4x).
+    let actor = agent_dispatch_run_actor(&status.input, status.attempt.id).map_err(text)?;
     // The run is the attempt's own: a retry is a fresh attempt, and so a
     // fresh run.
     let run_id = EntityId::from_bytes(*status.attempt.id.as_bytes()).map_err(text)?;
