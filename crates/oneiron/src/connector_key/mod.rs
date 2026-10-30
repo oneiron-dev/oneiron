@@ -134,6 +134,7 @@ pub use slate_draft::{
     SlateTrait, draft_connector_slate, rule_draft_row,
 };
 pub use slate_holder::ConnectorKeySlateNarrowed;
+pub(crate) use slate_holder::{KeySlateNarrows, narrowed_settings_in_txn};
 pub use slate_revision::{
     ConnectorRevisionDeferral, ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer,
     SlateRevisionCause,
