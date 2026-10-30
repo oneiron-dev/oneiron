@@ -50,6 +50,16 @@ impl Vault {
                 ));
             }
         }
+        // The base and each side are pinned before its worktree goes, so the
+        // recorded conflict's commits stay inspectable, as the queue's are
+        // (FIX 8834).
+        let wire = GitWire::new(self)?;
+        let pinned_repo = wire.open_repo(canonical.clone(), &root)?;
+        let base_head = snapshot
+            .head
+            .clone()
+            .ok_or_else(|| invalid("conflict base has no HEAD commit"))?;
+        let _pinned = wire.write_keep_ref(&pinned_repo, &GitOid::parse_hex(base_head)?, 0)?;
         let mut sides = Vec::new();
         for row in &proposals {
             let message = super::trailer::commit_message_with_provenance_trailer(
@@ -59,7 +69,11 @@ impl Vault {
             let (path, content) = row.ordinary_file()?;
             let prepared =
                 prepare_commit_file_through_queue_worktree(&root, path, content, &message)?;
-            remove_queue_worktree(&root, &prepared.worktree_path)?;
+            let pinned = GitOid::parse_hex(prepared.new_head.clone())
+                .and_then(|side| wire.write_keep_ref(&pinned_repo, &side, 0));
+            let removed = remove_queue_worktree(&root, &prepared.worktree_path);
+            let _pinned = pinned?;
+            removed?;
             sides.push(prepared.new_head);
         }
         super::conflict::record_repo_conflict_checked(

@@ -43,6 +43,14 @@ pub enum EngineScan {
     ScopedEdgeRows,
     /// The owner's MACHINE rows a mesh address bind walks for its endpoint.
     MachineRows,
+    /// Every repository's proposals a snapshot lookup walks (once refused past 100,000).
+    RepoProposalSnapshotRows,
+    /// The files and symlinks one checkout snapshot captures (once refused past 100,000).
+    RepoSnapshotFiles,
+    /// The own-catalog votes one repository proposal keeps (once refused past 64).
+    RepoProposalCritiques,
+    /// The paths one repository conflict records (once refused past 1,024).
+    RepoConflictPaths,
     /// The access grants a companion persona list walks.
     AccessGrantRows,
     /// One seed's inbound mentions a specificity weight counts.
@@ -341,7 +349,7 @@ pub enum EngineScan {
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 127] = [
+    pub const ALL: [Self; 131] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -359,6 +367,10 @@ impl EngineScan {
         Self::GateDecisionRows,
         Self::ScopedEdgeRows,
         Self::MachineRows,
+        Self::RepoProposalSnapshotRows,
+        Self::RepoSnapshotFiles,
+        Self::RepoProposalCritiques,
+        Self::RepoConflictPaths,
         Self::AccessGrantRows,
         Self::MentionRows,
         Self::PprCacheDepRows,
@@ -500,6 +512,10 @@ impl EngineScan {
             Self::GateDecisionRows => "gate_decision_rows",
             Self::ScopedEdgeRows => "scoped_edge_rows",
             Self::MachineRows => "machine_rows",
+            Self::RepoProposalSnapshotRows => "repo_proposal_snapshot_rows",
+            Self::RepoSnapshotFiles => "repo_snapshot_files",
+            Self::RepoProposalCritiques => "repo_proposal_critiques",
+            Self::RepoConflictPaths => "repo_conflict_paths",
             Self::AccessGrantRows => "access_grant_rows",
             Self::MentionRows => "mention_rows",
             Self::PprCacheDepRows => "ppr_cache_dep_rows",
@@ -622,6 +638,9 @@ impl EngineScan {
             Self::GitWirePlanObjects => 256,
             Self::OriginPublicationObligations => 4096,
             Self::ClaimVadIncidentEdges | Self::TaskAuthorityFactEdges => 100_000,
+            Self::RepoProposalSnapshotRows | Self::RepoSnapshotFiles => 100_000,
+            Self::RepoProposalCritiques => 64,
+            Self::RepoConflictPaths => 1024,
             Self::RoomRosterMembers
             | Self::DagWalkRecords
             | Self::AudienceEdgeRows
@@ -713,6 +732,10 @@ impl EngineScan {
             Self::GateDecisionRows => 21,
             Self::ScopedEdgeRows => 22,
             Self::MachineRows => 23,
+            Self::RepoProposalSnapshotRows => 210,
+            Self::RepoSnapshotFiles => 211,
+            Self::RepoProposalCritiques => 212,
+            Self::RepoConflictPaths => 213,
             Self::AccessGrantRows => 24,
             Self::MentionRows => 48,
             Self::PprCacheDepRows => 49,
