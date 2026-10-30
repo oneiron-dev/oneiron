@@ -678,11 +678,9 @@ pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<C
 pub(crate) fn evidence_source_from_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    entity_id: &EntityId,
     entity_type: u8,
     data: &[u8],
 ) -> Result<ClaimSource> {
-    let _ = entity_id;
     if entity_type == ENTITY_TYPE_NOTE {
         if let Ok(body) = crate::note::decode_note_body_in_txn(&vault.store, txn, data) {
             if let Some(author) = body.author_ref.id() {
