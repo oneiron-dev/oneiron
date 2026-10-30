@@ -76,6 +76,11 @@ pub(in crate::workspace_roster) fn require_admission_party_in_txn(
     caller: WriteActor,
 ) -> Result<()> {
     if !admission_party_in_txn(vault, txn, room, caller)? {
+        if room_is_none_slice_home_of_leader_in(vault, txn, room, caller)? {
+            return Err(refused(
+                "the project's slices contradict, so its effective slice is empty; only the room's owner or a delegated host answers its admission",
+            ));
+        }
         return Err(refused(
             "only the room's owner, a delegated host or its nearest project leader answers its admission",
         ));
@@ -126,6 +131,27 @@ fn nearest_leaders_in(
         ring = next;
     }
     Ok(BTreeMap::new())
+}
+
+/// Whether `room`'s own project folds to no effective slice and `caller`
+/// leads it (FIX 11753): such a leader still answers nothing in its home
+/// room, but the refusal names the contradicting slices as the cause.
+fn room_is_none_slice_home_of_leader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<bool> {
+    let Some(project) = crate::workspace_roster::room_project_in(vault, txn, room)? else {
+        return Ok(false);
+    };
+    let Some((_, effective)) = vault.effective_project_in_txn(txn, project)? else {
+        return Ok(false);
+    };
+    let Ok(leader) = EntityId::from_hex(&effective.leader) else {
+        return Ok(false);
+    };
+    Ok(effective.slice.is_none() && leader == caller.entity_ref())
 }
 
 /// Refuses `caller` the settled join `receipt`'s outcome, with its payer,

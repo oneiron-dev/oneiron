@@ -39,6 +39,18 @@ impl ReadSetProducer {
     /// served (FIX 7017).
     pub const TOOL_ANSWERS: Self = Self("resident.tool_answers");
 
+    /// The skill bodies a resident run's host exposed in its task (FIX 7020).
+    pub const CODE_RUN_TASK_EXPOSURE: Self = Self("resident.task_exposure");
+
+    /// A resident run's model-step inputs (FIX 7020); unknown until FIX 7104
+    /// keeps their complete row set.
+    pub const CODE_RUN_STEP_INPUT: Self = Self("resident.step_input");
+
+    /// The host-built resident task itself (FIX 7020): not source-free, so
+    /// its producer reports None without a witnessed row source (Engine
+    /// 03:58, CALLS `FIX 7020 host-built task source`).
+    pub const CODE_RUN_HOST_TASK: Self = Self("resident.host_task");
+
     /// A Dreamer weave recipe's evidence: the one row its draft reads
     /// (FIX 7019).
     pub const DREAMER_RECIPE_EVIDENCE: Self = Self("dreamer.recipe_evidence");
@@ -59,6 +71,12 @@ impl ReadSetProducer {
     /// A workflow model step's input: its agent definition row, the memory
     /// and chat rows its context render read and its planner craft (FIX 6934).
     pub const WORKFLOW_STEP_INPUT: Self = Self("workflow.step_input");
+
+    /// A Coach attribution pass's complete trace inputs (FIX 7020).
+    pub const ATTRIBUTION_TRACE: Self = Self("coach.attribution_trace");
+
+    /// A review explainer's proposal, fork and live-entity inputs (FIX 7020).
+    pub const REVIEW_BUNDLE: Self = Self("entity_doc.review_bundle");
 
     /// The key the record keeps.
     #[must_use]

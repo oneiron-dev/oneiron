@@ -54,12 +54,13 @@ const CHANGE_WORLD: &str = "oneironChange";
 /// its checked, selected and indeterminate properties and its ARIA states.
 const CONTROL_STATE: &str = "function() { const a = n => this.getAttribute(n); return [this.checked, this.selected, this.indeterminate, this.value, a('aria-checked'), a('aria-pressed'), a('aria-selected'), a('aria-expanded')]; }";
 
-/// What one act's change check watches, and names in its fact.
+/// What one act's change check watches, and names in its fact. A row's
+/// node reads on its own frame session beside it (FIX 11576).
 pub(super) enum Watch<'a> {
     /// A click on a row, its node's state read too, or at a point.
-    Click(ActionTarget, Option<&'a Value>),
+    Click(ActionTarget, Option<(&'a Value, &'a str)>),
     /// A type or select into a row: its value too, read off its node.
-    Entry(ActionTarget, &'a Value),
+    Entry(ActionTarget, &'a Value, &'a str),
     /// An open of a URL.
     Navigate(String),
 }
@@ -76,7 +77,7 @@ impl Watch<'_> {
                 reason,
                 window_ms,
             },
-            Self::Entry(target, _) => ActionFact::TypeNoEffect {
+            Self::Entry(target, ..) => ActionFact::TypeNoEffect {
                 engine,
                 target: target.clone(),
                 reason,
@@ -202,12 +203,14 @@ impl CdpDriver {
             None => self.signal("Runtime.evaluate", evaluate(PAGE_SIGNALS), deadline)?,
         };
         let value = match watch {
-            Watch::Entry(_, node) => self.signal(
+            Watch::Entry(_, node, session) => self.signal_in(
+                session,
                 "Runtime.callFunctionOn",
                 json!({"objectId": node["objectId"], "functionDeclaration": "function() { return this.value; }", "returnByValue": true}),
                 deadline,
             )?,
-            Watch::Click(_, Some(node)) => self.signal(
+            Watch::Click(_, Some((node, session))) => self.signal_in(
+                session,
                 "Runtime.callFunctionOn",
                 json!({"objectId": node["objectId"], "functionDeclaration": CONTROL_STATE, "returnByValue": true}),
                 deadline,
@@ -257,9 +260,21 @@ impl CdpDriver {
     /// One read on the front tab, answered by `deadline`: its value, none
     /// when it failed, threw or did not answer in time.
     fn signal(&self, method: &str, params: Value, deadline: Instant) -> Option<Value> {
+        self.signal_in(&self.session, method, params, deadline)
+    }
+
+    /// One read on `session` (FIX 11576), as `signal` reads on the front
+    /// tab's: its value, none when it failed, threw or did not answer.
+    fn signal_in(
+        &self,
+        session: &str,
+        method: &str,
+        params: Value,
+        deadline: Instant,
+    ) -> Option<Value> {
         let answer = self
             .pipe
-            .call(Some(&self.session), method, params, deadline)
+            .call(Some(session), method, params, deadline)
             .ok()?;
         if answer.get("exceptionDetails").is_some() {
             return None;

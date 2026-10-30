@@ -70,6 +70,7 @@ use serde_json::Value;
 
 use super::wave_door::resume_held_wave;
 use super::{SyncServer, wave_plan, wave_receipt};
+use crate::ai_host::live_lease::LeaseLine;
 use crate::api::{
     RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
 };
@@ -112,6 +113,10 @@ pub(crate) struct RunHostDoor {
     /// The line the run's entry in flight spends on, which its `ai.speech`
     /// is admitted on (FIX 3194); empty between entries.
     line: Mutex<Option<RunAdmission>>,
+    /// The live lease of the entry in flight, whose look its `ai.speech`
+    /// takes before it is admitted (FIX 11747); empty between entries and
+    /// for an entry that spends under no scope.
+    lease: Mutex<Option<LeaseLine>>,
     /// The attempt the run's entry in flight serves (hex), which keys its
     /// media calls (FIX 2245); empty between entries and for a turn program.
     attempt: Mutex<Option<String>>,
@@ -135,6 +140,7 @@ impl RunHostDoor {
             run: format!("agent-run:{}", run_id.to_hex()),
             run_id,
             line: Mutex::new(None),
+            lease: Mutex::new(None),
             attempt: Mutex::new(None),
             server: Arc::clone(server),
             actor,
@@ -176,6 +182,12 @@ impl RunHostDoor {
                 .funded_run(self.run.clone(), guard, payer)
         });
         *self.line.lock().unwrap_or_else(PoisonError::into_inner) = line;
+    }
+
+    /// Binds the live lease the run's next entry books its scope's spend on
+    /// (FIX 11747). `None` clears it once the entry ends.
+    pub(crate) fn bind_lease(&self, lease: Option<LeaseLine>) {
+        *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = lease;
     }
 
     /// Binds the attempt the run's next entry serves, which keys its media
@@ -243,6 +255,14 @@ impl AgentVerbDoor for RunHostDoor {
         let held = matches!(call.verb, AgentVerb::AiVerdict)
             .then(|| self.guests.held_image(&call.input))
             .flatten();
+        let lease = matches!(call.verb, AgentVerb::AiSpeech)
+            .then(|| {
+                self.lease
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+            })
+            .flatten();
         let resident = resident_row(call.verb, &call.input);
         let (board, run_id) = (self.board.clone(), self.run_id);
         // The run's thread drives its own reactor; the row runs on the
@@ -256,6 +276,11 @@ impl AgentVerbDoor for RunHostDoor {
         // FIX 3103: the row writes for the run whose lease the origin seals.
         let run_writes = RunWriteToken::of_origin(&origin);
         let work = move || {
+            // The run's speech is admitted after its lease's look, as the
+            // entry's own model calls are (FIX 11747).
+            if let Some(lease) = &lease {
+                lease.on(server.vault()).book_and_revise();
+            }
             with_run_write_token(run_writes.as_ref(), || match resident {
                 Some(ResidentRow::Board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)

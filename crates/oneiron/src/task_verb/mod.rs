@@ -43,7 +43,6 @@ mod consult_fanout_resume;
 mod consult_fanout_store;
 mod consult_fanout_types;
 mod consult_ladder_facade;
-mod consult_party_backfill;
 mod consult_payload;
 mod consult_result;
 mod create_facade;
