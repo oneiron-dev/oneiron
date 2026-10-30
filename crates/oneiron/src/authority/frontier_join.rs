@@ -14,16 +14,18 @@
 //! answer turns stale. A frontier that fits keeps today's path and bytes.
 //!
 //! A join is signed by the key that signs the act: the carrier's install
-//! key, or the host's slip issuer for a host-issued op. The fold admits its
-//! signer by the act's own carrier rule on the join's parent state
-//! ([`admits_join_signer`]): the one carrier rule in the roster view, or a
-//! live Ed25519 owner roster key, never a key the join names for itself. A
-//! join signed by any other key folds as every unvouched row does: invalid,
-//! with no sequence slot, so it never forks or blocks the act's sequence.
-//! Every group names the frontier's admission tip, the lowest-hash head whose
-//! own state admits the signer, so each join's parents carry the signer's
-//! standing. It reads no role, clearance or owner act beyond that, and grants
-//! nothing.
+//! key, the host's slip issuer for a host-issued op, or an owner anchor for
+//! its own rows (FIX 8498, Engine 09:31: its root record, its marks and the
+//! owner's kit push, never a row of another signer family). The fold admits
+//! its signer by the act's own rule on the join's parent state
+//! ([`admits_join_signer`]): the one carrier rule in the roster view, a live
+//! Ed25519 owner roster key, or an anchor the fold recorded for a stored
+//! root, never a key the join names for itself. A join signed by any other
+//! key folds as every unvouched row does: invalid, with no sequence slot, so
+//! it never forks or blocks the act's sequence. Every group names the
+//! frontier's admission tip, the lowest-hash head whose own state admits the
+//! signer, so each join's parents carry the signer's standing. It reads no
+//! role, clearance or owner act beyond that, and grants nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,19 +48,25 @@ pub(crate) enum FrontierSigner<'a> {
     Install(EntityId, &'a SigningKey),
     /// The host's slip issuer, for a host-issued op.
     Host(&'a HostSlipIssuer),
+    /// A stored owner root's anchor, for the anchor's own rows alone: its
+    /// root record, its marks and the owner's kit push (FIX 8498).
+    Anchor(&'a SigningKey),
 }
 
 impl FrontierSigner<'_> {
-    fn carrier(self) -> Option<EntityId> {
+    fn family(self) -> FrontierJoinFamily {
         match self {
-            Self::Install(carrier, _) => Some(carrier),
-            Self::Host(_) => None,
+            Self::Install(carrier, _) => FrontierJoinFamily::Install(carrier),
+            Self::Host(_) => FrontierJoinFamily::Host,
+            Self::Anchor(_) => FrontierJoinFamily::Anchor,
         }
     }
 
     fn key(self) -> AuthorityKey {
         match self {
-            Self::Install(_, signing) => AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
+            Self::Install(_, signing) | Self::Anchor(signing) => {
+                AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+            }
             Self::Host(issuer) => issuer.public_key(),
         }
     }
@@ -67,7 +75,7 @@ impl FrontierSigner<'_> {
     /// by its signer's own rule.
     fn first_sequence(self, fold: &AuthorityFold) -> Result<u64> {
         match self {
-            Self::Install(..) => next_sequence(fold, &self.key()),
+            Self::Install(..) | Self::Anchor(_) => next_sequence(fold, &self.key()),
             Self::Host(issuer) => fold
                 .append_sequences
                 .get(&issuer.public_key())
@@ -85,10 +93,12 @@ impl FrontierSigner<'_> {
         now: u64,
     ) -> Result<AuthorityLogEntry> {
         let op = AuthorityOp::FrontierJoin(FrontierJoin {
-            carrier: self.carrier(),
+            family: self.family(),
         });
         match self {
-            Self::Install(_, signing) => sign_side_entry(fold, signing, seq, parents, op, now),
+            Self::Install(_, signing) | Self::Anchor(signing) => {
+                sign_side_entry(fold, signing, seq, parents, op, now)
+            }
             Self::Host(issuer) => {
                 issuer.sign_entry(fold.vault_id, seq, parents.into_iter().collect(), op, now)
             }
@@ -96,22 +106,31 @@ impl FrontierSigner<'_> {
     }
 }
 
-/// Whether `state` admits `signer` to sign a join for `carrier`, as the act
-/// the join leads to admits its own carrier there: for a carrier, the one
+/// Whether `state` admits `signer` to sign a join in `family`, as the rows
+/// the join leads to admit their own signer there: for a carrier, the one
 /// carrier rule in the roster view ([`super::owner_act_signer_admits`]: not
 /// a roster key, no removed chain, a live chain whose machine key it is);
-/// for no carrier, a live Ed25519 owner roster key, as the host's slip
-/// issuer is. A P-256 key signs no join.
+/// for the host, a live Ed25519 owner roster key, as the host's slip issuer
+/// is; for an anchor, an anchor `state` recorded for a stored root, as its
+/// marks are admitted (FIX 8498, Engine 09:31 (2)), never a key the join
+/// carries and never a roster key in its place. A P-256 key signs no join.
 fn admits_join_signer(
     state: &FoldState,
-    carrier: Option<EntityId>,
+    family: FrontierJoinFamily,
     signer: &AuthorityKey,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> bool {
-    match (carrier, signer) {
-        (Some(carrier), AuthorityKey::Ed25519(key)) => Standing::new(state, pin, counted)
-            .admits_owner_act_signer(carrier, key, StandingView::Under(MachineAdmitter::Roster)),
-        (None, AuthorityKey::Ed25519(_)) => roster_has_live_owner(&state.roster, signer),
+    let roster = StandingView::Under(MachineAdmitter::Roster);
+    match (family, signer) {
+        (FrontierJoinFamily::Install(carrier), AuthorityKey::Ed25519(key)) => {
+            Standing::new(state, pin, counted).admits_owner_act_signer(carrier, key, roster)
+        }
+        (FrontierJoinFamily::Host, AuthorityKey::Ed25519(_)) => {
+            roster_has_live_owner(&state.roster, signer)
+        }
+        (FrontierJoinFamily::Anchor, AuthorityKey::Ed25519(key)) => {
+            state.root_anchors.contains_key(key)
+        }
         (_, AuthorityKey::P256(_)) => false,
     }
 }
@@ -153,7 +172,7 @@ pub(super) fn apply_frontier_join(
     standing: (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let signer = entry.signer_key();
-    if !admits_join_signer(state, join.carrier, signer, standing) {
+    if !admits_join_signer(state, join.family, signer, standing) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if state
@@ -251,7 +270,7 @@ impl Vault {
         Ok(states.into_iter().flatten().find_map(|(head, state)| {
             state
                 .filter(|state| {
-                    admits_join_signer(state, signer.carrier(), &key, (None, &every_chain))
+                    admits_join_signer(state, signer.family(), &key, (None, &every_chain))
                 })
                 .map(|_| head)
         }))
