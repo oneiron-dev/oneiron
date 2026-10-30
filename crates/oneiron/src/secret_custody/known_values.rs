@@ -445,7 +445,22 @@ impl KnownValues {
     fn growing_in(&self, bytes: &[u8]) -> (Option<usize>, usize) {
         let hold = self.longest.saturating_sub(1);
         let from = bytes.len().saturating_sub(hold);
+        let held = bytes.len() - hold.min(KNOWN_GROWING_HOLD).min(bytes.len());
+        // FIX 12250: only an offset whose tag window's rolling value the
+        // index holds is read; a value arriving there always is, and each
+        // one read is confirmed by its keyed tag as before.
+        let Some(lane) = self
+            .windows
+            .iter()
+            .position(|&window| window == TAG_WINDOW)
+        else {
+            return (None, held);
+        };
+        let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, &bytes[from..]);
         let opens = (from..bytes.len()).find(|&at| {
+            if scan.hits(at - from) & (1 << lane) == 0 {
+                return false;
+            }
             let rest = &bytes[at..];
             rest.len() >= TAG_WINDOW
                 && self
@@ -456,10 +471,7 @@ impl KnownValues {
                             .any(|known| known.len >= TAG_WINDOW && known.len > rest.len())
                     })
         });
-        (
-            opens,
-            bytes.len() - hold.min(KNOWN_GROWING_HOLD).min(bytes.len()),
-        )
+        (opens, held)
     }
 
     /// Merges one decoded tail's growing answer into `opens` and `held`
