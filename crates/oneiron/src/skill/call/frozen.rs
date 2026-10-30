@@ -141,10 +141,10 @@ pub(super) fn freeze_callable_case(
     })
 }
 
-/// Deletes the case under `key` with its index entries (FIX 12180).
+/// Deletes the case under `key` and its index entries, in one writer (FIX
+/// 12180): every delete of a case goes through here.
 fn delete_case_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>, key: &Vec<u8>) -> Result<()> {
-    let row = CASES.get_lenient(store, wtxn, key)?;
-    index::unindex_case_in_txn(store, wtxn, key, row.as_ref())?;
+    index::unindex_case_in_txn(store, wtxn, key)?;
     CASES.delete(store, wtxn, key)?;
     Ok(())
 }

@@ -3,10 +3,12 @@
 //! with its case and deleted with it, so an erase finds the cases that name
 //! its row by key and reads no other case.
 
+use serde::{Deserialize, Serialize};
+
 use super::FrozenCall;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 
 /// Key: [`SOURCE`] + source id16 + case key, or [`RECEIPT`] + u16be receipt
@@ -14,12 +16,24 @@ use crate::store::Store;
 const INDEX: SideTable<Vec<u8>, (), Raw> =
     SideTable::new(&side_table::SKILL_CALLABLE_CASE_INDEX);
 
+/// The stored cases, read for the two fields their entries are made from.
+const INDEXED: SideTable<Vec<u8>, IndexedFields, Named> =
+    SideTable::new(&side_table::SKILL_CALLABLE_CASE);
+
 /// The tag of an entry under a known source row.
 const SOURCE: u8 = b'S';
 /// The tag of an entry under the caller's receipt.
 const RECEIPT: u8 = b'R';
 /// Where a case key's receipt starts: after id16 + u64be at + u64be seq.
 const CASE_KEY_RECEIPT_AT: usize = 32;
+
+/// A stored case's receipt and sources, read on their own: a case whose
+/// other fields no longer decode still finds its entries.
+#[derive(Serialize, Deserialize)]
+struct IndexedFields {
+    receipt: String,
+    source_rows: Option<Vec<EntityId>>,
+}
 
 fn source_prefix(source: &EntityId) -> Vec<u8> {
     let mut key = vec![SOURCE];
@@ -39,12 +53,16 @@ fn receipt_prefix(receipt: &str) -> Result<Vec<u8>> {
     Ok(key)
 }
 
-/// The entries of the case `row` under `case_key`: one per known source
-/// row, or its receipt's when the sources are unknown.
-fn entries(case_key: &[u8], row: &FrozenCall) -> Result<Vec<Vec<u8>>> {
-    let prefixes: Vec<Vec<u8>> = match &row.source_rows {
+/// The entries of the case under `case_key`: one per known source row, or
+/// its receipt's when the sources are unknown.
+fn entries(
+    case_key: &[u8],
+    receipt: &str,
+    source_rows: Option<&[EntityId]>,
+) -> Result<Vec<Vec<u8>>> {
+    let prefixes: Vec<Vec<u8>> = match source_rows {
         Some(rows) => rows.iter().map(source_prefix).collect(),
-        None => vec![receipt_prefix(&row.receipt)?],
+        None => vec![receipt_prefix(receipt)?],
     };
     Ok(prefixes
         .into_iter()
@@ -62,34 +80,28 @@ pub(super) fn index_case_in_txn(
     case_key: &[u8],
     row: &FrozenCall,
 ) -> Result<()> {
-    for entry in entries(case_key, row)? {
+    for entry in entries(case_key, &row.receipt, row.source_rows.as_deref())? {
         INDEX.put(store, wtxn, &entry, &())?;
     }
     Ok(())
 }
 
-/// Deletes the entries of the case under `case_key`. With no row that
-/// decodes, the receipt in its key names its one findable entry.
+/// Deletes the entries of the stored case under `case_key`, in the writer
+/// that deletes the case. With neither field readable, the receipt in its
+/// key names its entry.
 pub(super) fn unindex_case_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    case_key: &[u8],
-    row: Option<&FrozenCall>,
+    case_key: &Vec<u8>,
 ) -> Result<()> {
-    // A key that could never have been indexed has no entry to delete.
-    let found = match row {
-        Some(row) => entries(case_key, row).unwrap_or_default(),
-        None => case_key
-            .get(CASE_KEY_RECEIPT_AT..)
-            .and_then(|receipt| std::str::from_utf8(receipt).ok())
-            .and_then(|receipt| receipt_prefix(receipt).ok())
-            .map(|mut key| {
-                key.extend_from_slice(case_key);
-                vec![key]
-            })
-            .unwrap_or_default(),
+    let found = match INDEXED.get_lenient(store, wtxn, case_key)? {
+        Some(fields) => entries(case_key, &fields.receipt, fields.source_rows.as_deref()),
+        None => std::str::from_utf8(case_key.get(CASE_KEY_RECEIPT_AT..).unwrap_or_default())
+            .map_err(|_| Error::EntityNotFound)
+            .and_then(|receipt| entries(case_key, receipt, None)),
     };
-    for entry in found {
+    // A key that could never have been indexed has no entry to delete.
+    for entry in found.unwrap_or_default() {
         INDEX.delete(store, wtxn, &entry)?;
     }
     Ok(())
