@@ -100,9 +100,9 @@ pub(in crate::origin) use self::publication_machine::obligations_beyond_owner;
 pub use self::publication_types::{
     ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN, ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN,
     ORIGIN_PUBLICATION_ID_DOMAIN, ORIGIN_PUBLICATION_INTENT_PREDICATE,
-    ORIGIN_PUBLICATION_MAX_FAILURE_BYTES, ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS,
-    ORIGIN_PUBLICATION_PREDICATE, ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS,
-    OriginActor, OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind,
-    OriginPublicationAnswer, OriginPublicationReceipt, OriginPublicationRecord,
-    OriginPublicationRequest, OriginPublicationStatus,
+    ORIGIN_PUBLICATION_MAX_FAILURE_BYTES, ORIGIN_PUBLICATION_PREDICATE,
+    ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS, OriginActor,
+    OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationAnswer,
+    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
+    OriginPublicationStatus,
 };

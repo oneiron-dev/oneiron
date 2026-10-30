@@ -145,6 +145,7 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
 ) -> Result<()> {
     delete_code_revision_record_in_txn(store, wtxn, id)?;
     delete_code_revision_fork_in_txn(store, wtxn, id)?;
+    super::proposals::delete_proposal_in_txn(store, wtxn, id)?;
     FRONTIER.delete(store, wtxn, id)?;
     SESSION_INDEX.delete_from(store, wtxn, id.as_bytes())?;
     PARENT_INDEX.delete_from(store, wtxn, id.as_bytes())?;
