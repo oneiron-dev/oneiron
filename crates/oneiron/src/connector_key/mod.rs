@@ -134,6 +134,10 @@ pub use slate_draft::{
     SlateTrait, draft_connector_slate, rule_draft_row,
 };
 pub use slate_holder::ConnectorKeySlateNarrowed;
+#[allow(
+    unused_imports,
+    reason = "FIX 9230 seam for the L13/L06-A consent, slate and reach overlays"
+)]
 pub(crate) use slate_holder::{KeySlateNarrows, narrowed_settings_in_txn};
 pub use slate_revision::{
     ConnectorRevisionDeferral, ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer,

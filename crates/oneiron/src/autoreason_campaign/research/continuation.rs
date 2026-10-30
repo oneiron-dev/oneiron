@@ -286,10 +286,10 @@ fn page_executed_roots_past(
         Unbounded,
     )? {
         let (_, binding) = row?;
+        count.row();
         if binding.execution.is_none() {
             continue;
         }
-        count.row();
         roots.push(binding.root);
         if roots.len() == limit {
             break;

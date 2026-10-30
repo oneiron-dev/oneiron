@@ -30,7 +30,7 @@ use super::pattern::{TeamAxis, TeamPattern};
 use super::receipt::{DecidedBy, TeamReceipt, TeamShape, record_team_receipt, team_receipt_in_txn};
 
 /// How far back the retry chain is walked for the run's first try
-/// (precedent: `LINEAGE_LIMIT` in `autoreason_campaign::authoring`).
+/// (precedent: `TOTAL_HOPS_PER_CALL` in `autoreason_campaign::authoring`).
 const RETRY_CHAIN_LIMIT: usize = 256;
 
 /// Records the solo run's team receipt once. Returns whether it wrote one

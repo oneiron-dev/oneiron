@@ -125,6 +125,10 @@ pub(super) fn narrowed_setting_in_txn(
 /// overlay — rows by row key plus the facet narrow — for the per-grant-key
 /// overlays in the consent, slate and reach views. `None` is no overlay
 /// stored. Keyed by the per-grant key's id, as the table is.
+#[allow(
+    dead_code,
+    reason = "FIX 9230 seam for the L13/L06-A consent, slate and reach overlays"
+)]
 pub(crate) fn narrowed_settings_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
