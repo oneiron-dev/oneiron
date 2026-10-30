@@ -151,7 +151,7 @@ pub(crate) fn decode_frame_admitted(
         }
     }
     // The row buffers are dropped here; their bytes go back (FIX 8448).
-    let spent = decode_admission::capacity_bytes(&previous) + decode_admission::capacity_bytes(&current);
+    let spent = previous.capacity() + current.capacity();
     drop((previous, current));
     decode_admission::release(admission, spent);
     Ok(decoded)

@@ -78,17 +78,12 @@ pub(crate) fn reserve<T>(
     let doubled = buf.capacity().saturating_mul(2).max(needed);
     let target = if layout_bytes::<T>(doubled).is_some() { doubled } else { needed };
     let bytes = layout_bytes::<T>(target).ok_or_else(unaddressable)?;
-    let old = capacity_bytes(buf);
+    let old = buf.capacity().saturating_mul(size_of::<T>());
     admission.admit(bytes)?;
     buf.try_reserve_exact(target - buf.len())
         .map_err(|_| allocator_refused(bytes))?;
     release(admission, old);
     Ok(())
-}
-
-/// The bytes `buf`'s allocation holds.
-pub(crate) fn capacity_bytes<T>(buf: &Vec<T>) -> usize {
-    buf.capacity().saturating_mul(size_of::<T>())
 }
 
 /// Give back `bytes` no longer allocated, if there are any.
