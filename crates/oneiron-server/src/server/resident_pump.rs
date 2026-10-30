@@ -52,7 +52,7 @@ use oneiron::agent_def::{
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
-    agent_dispatch_actor,
+    agent_dispatch_actor, agent_dispatch_run_actor,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,

@@ -1,0 +1,74 @@
+//! A delegated child's write met with its live delegation chain at the Gate
+//! (FIX 10537, Engine 09:24 and 10:43). Dispatch meets the chain once and
+//! forks the child only when the chain narrows it then; a write bound to the
+//! child's run attempt ([`crate::WriteActor::run_attempt`]) meets every
+//! ancestor's bound again as it stands at the write, in the write's own
+//! transaction ([`super::definition_ceiling::delegation_chain_narrowing`]).
+//! An ancestor that narrowed since holds the write for the owner's review as
+//! its own bound would hold a fork of it, named
+//! [`GateReasonCode::PendingDelegationChainCeiling`] and citing that
+//! ancestor. A forked child keeps its row's clamp, and a child with no agent
+//! parent keeps today's Auto.
+
+use super::ceiling::PolicyApprovalCeiling;
+use super::decision::{GateDecision, GateOutcome, GateReasonCode};
+use super::definition_ceiling::{DelegationNarrowing, delegation_chain_narrowing};
+use super::input::GateEvaluatorInput;
+use super::resolution::PolicyManifestResolution;
+use crate::store::Store;
+use crate::write_envelope::{SourceLineage, WriteActor};
+
+/// `policy`'s decision on `input`, met with the live delegation chain of the
+/// run `actor` writes for, when `actor` is bound to one.
+pub(in crate::gate) fn evaluate_with_delegation_chain(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    input: &GateEvaluatorInput,
+    lineage: Option<&SourceLineage>,
+    actor: Option<WriteActor>,
+) -> GateDecision {
+    let decision = policy.evaluate_gate_with_lineage(input, lineage);
+    match actor.and_then(|actor| delegation_chain_narrowing(store, txn, actor)) {
+        Some(narrowing) => meet_delegation_chain(decision, narrowing, input, |narrowed| {
+            policy.evaluate_gate_with_lineage(narrowed, lineage)
+        }),
+        None => decision,
+    }
+}
+
+/// `decision` held by the ancestor `narrowing` names, where that ancestor's
+/// bound clamps the write: the same input under a `Proposed` definition
+/// bound pends on the actor ceiling, and `decision` itself did not. A Deny,
+/// or a write its own bound already holds, stands as decided.
+fn meet_delegation_chain(
+    decision: GateDecision,
+    narrowing: DelegationNarrowing,
+    input: &GateEvaluatorInput,
+    evaluate: impl FnOnce(&GateEvaluatorInput) -> GateDecision,
+) -> GateDecision {
+    if decision.outcome() == GateOutcome::Deny
+        || decision
+            .reason_codes()
+            .contains(&GateReasonCode::PendingActorCeiling)
+    {
+        return decision;
+    }
+    let narrowed = evaluate(&GateEvaluatorInput {
+        agent_definition_ceiling: Some(PolicyApprovalCeiling::Proposed),
+        ..input.clone()
+    });
+    if !narrowed
+        .reason_codes()
+        .contains(&GateReasonCode::PendingActorCeiling)
+    {
+        return decision;
+    }
+    tracing::info!(
+        target: "oneiron::gate",
+        ancestor_agent = %narrowing.agent.to_hex(),
+        ancestor_attempt = %crate::entity_id::bytes_to_hex_lower(narrowing.attempt.as_bytes()),
+        "a delegation ancestor's live bound holds a delegated child's write",
+    );
+    decision.held_by_delegation_chain(narrowing)
+}

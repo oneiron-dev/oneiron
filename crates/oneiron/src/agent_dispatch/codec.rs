@@ -244,6 +244,16 @@ pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
     ))
 }
 
+/// [`agent_dispatch_actor`] bound to the attempt whose run writes as it
+/// (FIX 10537, L09 s50 10:4x): the Gate walks that attempt's delegation
+/// lineage at each write. It equals the unbound actor.
+pub fn agent_dispatch_run_actor(
+    input: &AgentDispatchInput,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<WriteActor> {
+    Ok(agent_dispatch_actor(input)?.with_run_attempt(*attempt.as_bytes()))
+}
+
 /// A queue row's decoded dispatch input, or `None` when the row is not an
 /// agent dispatch at all.
 ///

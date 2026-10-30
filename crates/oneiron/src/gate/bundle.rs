@@ -26,6 +26,7 @@ use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
+use super::delegation_chain::evaluate_with_delegation_chain;
 use super::doors::{
     ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision,
     check_claim_policy_for_write_with_record, claim_consent_binding_parts, claim_gate_input,
@@ -565,6 +566,10 @@ impl Vault {
                     },
                 )?;
             }
+            // The approval's commit carries its consolidation debt (FIX 11858).
+            if action == GateConsentBundleAction::Approve {
+                self.owe_settled_claim_vads_in_txn(wtxn, &member_claim_ids)?;
+            }
             let record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
                 decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
@@ -664,7 +669,15 @@ fn check_session_bundle_actor_policy(
             // classify, so no consent context is composed (pre-DEC-0006 path).
             None,
         );
-        enforce_gate_decision(policy.evaluate_gate(&input))?;
+        // A delegated reviewer meets its live delegation chain (FIX 10537).
+        enforce_gate_decision(evaluate_with_delegation_chain(
+            store,
+            rtxn,
+            policy,
+            &input,
+            None,
+            Some(*actor),
+        ))?;
     }
     let actor_ref = actor.entity_ref().to_hex();
     // Read-only review over already-proposed bodies. Bundle MERGE builds its

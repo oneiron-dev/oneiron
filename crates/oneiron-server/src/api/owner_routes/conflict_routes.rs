@@ -215,6 +215,10 @@ struct ConflictSettled {
     /// absent on every other settlement.
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_ref: Option<String>,
+    /// The work still owed after the settlement committed, from its receipt
+    /// (FIX 11859, L13 10:48); absent when none is.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<oneiron::memory::SettleWarning>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -353,6 +357,7 @@ async fn settle(
                 pending_review: None,
                 receipt_ref: receipt.receipt_ref,
                 approval_ref: receipt.approval_ref,
+                warnings: receipt.warnings,
             },
             ConflictSettleOutcome::ImportReviewPending {
                 staged,
@@ -369,6 +374,7 @@ async fn settle(
                 }),
                 receipt_ref,
                 approval_ref: None,
+                warnings: Vec::new(),
             },
         })
     })
