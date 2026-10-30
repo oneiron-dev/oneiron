@@ -1104,7 +1104,7 @@ impl TaskLend<'_> {
         let egress = self
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
-        run_weave_lens(
+        let rendered = run_weave_lens(
             attempt,
             ctx,
             WeaveLensModel {
@@ -1120,7 +1120,20 @@ impl TaskLend<'_> {
                 sourced: self.route.sourced.as_deref(),
             },
         )
-        .await
+        .await?;
+        // The weave-report pack it loaded closes attributed (FIX 1875), bound
+        // while its lease holds. A bind that fails leaves the receipt
+        // unattributed; the render stands.
+        let record = &attempt.status.attempt;
+        if matches!(rendered, DreamerAttemptExecution::Completed { .. })
+            && let Some(owner) = record.lease_owner.as_deref()
+            && let Err(error) = oneiron::skill_attribution::bind_dreamer_weave_attribution(
+                ctx.vault, record.id, owner, None,
+            )
+        {
+            tracing::warn!(kind = ?error.kind(), "a weave lens render's pack attribution did not bind");
+        }
+        Ok(rendered)
     }
 }
 
