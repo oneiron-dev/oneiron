@@ -51,8 +51,9 @@ pub struct SyncClient {
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
     pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
-    /// Unacknowledged cross-month deltas. Lost on process death, re-fetched by VV.
-    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>)>,
+    /// Unacknowledged cross-month deltas, each with the machine its connection
+    /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
+    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
     pub(crate) root_bootstrapped: bool,
     /// Durable home ACKs of opened-item queue updates, keyed by queue sequence:
     /// the BLAKE3 of each acknowledged row's own bytes, set once its window
