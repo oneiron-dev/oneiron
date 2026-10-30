@@ -443,6 +443,25 @@ fn commitment_lifecycle_receipts(
             if body.predicate != crate::commitment::PREDICATE_COMMITMENT_RECORD {
                 return Ok(());
             }
+            // A commitment's receipt is projected once, under its first id,
+            // from the body at the head of its status chain; a later link of
+            // that chain is not a commitment of its own.
+            if vault.commitment_predecessor_in_txn(txn, &id)?.is_some() {
+                return Ok(());
+            }
+            let head = vault.commitment_head_in_txn(txn, &id)?;
+            let (body, header) = if head == id {
+                (body, header)
+            } else {
+                (
+                    vault
+                        .get_claim_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                    vault
+                        .entity_header_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                )
+            };
             // Past the exact predicate match the codec is authoritative, so a
             // malformed commitment body is corruption rather than a row to skip.
             let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
