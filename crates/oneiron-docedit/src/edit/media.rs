@@ -1,7 +1,9 @@
-//! `set_picture` and `set_notes`: verbs whose write sets reach beyond the
-//! slide part. A picture gets a new media part and relationship (existing
-//! media is never rewritten); notes are written in the notes slide, which is
-//! created over the notes master when the slide has none.
+//! `set_picture`, `set_notes` and `release_media`: verbs whose write sets
+//! reach beyond the slide part. A picture gets a new media part and
+//! relationship (existing media is never rewritten); notes are written in
+//! the notes slide, which is created over the notes master when the slide
+//! has none; media the slide no longer references is released on its own
+//! step.
 use super::check::{Added, Declared};
 use super::text::{self, BREAK};
 use super::xml::{self, A, P, R};
@@ -11,6 +13,7 @@ use crate::design_plan::{AssetBinding, MediaType, Rect};
 use crate::graphic::{GraphicInput, Output, compile_graphic};
 use crate::ooxml::{CONTENT_TYPES, XmlTree};
 use crate::retained_opc::{Package, rels_name};
+use std::collections::BTreeSet;
 
 const TYPES: &str = "[Content_Types].xml";
 /// Office's SVG blip namespace (`asvg:svgBlip`).
@@ -113,6 +116,112 @@ pub(super) fn set_picture(
         effects,
         fit: None,
     })
+}
+
+/// `release_media` (FIX 10387): each relationship of `slide` that
+/// `relationships` names and no element of the slide references (a
+/// picture's previous media, [`Effect::PreviousMedia`], or a deleted
+/// shape's, [`Effect::Unreferenced`]) leaves the slide's relationship part,
+/// and the part it reached leaves the archive with each part only it
+/// reached, once no relationship of a part the archive keeps reaches it. A
+/// relationship the slide still references stays ([`Effect::MediaKept`]);
+/// one the slide no longer holds is not there to release. The user's own
+/// act: `set_picture` itself keeps the old media. Returns the parts it
+/// changed and what it did.
+pub(super) fn release_media(
+    next: &mut Package,
+    slide: &str,
+    relationships: &[String],
+) -> Result<(Vec<String>, Vec<Effect>), EditRefusal> {
+    let (_, tree) = xml::read(next, slide)?;
+    let used: BTreeSet<&str> = tree
+        .nodes
+        .iter()
+        .flat_map(|node| node.attrs_ns.iter())
+        .filter(|((ns, _), _)| ns == R)
+        .map(|(_, value)| value.as_str())
+        .collect();
+    let held = next.relationships(slide)?;
+    let types = next.part(TYPES)?;
+    let names: BTreeSet<String> = next.names().map(str::to_owned).collect();
+    let mut asked: Vec<&String> = Vec::new();
+    for id in relationships {
+        if !asked.contains(&id) {
+            asked.push(id);
+        }
+    }
+    let mut effects = Vec::new();
+    let mut released: Vec<(String, Option<String>)> = Vec::new();
+    for id in asked {
+        let Some(rel) = held.iter().find(|rel| rel.id == *id) else {
+            continue;
+        };
+        if used.contains(id.as_str()) {
+            effects.push(Effect::MediaKept {
+                relationship: id.clone(),
+            });
+            continue;
+        }
+        next.unrelate(slide, id)?;
+        released.push((id.clone(), (!rel.external).then(|| rel.target.clone())));
+    }
+    // The parts only the released relationships reached, less each one a
+    // part the archive keeps still relates to.
+    let root = next.reachable("")?;
+    let mut gone: BTreeSet<String> = BTreeSet::new();
+    for target in released.iter().filter_map(|(_, target)| target.as_ref()) {
+        for part in next.reachable(target)? {
+            if !root.contains(&part) && names.contains(&part) {
+                gone.insert(part);
+            }
+        }
+    }
+    loop {
+        let mut referenced = None;
+        for name in names.iter().filter(|name| !gone.contains(*name)) {
+            if let Some(rel) = next
+                .relationships(name)?
+                .into_iter()
+                .find(|rel| !rel.external && gone.contains(&rel.target))
+            {
+                referenced = Some(rel.target);
+                break;
+            }
+        }
+        match referenced {
+            Some(part) => {
+                gone.remove(&part);
+            }
+            None => break,
+        }
+    }
+    for part in &gone {
+        next.remove_part(part)?;
+    }
+    if !gone.is_empty() {
+        next.prune_defaults()?;
+    }
+    let mut changed: Vec<String> = Vec::new();
+    if !released.is_empty() {
+        changed.push(rels_name(slide));
+    }
+    for part in &gone {
+        changed.push(part.clone());
+        let rels = rels_name(part);
+        if names.contains(&rels) {
+            changed.push(rels);
+        }
+    }
+    if next.part(TYPES)? != types {
+        changed.push(TYPES.to_owned());
+    }
+    for (relationship, target) in released {
+        effects.push(Effect::MediaReleased {
+            relationship,
+            part: target.filter(|target| gone.contains(target)),
+        });
+    }
+    Ok((changed, effects))
 }
 
 /// The blip's Office SVG extension: the element dropping it removes (its
