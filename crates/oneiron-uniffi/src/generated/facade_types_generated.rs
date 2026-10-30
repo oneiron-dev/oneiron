@@ -37334,8 +37334,10 @@ pub struct CodeConflictView {
     pub paths: Vec<String>,
     #[serde(rename = "proposals")]
     pub proposals: Vec<String>,
-    #[serde(rename = "task")]
-    pub task: String,
+    #[serde(rename = "task", default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(rename = "held", default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<String>,
 }
 
 /// `oneiron::memory::code_doors::conflict_types::CodeConflictViewRequest`.

@@ -70,28 +70,70 @@ pub(super) fn put_engine_repo_conflict_claim_checked(
                 && existing.lifecycle == ClaimLifecycleStatus::Active
                 && existing.value == body.value
             {
+                // Recording a held conflict again asks again for its TASK,
+                // under the owner's authority as it reads now (FIX 8830).
+                if let Some(owner) = reconciliation_owner
+                    && vault.repo_reconciliation_task_in_txn(&wtxn, id)?.is_none()
+                    && reconciliation_task_in_txn(
+                        vault,
+                        &mut wtxn,
+                        id,
+                        branch_subject,
+                        &body.value,
+                        owner,
+                        learned_at,
+                    )?
+                    .is_some()
+                {
+                    wtxn.commit()?;
+                }
                 return Ok(id);
             }
         }
     }
     put_claim_in_txn(vault, &mut wtxn, claim_id, branch_subject, data, learned_at)?;
     if let Some(owner) = reconciliation_owner {
-        let value = decode_repo_conflict_open_value(&body.value)?;
-        let conflict = RepoConflictClaim {
+        // Below the owner's Auto ceiling the claim is kept and its
+        // reconciliation held, told to the owner; the ceiling is never
+        // widened (FIX 8830).
+        reconciliation_task_in_txn(
+            vault,
+            &mut wtxn,
             claim_id,
-            subject: branch_subject,
-            repo_ref: value.repo_ref,
-            branch: value.branch,
-            base_tree: value.base_tree,
-            ours_tree: value.ours_tree,
-            theirs_tree: value.theirs_tree,
-            conflicted_paths: value.conflicted_paths,
-            proposals: value.proposals,
-        };
-        vault.create_repo_reconciliation_task_in_txn(&mut wtxn, &conflict, owner, learned_at)?;
+            branch_subject,
+            &body.value,
+            owner,
+            learned_at,
+        )?;
     }
     wtxn.commit()?;
     Ok(claim_id)
+}
+
+/// The reconciliation TASK of the open conflict `claim_id`, minted for
+/// `owner` in this writer, or `None` while the owner's ceiling holds it.
+fn reconciliation_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: EntityId,
+    subject: EntityId,
+    value: &rmpv::Value,
+    owner: EntityId,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    let value = decode_repo_conflict_open_value(value)?;
+    let conflict = RepoConflictClaim {
+        claim_id,
+        subject,
+        repo_ref: value.repo_ref,
+        branch: value.branch,
+        base_tree: value.base_tree,
+        ours_tree: value.ours_tree,
+        theirs_tree: value.theirs_tree,
+        conflicted_paths: value.conflicted_paths,
+        proposals: value.proposals,
+    };
+    vault.create_repo_reconciliation_task_in_txn(wtxn, &conflict, owner, now)
 }
 
 /// Every source proposal, as the caller read it, is still stored unchanged.

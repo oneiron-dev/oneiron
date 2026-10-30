@@ -11830,7 +11830,8 @@ class CodeConflictView(TypedDict):
     right_tree: str
     paths: list[str]
     proposals: list[EntityId]
-    task: EntityId
+    task: NotRequired[EntityId | None]
+    held: NotRequired[str | None]
 class CodeConflictViewRequest(TypedDict):
     branch_subject: EntityId
 class CodeConflictResolutionView(TypedDict):
