@@ -20,8 +20,10 @@
 //!   carried proposal into this vault's
 //!   (`Vault::merge_carried_office_proposal_in_txn`): proposals union by id,
 //!   a decided member beats a waiting one, and a settled proposal beats an
-//!   open one. Two copies that diverge are quarantined, and both stand. The
-//!   merge writes the rows only: no holder is asked, no fork lands or goes.
+//!   open one. Two copies that diverge are quarantined, one row per
+//!   divergence under the proposal's key and a digest of both copies, and
+//!   both stand. The merge writes the rows only: no holder is asked, no fork
+//!   lands or goes.
 //! - A proposal whose artifact has not landed here waits in the window; the
 //!   live mirror merges it as the artifact's row commits.
 //! - Admission refuses every insert into the map that is not a whole
@@ -35,12 +37,13 @@ pub(super) mod checkpoint;
 
 use std::collections::BTreeSet;
 
+use heed::RoTxn;
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use super::bridge::BRIDGE_ORIGIN;
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
-use super::quarantine::{QuarantineContainer, quarantine_rejected_op_in_txn};
+use super::quarantine::{QuarantineContainer, quarantine_once_in_txn};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_doc::DocumentMerge;
@@ -54,6 +57,9 @@ pub(crate) const OFFICE_PROPOSALS_MAP: &str = "office_proposals";
 /// The largest proposal a window carries: one carrier part (a call; canon is
 /// silent). A larger one stays on its machine, logged.
 const MAX_PROPOSAL_BYTES: usize = super::carrier_parts::PART_BYTES;
+
+/// The context a divergence's digest is derived in.
+const DIVERGENCE_CONTEXT: &str = "oneiron.office_proposals.divergence.v1";
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("office proposal refused: {reason}"))
@@ -257,7 +263,8 @@ fn proposal_rows(map: &LoroMap, keep: impl Fn(&str) -> bool) -> Vec<(String, Vec
 
 /// Merges each carried proposal into this vault's, one write each, so a
 /// refusal stays with its proposal. A copy that diverges from the one held
-/// here is quarantined in the same write, and both copies stand.
+/// here is quarantined in the same write, once per divergence, and both
+/// copies stand.
 fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     let mut merged = 0_usize;
     for (map_key, bytes) in rows {
@@ -271,14 +278,15 @@ fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
         let outcome = vault.with_write_txn_grouped(|txn| {
             let merge = vault.merge_carried_office_proposal_in_txn(txn, &record)?;
             if merge == DocumentMerge::Conflict {
-                quarantine_rejected_op_in_txn(
+                let divergence = divergence_digest(vault, txn, &record, &bytes)?;
+                quarantine_once_in_txn(
                     vault,
                     txn,
                     window,
                     QuarantineContainer::OfficeProposals,
                     &map_key,
                     &refused("decisions diverge"),
-                    &bytes,
+                    &divergence,
                 )?;
             }
             Ok(merge)
@@ -305,6 +313,33 @@ fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     if merged > 0 {
         tracing::debug!(window, merged, "office proposals merged");
     }
+}
+
+/// What the divergence of `carried`, encoded as `bytes`, from the copy held
+/// here is quarantined under, beside the proposal's key: a digest of both
+/// copies in byte order, so the same two copies name one row however often
+/// they meet. A copy whose fork another proposal here holds digests alone.
+fn divergence_digest(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    carried: &OfficeBodyProposal,
+    bytes: &[u8],
+) -> Result<[u8; 32]> {
+    let held = vault
+        .office_proposals_in_txn(txn, &carried.header.artifact)?
+        .into_iter()
+        .find(|held| held.header.proposal == carried.header.proposal)
+        .map(|held| encode(&held))
+        .transpose()?
+        .unwrap_or_default();
+    let mut copies = [held.as_slice(), bytes];
+    copies.sort_unstable();
+    let mut hasher = blake3::Hasher::new_derive_key(DIVERGENCE_CONTEXT);
+    for copy in copies {
+        hasher.update(&u64::try_from(copy.len()).unwrap_or(u64::MAX).to_le_bytes());
+        hasher.update(copy);
+    }
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// Drops from `doc` each proposal of an artifact this vault removed or the
