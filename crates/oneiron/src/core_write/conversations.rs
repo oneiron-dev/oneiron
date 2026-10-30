@@ -322,7 +322,7 @@ impl Memory<'_> {
         &self,
         input: &ConversationCreateInput,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let lane = self.core_write_lane()?;
         self.vault()
             .write_core_conversation(input, Some(actor), &lane)

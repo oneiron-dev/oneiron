@@ -4,9 +4,9 @@ use super::documents::{NOTE_PROPOSAL_DOC, live_doc, load_head};
 use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, land};
 use super::side_keys::HexPair;
 use super::{NoteFork, NoteVerdict, NoteVersion};
+use crate::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::HexId;
-use crate::{EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ pub(crate) fn settle_run_note_in_txn(
 ) -> MemoryResult<Option<(String, RunNoteUndo)>> {
     let vault = memory.vault();
     let (mut record, _) = run_note_review_in_txn(vault, txn, note, fork)?;
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     if record.actor.is(actor.entity_ref()) {
         return Err(MemoryError::bad_request(
             "a proposal's opener never settles it",
@@ -125,7 +125,7 @@ pub(crate) fn revert_run_note_in_txn(
         },
     };
     let receipt = memory.apply_note_operation_in_txn(txn, note, &operation, None)?;
-    if matches!(receipt.outcome, super::NoteEditOutcome::Proposed(_)) {
+    if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {
         return Err(MemoryError::bad_request("NOTE compensation did not land"));
     }
     Ok(Some(operation.request_id.to_hex()))

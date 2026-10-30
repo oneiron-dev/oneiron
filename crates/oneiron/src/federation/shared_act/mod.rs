@@ -9,6 +9,7 @@
 //! Admin's ask for one is `erase_ask`.
 mod erase_ask;
 mod execute;
+mod export_records;
 mod membership;
 mod removal;
 mod removal_archive;

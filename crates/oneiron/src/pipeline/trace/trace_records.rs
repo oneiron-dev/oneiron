@@ -15,8 +15,7 @@ use crate::store::{
 
 use super::super::filters::pipeline_candidate_matches_filters_and_gate;
 use super::super::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, RETRIEVAL_TRACE_RRF_K,
-    ScoredEntity,
+    ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity,
 };
 
 /// Aggregate cache operations conservatively: a later hit cannot hide a miss
@@ -103,20 +102,10 @@ pub(in crate::pipeline) fn retrieval_trace_channel_record(
 
 pub(in crate::pipeline) fn retrieval_trace_fused_scores(
     ranked_lists: &[Vec<ScoredEntity>],
+    sparse_indexes: &[usize],
     limit: usize,
 ) -> Vec<ScoredEntity> {
-    let mut scores = HashMap::<EntityId, f32>::new();
-    for ranked in ranked_lists {
-        for (rank, scored) in ranked.iter().take(limit).enumerate() {
-            let rank = (rank + 1).min(u32::MAX as usize) as f32;
-            *scores.entry(scored.id).or_default() += 1.0 / (RETRIEVAL_TRACE_RRF_K + rank);
-        }
-    }
-
-    let mut scores: Vec<ScoredEntity> = scores
-        .into_iter()
-        .map(|(id, score)| ScoredEntity { id, score })
-        .collect();
+    let mut scores = fusion::fuse_ranked_lists_with_sparse(ranked_lists, sparse_indexes);
     fusion::sort_scored_entities_desc(&mut scores);
     retrieval_trace_top_scores(&scores, limit)
 }

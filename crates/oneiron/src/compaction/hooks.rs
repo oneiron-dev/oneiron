@@ -282,7 +282,7 @@ pub(crate) fn host_compact_as_owner(
                 let (epoch, summary) = super::epoch::mint_epoch_summary_guarded(
                     vault,
                     &input.session_ref,
-                    crate::WriteActor::new(memory.actor(), memory.actor_class()),
+                    memory.write_actor(),
                     gated.request(),
                     &super::CompactionProduct {
                         summary_text: text.clone(),
