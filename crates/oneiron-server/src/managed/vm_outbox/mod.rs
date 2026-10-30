@@ -114,8 +114,9 @@ struct Carrier {
     /// statuses and the owner's answers to its diverged copies; `None` on
     /// the host.
     board: Option<diverged::Board>,
-    /// The host's answers to the guest's removals of its kept-aside copies,
-    /// sent first in its next turn (FIX 11985); empty on the guest.
+    /// The host's answers to the guest's keeps and removals of its
+    /// kept-aside copies, sent first in its next turn (FIX 11985, FIX 12010);
+    /// empty on the guest.
     aside_answers: Vec<oneiron_vault_contract::vm_outbox::VmOutboxFrame>,
 }
 

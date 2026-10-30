@@ -28,7 +28,7 @@ use super::local;
 use super::store::{Diverged, DivergedAnswer, SourceStatus};
 use super::{Carrier, Mode};
 use oneiron_vault_contract::vm_outbox::{
-    VmOutboxFrame, VmOutboxKind, VmOutboxNoticeAction, VmOutboxSide,
+    VmOutboxFrame, VmOutboxKind, VmOutboxNoticeAction, VmOutboxSide, vm_outbox_detail,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -421,7 +421,8 @@ impl Carrier {
     /// record keeps that copy. One this end holds, which the owner kept,
     /// moves aside under its own name, so the guest's next version lands;
     /// when it does not move, the keep stays on this end's record and the
-    /// copy moves aside once it blocks the guest's next put (FIX 11986).
+    /// copy moves aside once it blocks the guest's next put (FIX 11986),
+    /// and the guest is answered with the move's result (FIX 12010).
     /// The guest's copy is out of the member's way, so a refusal of this
     /// end's version for it no longer holds and the next scan offers that
     /// version again, as [`Self::reoffer`] does. A `remove_aside` notice
@@ -462,10 +463,15 @@ impl Carrier {
                     if let Some(aside) = aside {
                         record_kept_aside(&mut record, self.side, &diverged.held, aside);
                     }
+                    self.queue_aside_kept(kind, member, &held, None);
                 }
                 Err(error) => {
                     let what = format!("its kept copy did not move aside: {error}");
                     self.say(kind, member, &what);
+                    let failed = vm_outbox_detail(&format!(
+                        "the host's kept copy did not move aside: {error}"
+                    ));
+                    self.queue_aside_kept(kind, member, &held, Some(failed));
                     record.diverged = Some(Diverged {
                         answer: Some(DivergedAnswer::Keep),
                         ..diverged

@@ -140,8 +140,12 @@ credential.
   companion deletes it at its next turn. For a host copy, the guest sends
   `divergence_cleared` with `action` `remove_aside` at each turn, and the
   host deletes its side copy and answers `aside_removed` (kind, member,
-  digest, `failed`) first in its next turn. The entry goes once the side
-  copy is deleted. A delete that fails is logged once and keeps the entry,
+  digest, `failed`) first in its next turn. A keep of a host copy is
+  answered the same way with `aside_kept` (FIX 12010): when the host's
+  move aside failed, the entry keeps `failed` saying why, while the copy
+  stays at the member's name until the next put moves it. The entry goes
+  once the side copy is deleted. A delete that fails is logged once and
+  keeps the entry,
   with `failed` saying why, so the owner can answer again. A keep whose side
   name is already there, with the same bytes, counts as aside, and the twin
   at the member's name is deleted. Other notices carry `action` `answered`.

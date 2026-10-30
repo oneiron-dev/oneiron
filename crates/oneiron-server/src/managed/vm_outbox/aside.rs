@@ -9,7 +9,10 @@
 //! ([`VmOutboxFrame::AsideRemoved`]). The entry goes once its side copy is
 //! deleted; a delete that fails is said and keeps the entry, with why. A
 //! host copy whose move aside failed when he kept it keeps that keep on the
-//! host's record and moves aside once it blocks the guest's next put.
+//! host's record and moves aside once it blocks the guest's next put; the
+//! host answers the keep with its move's result
+//! ([`VmOutboxFrame::AsideKept`]), so the guest's entry says when the copy
+//! stays at the member's name (FIX 12010).
 
 use super::link::Link;
 use super::local;
@@ -138,6 +141,41 @@ impl Carrier {
         drop(mode);
     }
 
+    /// On the guest: takes the host's answer to a keep of its copy, under
+    /// this end's gate (FIX 12010). A move that went through changes
+    /// nothing, as the copy was recorded aside when the owner answered; a
+    /// move that failed marks the entry with why, while the copy stays at
+    /// the member's name until the next put moves it.
+    pub(super) fn aside_kept(&mut self, frame: VmOutboxFrame) {
+        let VmOutboxFrame::AsideKept {
+            kind,
+            member,
+            held,
+            failed,
+        } = frame
+        else {
+            return;
+        };
+        let Some(why) = failed else {
+            return;
+        };
+        let gate = Arc::clone(&self.gate);
+        let mode = gate.hold();
+        if *mode == Mode::Draining {
+            return;
+        }
+        let host = self.side.peer();
+        let mut record = self.store.get(kind, &member);
+        let what = format!("{why}; it stays at the member's name until the next put moves it");
+        for entry in &mut record.aside {
+            if entry.held_by == host && entry.held.blake3 == held {
+                entry.failed = Some(what.clone());
+            }
+        }
+        self.write_record(kind, &member, record);
+        drop(mode);
+    }
+
     /// On the host, under the gate the caller holds: deletes its kept-aside
     /// copy of `kind`'s `member` hashing to `held`, which a `remove_aside`
     /// notice named, and queues its answer for the guest's next pull. A
@@ -181,9 +219,27 @@ impl Carrier {
         });
     }
 
-    /// On the host: sends the guest each answer to a removal of a kept-aside
-    /// copy, first in its turn. One lost with the connection is answered
-    /// again, as the guest tells the host again.
+    /// On the host: queues the answer to the guest's keep notice for
+    /// `kind`'s `member` hashing to `held`: whether this end's move aside
+    /// went through, for the guest's next pull (FIX 12010).
+    pub(super) fn queue_aside_kept(
+        &mut self,
+        kind: VmOutboxKind,
+        member: &str,
+        held: &str,
+        failed: Option<String>,
+    ) {
+        self.aside_answers.push(VmOutboxFrame::AsideKept {
+            kind,
+            member: member.to_owned(),
+            held: held.to_owned(),
+            failed,
+        });
+    }
+
+    /// On the host: sends the guest each answer to a keep or a removal of
+    /// a kept-aside copy, first in its turn. One lost with the connection
+    /// is answered again, as the guest tells the host again.
     pub(super) fn send_aside_answers<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -246,7 +302,7 @@ impl Carrier {
         held: &str,
     ) -> std::io::Result<()> {
         match self.roots.open(kind)? {
-            Some(root) => local::remove_aside(&root, member, held),
+            Some(root) => local::remove_aside(&root, kind, member, held),
             None => Err(std::io::Error::other("this end has no root for the kind now")),
         }
     }
