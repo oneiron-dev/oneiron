@@ -19,6 +19,7 @@
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due.
 
+mod claim_vad_payment;
 mod report;
 mod schedule;
 mod sweeps;
@@ -27,6 +28,8 @@ mod sync_work;
 mod tests;
 mod wake;
 
+pub(crate) use self::claim_vad_payment::ClaimVadPayment;
+pub use self::claim_vad_payment::ClaimVadPaymentWorker;
 pub use self::report::{
     HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
 };
@@ -79,7 +82,8 @@ pub enum HousekeepingSweep {
     /// paused while the owner's switch is off.
     SecretLiftHistory,
     /// Finishes owed claim VAD consolidations (FIX 9598): an approval whose
-    /// writer stopped, or whose consolidation failed, before it was done.
+    /// writer or payment worker stopped, or whose consolidation failed,
+    /// before it was done.
     ClaimVadDebt,
     /// Raises the found-key notices left due past one write's share (OF-560,
     /// FIX 2648), for a vault no later write comes to.
@@ -200,7 +204,8 @@ impl HousekeepingSweep {
     /// The lift sweep looks for a queued run every fifteen minutes, and a run
     /// left unfinished at a pass's deadline is due again at once. Owed claim
     /// VAD work runs at open, for an approval a stopped process left, and
-    /// every fifteen minutes. The found-key drain looks for due notices every
+    /// every fifteen minutes, behind the payment worker each write wakes
+    /// (FIX 11702). The found-key drain looks for due notices every
     /// fifteen minutes.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
