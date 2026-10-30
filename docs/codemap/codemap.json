@@ -14191,7 +14191,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -37143,6 +37143,16 @@
      "purpose": "The whole policy-manifest fold; `manifest_fold` re-exports it",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_fold/snapshot_cache.rs",
+     "purpose": "The policy manifest resolved once per committed snapshot: the fold is a pure function of the snapshot it…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68611,6 +68621,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/handle/policy_fold.rs",
+     "purpose": "The policy manifest's fold of one committed snapshot, kept on the vault between resolutions: a light recall…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -85487,7 +85507,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 167,
+     "files": 168,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86152,7 +86172,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 194,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86392,7 +86412,7 @@
    },
    "over_bar": 105,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5852,
+   "source_files": 5854,
    "test_files": 902
   },
   "oneiron-android": {
