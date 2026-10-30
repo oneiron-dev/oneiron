@@ -138,6 +138,10 @@ side_tables! {
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named
         => crate::dreamer_runner::maintenance::agent_health::erase_actor_sources_in_txn;
+    /// Each live agent-health card under every row its standing Coach draft was written from
+    /// (FIX 10434): `draft_source_rows`. Key: id16(source) + id16(actor) + u8(signal) +
+    /// id16(task).
+    COACH_AGENT_HEALTH_CARD_BY_SOURCE: VaultMeta b"coach:agent_health_card_by_source:v1:" Raw;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;

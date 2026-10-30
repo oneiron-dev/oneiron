@@ -8,11 +8,19 @@
 //! erased actor and for a restored image's replay, and a saved Weave copy
 //! runs it too. An answer that lands after such an erase is checked against
 //! its rows first and lands without its draft's text.
+use std::collections::BTreeSet;
+
 use super::ask::AgentHealthCoachAnswer;
 use super::{AgentHealthCard, CARDS};
 use crate::ports::TombstoneStoreRead;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
+
+/// Each live card under every row its standing Coach draft was written from
+/// (FIX 10434): `draft_source_rows`. Key: id16(source) + the card key.
+const CARD_BY_SOURCE: SideTable<(EntityId, ([u8; 16], [u8; 1], [u8; 16])), (), Raw> =
+    SideTable::new(&side_table::COACH_AGENT_HEALTH_CARD_BY_SOURCE);
 
 impl AgentHealthCoachAnswer {
     /// Clears the draft's diagnosis and proposal and marks the answer
@@ -49,16 +57,45 @@ impl AgentHealthCard {
     }
 }
 
+/// Keeps [`CARD_BY_SOURCE`] in step with one card write, in the caller's
+/// transaction: drops the rows of sources the card no longer names, adds the
+/// rows of sources it newly names (FIX 10434). Both sets come from
+/// [`AgentHealthCard::draft_source_rows`] on the card before and after the
+/// write.
+pub(super) fn sync_card_membership(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &([u8; 16], [u8; 1], [u8; 16]),
+    old: &BTreeSet<EntityId>,
+    new: &BTreeSet<EntityId>,
+) -> Result<()> {
+    for gone in old.difference(new) {
+        CARD_BY_SOURCE.delete(store, txn, &(*gone, *key))?;
+    }
+    for added in new.difference(old) {
+        CARD_BY_SOURCE.put(store, txn, &(*added, *key), &())?;
+    }
+    Ok(())
+}
+
 /// Clears the Coach draft text of every live card whose draft was written
 /// from the erased `id`, in the erase's own transaction. A no-op for an id
-/// no standing draft names.
+/// no standing draft names. Cards are found through the by-source index
+/// (FIX 10434); the live row is rechecked before the scrub, so a stale
+/// membership row causes an extra read, never a wrong scrub.
 pub(crate) fn erase_sources_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    for (key, mut card) in CARDS.scan(store, txn)? {
-        if card.draft_source_rows().contains(id) && card.scrub_coach_draft() {
+    for (_, key) in CARD_BY_SOURCE.scan_keys(store, txn, id.as_bytes())? {
+        let Some(mut card) = CARDS.get(store, txn, &key)? else {
+            continue;
+        };
+        let old = card.draft_source_rows();
+        if old.contains(id) && card.scrub_coach_draft() {
+            let new = card.draft_source_rows();
+            sync_card_membership(store, txn, &key, &old, &new)?;
             CARDS.put(store, txn, &key, &card)?;
         }
     }

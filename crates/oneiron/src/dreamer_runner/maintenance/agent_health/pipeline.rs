@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rmpv::Value;
 
+use super::erase::sync_card_membership;
 use super::{
     AgentHealthCard, AgentHealthConfidence, AgentHealthMove, AgentHealthOutcome, AgentHealthTone,
     Attempts, CARDS, DialBook, Dispatched, Dispatches, Finding, HEALTH_DIGEST_DOMAIN,
@@ -179,6 +180,12 @@ pub(super) fn land(
             }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
+            // `merge` replaces the observed brief, whose TASK the draft names
+            // (FIX 10434): the old row's membership is diffed below.
+            let old_sources = card
+                .as_ref()
+                .map(|card| card.draft_source_rows())
+                .unwrap_or_default();
             let kept = card.as_ref().is_some_and(|card| card.agent_blocked);
             let mut card = merge(
                 card,
@@ -196,6 +203,8 @@ pub(super) fn land(
             for items in [card.evidence.len(), card.diagnostics.len()] {
                 let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
             }
+            let new_sources = card.draft_source_rows();
+            sync_card_membership(&vault.store, txn, &key, &old_sources, &new_sources)?;
             CARDS.put(&vault.store, txn, &key, &card)?;
             touched.insert(key);
         }
