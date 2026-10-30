@@ -59,10 +59,14 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// it aborts the renewal ([`Renewal::stop`]).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// The pairing again a refusal asks for.
+/// The pairing again a refusal asks for. A home that still holds this
+/// machine live in its class pairs it again on the machine's possession
+/// proof, credential only (FIX 8636); any other home enrols it anew.
 const PAIR_AGAIN: &str = "pair this machine again: stop the vault, remove its device-sync \
                           enrolment (the .json and .cred files) and run `oneiron device enrol` \
-                          with a new link";
+                          with a new machine link (`oneiron token pair --machine yours` on the \
+                          home); a home that still holds this machine pairs it again under its \
+                          own identity and class, credential only";
 
 /// A renewed credential the home answered, not yet written to its file,
 /// and how long its slip lives.

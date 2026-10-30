@@ -7,8 +7,10 @@
 //! per member and the axis) and sends what was asked, the owner's prompt and
 //! the plan as JSON task data. The call is house work for the owner: one
 //! model turn on the generative role's live route, metered on the house chat
-//! turn's line, with no tool, so nothing it asks for ever runs. The reply must
-//! stop naturally and match a schema built for the plan's width.
+//! turn's line under the vault's policy budget guard for the caller who
+//! pays, so the manifest's `budget_policy` rows bind it (FIX 4638), with no
+//! tool, so nothing it asks for ever runs. The reply must stop naturally and
+//! match a schema built for the plan's width.
 //!
 //! A leased agent's planned team runs the same request, schema and decode
 //! on its own seat and line instead (DOOR-111 S4c-4,
@@ -20,14 +22,14 @@ use std::time::{Duration, Instant};
 
 use oneiron::agent_dispatch::{CareLevel, CostEnvelope, ExpectedSpend, SpawnNeed, TeamPlan};
 use oneiron::llm::{
-    BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_BUDGET_RESERVE_UNITS, FinishReason, LlmCapability, LlmError, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
     ResponseFormat, RetryableLlmError, SpentKind, TierPrecedence, validate_json_schema,
 };
 use oneiron::skill::{LoadedSkillPack, SkillRole};
 use oneiron::team::{PatternLaunchRunner, PatternLaunchSpec, TeamAxis};
-use oneiron::{EntityId, Error, ErrorKind, Result, Vault};
+use oneiron::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -143,6 +145,7 @@ impl PatternLaunchRunner for HostPatternLaunchRunner {
         asked: &SpawnNeed,
         prompt: &str,
         plan: &TeamPlan,
+        payer: &WriteActor,
     ) -> Result<PatternLaunchSpec> {
         let members = launch_members(skill, plan)?;
         let seat = self.ai.chat_seat().ok_or_else(no_seat)?;
@@ -161,7 +164,7 @@ impl PatternLaunchRunner for HostPatternLaunchRunner {
             skill.entity.to_hex(),
             self.vault.now_recorded_at()
         );
-        let response = self.capture(request, run_id)?;
+        let response = self.capture(request, run_id, payer)?;
         decode_launch_spec(&response, &schema)
     }
 }
@@ -169,15 +172,21 @@ impl PatternLaunchRunner for HostPatternLaunchRunner {
 impl HostPatternLaunchRunner {
     /// One model turn: admitted as a call of the house generative role on
     /// the vault's live route, asked in plain text where that route holds no
-    /// reply to a schema, and sent on the house chat turn's line. The ladder
-    /// owns its retries and fallback. The call drives its own runtime on a
-    /// thread of its own, since a caller may sit inside a runtime, which
+    /// reply to a schema, and sent on the house chat turn's line, metered to
+    /// `payer` under the manifest's `budget_policy` rows (FIX 4638). The
+    /// ladder owns its retries and fallback. The call drives its own runtime
+    /// on a thread of its own, since a caller may sit inside a runtime, which
     /// cannot block on another. A caller's call first takes its fair
     /// task-work turn, waiting no longer than the caller's time and running
     /// without one past it, as the line's own wait does; it then waits for
     /// an offer back until the caller's deadline where that is later than
     /// the host's longest wait (FIX 9535). No transaction is held.
-    fn capture(&self, request: LlmRequest, run_id: String) -> Result<LlmResponse> {
+    fn capture(
+        &self,
+        request: LlmRequest,
+        run_id: String,
+        payer: &WriteActor,
+    ) -> Result<LlmResponse> {
         // A running turn to shutdown's grace and the Dreamer's idle sample,
         // until the capture returns on any path (FIX 4639).
         let _turn = self.ai.enter_turn();
@@ -209,12 +218,29 @@ impl HostPatternLaunchRunner {
         }
         warn_launch_input(&self.vault, &call.request);
         let units = self.ai.chat_settings().turn_budget_units;
-        let meter = BudgetGuard::with_reserve_units(
-            run_id.clone(),
-            units,
-            DEFAULT_BUDGET_RESERVE_UNITS.min(units),
-            BudgetExhaustionPolicy::Suspend,
-        );
+        let meter = self
+            .vault
+            .policy_budget_guard(
+                run_id.clone(),
+                units,
+                DEFAULT_BUDGET_RESERVE_UNITS.min(units),
+                BudgetExhaustionPolicy::Suspend,
+                *payer,
+            )
+            .map_err(|error| {
+                if store_fault(&error) {
+                    fault(format!(
+                        "the pattern run's budget policy failed on a store fault: {error}"
+                    ))
+                } else if matches!(error, Error::Refused(_)) {
+                    error
+                } else {
+                    stop(format!(
+                        "the vault's budget policy refused the pattern run: {error}; fix the \
+                         vault's policy manifest, then ask again"
+                    ))
+                }
+            })?;
         let run = self.ai.undeclared_run(run_id, meter);
         let wait = self.offer_wait();
         let caller = self.caller;

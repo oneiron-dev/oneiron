@@ -161,6 +161,8 @@ impl PatternLaunchRunner for AgentPatternLaunchRunner {
         asked: &SpawnNeed,
         prompt: &str,
         plan: &TeamPlan,
+        // The agent's own scope line meters the run; the payer is not read.
+        _payer: &WriteActor,
     ) -> Result<PatternLaunchSpec> {
         let members = launch_members(skill, plan)?;
         self.held()?;
