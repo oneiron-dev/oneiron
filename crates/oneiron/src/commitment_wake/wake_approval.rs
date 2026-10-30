@@ -347,7 +347,9 @@ fn require_proposal_agreement(fields: &ProposalFields) -> Result<()> {
 ///    residual read-then-schedule TOCTOU window is accepted, matching every
 ///    other non-transactional facade verb.
 /// 1. The facade must be bound to the proposal's authoring agent. Same-actor
-///    replay proceeds into the existing idempotency path and coalesces.
+///    replay proceeds into the existing idempotency path and coalesces; a
+///    reminder's replay re-pins the existing send's wording when it has not
+///    sent yet.
 ///
 /// # Errors
 ///
@@ -365,7 +367,8 @@ pub fn schedule_approved_commitment_wake(
 /// reminder wording the owner saw: `seen_wording`, the BLAKE3 hash of its
 /// text. A reminder's send pins those words; with none named, it pins the
 /// wording filed for it now, or the fixed wording when none is filed
-/// (FIX 12239).
+/// (FIX 12239). A re-approval re-pins an existing, not yet sent TASK for
+/// the phase to the new words; a TASK that already sent stays as it is.
 ///
 /// # Errors
 ///
@@ -400,6 +403,12 @@ pub fn schedule_approved_commitment_wake_with_wording(
         }
         other => other,
     };
+    repin_existing_commitment_wake_send(
+        facade.vault(),
+        facade.actor(),
+        &approved.idempotency_key,
+        content_ref.as_deref(),
+    )?;
     let draft = OutboundDraftInput {
         verb: approved.verb,
         channel: approved.channel,
@@ -417,6 +426,53 @@ pub fn schedule_approved_commitment_wake_with_wording(
         mention: None,
     };
     facade.schedule_outbound_with_context(&draft, &context)
+}
+
+/// Re-pins the wording an existing send for `phase_key` carries to the new
+/// approval's pin: an approval revoked and approved again merges into its
+/// phase's TASK, so the first pin would otherwise stay. A TASK that already
+/// sent stays as it is, as does any send that is not the same reminder.
+fn repin_existing_commitment_wake_send(
+    vault: &Vault,
+    actor: EntityId,
+    phase_key: &str,
+    content_ref: Option<&str>,
+) -> Result<()> {
+    let Some(content_ref) = content_ref else {
+        return Ok(());
+    };
+    let (reminder_ref, pin) = split_wording_pin(content_ref);
+    if pin.is_none() {
+        return Ok(());
+    }
+    if vault
+        .store
+        .get_delivered_send_task_by_idempotency(&actor, phase_key)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    for task in vault.connector_send_tasks()? {
+        if task.actor_ref != actor
+            || task.intent.idempotency_key.as_deref() != Some(phase_key)
+            || task.outcome.is_some()
+            || task.intent.content_ref.as_deref() == Some(content_ref)
+        {
+            continue;
+        }
+        let Some(existing) = task.intent.content_ref.as_deref() else {
+            continue;
+        };
+        if split_wording_pin(existing).0 != reminder_ref {
+            continue;
+        }
+        vault.replace_connector_send_task_content_ref(
+            task.task_ref,
+            Some(content_ref),
+            vault.now_recorded_at(),
+        )?;
+    }
+    Ok(())
 }
 
 /// The approval half of a commitment wake (ARCH-0046 O2): every approved
