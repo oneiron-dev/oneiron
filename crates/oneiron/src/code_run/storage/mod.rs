@@ -74,8 +74,8 @@ pub(crate) use self::speech_identity::executor_speech_message_id;
 #[cfg(test)]
 pub(super) use self::speech_identity::executor_speech_turn_id;
 pub(crate) use self::speech_identity::{
-    ResultSpeech, executor_compaction_session_id, executor_speech_message_id_in_run,
-    executor_speech_turn_id_for_run,
+    ResultSpeech, RunAssertionCollector, executor_compaction_session_id,
+    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
 };
 pub(crate) use self::type_diagnostics::{
     StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn, runs_program_steps,
