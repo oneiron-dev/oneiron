@@ -218,6 +218,9 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`
+- `self.inbox.get`
+- `self.inbox.done`
+- `self.inbox.later`
 - `vault.skills.bootstrap`
 - `vault.skill_hubs.default.get`
 - `vault.skills.restoreDefaults`

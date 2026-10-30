@@ -3608,6 +3608,12 @@ class Oneiron:
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
         def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
             """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
+        def get(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemView:
+            """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
+        def done(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemMarked:
+            """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
+        def later(self, spec: Facade.InboxItemLaterRequest) -> Facade.InboxItemMarked:
+            """Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."""
     class _SelfInboxConcernVerbs:
         def __call__(self, spec: Facade.ConcernCardRequest) -> Facade.AgentHealthCardView: ...
         def outcome(self, spec: Facade.ConcernOutcomeRequest) -> Facade.ConcernCardSummary: ...

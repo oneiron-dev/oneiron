@@ -13,7 +13,7 @@ use crate::Vault;
 use crate::dreamer_runner::maintenance::agent_health::AgentHealthTone;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition};
 use crate::self_heal::AgentHealthSignal;
 
 pub const AGENT_INBOX_LENS_SCHEMA_VERSION: u64 = 1;
@@ -171,18 +171,28 @@ impl Vault {
         if query.limit == 0 {
             return Ok(Vec::new());
         }
-        // Fetch before filtering/limiting by impact. A capped chronological
-        // scan cannot prove impact top-N, so reject instead of returning a
-        // silently count-biased pile. The receipt substrate owns this cap.
-        let cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN;
-        let scan = self.scan_receipts(ReceiptQuery::new(cap).with_kind(ReceiptKind::Outbound))?;
-        if !scan.complete {
-            return Err(Error::InvalidConfig(
-                "inbox receipt scan is incomplete".to_owned(),
-            ));
-        }
+        let items = self.agent_inbox_entries(digests_for)?;
+        // Filter after folding, so a filtered conversation still names every
+        // identity on its thread.
+        let mut items = fold_threads(items);
+        items.retain(|item| item.participants.iter().any(&keep));
+        sort_page(&mut items, query);
+        Ok(items)
+    }
+
+    /// Every entry the lens reads, before threads fold: each receipt, inbound
+    /// event and membership row on its canonical thread, then the rows no
+    /// thread carries. `digests_for` names the one actor whose own digests
+    /// join; none join without it.
+    fn agent_inbox_entries(
+        &self,
+        digests_for: Option<EntityId>,
+    ) -> Result<Vec<AgentInboxLensItem>> {
+        // Fetch before filtering/limiting by impact: impact top-N needs every
+        // outbound receipt, not a chronological prefix of them.
+        let receipts = self.every_outbound_receipt()?;
         let mut items = project_receipts(
-            &scan.records,
+            &receipts,
             AgentInboxLensQuery {
                 identity_ref: None,
                 limit: usize::MAX,
@@ -211,12 +221,30 @@ impl Vault {
         if let Some(recipient) = digests_for {
             items.extend(self.digest_inbox_items(recipient)?);
         }
-        // Filter after folding, so a filtered conversation still names every
-        // identity on its thread.
-        let mut items = fold_threads(items);
-        items.retain(|item| item.participants.iter().any(&keep));
-        sort_page(&mut items, query);
         Ok(items)
+    }
+
+    /// Every outbound receipt, newest first. The receipt substrate serves at
+    /// most its work cap a scan, so each scan the cap cuts short resumes
+    /// after its last receipt until one comes back complete.
+    fn every_outbound_receipt(&self) -> Result<Vec<ReceiptRecord>> {
+        let mut query = ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
+            .with_kind(ReceiptKind::Outbound);
+        let mut receipts = Vec::new();
+        loop {
+            let scan = self.scan_receipts(query.clone())?;
+            let resume = (!scan.complete).then(|| scan.records.last().map(ReceiptScanPosition::of));
+            receipts.extend(scan.records);
+            match resume {
+                None => return Ok(receipts),
+                Some(Some(after)) => query = query.with_after(after),
+                Some(None) => {
+                    return Err(Error::InvalidConfig(
+                        "inbox receipt scan returned an incomplete empty page".to_owned(),
+                    ));
+                }
+            }
+        }
     }
 
     /// The digests addressed to `recipient` alone that it has not yet
@@ -291,6 +319,8 @@ impl Vault {
 /// one Conversation row, whichever identity received or sent it. Approvals
 /// stay their own rows, each with its own decision. Impact is the highest on
 /// the thread, so a blocked entry lifts its conversation (the residue law).
+/// The folded row names its newest entry; the thread's earlier messages stay
+/// in the entries, where `resolve_agent_inbox_texts` reads them.
 fn fold_threads(items: Vec<AgentInboxLensItem>) -> Vec<AgentInboxLensItem> {
     let mut out = Vec::new();
     let mut threads: BTreeMap<String, AgentInboxLensItem> = BTreeMap::new();
@@ -512,11 +542,17 @@ fn receipt_order(receipt: &ReceiptRecord) -> (u64, bool, &str) {
 }
 
 mod inbound;
+mod read_state;
+pub(crate) use read_state::erase_agent_inbox_read_marks_actor_in_txn;
+pub use read_state::{
+    AgentInboxBoardSlice, AgentInboxReadState, InboxItemLaterRequest, InboxItemMarked,
+    InboxItemMessage, InboxItemRequest, InboxItemView,
+};
 mod serve;
 pub use serve::*;
 mod text;
 
-pub use self::text::{InboxTextSource, ResolvedInboxText};
+pub use self::text::{InboxTextSource, ResolvedInboxMessage, ResolvedInboxText};
 
 #[cfg(test)]
 mod tests;

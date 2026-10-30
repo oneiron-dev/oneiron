@@ -1848,6 +1848,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_done(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.done", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_later(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.later", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_bootstrap(
         &self,
         input: serde_json::Value,
