@@ -794,6 +794,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
             ),
             (
+                "vault.export.transfer.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ExportTransferReadRequest,
+                >(),
+            ),
+            (
+                "vault.export.transfer.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ExportTransferReleaseRequest,
+                >(),
+            ),
+            (
                 "self.credential.attenuate",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CredentialAttenuationRequest,
@@ -11482,6 +11494,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.export.transfer.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.export.transfer.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.credential.attenuate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19354,6 +19380,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
         }
+        "vault.export.transfer.read" => {
+            let _input: crate::memory::ExportTransferReadRequest = decode(value.clone())?;
+        }
+        "vault.export.transfer.release" => {
+            let _input: crate::memory::ExportTransferReleaseRequest = decode(value.clone())?;
+        }
         "self.credential.attenuate" => {
             let _input: crate::task_verb::sdk::CredentialAttenuationRequest =
                 decode(value.clone())?;
@@ -23318,6 +23350,10 @@ pub fn invoke(
             encode(vault_retrieval_policy_update(memory, decode(value)?)?)
         }
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
+        "vault.export.transfer.read" => encode(vault_export_transfer_read(memory, decode(value)?)?),
+        "vault.export.transfer.release" => {
+            encode(vault_export_transfer_release(memory, decode(value)?)?)
+        }
         "self.credential.attenuate" => encode(self_credential_attenuate(memory, decode(value)?)?),
         "self.actor" => encode(self_actor(memory, decode(value)?)?),
         "vault.scope.position" => encode(vault_scope_position(memory, decode(value)?)?),
@@ -26889,6 +26925,18 @@ pub fn vault_export(
     input: crate::memory::ExportOptions,
 ) -> MemoryResult<crate::memory::ExportAnswer> {
     Ok(crate::memory::ExportAnswer::Inline(memory.export(&input)?))
+}
+pub fn vault_export_transfer_read(
+    memory: &Memory<'_>,
+    input: crate::memory::ExportTransferReadRequest,
+) -> MemoryResult<crate::memory::ExportTransferPiece> {
+    crate::task_verb::sdk::host_only(memory, "vault.export.transfer.read", &input)
+}
+pub fn vault_export_transfer_release(
+    memory: &Memory<'_>,
+    input: crate::memory::ExportTransferReleaseRequest,
+) -> MemoryResult<crate::memory::ExportTransferReleased> {
+    crate::task_verb::sdk::host_only(memory, "vault.export.transfer.release", &input)
 }
 pub fn self_credential_attenuate(
     memory: &Memory<'_>,
@@ -32694,6 +32742,7 @@ pub fn vault_skills_attribution_read(
     crate::task_verb::sdk::skill_attribution_read_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.attribution.read")?,
+        crate::claim::CallerLocality::OnDevice,
         &input,
     )
 }

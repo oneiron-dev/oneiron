@@ -364,6 +364,9 @@ impl Vault {
             &mut txn, id, vault_id, None, actor_id, owners, effect, None, None, None, now,
         )?;
         txn.commit()?;
+        if !receipt.revoked_slips.is_empty() {
+            self.store.notify_credential_revocations();
+        }
         Ok(receipt)
     }
 
@@ -630,6 +633,9 @@ impl Vault {
             now,
         )?;
         txn.commit()?;
+        if !receipt.revoked_slips.is_empty() {
+            self.store.notify_credential_revocations();
+        }
         Ok(receipt)
     }
 

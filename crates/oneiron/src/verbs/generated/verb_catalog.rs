@@ -149,6 +149,8 @@ pub enum AgentVerb {
     VaultRetrievalPolicyAdmit,
     VaultRetrievalPolicyUpdate,
     VaultExport,
+    VaultExportTransferRead,
+    VaultExportTransferRelease,
     SelfCredentialAttenuate,
     SelfActor,
     VaultScopePosition,
@@ -1379,6 +1381,8 @@ impl AgentVerb {
         Self::VaultRetrievalPolicyAdmit,
         Self::VaultRetrievalPolicyUpdate,
         Self::VaultExport,
+        Self::VaultExportTransferRead,
+        Self::VaultExportTransferRelease,
         Self::SelfCredentialAttenuate,
         Self::SelfActor,
         Self::VaultScopePosition,
@@ -2612,6 +2616,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => "vault.retrieval.policy.admit",
             Self::VaultRetrievalPolicyUpdate => "vault.retrieval.policy.update",
             Self::VaultExport => "vault.export",
+            Self::VaultExportTransferRead => "vault.export.transfer.read",
+            Self::VaultExportTransferRelease => "vault.export.transfer.release",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::SelfActor => "self.actor",
             Self::VaultScopePosition => "vault.scope.position",
@@ -3872,6 +3878,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfCredentialAttenuate
                 | Self::SelfActor
                 | Self::VaultScopePosition
@@ -5131,6 +5139,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfCredentialAttenuate
                 | Self::SelfActor
                 | Self::VaultScopePosition
@@ -6528,6 +6538,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfActor
                 | Self::VaultReceipts
                 | Self::VaultAssetsIngest
@@ -8456,6 +8468,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => &["spec"],
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultExportTransferRead => &["spec"],
+            Self::VaultExportTransferRelease => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -9687,6 +9701,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => &["spec"],
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultExportTransferRead => &["spec"],
+            Self::VaultExportTransferRelease => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -11201,7 +11217,13 @@ impl AgentVerb {
                 "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
             }
             Self::VaultExport => {
-                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline."
+                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref, read at /v1/core/export-transfers/{transfer_ref} or vault.export.transfer.read."
+            }
+            Self::VaultExportTransferRead => {
+                "Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."
+            }
+            Self::VaultExportTransferRelease => {
+                "Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
