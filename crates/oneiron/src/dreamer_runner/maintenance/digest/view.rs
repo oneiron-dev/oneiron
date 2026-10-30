@@ -17,8 +17,8 @@ use super::super::agent_health::{COACH_AGENT_HEALTH_FACET, ConcernCardSummary};
 use super::private_sources::digest_item_readable_by_in;
 use super::{
     CLEANUP_GROUP, DIGEST, DigestApplied, DigestCleanup, DigestNoteTombstones, DigestOffer,
-    DigestProposal, EVAL_LABEL_ASK_GROUP, JUDGE_ASK_GROUP, NOTE_TOMBSTONE_GROUP,
-    ProactivityDigest, ProactivityPresentation, TRAINING_OFFER_GROUP, invalid, load_state,
+    DigestProposal, EVAL_LABEL_ASK_GROUP, JUDGE_ASK_GROUP, NOTE_TOMBSTONE_GROUP, ProactivityDigest,
+    ProactivityPresentation, TRAINING_OFFER_GROUP, invalid, load_state,
 };
 use crate::{EntityId, Result, Vault};
 

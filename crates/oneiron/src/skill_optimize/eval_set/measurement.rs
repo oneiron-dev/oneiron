@@ -24,7 +24,9 @@ mod finish;
 mod statistics;
 
 pub use self::doors::eval_seat_canary;
-pub(super) use self::doors::measurement_in_txn;
+pub(super) use self::doors::{
+    measurement_in_txn, measurements_in_txn, put_in_txn as put_measurement_in_txn,
+};
 pub use self::finish::{JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS};
 pub use self::statistics::{EstimateGap, EvalFamilySummary, MeasurementMethodPin};
 
