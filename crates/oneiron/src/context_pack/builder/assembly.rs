@@ -159,6 +159,7 @@ impl<'a> ContextPackBuilder<'a> {
             world_share: run.world_share,
         };
         lane.end_recall_plan()?;
+        let l15_post_filter = crate::stage_timing::stage("pack.post_filter");
         let receipt = match pending.filter_scoped_under(lane, disclosure.as_ref()) {
             Ok(receipt) => receipt,
             Err(error) => {
@@ -168,9 +169,12 @@ impl<'a> ContextPackBuilder<'a> {
         };
         // Instruction files name only units this read returns (FIX 9761).
         pending.project_instruction_files_under(lane, disclosure.as_ref())?;
+        drop(l15_post_filter);
         // Counts exposed by recall refer only to rows admitted by this read.
         pending.value.stats.candidates_considered = pending.value.results.len();
+        let l15_finalize_write = crate::stage_timing::stage("pack.finalize_write");
         let finalized = pending.finish_post_filter()?;
+        drop(l15_finalize_write);
         status.run_id = finalized.run_id;
         let pack = finalized.value;
         Ok((
