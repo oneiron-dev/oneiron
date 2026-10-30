@@ -559,6 +559,7 @@ pub(super) fn promote_one_answering(
     } else {
         // Preserve the original single-pass transaction for every None caller.
         vault.with_write_txn_grouped(|wtxn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion");
             read_prior(wtxn)?;
             vault
                 .batch_in()

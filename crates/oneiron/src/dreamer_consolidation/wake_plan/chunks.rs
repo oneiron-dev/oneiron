@@ -200,7 +200,10 @@ pub(super) fn owe(
 ) {
     let mut queued_any = false;
     for set in owed {
-        match vault.with_write_txn_grouped(|txn| set.enqueue_in_txn(vault, txn, scope)) {
+        match vault.with_write_txn_grouped(|txn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("wake prep");
+            set.enqueue_in_txn(vault, txn, scope)
+        }) {
             Ok(queued) => {
                 queued_any |= queued > 0;
                 tracing::debug!(

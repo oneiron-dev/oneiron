@@ -372,6 +372,7 @@ pub fn enqueue_partition_attempts(
 ) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
     let turn_ids: Vec<_> = dirty_turns.iter().map(|turn| turn.turn_id).collect();
     vault.with_write_txn_grouped(|wtxn| {
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("partition enqueue");
         if read_partition_turns_in_txn(vault, wtxn, scope, &turn_ids)?
             .iter()
             .any(|turn| turn.conversation.is_none())

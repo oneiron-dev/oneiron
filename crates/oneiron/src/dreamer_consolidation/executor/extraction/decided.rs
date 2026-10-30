@@ -79,6 +79,7 @@ pub(super) fn record_decided_candidates(
         return Ok(());
     }
     vault.with_write_txn_grouped(|txn| {
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("resolve decided");
         for (position, row) in &rows {
             DECIDED.put(&vault.store, txn, &(*attempt.as_bytes(), *position), row)?;
         }
