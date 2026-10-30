@@ -13,7 +13,7 @@ use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{ConnectAccepted, ConnectGrant, EmptyRequest, Offer};
 use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::federation_connect::{self, AcceptConnect, MintConnectGrant, OfferConnect};
@@ -28,6 +28,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect",
                 summary: "This vault's id and host key, what a peer's owner names to offer it a pact.",
                 row: None,
+                shape: None,
             },
             get(identity),
         ),
@@ -37,6 +38,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/grants",
                 summary: "Mints the guest grant a Connect with a peer vault governs: named local worlds, read and propose only, inside the vault's Connect guest ceiling. Inert until the pact is Active.",
                 row: None,
+                shape: Some(RestShape::json(
+                    mint_grant_body_schema,
+                    connect_grant_schema,
+                )),
             },
             post(mint_grant),
         ),
@@ -46,6 +51,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/offer",
                 summary: "This host's signed half of a new pact with a peer vault, for the owner to carry to the peer.",
                 row: None,
+                shape: Some(RestShape::json(
+                    offer_connect_body_schema,
+                    connect_offer_schema,
+                )),
             },
             post(offer),
         ),
@@ -55,6 +64,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/accept",
                 summary: "Logs the Connect the peer's half signs and answers this host's half of the same pact.",
                 row: None,
+                shape: Some(RestShape::json(
+                    accept_connect_body_schema,
+                    connect_accepted_schema,
+                )),
             },
             post(accept),
         ),

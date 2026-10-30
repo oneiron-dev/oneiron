@@ -45,9 +45,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
-use super::owner_work_routes::{OwnerWorkView, request_entry};
+use super::owner_work_routes::{OwnerWorkView, owner_work_view_schema, request_entry};
 use super::recovery_kit_target_routes::RepinView;
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -62,6 +62,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots",
                 summary: "The roots this install sees: the one it pins, one page of foreign roots (after, limit) with next, the root a pin awaits, and this install's machine.",
                 row: None,
+                shape: None,
             },
             get(roots),
         ),
@@ -71,6 +72,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/pin",
                 summary: "Pins a root on this install from its fingerprint and re-wraps the keys this machine may read under it; a root not stored here yet is awaited.",
                 row: None,
+                shape: Some(RestShape::json(pin_root_body_schema, repin_view_schema)),
             },
             post(pin),
         ),
@@ -80,6 +82,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/requests",
                 summary: "The root requests naming this install with no result yet, each with its change and receipt. Ids only.",
                 row: None,
+                shape: None,
             },
             get(pending),
         ),
@@ -89,6 +92,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/requests",
                 summary: "Records the owner's root change (pin, activate, restore, anchor) for the target install, ids only; the receipt is recorded and awaiting the target, or says why nothing was recorded.",
                 row: None,
+                shape: Some(RestShape::json(
+                    root_request_body_schema,
+                    owner_work_view_schema,
+                )),
             },
             post(request),
         ),
@@ -98,6 +105,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/roots/requests/cancel",
                 summary: "Records the owner's cancel of one root request, ids only; it takes effect on the target whenever it syncs, offline or not. The receipt says cancelled, or that the target answered it first (already enacted or refused), which stands.",
                 row: Some("vault.roots.requests.cancel"),
+                shape: None,
             },
             post(cancel),
         ),

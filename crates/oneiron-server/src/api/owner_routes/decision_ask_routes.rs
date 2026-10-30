@@ -19,7 +19,7 @@ use oneiron::EntityId;
 use oneiron::llm::decision::{DecisionAnswer, DecisionAsk, HostRule};
 use serde::Deserialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -38,6 +38,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/decisions/asks",
                 summary: "The asks after after, oldest first.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -47,6 +48,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/decisions/asks/answer",
                 summary: "The owner's answer to one ask, with the reason typed on the card when there is one.",
                 row: None,
+                shape: Some(RestShape::json(answer_ask_body_schema, decision_ask_schema)),
             },
             post(answer),
         ),
@@ -56,6 +58,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/decisions/rules",
                 summary: "Every host rule row at its latest revision, revoked ones included.",
                 row: None,
+                shape: None,
             },
             get(rules),
         ),
@@ -65,6 +68,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/decisions/rules/revoke",
                 summary: "The owner revokes one rule row, so it answers nothing; the next ask of its question goes up the ladder.",
                 row: None,
+                shape: Some(RestShape::json(revoke_rule_body_schema, host_rule_schema)),
             },
             post(revoke_rule),
         ),

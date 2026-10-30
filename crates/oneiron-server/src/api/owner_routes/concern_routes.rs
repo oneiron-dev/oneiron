@@ -21,7 +21,7 @@ use oneiron::dreamer_runner::maintenance::agent_health::{
 use oneiron::memory::MemoryError;
 use serde::Deserialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -36,6 +36,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/inbox/concern",
                 summary: "One card, with the run its attempt is in and that attempt's node marked.",
                 row: None,
+                shape: None,
             },
             get(card),
         ),
@@ -45,6 +46,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/inbox/concern/outcome",
                 summary: "Sets one card's outcome.",
                 row: None,
+                shape: Some(RestShape::json(
+                    concern_outcome_body_schema,
+                    concern_card_summary_schema,
+                )),
             },
             post(set_outcome),
         ),
@@ -54,6 +59,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/inbox/concern/move",
                 summary: "Takes one of the card's moves.",
                 row: None,
+                shape: Some(RestShape::json(
+                    concern_move_body_schema,
+                    concern_move_outcome_schema,
+                )),
             },
             post(take_move),
         ),
@@ -63,6 +72,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/inbox/concern/apply",
                 summary: "Applies the Coach's skill edit on one card as the owner approves it.",
                 row: None,
+                shape: Some(RestShape::json(
+                    concern_apply_body_schema,
+                    concern_apply_outcome_schema,
+                )),
             },
             post(apply_edit),
         ),
@@ -72,6 +85,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/inbox/concern/apply-prompt-inject",
                 summary: "Applies the Coach's prompt injection on one card as the owner approves or edits it: the failed attempt goes on as a new one, from its pre-fail checkpoint.",
                 row: None,
+                shape: Some(RestShape::json(
+                    concern_prompt_inject_body_schema,
+                    concern_prompt_inject_outcome_schema,
+                )),
             },
             post(apply_prompt_inject),
         ),

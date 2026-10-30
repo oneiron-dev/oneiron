@@ -35,11 +35,15 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::owner_work_routes::OwnerWorkReceiptView;
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{has_json_content_type, query_params};
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use crate::owner::secrets::{
+    custody_rotated_schema, register_secret_body_schema, registered_schema,
+    revoke_secret_body_schema, rotate_secret_body_schema,
+};
 use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
 use crate::server::SyncServer;
 
@@ -56,6 +60,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/register",
                 summary: "The body is read by RegisterSecret::read, as rotation's is: the owner door runs first, so a refused caller's body is never read.",
                 row: None,
+                shape: Some(RestShape::json(
+                    register_secret_body_schema,
+                    registered_schema,
+                )),
             },
             post(register_secret),
         ),
@@ -65,6 +73,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/rotate",
                 summary: "The body is read by RotateSecret::read, not Json: the extractor's body copy and parser scratch would outlive the request unwiped.",
                 row: None,
+                shape: Some(RestShape::json(
+                    rotate_secret_body_schema,
+                    custody_rotated_schema,
+                )),
             },
             post(rotate_secret),
         ),
@@ -74,6 +86,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/revoke",
                 summary: "The record goes terminal and every lease over it is revoked (OF-422); a portable one's revoke is carried to the owner's other machines.",
                 row: None,
+                shape: Some(RestShape::json(
+                    revoke_secret_body_schema,
+                    custody_rotated_schema,
+                )),
             },
             post(revoke_secret),
         ),
@@ -83,6 +99,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/rewrap",
                 summary: "Seals a portable secret again, same generation, to the installs the owner names, by its holder.",
                 row: None,
+                shape: Some(RestShape::json(rewrap_body_schema, custody_reply_schema)),
             },
             post(rewrap_secret),
         ),
@@ -92,6 +109,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/custody",
                 summary: "A secret's custody record id, generation, custody revision and live requests, and every linked install a surface may offer as holder or recipient, value-free (WILL L04 row 04).",
                 row: None,
+                shape: None,
             },
             get(custody_view),
         ),
@@ -101,6 +119,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/custody",
                 summary: "A register or rotate whose protected input the surface sealed to the holder itself: this install takes only the ciphertext.",
                 row: None,
+                shape: Some(RestShape::json(
+                    sealed_change_body_schema,
+                    custody_reply_schema,
+                )),
             },
             post(sealed_change),
         ),

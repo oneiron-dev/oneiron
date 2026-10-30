@@ -16,7 +16,7 @@ use oneiron::actor_claims::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -31,6 +31,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/craft-candidates",
                 summary: "The candidates waiting on a verdict, newest first.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -40,6 +41,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/craft-candidates/answer",
                 summary: "The owner's verdict on one candidate, bound to the content hash its card showed.",
                 row: None,
+                shape: Some(RestShape::json(
+                    craft_answer_body_schema,
+                    craft_verdict_schema,
+                )),
             },
             post(answer),
         ),

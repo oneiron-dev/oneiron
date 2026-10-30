@@ -15,7 +15,7 @@ use oneiron::skill_hub::pack_catalog::PackImportPreview;
 use oneiron::task_verb::sdk::{PackFileInput, decode_pack_files};
 use serde::Deserialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
@@ -28,6 +28,10 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/packs/preview",
             summary: "What installing a pack folder would land, and each world it would land in that this machine's setting does not cover; stages and writes nothing (FIX 5493).",
             row: None,
+            shape: Some(RestShape::json(
+                preview_pack_body_schema,
+                pack_import_preview_schema,
+            )),
         },
         post(preview),
     )]
