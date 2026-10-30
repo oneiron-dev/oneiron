@@ -12,11 +12,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/answer.rs` | src | s | 6 struct · 2 enum · 2 fn | BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp, TakeoverRecord, WindowSwitch, WindowSwitchCause | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
-| `src/capture.rs` | src | s | 11 crate-vis | — | Repeat screenshots (AB-004) |
-| `src/cdp.rs` | src | m | 15 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
+| `src/capture.rs` | src | s | 13 crate-vis | — | Repeat screenshots (AB-004) |
+| `src/cdp.rs` | src | m | 16 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/cdp/deep.rs` | src | s | 3 crate-vis | — | A CDP message nested past serde_json's recursion limit (FIX 6963): a `DOM.getDocument` at `depth: -1` of a… |
 | `src/cdp/overrun.rs` | src | m | 14 crate-vis | — | A message past the pipe's framing threshold, and one it cannot read (FIX 6851, FIX 7988, FIX 6860, FIX 7410) |
-| `src/cdp/parsed.rs` | src | s | 4 crate-vis | — | A reply read past the pipe's framing threshold, once parsed (FIX 7988): its raw bytes were charged to the… |
+| `src/cdp/parsed.rs` | src | s | 7 crate-vis | — | A reply read past the pipe's framing threshold, once parsed (FIX 7988): its raw bytes were charged to the… |
 | `src/cdp/paused.rs` | src | s | 4 crate-vis | — | Each paused request's host worker (FIX 7651, FIX 6302) |
 | `src/cdp/recorder.rs` | src | m | 20 crate-vis | — | The road a demonstration's page events take to the host (CUA E9): the recorder's own binding, never the… |
 | `src/cdp/requests.rs` | src | s | 7 crate-vis | — | Each paused request's custody (FIX 7122), on the routing of both transports |
@@ -38,10 +38,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/driver/acts.rs` | src | m | 7 crate-vis | — | — |
 | `src/driver/change.rs` | src | s | 8 crate-vis | — | The change check (FIX 6680, BROWSER-SPLIT) |
 | `src/driver/document.rs` | src | s | 2 crate-vis | — | What the driver reads for a host's rendered document, and its load wait with the host's custody of the… |
-| `src/driver/frames.rs` | src | s | 3 crate-vis | — | The front tab's in-page frames, read into its outline (FIX 205, FIX 8336) |
+| `src/driver/frames.rs` | src | m | 4 crate-vis | — | The front tab's in-page frames, read into its outline (FIX 205, FIX 8336) |
 | `src/driver/handles.rs` | src | m | 9 crate-vis | — | Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows |
 | `src/driver/lightpanda.rs` | src | s | 5 crate-vis | — | Where a Lightpanda guest differs from a Chromium one (FIX 6680, BROWSER-SPLIT), on Lightpanda 1.0.0's CDP… |
-| `src/driver/pages.rs` | src | m | 30 crate-vis | — | The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last… |
+| `src/driver/pages.rs` | src | m | 31 crate-vis | — | The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last… |
 | `src/driver/person.rs` | src | s | 3 crate-vis | — | — |
 | `src/driver/recorder.rs` | src | m | 6 crate-vis | — | A demonstration's capture on a Chromium guest (CUA E9): the listeners a recording puts in each page and… |
 | `src/driver/row_metadata.rs` | src | m | 5 crate-vis | — | Where a link row goes, a heading row's level and a row's datetimes, from the outline's own candidates and… |
@@ -52,7 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/driver/verbs.rs` | src | m | — | — | — |
 | `src/engine.rs` | src | s | 1 enum · 3 fn | BrowserEngine | The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt… |
 | `src/fact.rs` | src | s | 3 struct · 2 enum | ActionFact, ActionTarget, DialogAnswerFailure, NoEffectReason, ViewportPoint | What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page… |
-| `src/field.rs` | src | s | 1 struct · 2 enum · 2 fn · 2 re-export · 2 crate-vis | FieldTextReason, TextProvenance, TextSource | A Fill step's text (CUA E6, DESIGN-2 §4 "Field text = A"): what one field takes, resolved in code before any… |
+| `src/field.rs` | src | s | 1 struct · 2 enum · 2 fn · 2 re-export · 1 crate-vis | FieldTextReason, TextProvenance, TextSource | A Fill step's text (CUA E6, DESIGN-2 §4 "Field text = A"): what one field takes, resolved in code before any… |
 | `src/field/run.rs` | src | m | 2 crate-vis | — | A Fill step running (moved out of `field` whole): its text resolved in order and typed, its generation, its… |
 | `src/field/spec.rs` | src | s | 2 struct · 2 crate-vis | FieldSpec, TextReference | What a Fill step types (moved out of `field` whole): the step's text sources and their check before the… |
 | `src/field/write.rs` | src | s | 5 struct · 2 enum · 1 trait · 1 const | FieldWrite, FieldWriteError, FieldWriter, FieldWritten, NoWriter, TextCheck, TextCheckReply, TextVerdict | The host's field writer (moved out of `field` whole): one model call that writes a field's text, and the… |

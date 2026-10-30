@@ -135,6 +135,7 @@ mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
 mod origin_publish_doors;
+pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
 mod pack_preview_doors;
@@ -158,6 +159,7 @@ pub(super) mod role_picks;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
+pub(crate) mod run_write_polls;
 mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
@@ -211,13 +213,13 @@ use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{
     connector_answer_as, connector_call_listing_as, connector_call_listing_on,
 };
-pub(crate) use export_transfer::ExportTransfers;
+pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
     ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_run, ai_video_poll_as_owner,
-    ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
+    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
@@ -226,6 +228,7 @@ pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
 pub(crate) use release::*;
+pub(crate) use secret_body::{lift_custody_secret, with_custody_secret};
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;
@@ -441,6 +444,9 @@ struct FacadeErrorBody {
     /// named any (FIX 7398).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     reason_codes: Vec<String>,
+    /// The typed legal-hold notice, when the engine supplied one.
+    #[serde(rename = "legal_hold", skip_serializing_if = "Option::is_none")]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
     /// A failed run's program type feedback (FIX 10389), beside the refusal
     /// and never among its words: each item released whole, or withheld
     /// with none of its text when its own release check holds it.
@@ -478,6 +484,9 @@ pub(crate) struct MemoryErrorBodySchema {
     retry_after: Option<u64>,
     resets_at: Option<Vec<u64>>,
     reason_codes: Option<Vec<String>>,
+    #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
+    #[serde(rename = "legal_hold")]
+    legal_hold: Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>,
     #[schema(value_type = Option<Vec<Object>>)]
     program_steps: Option<Vec<serde_json::Value>>,
 }

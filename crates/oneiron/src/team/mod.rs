@@ -65,7 +65,7 @@ pub use run_binding::{
     team_run_binding_in_txn, team_spawn_context_for_attempt, team_spawn_context_for_attempt_in_txn,
 };
 pub use spawn_intent::{
-    FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch,
-    PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure, SpawnPhase,
+    ErasedPackSpan, FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView,
+    PlannedLeaderLaunch, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure, SpawnPhase,
 };
 pub use stack::{BranchResult, NodeComparison, compare_at_equal_budget};

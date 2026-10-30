@@ -37,11 +37,10 @@ use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 
+mod log;
+
 /// The verb a diary-read Grant names.
 pub const DIARY_READ_VERB: &str = "diary.read";
-const REASON_MAX_BYTES: usize = 512;
-const READS_LIMIT_DEFAULT: u32 = 50;
-const READS_LIMIT_MAX: u32 = 500;
 /// A review waiting on its agent ranks with the other rows that wait on it.
 const REVIEW_INBOX_IMPACT: u16 = 100;
 
@@ -218,9 +217,9 @@ impl DiaryReadGate {
     /// A gate for `reader`'s reads, all stating `reason`.
     pub fn new(reader: WriteActor, reason: &str) -> Result<Self> {
         let reason = reason.trim();
-        if reason.is_empty() || reason.len() > REASON_MAX_BYTES || reason.contains(['\n', '\r']) {
+        if reason.is_empty() || reason.contains(['\n', '\r']) {
             return Err(authority_denied(
-                "a diary read states its reason in one line of at most 512 bytes",
+                "a diary read states its reason in one non-empty line",
             ));
         }
         Ok(Self {
@@ -561,7 +560,7 @@ impl Vault {
 }
 
 /// One diary entry a read returned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiaryEntry {
     pub id: EntityId,
     pub learned_at: u64,
@@ -569,7 +568,7 @@ pub struct DiaryEntry {
 }
 
 /// What one direct diary read returned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum DiaryReadOutcome {
     /// The entries the reader's Grants cover; `read` names the log row (none
@@ -590,8 +589,14 @@ pub enum DiaryReadOutcome {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DiaryReadsRequest {
+    /// The newest rows to return; omitted reads the complete log. An
+    /// explicit count stays the caller's own recent-window choice.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Also return spent (`Used`) review requests. Default false keeps
+    /// `requests` as the unspent queue: pending, approved or declined.
+    #[serde(default)]
+    pub include_used: bool,
 }
 
 /// `self.memory.diary.reads`'s answer: who read the agent's diary and why,
@@ -601,7 +606,8 @@ pub struct DiaryReadsView {
     /// Whether the agent reviews each read first.
     pub review: bool,
     pub reads: Vec<DiaryReadRecord>,
-    /// Requests not yet spent: pending, approved or declined.
+    /// The persisted review requests, newest first: pending, approved or
+    /// declined, and spent ones too when the input asked with `include_used`.
     pub requests: Vec<DiaryReadRequest>,
 }
 
@@ -663,37 +669,6 @@ impl Memory<'_> {
                 }
                 _ => DiaryReadOutcome::NotCovered,
             })
-        })
-    }
-
-    /// `self.memory.diary.reads`: this agent's read log and review requests.
-    pub fn diary_reads(&self, input: &DiaryReadsRequest) -> MemoryResult<DiaryReadsView> {
-        super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-        let limit = input
-            .limit
-            .unwrap_or(READS_LIMIT_DEFAULT)
-            .min(READS_LIMIT_MAX) as usize;
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        let prefix = self.actor.as_bytes();
-        let reads = DIARY_READ_LOG
-            .scan_from(&self.vault.store, &txn, prefix)?
-            .into_iter()
-            .rev()
-            .take(limit)
-            .map(|(_, record)| record)
-            .collect();
-        let requests = DIARY_READ_REQUEST
-            .scan_from(&self.vault.store, &txn, prefix)?
-            .into_iter()
-            .rev()
-            .map(|(_, request)| request)
-            .filter(|request| request.state != DiaryReviewState::Used)
-            .take(limit)
-            .collect();
-        Ok(DiaryReadsView {
-            review: agent_reviews_diary_reads_in_txn(self.vault, &txn, &self.actor)?,
-            reads,
-            requests,
         })
     }
 

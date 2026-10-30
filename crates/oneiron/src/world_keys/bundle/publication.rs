@@ -158,7 +158,8 @@ pub(super) fn asks(
             }
             OwnerWorkBody::WorldKey { .. }
             | OwnerWorkBody::Root { .. }
-            | OwnerWorkBody::Custody { .. } => false,
+            | OwnerWorkBody::Custody { .. }
+            | OwnerWorkBody::ExportSecret(_) => false,
         })
 }
 
@@ -273,7 +274,8 @@ impl Vault {
                 OwnerWorkBody::PublishBundle { home } => Some((hash, home)),
                 OwnerWorkBody::WorldKey { .. }
                 | OwnerWorkBody::Root { .. }
-                | OwnerWorkBody::Custody { .. } => None,
+                | OwnerWorkBody::Custody { .. }
+                | OwnerWorkBody::ExportSecret(_) => None,
             })
             .collect())
     }

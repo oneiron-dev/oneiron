@@ -168,6 +168,7 @@ async fn draft_one(
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: seat.locality,
+            host_keyless: false,
         },
         messages: draft_messages(draft, &context),
         tools: Vec::new(),

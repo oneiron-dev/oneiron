@@ -32,7 +32,8 @@ use crate::authority::AuthorityView;
 use crate::claim::ScopedRead;
 use crate::consent::AuthenticatedOwner;
 use crate::disclosure::{DisclosureTier, RoomParty, bound_room_party_in, disclosure_tier};
-use crate::edit_distance::PROPOSAL_ARTIFACT;
+use crate::edit_distance::text_ref::retained_proposal_in_txn;
+use crate::edit_distance::{PROPOSAL_ARTIFACT, ProposalArtifactRef, RetainedProposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -127,8 +128,16 @@ pub(super) fn admitted_pairs_in(
     };
     let mut admitted = Vec::with_capacity(pairs.len());
     let mut excluded = BTreeMap::<String, u64>::new();
+    let mut imported_owner_side = BTreeMap::<EntityId, bool>::new();
     for pair in pairs {
-        let code = match refusal_in(vault, rtxn, &readable, run.as_ref(), pair.receipt_ref) {
+        let code = match refusal_in(
+            vault,
+            rtxn,
+            &readable,
+            run.as_ref(),
+            pair.receipt_ref,
+            &mut imported_owner_side,
+        ) {
             Ok(None) => {
                 admitted.push(pair);
                 continue;
@@ -141,6 +150,39 @@ pub(super) fn admitted_pairs_in(
         *excluded.entry(code.to_owned()).or_default() += 1;
     }
     Ok((admitted, excluded))
+}
+
+/// FIX 11351, 11355: the proposal retained under `artifact` as the owner's
+/// own read through `reader` may show it, in the snapshot `rtxn`. It is
+/// judged as a corpus pair is: its artifact row and its input source must
+/// each pass `reader`'s governed read and not be a Tier-A withhold. An
+/// ordinary read is no run, so no source needs a consent tick. `None` when
+/// nothing is retained there or either row is withheld, and so is a row
+/// that refuses or does not decode. Only storage, I/O and the owner's proof
+/// fail the read.
+pub(crate) fn owner_readable_proposal_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    reader: &ScopedRead<'_>,
+    artifact: EntityId,
+) -> Result<Option<RetainedProposal>> {
+    let policy = reader.live_policy_manifest_in(rtxn)?;
+    let readable = |id: &EntityId| reader.is_entity_readable_with_policy_in(rtxn, &policy, id);
+    // No run: refusal never reaches the source-people memo on this path.
+    let mut imported_owner_side = BTreeMap::new();
+    match refusal_in(
+        vault,
+        rtxn,
+        &readable,
+        None,
+        artifact,
+        &mut imported_owner_side,
+    ) {
+        Ok(None) => {}
+        Err(error) if fails_export(&error) => return Err(error),
+        Ok(Some(_)) | Err(_) => return Ok(None),
+    }
+    retained_proposal_in_txn(vault, rtxn, ProposalArtifactRef::new(artifact))
 }
 
 /// Whether `error` fails the whole export: storage, I/O or the owner's
@@ -164,6 +206,7 @@ fn refusal_in(
     readable: &dyn Fn(&EntityId) -> Result<bool>,
     run: Option<&RunTerms>,
     artifact: EntityId,
+    imported_owner_side: &mut BTreeMap<EntityId, bool>,
 ) -> Result<Option<&'static str>> {
     match row_check_in(vault, rtxn, readable, artifact)? {
         RowCheck::Absent | RowCheck::Passes(_) => {}
@@ -185,7 +228,7 @@ fn refusal_in(
         return Ok(None);
     };
     Ok(
-        match source_people_in(vault, rtxn, run, source, entity_type)? {
+        match source_people_in(vault, rtxn, run, source, entity_type, imported_owner_side)? {
             SourcePeople::Owner => None,
             SourcePeople::Others(key) | SourcePeople::Unknown(key)
                 if run.consented.contains(&key) =>
@@ -224,13 +267,15 @@ fn row_check_in(
 /// and its people are the authors its `AuthoredBy` edges name. The acting
 /// owner and the vault's own agents (`bound_room_party_in`) are the owner's
 /// side. A room or ledger that cannot be read, or no one to class, is
-/// unknown.
+/// unknown. A never-joined imported conversation's recorded speakers decide
+/// (FIX 11353).
 fn source_people_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     run: &RunTerms,
     source: EntityId,
     entity_type: u8,
+    imported_owner_side: &mut BTreeMap<EntityId, bool>,
 ) -> Result<SourcePeople> {
     let (key, people) = if entity_type == ENTITY_TYPE_TURN {
         let room = match crate::conversation_dag::conversation_of(&vault.store, rtxn, &source) {
@@ -257,6 +302,29 @@ fn source_people_in(
         (source, authors)
     };
     if people.is_empty() {
+        // FIX 11353: a never-joined imported conversation's speakers are side
+        // strings, not members. An owner-side import needs no tick.
+        if entity_type == ENTITY_TYPE_TURN {
+            let owner_side = match imported_owner_side.get(&key) {
+                Some(cached) => *cached,
+                None => {
+                    let verdict =
+                        match crate::ingest::history::imported_speakers_in(vault, rtxn, key) {
+                            Ok(crate::ingest::history::ImportedConversationSpeakers::OwnerSide) => {
+                                true
+                            }
+                            Ok(_) => false,
+                            Err(error) if fails_export(&error) => return Err(error),
+                            Err(_) => false,
+                        };
+                    imported_owner_side.insert(key, verdict);
+                    verdict
+                }
+            };
+            if owner_side {
+                return Ok(SourcePeople::Owner);
+            }
+        }
         return Ok(SourcePeople::Unknown(key));
     }
     for person in people {
@@ -336,8 +404,7 @@ pub fn reservoir_source_preview(
     let corpus_use = CorpusUse::TrainingRun {
         consented_sources: consented,
     };
-    let (carried, excluded) =
-        admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?;
+    let (carried, excluded) = admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?;
     Ok(ReservoirSourcePreview {
         carried: carried.len() as u64,
         excluded,
@@ -365,8 +432,16 @@ fn ticked_sources_in(
         fold: vault.authority_view_readonly_in_txn(rtxn)?,
     };
     let mut sources = BTreeMap::<EntityId, ReservoirSourceRow>::new();
+    let mut imported_owner_side = BTreeMap::<EntityId, bool>::new();
     for pair in pairs {
-        let people = match ticked_source_in(vault, rtxn, &readable, &run, pair.receipt_ref) {
+        let people = match ticked_source_in(
+            vault,
+            rtxn,
+            &readable,
+            &run,
+            pair.receipt_ref,
+            &mut imported_owner_side,
+        ) {
             Ok(people) => people,
             Err(error) if fails_export(&error) => return Err(error),
             Err(_) => None,
@@ -398,6 +473,7 @@ fn ticked_source_in(
     readable: &dyn Fn(&EntityId) -> Result<bool>,
     run: &RunTerms,
     artifact: EntityId,
+    imported_owner_side: &mut BTreeMap<EntityId, bool>,
 ) -> Result<Option<SourcePeople>> {
     match row_check_in(vault, rtxn, readable, artifact)? {
         RowCheck::Absent | RowCheck::Passes(_) => {}
@@ -412,7 +488,7 @@ fn ticked_source_in(
     let RowCheck::Passes(entity_type) = row_check_in(vault, rtxn, readable, source)? else {
         return Ok(None);
     };
-    source_people_in(vault, rtxn, run, source, entity_type).map(Some)
+    source_people_in(vault, rtxn, run, source, entity_type, imported_owner_side).map(Some)
 }
 
 /// The export receipt's exclusion fields: the count always, and each reason

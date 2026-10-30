@@ -51,7 +51,7 @@ pub use self::lifecycle::{
     CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute, ConnectorConsentRowView,
     ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription, ConnectorManifestQualifier,
     ConnectorQualificationError, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
-    PROXY_CONNECTOR, ProbeManifestQualifier,
+    OwnerAttestedManifestQualifier, PROXY_CONNECTOR, ProbeManifestQualifier,
 };
 pub use self::meter::{
     ConnectorDispatchTelemetry, ConnectorKeyDispatchTally, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
@@ -69,9 +69,9 @@ pub use self::record::{
 };
 pub use self::setup::{
     BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
-    NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck,
-    PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks,
-    SLACK_AUTH_TEST_CHECK,
+    NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR,
+    PACK_SETUP_ALLOW_ASK_QUEUE, PackConnectionCheck, PackConnectionEvidence,
+    PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 

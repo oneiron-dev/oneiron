@@ -20,6 +20,14 @@
 //! FIX 6574: a status names a handoff its source cancelled here as fenced,
 //! for good, so a source that missed its own cancel takes its state back
 //! rather than deliver it again.
+//!
+//! FIX 8875 stage 2: `.session` offers the source a key session for a
+//! handoff, whose secret stays in this process's memory, and `.keys`
+//! installs the erasable keys its actors' content is sealed under, each
+//! sealed to that session. `.retire` retires this node's copies of keys whose
+//! actors the calling machine erased, and `.retired` names those of them this
+//! node keeps no live copy of, so the caller clears its debts. Seals and key
+//! refs only: no key or content leaves these doors.
 
 use std::collections::HashSet;
 
@@ -67,6 +75,22 @@ pub enum HomeHandoffCancel {
     /// Adopted here first, and it stays adopted: the ack this node signed,
     /// as named MessagePack.
     Adopted { ack: Vec<u8> },
+}
+
+/// What this node offers a source for one handoff's keys (FIX 8875): its
+/// session-ephemeral hybrid public key and the nonce it drew. The secret
+/// stays in this process's memory until the keys arrive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeHandoffSession {
+    pub ephemeral: Vec<u8>,
+    pub nonce: [u8; 32],
+}
+
+/// One key a source sends for a handoff (FIX 8875): its ref, as 64
+/// lowercase hex digits, and its seal to this node's session.
+pub struct HomeHandoffKey {
+    pub key: String,
+    pub sealed: Vec<u8>,
 }
 
 /// Admits a machine of the owner's, as its socket proved it, and names it.
@@ -212,6 +236,75 @@ pub fn home_handoff_cancel(
             None => HomeHandoffCancel::Fenced,
         },
     )
+}
+
+/// FIX 8875: a fresh key session for handoff `id`, sealed to the bytes
+/// `digest` names, offered to the calling machine. A later session from the
+/// same machine replaces it.
+///
+/// # Errors
+///
+/// A refused peer; a vault with no genesis or an install with no machine
+/// yet; the random source failed; storage errors.
+pub fn home_handoff_session(
+    vault: &Vault,
+    peer: PeerMachine,
+    id: [u8; 32],
+    digest: [u8; 32],
+) -> Result<HomeHandoffSession> {
+    let source = owner_machine(vault, peer)?;
+    let offer = home_handoff::open_key_session(vault, id, digest, source)?;
+    Ok(HomeHandoffSession {
+        ephemeral: offer.ephemeral,
+        nonce: offer.nonce,
+    })
+}
+
+/// FIX 8875: installs `keys`, sealed to the session this node offered the
+/// calling machine for handoff `id`, and closes that session. Returns how
+/// many of them this node holds now; one whose actor is erased here is
+/// refused and not counted.
+///
+/// # Errors
+///
+/// A refused peer; no session open here for this handoff from that machine;
+/// storage errors.
+pub fn home_handoff_keys(
+    vault: &Vault,
+    peer: PeerMachine,
+    id: [u8; 32],
+    digest: [u8; 32],
+    keys: Vec<HomeHandoffKey>,
+) -> Result<u32> {
+    let source = owner_machine(vault, peer)?;
+    let keys = keys.into_iter().map(|key| (key.key, key.sealed)).collect();
+    home_handoff::receive_keys(vault, id, digest, source, keys)
+}
+
+/// FIX 8875: retires this node's copies of `keys`, which the calling machine
+/// retired for an erase of their actors; returns how many it named.
+///
+/// # Errors
+///
+/// A refused peer; storage and custody faults.
+pub fn home_handoff_retire(vault: &Vault, peer: PeerMachine, keys: &[String]) -> Result<u32> {
+    let requester = owner_machine(vault, peer)?;
+    home_handoff::retire_held(vault, requester, keys)
+}
+
+/// FIX 8875: those of `keys` this node keeps no live copy of: retired here,
+/// or never held.
+///
+/// # Errors
+///
+/// A refused peer.
+pub fn home_handoff_retired(
+    vault: &Vault,
+    peer: PeerMachine,
+    keys: &[String],
+) -> Result<Vec<String>> {
+    owner_machine(vault, peer)?;
+    Ok(home_handoff::retired_here(vault, keys))
 }
 
 /// FIX 5661 C2b (FIX 6211): readies this node as the vault's new MACRO home,

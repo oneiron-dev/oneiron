@@ -156,6 +156,8 @@ pub struct CanonicalDocumentFork {
     pub proposal_index: u64,
     pub proposal_len: u64,
     pub proposal_settled: bool,
+    /// The credential lineage its bundle froze as it opened (FIX 10931).
+    pub proposal_opener_lineage: Vec<[u8; 32]>,
     pub read_refs: Vec<[u8; 16]>,
     pub keep: Option<String>,
 }

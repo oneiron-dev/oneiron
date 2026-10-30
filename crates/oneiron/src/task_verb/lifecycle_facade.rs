@@ -15,6 +15,7 @@ use super::create_validation::{
     standard_body_in_txn, task_body_in_txn,
 };
 use super::route_receipts::{TaskCreateReceipt, TaskResultInput, TaskStartedReceipt};
+use super::settlement_anchor::anchor_kept_review_in_txn;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::TaskAssignee;
 use super::wire_encode::encode_task_verb_body;
@@ -343,6 +344,11 @@ impl Memory<'_> {
                 owner,
             )?;
         }
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement, unless this surface keeps no record.
+        if self.keeps_lifecycle() {
+            anchor_kept_review_in_txn(self.vault(), wtxn, task_ref, None)?;
+        }
         // The routing projection counts this settlement on the folds whose
         // runs worked this TASK before it settled (FIX 11618).
         crate::edit_distance::routing::refold_task_outcomes_in_txn(self.vault(), wtxn, task_ref);
@@ -375,6 +381,12 @@ impl Memory<'_> {
     /// later rewrite may change, never stands in. Every consult mint writes
     /// that fact, so a consult without one proves nobody. A TASK of another
     /// kind carries no such fact and keeps its body's addressee.
+    ///
+    /// A consult whose body arrived before its fact waits for it
+    /// ([`super::consult_assignee_wait`]): the executor its body addresses
+    /// is told so, and parks on it with `tasks.wait` until the fact lands.
+    /// That addressee never stands in meanwhile; anyone else's write stays
+    /// unaddressed.
     pub(super) fn require_execution_writer(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -382,6 +394,18 @@ impl Memory<'_> {
         body: &TaskVerbBody,
     ) -> MemoryResult<()> {
         let facts = self.vault().task_authority_facts_in(txn, task_ref)?;
+        if super::consult_assignee_wait::waits_for_assignee_fact(body, &facts)
+            && body_executor(body).is_ok_and(|executor| executor == self.actor())
+        {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                &format!(
+                    "this consult waits for its ConsultAssignee fact ({})",
+                    super::consult_assignee_wait::CONSULT_ASSIGNEE_FACT_WAIT
+                ),
+                "Park on the consult with tasks.wait; it wakes when the fact lands.",
+            ));
+        }
         if facts.has_consult_party_fact() || body.task_kind() == super::TaskKind::Consult {
             let standing = facts
                 .consult_execution_standing(self.actor())
@@ -395,15 +419,7 @@ impl Memory<'_> {
                 )
                 .map_err(MemoryError::from);
         }
-        let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
-            Some(entity_ref) => entity_ref,
-            None => EntityId::from_hex(&body.owner_ref).map_err(|_| {
-                MemoryError::from(Error::Record(RecordError::InvalidTaskBody(
-                    "tasks.body.owner_ref",
-                )))
-            })?,
-        };
-        if expected == self.actor() {
+        if body_executor(body)? == self.actor() {
             Ok(())
         } else {
             // The task is ADDRESSED. A write from anyone else is not a late
@@ -528,6 +544,13 @@ pub(super) fn complete_ask_member_in_txn(
                 &encode_task_verb_body(body),
             )
             .apply(txn)?;
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement; the completion keeps no row of its own, so no settler
+        // gate stands beside the reviewer's (FIX 11806).
+        anchor_kept_review_in_txn(vault, txn, answer.task_ref, None)?;
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11807).
+        crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, answer.task_ref);
     }
     Ok(())
 }
@@ -569,12 +592,14 @@ impl Memory<'_> {
 /// reply is refs only, `{task_ref, disposition, result_ref, finished_at}`,
 /// and a run reads the result through `result_ref`. A TASK no canonical run
 /// is parked on, or one not yet terminal, delivers nothing, so a commit
-/// that puts any TASK may pass it here, and so may a run's park.
+/// that puts any TASK may pass it here, and so may a run's park. A consult's
+/// ConsultAssignee fact passes here too, and wakes the runs parked on it.
 pub(crate) fn deliver_task_result_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     task: EntityId,
 ) -> crate::Result<()> {
+    super::consult_assignee_wait::wake_assignee_wait_in_txn(vault, txn, task)?;
     if !crate::code_run::has_parked_run_in_txn(vault, txn, task)? {
         return Ok(());
     }
@@ -601,6 +626,19 @@ impl Vault {
     /// deadline lands with no Dreamer enabled.
     pub fn settle_code_run_waits(&self) -> crate::Result<()> {
         super::ask_facade::settle_waiting_asks(self)
+    }
+}
+
+/// The executor `body` addresses: its assignee, or its owner when the
+/// assignee is the local Dreamer. Display, never a consult's standing.
+pub(super) fn body_executor(body: &TaskVerbBody) -> MemoryResult<EntityId> {
+    match body.assignee.and_then(TaskAssignee::entity_ref) {
+        Some(entity_ref) => Ok(entity_ref),
+        None => EntityId::from_hex(&body.owner_ref).map_err(|_| {
+            MemoryError::from(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.body.owner_ref",
+            )))
+        }),
     }
 }
 

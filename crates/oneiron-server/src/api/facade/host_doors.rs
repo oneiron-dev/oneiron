@@ -47,8 +47,8 @@ pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
 // The caller's own actor and person refs (FIX 1047).
-pub(crate) use super::self_actor_doors::*;
 pub(crate) use super::saved_query_doors::*;
+pub(crate) use super::self_actor_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
 // The shared-vault doors live beside these; the generated callers name them here.
@@ -85,6 +85,7 @@ pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
+pub(crate) use super::outbox_diverged_doors::*;
 pub(crate) use super::web_connector_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
@@ -161,6 +162,10 @@ pub(crate) use super::secret_custody_doors::*;
 pub(crate) use super::custody_drain_doors::*;
 // The owner's reservoir source preview door (FIX 11352), likewise.
 pub(crate) use super::reservoir_source_doors::*;
+// A kept export's read and release doors (FIX 11176), likewise.
+pub(crate) use super::export_transfer::{
+    vault_export_transfer_read, vault_export_transfer_release,
+};
 // The usage repair doors (FIX 6476), likewise.
 pub(crate) use super::usage_repair_doors::*;
 // The owner's root wave door (OF-427), likewise.

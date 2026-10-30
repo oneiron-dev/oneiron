@@ -42,6 +42,14 @@ pub(super) fn replay_record<T: OutboundTransport>(
     now_ms: u64,
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
+    // KS7-4b: an owner's erase that took this call's request since `record`
+    // was read never waited for this sender. Only that later send stops; the
+    // row the erase left settled replays as itself.
+    if record.state == IntentState::Pending
+        && let Some(erased) = record.erased_since_read(vault)?
+    {
+        return replay_record(vault, authority, erased, prepared, now_ms, transport);
+    }
     match (record.state, record.recorded_outcome) {
         (IntentState::Done, Some(RecordedOutboundOutcome::Acked)) => Ok(effect_result(
             &record,

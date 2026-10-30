@@ -263,6 +263,7 @@ fn policy_admits(server: &SyncServer, row: &MediaRow) -> bool {
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: row.locality,
+            host_keyless: false,
             seat_effort: None,
         },
         operation: row.operation,
@@ -281,7 +282,11 @@ fn policy_admits(server: &SyncServer, row: &MediaRow) -> bool {
         .is_ok();
     }
     let binding = match server.ai.model_locality(&model) {
-        Some(locality) => HostInferenceBinding::Advertised { model, locality },
+        Some(locality) => HostInferenceBinding::Advertised {
+            model,
+            locality,
+            keyless: false,
+        },
         None => HostInferenceBinding::Registered,
     };
     let context = HostInferenceContext {

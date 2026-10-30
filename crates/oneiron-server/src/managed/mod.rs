@@ -69,7 +69,7 @@ pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 pub(crate) use state_serve::{
     ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder, ManagedOwnerSession,
-    ManagedPersonHolder, ManagedWidenHolder,
+    ManagedPersonHolder, ManagedPersonSession, ManagedWidenHolder,
 };
 mod vault_gates;
 #[cfg(target_os = "linux")]
@@ -91,13 +91,13 @@ pub use self::vm_host::{
 #[cfg(target_os = "linux")]
 pub use self::vm_init::run_vm_init;
 #[cfg(target_os = "linux")]
-pub use self::vm_outbox::{
-    VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label, run_vm_outbox,
-};
-#[cfg(target_os = "linux")]
 pub(crate) use self::vm_outbox::{
     DIVERGED_ANSWER_ROUTE, DivergedAnswer, DivergedOwnerAnswer, VmOutboxMemberStatus,
     answer_diverged, companion_member_statuses,
+};
+#[cfg(target_os = "linux")]
+pub use self::vm_outbox::{
+    VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label, run_vm_outbox,
 };
 
 pub use self::args::{ManagedArgs, ManagedError, ManagedStartMode, NO_FD, SettingsRefusal};

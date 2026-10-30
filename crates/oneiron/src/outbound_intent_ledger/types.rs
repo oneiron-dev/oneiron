@@ -204,6 +204,9 @@ pub enum IntentEscalationReason {
     /// The person a send went to was erased before it settled: its request
     /// is gone and it is never sent again (FIX 10953).
     RecipientErased,
+    /// The owner erased this call's frozen request (KS7-4b): it is never
+    /// sent again, and the row keeps only its evidence.
+    OwnerErased,
     /// The provider reported that the remote task it accepted the send as
     /// failed or was cancelled (FIX 7960).
     RemoteTaskFailed,
@@ -224,6 +227,7 @@ impl IntentEscalationReason {
             Self::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
             Self::ActorErased => "actor_erased",
             Self::RecipientErased => "recipient_erased",
+            Self::OwnerErased => "owner_erased",
             Self::RemoteTaskFailed => "remote_task_failed",
         }
     }
@@ -242,6 +246,7 @@ impl IntentEscalationReason {
             "connector_key_slate_never_allow" => Some(Self::ConnectorSlateNeverAllow),
             "actor_erased" => Some(Self::ActorErased),
             "recipient_erased" => Some(Self::RecipientErased),
+            "owner_erased" => Some(Self::OwnerErased),
             "remote_task_failed" => Some(Self::RemoteTaskFailed),
             _ => None,
         }

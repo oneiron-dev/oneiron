@@ -13,6 +13,7 @@ mod home;
 mod lease_fence;
 mod milestone;
 pub mod observation;
+mod outage_due;
 mod owner_doors;
 mod program;
 #[cfg(feature = "sync")]
@@ -46,6 +47,7 @@ pub use self::free_time::*;
 pub(crate) use self::home::reelect_home_in_txn;
 pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
+pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
 pub use self::program::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
@@ -80,6 +82,8 @@ pub use self::program::{
     ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
     release_turn_program_hold_as_owner,
 };
+// FIX 11429: the waking actor's rebind of a turn program to a live slip.
+pub use self::program::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;

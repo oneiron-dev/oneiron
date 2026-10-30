@@ -136,6 +136,10 @@ pub enum ProgramAdmissionOutcome {
     /// The page the proposal's steps reached is not its pre-press page:
     /// the no-model batch ended so, and nothing was proposed.
     ReconstructionStopped { status: SubgoalStatus },
+    /// The no-model batch ended Done but the filled postcondition is unmet
+    /// on its page: the checks it missed, by index; nothing was proposed
+    /// (FIX 10721).
+    PostconditionUnmet { unmet: Vec<usize> },
     /// The proposal names parameters it gives no value.
     ArgsMissing { params: Vec<String> },
     /// The proposal's secret slots take secrets this run does not hold.
@@ -179,6 +183,9 @@ pub enum CallerUnavailable {
     ScopeRefused,
     /// No door rebuilds this caller: a person with no credential.
     ContextUnavailable,
+    /// The managed vault's attested owner the source acted as is no longer
+    /// its live owner (FIX 11690): his lapse, not the door's.
+    OwnerNotLive,
 }
 
 /// Why a job's sources no longer stand (CUA E8b).

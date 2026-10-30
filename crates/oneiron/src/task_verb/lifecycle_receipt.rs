@@ -192,6 +192,31 @@ pub(super) fn mark_settled_in(
     Ok(())
 }
 
+/// Names `kind` at `reference` as the anchor of the settled receipt kept
+/// under `id`, in the anchoring write's transaction
+/// ([`super::settlement_anchor`]). A receipt that already names an anchor
+/// keeps it, and one not kept anchors nothing. Only its fields change, so
+/// its index rows stand.
+pub(super) fn anchor_in(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &str,
+    kind: &str,
+    reference: &str,
+) -> MemoryResult<()> {
+    let key = id.to_owned();
+    let Some(mut row) = RECEIPTS.get(&vault.store, &*wtxn, &key)? else {
+        return Ok(());
+    };
+    if super::settlement_anchor::names_anchor(&row.fields) {
+        return Ok(());
+    }
+    row.fields
+        .extend(super::settlement_anchor::anchor_fields(kind, reference));
+    RECEIPTS.put(&vault.store, wtxn, &key, &row)?;
+    Ok(())
+}
+
 /// The receipt of the write that settled `task` at `finished_at` (FIX 3272),
 /// the least id when more than one was marked then: what a replay of that
 /// settlement names. `None` when that write kept none.
@@ -321,14 +346,16 @@ fn project(
 }
 
 /// Drops every lifecycle receipt naming `id` as its TASK or its parked
-/// proposal, in the transaction that erases it; a no-op for any other
-/// entity, as the report journal's erase is. The table keys on the receipt
-/// id, so its rows are found by what each one names.
+/// proposal, and the review a TASK kept for its settlement, in the
+/// transaction that erases it; a no-op for any other entity, as the report
+/// journal's erase is. The table keys on the receipt id, so its rows are
+/// found by what each one names.
 pub(crate) fn erase_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> crate::Result<()> {
+    super::settlement_anchor::erase_in_txn(store, txn, id)?;
     let hex = id.to_hex();
     for (key, row) in RECEIPTS.scan(store, txn)? {
         if row.trigger_ref.as_deref() == Some(hex.as_str())

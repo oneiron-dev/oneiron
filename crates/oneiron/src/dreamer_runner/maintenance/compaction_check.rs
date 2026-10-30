@@ -294,7 +294,8 @@ pub async fn run_compaction_check(
         }
     };
     let locality = judge_locality(&model)?;
-    let request = judge_request(&model, &declaration, &read, locality)?;
+    let keyless = model.inference.selected_keyless();
+    let request = judge_request(&model, &declaration, &read, locality, keyless)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -308,6 +309,7 @@ pub async fn run_compaction_check(
         evidence: &cited,
         state: &state,
         locality,
+        keyless,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
@@ -327,7 +329,10 @@ pub async fn run_compaction_check(
         diagnostic,
         decision: verdict.decision,
     };
-    record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+    if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, now) {
+        verdict.spend.note_before_error(ctx);
+        return Err(error);
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: verdict.spend.units,
         step_hashes: Vec::new(),
@@ -538,9 +543,10 @@ fn judge_request(
     declaration: &CompactionCheckDeclaration,
     read: &Ready,
     locality: crate::llm::ModelLocality,
+    keyless: bool,
 ) -> Result<LlmRequest> {
     let input = judge_input(declaration, read);
-    judge_call(model, diagnostic_schema(), &input, locality)
+    judge_call(model, diagnostic_schema(), &input, locality, keyless)
 }
 
 /// What the judge reads: the span, the summary and the span's retained
@@ -582,10 +588,11 @@ fn judge_call(
     schema: serde_json::Value,
     input: &serde_json::Value,
     locality: crate::llm::ModelLocality,
+    keyless: bool,
 ) -> Result<LlmRequest> {
     let input = serde_json::to_string(input)
         .map_err(|_| Error::InvariantViolation("the check input did not encode"))?;
-    let mut request = judge_shell(model, schema, locality);
+    let mut request = judge_shell(model, schema, locality, keyless);
     request.messages.push(LlmMessage {
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text { text: input }],
@@ -599,6 +606,7 @@ fn judge_shell(
     model: &CompactionCheckModel<'_>,
     schema: serde_json::Value,
     locality: crate::llm::ModelLocality,
+    keyless: bool,
 ) -> LlmRequest {
     LlmRequest {
         model: model.model.clone(),
@@ -615,6 +623,7 @@ fn judge_shell(
             ),
             response_format: ResponseFormat::Json { schema },
             locality,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {

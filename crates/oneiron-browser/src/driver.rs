@@ -53,7 +53,7 @@ mod verbs;
 
 pub(crate) use crate::capture::{crop_region, encode_png, png_dimensions};
 
-use crate::capture::{self, Capture, Captures};
+use crate::capture::{self, Capture, Captures, Viewport};
 use crate::cdp::Pipe;
 use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
 use crate::outline::{self, Line, Masks};
@@ -166,21 +166,28 @@ struct KeySpec {
     text: Option<String>,
 }
 
-/// One act's target, resolved once: its row as read now, its DOM node, and
-/// how it rebound when the handle named no longer stood.
+/// One act's target, resolved once: its row as read now, its DOM node on
+/// its own frame session (FIX 11576), and how it rebound when the handle
+/// named no longer stood.
 pub(crate) struct Target {
     pub(crate) row: Row,
     node: Value,
+    session: String,
     rebound: Option<Rebound>,
 }
 
 /// An image the driver holds: its content ref, its PNG bytes, what of the
-/// page it shows, and, for a screenshot, its capture.
+/// page it shows, and, for a screenshot, its capture. The charge for the
+/// bytes where they prove a past-threshold reply, given back once the
+/// image ages out (FIX 11578).
 struct Held {
     image: String,
     png: Vec<u8>,
     frame: Frame,
     capture: Option<Capture>,
+    // Dropped for the charge it gives back; never read (FIX 11578).
+    #[allow(dead_code)]
+    held: Option<crate::cdp::Held>,
 }
 
 /// What a held image shows: a viewport rectangle in CSS pixels, on the page
@@ -200,13 +207,18 @@ impl Frame {
     /// The frame of the (`x`, `y`, `width`, `height`) region of an image of
     /// `image` pixels that shows this frame.
     fn region(&self, image: (u32, u32), x: u32, y: u32, width: u32, height: u32) -> Self {
-        let across = self.width / f64::from(image.0.max(1));
-        let down = self.height / f64::from(image.1.max(1));
+        let view = Viewport {
+            left: self.left,
+            top: self.top,
+            width: self.width,
+            height: self.height,
+        }
+        .region(image, x, y, width, height);
         Self {
-            left: self.left + f64::from(x) * across,
-            top: self.top + f64::from(y) * down,
-            width: f64::from(width) * across,
-            height: f64::from(height) * down,
+            left: view.left,
+            top: view.top,
+            width: view.width,
+            height: view.height,
             scroll: self.scroll,
             url: self.url.clone(),
         }
@@ -215,8 +227,14 @@ impl Frame {
 
 impl CdpDriver {
     fn page(&self, method: &str, params: Value) -> Result<Value, BrowserError> {
+        self.call_in(&self.session, method, params)
+    }
+
+    /// One call on `session` (FIX 11576), a target's own frame session
+    /// where its row came from one, as `page` calls on the front tab's.
+    fn call_in(&self, session: &str, method: &str, params: Value) -> Result<Value, BrowserError> {
         self.pipe
-            .call(Some(&self.session), method, params, Instant::now() + CALL)
+            .call(Some(session), method, params, Instant::now() + CALL)
     }
 
     /// The front tab's accessibility nodes as they are now. A loaded page
@@ -436,11 +454,13 @@ impl CdpDriver {
             .ok_or_else(|| BrowserError::Protocol("image is not a PNG".to_owned()))?;
         let image = format!("blake3:{}", blake3::hash(&png).to_hex());
         let bytes = png.len() as u64;
+        let held = self.pipe.charge_media(png.len());
         self.media.push_back(Held {
             image: image.clone(),
             png,
             frame,
             capture,
+            held,
         });
         if self.media.len() > MEDIA {
             self.media.pop_front();
@@ -484,7 +504,20 @@ impl CdpDriver {
     }
 
     fn call_on(&self, node: &Value, function: &str, args: Value) -> Result<Value, BrowserError> {
-        let result = self.page(
+        self.call_on_in(&self.session, node, function, args)
+    }
+
+    /// `node`'s `function` on `session` (FIX 11576), as `call_on` calls it
+    /// on the front tab's session.
+    fn call_on_in(
+        &self,
+        session: &str,
+        node: &Value,
+        function: &str,
+        args: Value,
+    ) -> Result<Value, BrowserError> {
+        let result = self.call_in(
+            session,
             "Runtime.callFunctionOn",
             json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
         )?;

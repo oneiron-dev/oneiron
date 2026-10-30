@@ -285,9 +285,7 @@ fn call(request: &Request) -> std::io::Result<Reply> {
     line.push('\n');
     stream.write_all(line.as_bytes())?;
     let mut reply = String::new();
-    BufReader::new(stream)
-        .take(bound)
-        .read_line(&mut reply)?;
+    BufReader::new(stream).take(bound).read_line(&mut reply)?;
     serde_json::from_str(reply.trim_end()).map_err(std::io::Error::other)
 }
 

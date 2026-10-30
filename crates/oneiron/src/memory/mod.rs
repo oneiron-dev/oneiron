@@ -84,6 +84,8 @@ pub mod erase_sweep;
 mod export;
 mod export_audit;
 mod export_kept;
+// FIX 11176: a kept export read and let go through verbs.
+mod export_transfer_read;
 mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
@@ -214,6 +216,10 @@ pub(crate) use export_audit::{
     turn_thread_root,
 };
 pub use export_kept::KeptExportLapse;
+pub use export_transfer_read::{
+    EXPORT_TRANSFER_READ_BYTES, ExportTransferPiece, ExportTransferReadRequest,
+    ExportTransferReleaseRequest, ExportTransferReleased,
+};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
@@ -232,8 +238,9 @@ pub use oneiron_contracts::memory::{
     MemoryWrongRoot,
 };
 pub use people_verbs::{
-    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
-    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
+    GrantAskedRow, MessagePersonReceipt, MessagePersonRequest, PEOPLE_PAGE_SIZE, PeopleListRequest,
+    PeoplePage, PersonRequest,
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,

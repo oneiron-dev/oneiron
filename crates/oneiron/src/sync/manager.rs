@@ -49,6 +49,7 @@
 mod document_api;
 mod live_mirror;
 mod promotion;
+mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
@@ -297,7 +298,8 @@ impl WindowManager {
             }
             Err(err) => return Err(err),
         };
-        let recovered_from = doc.oplog_vv();
+        // FIX 5133: each commit the recovery makes is sent as its own update.
+        let recovered = recovery_commits::RecoveryCommits::watch(&doc);
 
         let rm_flagged = self.sync_state_marker_present(key)?;
         if rm_flagged {
@@ -321,7 +323,7 @@ impl WindowManager {
         let mirrored = reverse_rematerialize(&self.vault, &doc, key)?;
         // FIX 3095, 3787: what recovery mirrored is made durable, and sent,
         // before the forward pass clears the marks it mirrored.
-        self.route_recovered_delta(&doc, key, &recovered_from)?;
+        recovered.route(self, key)?;
         let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer, key)?;
         drop(deferral);
         // The door re-derives every scope summary after a write: this one
@@ -358,23 +360,6 @@ impl WindowManager {
         drop(opening);
         drop(registry);
         Ok((window, true))
-    }
-
-    /// Persists and routes what `doc`'s recovery committed since `before`,
-    /// as Observer A persists and routes a local update (FIX 3095).
-    fn route_recovered_delta(
-        &self,
-        doc: &loro::LoroDoc,
-        key: &WindowKey,
-        before: &loro::VersionVector,
-    ) -> Result<()> {
-        if doc.oplog_vv() == *before {
-            return Ok(());
-        }
-        let update = super::loro_support::export_updates_from(doc, before)?;
-        super::bridge::persist_window_update(&self.vault, key.as_str(), &update)?;
-        self.outbound.route(&self.vault, key.as_str(), &update);
-        Ok(())
     }
 
     /// Opens the default loaded-window set for `now_secs` per the
