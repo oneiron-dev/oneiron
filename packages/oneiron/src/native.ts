@@ -342,6 +342,8 @@ vaultMeshBindMachine(input: unknown): unknown
 vaultMeshSetAlpnGrant(input: unknown): unknown
 vaultMeshRevokeMachine(input: unknown): unknown
 vaultMeshDial(input: unknown): unknown
+vaultOutboxDivergedList(input: unknown): unknown
+vaultOutboxDivergedAnswer(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown

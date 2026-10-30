@@ -598,6 +598,7 @@ impl ObservedFactory {
                     binding: HostInferenceBinding::Advertised {
                         model: route.model.clone(),
                         locality: route.locality,
+                        keyless: route.ladder.all_keyless_own_server(),
                     },
                     sourced: Some(backend),
                 },
@@ -1179,6 +1180,7 @@ impl ResidentLend<'_> {
                 oneiron::BudgetExhaustionPolicy::Suspend,
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
+            let keyless = ladder.all_keyless_own_server();
             let backend = SourcedRunBackend::new(
                 ladder,
                 self.runtime.undeclared_run(
@@ -1208,7 +1210,11 @@ impl ResidentLend<'_> {
                     guard: &step,
                     model: model.clone(),
                     inference: HostInferenceContext {
-                        binding: HostInferenceBinding::Advertised { model, locality },
+                        binding: HostInferenceBinding::Advertised {
+                            model,
+                            locality,
+                            keyless,
+                        },
                         extraction_egress: egress.as_deref(),
                     },
                     role: None,

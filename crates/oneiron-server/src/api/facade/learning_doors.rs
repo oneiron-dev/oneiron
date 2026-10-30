@@ -28,7 +28,7 @@ async fn as_owner<T: Send + 'static>(
     };
     let server = Arc::clone(server);
     let answer: MemoryResult<T> =
-        tokio::task::spawn_blocking(move || act(&server, &owner).map_err(MemoryError::from))
+        super::clock_ingress::run_blocking(move || act(&server, &owner).map_err(MemoryError::from))
             .await
             .map_err(|_| internal(verb))
             .and_then(|answer| answer);

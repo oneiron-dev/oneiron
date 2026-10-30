@@ -633,22 +633,22 @@ impl Vault {
         Ok(())
     }
 
-    /// Every persisted update key of `window_key`, under the same 10,000-key
-    /// cap as [`Vault::sync_state_keys_with_prefix`].
+    /// Every persisted update key of `window_key`, however many (FIX 9783).
     #[cfg(feature = "sync")]
     fn window_update_keys(&self, window_key: &crate::sync::WindowKey) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start_at(
+            crate::scan_check::EngineScan::PackQuarantineRows,
+            window_key.as_str().as_bytes(),
+            crate::vault::MAX_SYNC_STATE_KEYS as u64,
+        );
         let mut keys = Vec::new();
-        for key in self.store.port_window_update_keys(
-            &rtxn,
-            Some(WindowAddress::new(window_key.as_str())),
-            |key| key.to_owned(),
-        )? {
-            if keys.len() >= crate::vault::MAX_SYNC_STATE_KEYS {
-                return Err(Error::IndexOverflow("window update keys"));
-            }
+        let address = WindowAddress::new(window_key.as_str());
+        for key in self.store.port_window_update_keys(&rtxn, Some(address), str::to_owned)? {
+            count.row();
             keys.push(key?);
         }
+        count.finish(self);
         Ok(keys)
     }
 

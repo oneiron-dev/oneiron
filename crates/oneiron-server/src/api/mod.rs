@@ -120,6 +120,7 @@ mod slip_renewal;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+pub(crate) mod legal_hold_schema;
 // FIX 2222: who a host credential acts as at every door, through one resolver.
 pub(crate) mod host_action;
 // OF-489: the held socket runs every facade verb through the facade's one

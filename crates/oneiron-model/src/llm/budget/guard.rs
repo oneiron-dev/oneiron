@@ -125,21 +125,27 @@ impl BudgetGuard {
     }
 
     /// Admits one call of `request`. A call its route selected to run on this
-    /// device is free local work (FIX 8623): it takes an unmetered lease that
-    /// reserves nothing ([`Self::admit_local`]) before any paid policy, row
-    /// cap or capacity is read, so a full or exhausted paid line never holds
-    /// it. Every other call reserves on the paid line, its purpose's policy
-    /// rows capping it.
+    /// device is free local work (FIX 8623), as is one its door attested as
+    /// keyless work on the owner's own server (FIX 10592): each takes an
+    /// unmetered lease that reserves nothing ([`Self::admit_local`]) before
+    /// any paid policy, row cap or capacity is read, so a full or exhausted
+    /// paid line never holds it. Every other call reserves on the paid line,
+    /// its purpose's policy rows capping it.
     ///
     /// This low-level door trusts the request it is given (FIX 8998): its
     /// `envelope.locality` must be host-bound (the seat, route or offer that
     /// will actually serve the call, stamped by host code before the request
-    /// is hashed or admitted), never a value read from caller JSON. A caller
+    /// is hashed or admitted), never a value read from caller JSON, and so
+    /// must its `envelope.host_keyless` (the stamping door verified every
+    /// rung that may serve the call from the host-bound ladder). A caller
     /// that relays a request someone else built inherits that binding, and
     /// one that cannot vouch for it binds the locality itself before this
     /// call; this door adds no second check.
     pub fn admit_for_request(&self, request: &LlmRequest) -> Result<BudgetAdmission, BudgetDenied> {
-        if request.envelope.locality == ModelLocality::OnDevice {
+        if request.envelope.locality == ModelLocality::OnDevice
+            || (request.envelope.host_keyless
+                && request.envelope.locality == ModelLocality::OwnServer)
+        {
             return self.admit_local();
         }
         let mut state = self.lock_state();

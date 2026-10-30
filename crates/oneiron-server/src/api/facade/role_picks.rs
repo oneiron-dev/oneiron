@@ -56,7 +56,7 @@ async fn asks(
 ) -> Result<Json<Vec<SkillTradeoffAsk>>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     let (actor, _) = facade_actor(&server, &auth)?;
-    let asks = tokio::task::spawn_blocking(move || -> Result<_, FacadeApiError> {
+    let asks = super::clock_ingress::run_blocking(move || -> Result<_, FacadeApiError> {
         let asks = skill_tradeoff_asks_for(&server.vault, &actor).map_err(engine)?;
         // FIX 8162: of the asks the reached-role check picked, the ones the
         // credential's own lane reads whole, at its destination.
@@ -108,7 +108,7 @@ async fn pick(
         )
     })?;
     let vault = Arc::clone(&server.vault);
-    let verdict = tokio::task::spawn_blocking(move || {
+    let verdict = super::clock_ingress::run_blocking(move || {
         settle_skill_tradeoff_ask_as(
             &vault,
             &WriteActor::new(actor, class),

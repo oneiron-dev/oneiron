@@ -3,9 +3,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::llm::{WorkerDescriptor, WorkerFailure, WorkerReadiness};
+use oneiron::llm::{
+    WorkerDescriptor, WorkerFailure, WorkerFailureDetail, WorkerPhase, WorkerReadiness,
+};
 
-use super::{Inner, LaunchFailure, Phase, RunningWorker, WORKER_CRASH_BACKOFF_SECS, WorkerExit};
+use super::{
+    Inner, LaunchFailure, LoadGrant, Phase, RunningWorker, WORKER_CRASH_BACKOFF_SECS, WorkerExit,
+};
 
 /// How one incarnation ended.
 enum Ended {
@@ -61,6 +65,24 @@ impl Inner {
         restart
     }
 
+    fn note_failure(&self, reason: &str) {
+        let mut state = self.lock();
+        let phase = match &state.phase {
+            Phase::Installing => WorkerPhase::Install,
+            Phase::Starting => WorkerPhase::Launch,
+            Phase::Qualifying => WorkerPhase::Qualify,
+            Phase::Draining | Phase::IdleStopped => WorkerPhase::Drain,
+            Phase::Ready(_) | Phase::Stopped | Phase::Backoff | Phase::Failed { .. } => {
+                WorkerPhase::Serve
+            }
+        };
+        state.failure_detail = Some(WorkerFailureDetail {
+            model: self.spec.model.clone(),
+            phase,
+            reason: reason.to_owned(),
+        });
+    }
+
     /// Parks the worker until its config changes.
     fn park(&self, readiness: WorkerReadiness, reason: String) {
         tracing::warn!(
@@ -69,6 +91,7 @@ impl Inner {
             %reason,
             "model worker parked until its config changes"
         );
+        self.note_failure(&reason);
         {
             let mut state = self.lock();
             state.phase = Phase::Failed { readiness, reason };
@@ -148,6 +171,7 @@ impl Inner {
             Err(ended) => return ended,
         };
         *attempt = 0;
+        self.mark_loaded();
         {
             let mut state = self.lock();
             state.epoch = observed
@@ -156,6 +180,7 @@ impl Inner {
                 .as_ref()
                 .map(|epoch| epoch.as_str().to_owned());
             state.phase = Phase::Ready(observed);
+            state.failure_detail = None;
         }
         self.notify();
         tracing::info!(worker = %self.spec.worker_id, model = %self.spec.model, "model worker ready");
@@ -183,15 +208,32 @@ impl Inner {
                 activity = running.activity() => activity,
             };
             self.note_activity(activity);
+            let now = Instant::now();
+            let (unleased, used_at, unload_requested) = {
+                let state = self.lock();
+                (
+                    state.leases == 0 && state.waiting == 0,
+                    state.used_at,
+                    state.unload_requested,
+                )
+            };
+            let fresh_idle = activity.is_some_and(|activity| activity.is_idle());
+            if unload_requested {
+                if unleased && fresh_idle && self.close_if_idle() {
+                    tracing::info!(worker = %self.spec.worker_id, "model worker unloaded under device pressure");
+                    tokio::select! {
+                        biased;
+                        () = self.abort_wanted() => return self.abort(running).await,
+                        _ = running.terminate(self.policy.stop_grace) => {}
+                    }
+                    return Ended::Stopped(Phase::IdleStopped);
+                }
+                continue;
+            }
             let Some(span) = self.policy.idle_stop else {
                 continue;
             };
-            let now = Instant::now();
-            let (unleased, used_at) = {
-                let state = self.lock();
-                (state.leases == 0 && state.waiting == 0, state.used_at)
-            };
-            if !(unleased && activity.is_some_and(|activity| activity.is_idle())) {
+            if !(unleased && fresh_idle) {
                 idle_since = None;
                 continue;
             }
@@ -271,7 +313,7 @@ impl Inner {
     fn close_if_idle(&self) -> bool {
         let closed = {
             let mut state = self.lock();
-            if state.leases == 0 && state.waiting == 0 && !state.retiring {
+            if state.leases == 0 && state.waiting == 0 && !state.retiring && self.admission_idle() {
                 state.phase = Phase::Draining;
                 true
             } else {
@@ -330,14 +372,55 @@ impl Inner {
         Ended::Stopped(next)
     }
 
+    async fn acquire_load_grant(&self) -> Result<Option<LoadGrant>, ()> {
+        let Some(admission) = self.admission() else {
+            return Ok(None);
+        };
+        let Some((_, declared)) = &self.device else {
+            return Ok(None);
+        };
+        let declared = *declared;
+        loop {
+            let admission_changed = admission.changed();
+            tokio::pin!(admission_changed);
+            admission_changed.as_mut().enable();
+            let mut worker_changed = self.changed.subscribe();
+            if self.retiring() || self.abort_requested() {
+                return Err(());
+            }
+            if let Some(grant) =
+                admission.acquire_load(&self.spec.worker_id, &declared, self.resource_class())
+            {
+                return Ok(Some(grant));
+            }
+            tokio::select! {
+                () = admission_changed.as_mut() => {},
+                _ = worker_changed.changed() => {}
+            }
+        }
+    }
+
     fn reserve_device(&self) {
+        // With admission, the pre-launch grant owns all load bytes; Ready
+        // promotes them to the steady row. The legacy path is unchanged.
+        if self.admission().is_some() {
+            return;
+        }
         if let Some((ledger, declared)) = &self.device {
             ledger.reserve(&self.spec.worker_id, *declared);
         }
     }
 
+    fn mark_loaded(&self) {
+        if let (Some(admission), Some((_, declared))) = (self.admission(), &self.device) {
+            admission.loaded(&self.spec.worker_id, *declared, self.resource_class());
+        }
+    }
+
     fn release_device(&self) {
-        if let Some((ledger, _)) = &self.device {
+        if let Some(admission) = self.admission() {
+            admission.reaped(&self.spec.worker_id);
+        } else if let Some((ledger, _)) = &self.device {
             ledger.release(&self.spec.worker_id);
         }
     }
@@ -363,6 +446,7 @@ pub(super) async fn drive(inner: Arc<Inner>) {
                 inner.park(failed(&failure), failure.reason);
                 return;
             }
+            inner.note_failure(&failure.reason);
             tracing::warn!(%worker, reason = %failure.reason, "model worker install failed; trying again");
             if !inner.back_off(&mut attempt).await {
                 inner.finish_or_restart(Phase::Stopped);
@@ -375,6 +459,13 @@ pub(super) async fn drive(inner: Arc<Inner>) {
                 inner.finish_or_restart(Phase::Stopped);
                 return;
             }
+            let _load_grant = match inner.acquire_load_grant().await {
+                Ok(grant) => grant,
+                Err(()) => {
+                    inner.finish_or_restart(Phase::Stopped);
+                    return;
+                }
+            };
             let running = match launcher.launch(&inner.spec).await {
                 Ok(running) => running,
                 Err(failure) if failure.permanent => {
@@ -382,6 +473,7 @@ pub(super) async fn drive(inner: Arc<Inner>) {
                     return;
                 }
                 Err(failure) => {
+                    inner.note_failure(&failure.reason);
                     tracing::warn!(%worker, reason = %failure.reason, "model worker did not start; trying again");
                     if !inner.back_off(&mut attempt).await {
                         inner.finish_or_restart(Phase::Stopped);
@@ -401,6 +493,7 @@ pub(super) async fn drive(inner: Arc<Inner>) {
                     tracing::info!(%worker, exit = %exit.description, "aborted model worker reaped");
                 }
                 Ended::Exited(exit) => {
+                    inner.note_failure(&exit.description);
                     tracing::warn!(%worker, exit = %exit.description, "model worker exited; relaunching after its backoff");
                     if !inner.back_off(&mut attempt).await {
                         inner.finish_or_restart(Phase::Stopped);

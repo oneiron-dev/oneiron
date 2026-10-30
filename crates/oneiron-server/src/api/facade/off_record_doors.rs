@@ -163,7 +163,7 @@ async fn as_caller<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let caller = caller(server, auth, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&server, &caller))
+    super::clock_ingress::run_blocking(move || act(&server, &caller))
         .await
         .map_err(|_| internal(verb))?
 }

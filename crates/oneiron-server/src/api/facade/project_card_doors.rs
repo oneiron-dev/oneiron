@@ -57,7 +57,7 @@ pub(crate) async fn vault_projects_confirm(
         return (Err(refused()), Vec::new());
     };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         let vault = server.vault();
         let mut listed = Vec::new();
         match vault.project_card(&input.card_id) {
