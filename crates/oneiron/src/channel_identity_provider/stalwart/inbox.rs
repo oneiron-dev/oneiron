@@ -358,7 +358,9 @@ impl StalwartClient {
                                     identity_ref: identity_ref.to_hex(),
                                     mailbox_address: mailbox.address.clone(),
                                     message_id: stop.message_id.clone(),
-                                    reason: stop.reason.clone(),
+                                    // A typed code: the error's text may quote
+                                    // the message.
+                                    reason: error_kind_code(error.kind()),
                                     polls,
                                     skipped_at: now,
                                 },
@@ -520,6 +522,15 @@ impl StalwartClient {
 /// one more than `cursor` counted when its last poll stopped at the same
 /// message, else one. A transport or storage failure says nothing about the
 /// message, so it leaves the count as the cursor had it.
+/// `kind`'s stable snake_case wire name (FIX 9177): the typed code a stored
+/// skip row keeps in place of the error's text.
+fn error_kind_code(kind: ErrorKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{kind:?}"))
+}
+
 fn stop_polls(cursor: Option<&StalwartInboxCursor>, id: &str, error: &Error) -> u32 {
     let counted = cursor
         .and_then(|cursor| cursor.stopped.as_ref())
