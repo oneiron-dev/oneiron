@@ -209,7 +209,9 @@ impl Vault {
         }
         // Independent dependencies are not necessarily reachable from the tip.
         // Keep them until this publication stops owning the visible-ref slot.
+        let mut count = self.start_obligation_count(&request.repo_id)?;
         for oid in &request.required_objects {
+            count.row();
             if oid != &request.new_oid && git.object_exists(&request.repo, oid)? {
                 self.pin_origin_object(
                     git,
@@ -221,6 +223,7 @@ impl Vault {
                 )?;
             }
         }
+        count.finish(self);
         let row = OriginPublicationRow::from_record(&record);
         PUBLICATIONS.encode_value(&row)?;
         self.with_write_txn_grouped(|wtxn| {
@@ -715,7 +718,9 @@ impl Vault {
                 record.new_oid.as_str()
             )));
         }
+        let mut count = self.start_obligation_count(&record.repo_id)?;
         for oid in &record.required_objects {
+            count.row();
             if !git.object_exists(repo, oid)? {
                 return Ok(Some(format!(
                     "required git object {} is not present in this object store",
@@ -724,6 +729,7 @@ impl Vault {
             }
         }
         for (oid, size) in &record.required_lfs_oids {
+            count.row();
             if !self.has_lfs_object(*oid, *size)? {
                 return Ok(Some(format!(
                     "required lfs object {} at {size} bytes is not stored in this vault",
@@ -750,6 +756,7 @@ impl Vault {
                 )));
             }
         }
+        count.finish(self);
         Ok(None)
     }
 
