@@ -3,7 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{AnnotationComment, DriftMarker, Locator, ThreadState};
+use super::{AnnotationComment, BodyAnchor, DriftMarker, Locator, ThreadState};
 use crate::blob_artifact::ArtifactKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -122,6 +122,26 @@ pub struct AnnotationAnchorView {
     /// Read from the immutable version and stored locator, with the caller's
     /// file sight. Null is explicit unreadability, never a nearby text match.
     pub quote: Option<String>,
+    /// Where the unit stands in the artifact's live body; null for an anchor
+    /// that names its version only.
+    pub body: Option<AnnotationBodyAnchorView>,
+}
+
+/// A body-frontier anchor: the live body's frontier and the unit's locator
+/// in the body there. Live edits move it; an export lands it on a version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AnnotationBodyAnchorView {
+    pub frontier: Vec<u8>,
+    pub locator: AnnotationLocator,
+}
+
+impl From<&BodyAnchor> for AnnotationBodyAnchorView {
+    fn from(body: &BodyAnchor) -> Self {
+        Self {
+            frontier: body.frontier.clone(),
+            locator: (&body.locator).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
