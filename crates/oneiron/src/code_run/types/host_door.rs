@@ -100,6 +100,9 @@ pub const AGENT_VERB_DOOR_UNBOUND: &str = "agent_verb_door_unbound";
 /// (`dispatcher::session_verbs`) answer through the room's view instead.
 pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
 
+/// The refusal a door that serves no reveal gives a replayed `reveal.wait`.
+const REVEAL_REPLAY_UNSERVED: &str = "reveal_replay_unserved";
+
 /// The host's door onto the SDK verb table.
 ///
 /// The engine runs no verb here. The host that binds this door runs each call
@@ -123,6 +126,23 @@ pub trait AgentVerbDoor: Send + Sync {
         origin: &crate::memory::HostWriteOrigin,
         invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>>;
+
+    /// A granted `reveal.wait` its step made before a park, made again as the
+    /// resumed step replays it (FIX 2360): the value read again under
+    /// `lease`, the T1 lease its kept answer names, for the replayed guest's
+    /// view only; nothing is spent, stamped or extended. A door that serves
+    /// no reveal refuses, and the step keeps its kept answer.
+    fn replay_reveal(
+        &self,
+        _call: &SelfAgentVerbCall,
+        _lease: crate::EntityId,
+        _origin: &crate::memory::HostWriteOrigin,
+        _invocation: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
+            code: REVEAL_REPLAY_UNSERVED.to_owned(),
+        }))
+    }
 
     /// Admits one call the run serves itself, before it runs. The host's
     /// ceiling and credential bind these as they bind [`Self::call`], so a run
