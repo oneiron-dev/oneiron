@@ -10,10 +10,11 @@
 //! executes it (its carrier and executor fields name the secret itself),
 //! no profile is asked for, and no other change takes the kit's signature.
 //! The transition then names that request, and a receiver admits it only on
-//! it ([`kit_request_admits`]). A fault recording it aborts the push's
-//! transaction, warned (FIX 12016): its staged pieces and frontier join
-//! leave with the request, never orphaned. Its permits are measured as an
-//! install's request's are, and past
+//! it ([`kit_request_admits`]). A fault recording it leaves the push as it
+//! was, its request zero, warned: never a refusal, never a demand for a
+//! profile. The request is recorded in a savepoint, so a fault takes its
+//! staged pieces and frontier join with it, never orphaned (FIX 12016).
+//! Its permits are measured as an install's request's are, and past
 //! one row ride in pieces the anchor signs ahead of the request (FIX 11866).
 
 use ed25519_dalek::SigningKey;
@@ -34,9 +35,11 @@ use crate::temporal::TimeRange;
 /// What the kit push records (CALLS `KS-6 kit request authority`): one
 /// custody request for the owner `actor`'s push of record `id` at
 /// `generation` to `permits`, signed with `anchor`, the anchor of `root`,
-/// in `wtxn`. Returns its entry hash once the fold here counts it; the
-/// error, warned, when it cannot be recorded or has no effect here, so the
-/// push's transaction aborts with its staged pieces and join (FIX 12016).
+/// in `wtxn`. Returns its entry hash once the fold here counts it; zero,
+/// warned, when it cannot be recorded or has no effect here, so the push
+/// goes on as it did (CUSTODY_NEW_CHECK_FAULT = WarnAndKeepCurrentPath).
+/// The request is written in a savepoint of `wtxn`: a fault drops every row
+/// it staged (its permit pieces and frontier join) with it (FIX 12016).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_kit_request_in_txn(
     vault: &Vault,
@@ -47,25 +50,35 @@ pub(super) fn record_kit_request_in_txn(
     generation: u32,
     permits: &[CustodyRecipientPermit],
     (anchor, root): (&SigningKey, RecoveryRootId),
-) -> Result<AuthorityEntryHash> {
-    match record_in_txn(
-        vault,
-        wtxn,
-        fold,
-        actor,
-        id,
-        generation,
-        permits,
-        (anchor, root),
-    ) {
-        Ok(hash) => Ok(hash),
+) -> AuthorityEntryHash {
+    let recorded = vault
+        .store
+        .env
+        .nested_write_txn(wtxn)
+        .map_err(Error::from)
+        .and_then(|mut savepoint| {
+            let hash = record_in_txn(
+                vault,
+                &mut savepoint,
+                fold,
+                actor,
+                id,
+                generation,
+                permits,
+                (anchor, root),
+            )?;
+            savepoint.commit()?;
+            Ok(hash)
+        });
+    match recorded {
+        Ok(hash) => hash,
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
-                "the kit push's custody request was not recorded; the push aborts with it \
-                 (FIX 12016)"
+                "the kit push's custody request was not recorded; the push carries no request, \
+                 as before (FIX 6053 pending here)"
             );
-            Err(error)
+            [0; 32]
         }
     }
 }
