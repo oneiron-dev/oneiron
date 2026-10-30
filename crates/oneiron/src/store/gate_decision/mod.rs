@@ -9,6 +9,8 @@ mod checkpoint_custody;
 mod claim_refs;
 mod context;
 mod keys;
+#[cfg(feature = "sync")]
+mod leave;
 mod ledger;
 mod lookup;
 mod orcb;
@@ -22,6 +24,8 @@ mod types;
 mod vet;
 
 pub(crate) use self::actor_erase::erase_gate_decision_actor_in_txn;
+#[cfg(feature = "sync")]
+pub(in crate::store) use self::leave::HeldGateRows;
 pub use self::actor_erase::{ACTOR_ERASE_GATE_ATTRIBUTION, GateAttributionErase};
 pub(in crate::store) use self::checkpoint_custody::archived_by;
 #[cfg(feature = "sync")]
