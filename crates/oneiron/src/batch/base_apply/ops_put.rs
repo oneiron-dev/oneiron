@@ -28,6 +28,7 @@ pub(super) fn apply_put_arm(
     mut put_options: PutOptions,
     origin: BaseWriteOrigin<'_>,
     text_index_trusted: bool,
+    authority_beside: Option<crate::authority::RowsBeside<'_>>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
     entity_type = validate_put_type(
@@ -135,7 +136,7 @@ pub(super) fn apply_put_arm(
     );
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
-    let applied = apply_put(
+    let applied = apply_put_beside(
         store,
         wtxn,
         PutRequest {
@@ -161,6 +162,7 @@ pub(super) fn apply_put_arm(
                 owner_authored: None,
             },
         },
+        authority_beside,
     )?;
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if rewritten {

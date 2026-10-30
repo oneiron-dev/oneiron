@@ -27,10 +27,11 @@ use super::{
     evict_authority_log_store_key_squatter, index_thread_claim_subject,
     lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update_hashed,
     reject_overlay_member_base_write, validate_immutable_task_record,
+    validate_replicated_authority_log_beside_for_local_vault,
     validate_replicated_authority_log_for_local_vault,
 };
 
-pub(super) use self::apply::apply_put;
+pub(super) use self::apply::{apply_put, apply_put_beside};
 pub(crate) use self::claim_admission::put_target_admitted_in;
 #[cfg(test)]
 pub(crate) use self::put_staging::wiped_rows;

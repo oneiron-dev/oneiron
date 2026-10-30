@@ -31,6 +31,9 @@ pub(in crate::sync) struct IngestCtx<'a> {
     lease_vault_id: u64,
     tombstones: &'a TombstoneIndex,
     residence: Option<Residence<'a>>,
+    /// The window's AUTHORITY_LOG rows, gathered from its carrier before the walk, which each
+    /// arriving one is judged beside (FIX 11764); `None` without a carrier.
+    pub(super) authority_beside: Option<crate::sync::selector::authority_beside::AuthorityBeside>,
     pub(super) staged: super::task_pairs::Staging,
 }
 
@@ -60,13 +63,22 @@ impl<'a> IngestCtx<'a> {
             lease_vault_id,
             tombstones,
             residence: None,
+            authority_beside: None,
             staged: Default::default(),
         }
     }
 
-    /// Checks every body against the window's residence before admission.
+    /// Checks every body against the window's residence before admission, and gathers the
+    /// window's AUTHORITY_LOG rows from its carrier, before the walk reads it, for each
+    /// arriving one to be judged beside (FIX 11764).
     pub(in crate::sync) fn with_residence(mut self, residence: Residence<'a>) -> Self {
         self.residence = Some(residence);
+        self.authority_beside = self.carrier_doc().map(|doc| {
+            crate::sync::selector::authority_beside::AuthorityBeside::gather(
+                &doc.get_map("entities"),
+                |_| true,
+            )
+        });
         self
     }
 
@@ -531,12 +543,20 @@ fn admit(
                 refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
                 return Ok(EntityStep::Protected { id, wrote: false });
             }
-            crate::batch::validate_replicated_authority_log_for_local_vault(
+            // History the window carries in two or more rows lands together: the row is
+            // judged beside the window's other authority rows, as its selector door judged it
+            // (FIX 11764).
+            let beside = || match &ctx.authority_beside {
+                Some(authority) => authority.rows(),
+                None => Ok(std::collections::BTreeMap::new()),
+            };
+            crate::batch::validate_replicated_authority_log_beside_for_local_vault(
                 &vault.store,
                 wtxn,
                 &id,
                 data,
                 vault.privacy_posture(),
+                &beside,
             )?;
             None
         }
@@ -607,7 +627,7 @@ fn admit(
     // while still validating structure: unknown type bytes, ungrammatical predicates, malformed
     // CLAIM bodies and ONE-1159 provenance records fail typed, and come back as refusals.
     // A TASK row its component stages lands in the component's batch (FIX 5998).
-    let applied = super::task_pairs::put_or_stage(&ctx.staged, vault, wtxn, id, header, &data);
+    let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, &data);
     if let Err(err) = applied {
         if let Some(quota_debit) = quota_debit {
             quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
