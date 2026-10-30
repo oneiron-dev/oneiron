@@ -6396,10 +6396,15 @@ impl AgentVerb {
                 | Self::VaultProductivityTree
                 | Self::VaultEsignCreate
                 | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
                 | Self::VaultEsignSendForSignature
                 | Self::VaultEsignNoticesDispatch
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
+                | Self::VaultEsignSigningAct
+                | Self::VaultEsignSigningPdf
+                | Self::VaultEsignSigningImage
+                | Self::VaultEsignSigningSignature
                 | Self::VaultEsignSealGet
                 | Self::VaultClaimsSeed
                 | Self::VaultSummariesRead
@@ -7368,11 +7373,6 @@ impl AgentVerb {
                 | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
-                | Self::VaultEsignLinksIssue
-                | Self::VaultEsignSigningAct
-                | Self::VaultEsignSigningPdf
-                | Self::VaultEsignSigningImage
-                | Self::VaultEsignSigningSignature
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend

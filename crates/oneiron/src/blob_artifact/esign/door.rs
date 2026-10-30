@@ -18,9 +18,14 @@
 //!   recipient ceremony, typed twins of the public `/sign/*` doors. The
 //!   capability in the request is the authority (the public doors carry it
 //!   in the `x-oneiron-esign-capability` header, these rows in their
-//!   input); the bound caller only classes the act.
+//!   input); the bound caller only classes the act, and a narrowed
+//!   credential's lane bounds it to the documents that lane reaches.
 //! - `vault.esign.seal.get`: the seal task's receipts for one document
 //!   and its sealed manifest once sealing lands.
+//!
+//! FIX 6403: every row admits a world-, facet- or record-scoped credential
+//! within its own read lane ([`super::lane_scope`]); an unrestricted caller
+//! keeps each row's own path.
 use super::delivery_settlement::EsignDeliveryReceipt;
 use super::document_view::EsignSealTrail;
 use super::lane_scope::{self, EsignScope};
@@ -34,9 +39,9 @@ use crate::outbound::{
 };
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 mod draft;
+mod links;
 mod read;
 
 /// A signing document to draft on an existing artifact.
@@ -356,9 +361,22 @@ impl Memory<'_> {
             crate::edge::EdgeActorClass::Human => super::SigningCaller::Person,
             _ => super::SigningCaller::Agent,
         };
-        Ok(self
-            .vault()
-            .execute_signing_action_as(&token, &input.action, caller, None, None)?)
+        let vault = self.vault();
+        Ok(match self.esign_scope()? {
+            EsignScope::Unrestricted => {
+                vault.execute_signing_action_as(&token, &input.action, caller, None, None)?
+            }
+            EsignScope::Credential(lane) => vault.execute_signing_action_within(
+                &token,
+                &input.action,
+                caller,
+                None,
+                None,
+                &|txn: &heed::RoTxn<'_>, document: EntityId| {
+                    lane_scope::reaches(&lane, txn, document)
+                },
+            )?,
+        })
     }
 
     /// `vault.esign.signing.pdf`: one ceremony item's bytes under its
@@ -374,9 +392,21 @@ impl Memory<'_> {
     ) -> MemoryResult<EsignSigningPdfView> {
         use base64::Engine;
         let token = super::EsignCapability::parse(&input.token)?;
-        let bytes = self
-            .vault()
-            .esign_pdf_for_capability(&token, input.item, None, None)?;
+        let vault = self.vault();
+        let bytes = match self.esign_scope()? {
+            EsignScope::Unrestricted => {
+                vault.esign_pdf_for_capability(&token, input.item, None, None)?
+            }
+            EsignScope::Credential(lane) => vault.esign_pdf_for_capability_within(
+                &token,
+                input.item,
+                None,
+                None,
+                &|txn: &heed::RoTxn<'_>, document: EntityId| {
+                    lane_scope::reaches(&lane, txn, document)
+                },
+            )?,
+        };
         Ok(EsignSigningPdfView {
             item: input.item,
             pdf_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -398,7 +428,17 @@ impl Memory<'_> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&input.png_or_jpeg_base64)
             .map_err(|_| MemoryError::bad_request("png_or_jpeg_base64 is not base64"))?;
-        let image_ref = self.vault().upload_esign_signature_image(&token, &bytes)?;
+        let vault = self.vault();
+        let image_ref = match self.esign_scope()? {
+            EsignScope::Unrestricted => vault.upload_esign_signature_image(&token, &bytes)?,
+            EsignScope::Credential(lane) => vault.upload_esign_signature_image_within(
+                &token,
+                &bytes,
+                &|txn: &heed::RoTxn<'_>, document: EntityId| {
+                    lane_scope::reaches(&lane, txn, document)
+                },
+            )?,
+        };
         Ok(EsignSigningImageView { image_ref })
     }
 
@@ -413,9 +453,19 @@ impl Memory<'_> {
     ) -> MemoryResult<EsignSigningSignatureView> {
         use base64::Engine;
         let token = super::EsignCapability::parse(&input.token)?;
-        let bytes = self
-            .vault()
-            .esign_signature_image_for_capability(&token, &input.image_ref)?;
+        let vault = self.vault();
+        let bytes = match self.esign_scope()? {
+            EsignScope::Unrestricted => {
+                vault.esign_signature_image_for_capability(&token, &input.image_ref)?
+            }
+            EsignScope::Credential(lane) => vault.esign_signature_image_for_capability_within(
+                &token,
+                &input.image_ref,
+                &|txn: &heed::RoTxn<'_>, document: EntityId| {
+                    lane_scope::reaches(&lane, txn, document)
+                },
+            )?,
+        };
         Ok(EsignSigningSignatureView {
             image_ref: input.image_ref.clone(),
             image_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -425,7 +475,8 @@ impl Memory<'_> {
     /// `vault.esign.links.issue`: the vault owner mints the draft's signing
     /// capabilities and receives each new one once, to deliver. Only the
     /// owner's proof mints: the one the host bound to this request, else the
-    /// embedded owner's own.
+    /// embedded owner's own. A narrowed credential mints only as the vault
+    /// owner's own, on a draft its lane reaches (FIX 6403).
     /// # Errors
     /// A caller that is not the vault owner, a document already sent, or no
     /// such document.
@@ -435,6 +486,9 @@ impl Memory<'_> {
     ) -> MemoryResult<EsignLinksView> {
         const VERB: &str = "vault.esign.links.issue";
         let document = document_id(&input.document_ref)?;
+        if let EsignScope::Credential(lane) = self.esign_scope()? {
+            return self.esign_links_issue_in_lane(&lane, document, input.rotate);
+        }
         let embedded: AuthenticatedOwner;
         let owner = match self.owner_authorship() {
             Some(owner) => owner,
@@ -450,24 +504,7 @@ impl Memory<'_> {
             vault.issue_esign_capabilities(owner, document)?
         };
         let state = vault.esign_document(document)?;
-        let mut minted: BTreeMap<String, super::EsignCapability> = minted.into_iter().collect();
-        let mut issued = Vec::new();
-        let mut unchanged = Vec::new();
-        for recipient in state.document.recipients {
-            match minted.remove(&recipient.id) {
-                Some(capability) => issued.push(EsignIssuedLink {
-                    capability: capability.expose_for_delivery().to_owned(),
-                    recipient: recipient.id,
-                    email: recipient.email,
-                }),
-                None => unchanged.push(recipient.id),
-            }
-        }
-        Ok(EsignLinksView {
-            document_ref: document.to_hex(),
-            issued,
-            unchanged,
-        })
+        Ok(links::links_view(document, state, minted))
     }
 
     /// `vault.esign.send_for_signature`: sends the drafted document to its

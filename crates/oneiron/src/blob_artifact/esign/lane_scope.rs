@@ -215,6 +215,25 @@ pub(super) fn reaches_signing_document(
     Ok(true)
 }
 
+/// Refuses the `document` a capability binds when a narrowed caller's
+/// `ceiling` does not reach it in `txn`, as the invalid capability a
+/// ceremony row answers (FIX 6403). An unrestricted caller's ceiling admits
+/// every document and reads nothing.
+/// # Errors
+/// A document out of the ceiling's reach, a `document` that is no id, or the
+/// ceiling's own read failure.
+pub(super) fn ceiling_admits_in(
+    ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    txn: &heed::RoTxn<'_>,
+    document: &str,
+) -> Result<()> {
+    if ceiling(txn, EntityId::from_hex(document)?)? {
+        Ok(())
+    } else {
+        Err(invalid("invalid capability"))
+    }
+}
+
 /// One write of a narrowed call on `document`: through the document
 /// artifact's own content writer (the actor's Grant at the document's
 /// position in a shared vault, never a whole-vault one), the lane judged
