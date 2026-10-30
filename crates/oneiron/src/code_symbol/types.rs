@@ -131,6 +131,9 @@ impl CodeEmbeddingVector {
     }
 }
 
+/// One revision of a symbol. Its identity is its file document, name, kind
+/// and ordinal (ARCH-0050, FIX 7809); its path and fingerprint are this
+/// revision's data, so a rename or an edit above it keeps the symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CodeSymbolRevision {
@@ -142,6 +145,11 @@ pub struct CodeSymbolRevision {
     pub provenance_claim_id: Option<EntityId>,
     pub source_session: Option<String>,
     pub producing_operations: Vec<CodeProducingOperation>,
+    /// The file document the symbol is a span on; `None` names the
+    /// document the path's first op births.
+    pub document: Option<[u8; 32]>,
+    /// How many symbols of the same name and kind precede it in its file.
+    pub ordinal: u32,
 }
 
 impl CodeSymbolRevision {
@@ -165,7 +173,18 @@ impl CodeSymbolRevision {
             provenance_claim_id,
             source_session,
             producing_operations: Vec::new(),
+            document: None,
+            ordinal: 0,
         }
+    }
+
+    /// This revision on `document`, the `ordinal`-th symbol of its name and
+    /// kind in that file.
+    #[must_use]
+    pub fn on_document(mut self, document: Option<[u8; 32]>, ordinal: u32) -> Self {
+        self.document = document;
+        self.ordinal = ordinal;
+        self
     }
 }
 
@@ -228,12 +247,25 @@ pub struct CodeSymbolBlame {
 pub struct CodeSymbolSource<'a> {
     pub path: &'a str,
     pub text: &'a str,
+    /// The file document `path` is, when the caller read it (FIX 7809).
+    pub document: Option<[u8; 32]>,
 }
 
 impl<'a> CodeSymbolSource<'a> {
     #[must_use]
     pub const fn new(path: &'a str, text: &'a str) -> Self {
-        Self { path, text }
+        Self {
+            path,
+            text,
+            document: None,
+        }
+    }
+
+    /// This source as the file document `document`.
+    #[must_use]
+    pub fn with_document(mut self, document: [u8; 32]) -> Self {
+        self.document = Some(document);
+        self
     }
 }
 

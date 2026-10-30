@@ -52,7 +52,7 @@ pub fn derive_code_embedding_inputs_from_text_diff(
             .flat_map(|version| version.byte_spans)
             .map(|(start, end)| line(start)..line(end) + 1)
             .collect();
-    rust_code_embedding_inputs(repo_ref, path, new_text, &changed_ranges)
+    rust_code_embedding_inputs(repo_ref, path, None, new_text, &changed_ranges)
 }
 
 pub fn embed_code_chunks(

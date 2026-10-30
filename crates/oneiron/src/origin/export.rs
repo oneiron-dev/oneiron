@@ -100,6 +100,25 @@ impl Vault {
         request: &EngineCommitExport,
         authority: Option<&OriginAuthorityLease>,
     ) -> Result<OriginPublicationReceipt> {
+        match self.export_engine_commit_judged(git, repo, request, authority, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(receipt) => Ok(receipt),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::export_engine_commit`], with `judge` deciding the exact ref
+    /// move once its Git projection is known and before anything records
+    /// or publishes it (FIX 8800): a refusal there exports nothing.
+    pub(crate) fn export_engine_commit_judged<R>(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        request: &EngineCommitExport,
+        authority: Option<&OriginAuthorityLease>,
+        judge: impl FnOnce(&GitOid) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
         let _guard = lock_repository(repo.common_dir())?;
         // The shared eligibility (G4 PR3): the stored promotion is judged
         // again before any Git object is created, at its original point.
@@ -159,6 +178,9 @@ impl Vault {
             },
             revision.finalized_at,
         )?;
+        if let Err(refused) = judge(&oid)? {
+            return Ok(Err(refused));
+        }
         self.with_write_txn_grouped(|txn| {
             let key = export_key(repo, revision.revision_id);
             if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
@@ -204,10 +226,11 @@ impl Vault {
             learned_at: revision.finalized_at,
         };
         self.put_origin_publication_intent(&publication)?;
-        match authority {
+        let receipt = match authority {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),
-        }
+        }?;
+        Ok(Ok(receipt))
     }
 }
 
