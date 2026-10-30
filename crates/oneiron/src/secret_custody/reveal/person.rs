@@ -120,8 +120,8 @@ impl Vault {
         let reveal = asker
             .reach()
             .covering_grant(&asker.connection(), "names", &grants)?
-            .map_or(HandleReveal::Asks, |(_, grant_ref)| HandleReveal::Hydrates {
-                grant_ref,
+            .map_or(HandleReveal::Asks, |(_, grant_ref)| {
+                HandleReveal::Hydrates { grant_ref }
             });
         let learned_at = self
             .store
