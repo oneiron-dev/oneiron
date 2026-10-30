@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4388 declarations.
+Census: 1211 facade rows, 4389 declarations.
 Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -2165,7 +2165,7 @@ AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Can
 SpendState = Literal["open", "closed"]
 class SpendPayer(TypedDict):
     party: EntityId
-    granted_by: EntityId
+    granted_by: NotRequired[EntityId | None]
     at_ms: int
 class SpendScope(TypedDict):
     scope: SpendScopeId
@@ -5044,11 +5044,27 @@ class UnifiedInboxGroupPage(TypedDict):
     groups: list[UnifiedInboxGroup]
     next: NotRequired[str | None]
 InboxGroupKind = Literal["dreamer", "shape"]
+class InboxGroupResolveTargetFallback(TypedDict):
+    kind: Literal["fallback"]
+class InboxGroupResolveTargetBan(TypedDict):
+    kind: Literal["ban"]
+    text: str
+class InboxGroupResolveTargetStyleRule(TypedDict):
+    kind: Literal["style_rule"]
+    text: str
+class InboxGroupResolveTargetCharterLine(TypedDict):
+    kind: Literal["charter_line"]
+    text: str
+class InboxGroupResolveTargetBriefUpdate(TypedDict):
+    kind: Literal["brief_update"]
+    text: str
+InboxGroupResolveTarget = InboxGroupResolveTargetFallback | InboxGroupResolveTargetBan | InboxGroupResolveTargetStyleRule | InboxGroupResolveTargetCharterLine | InboxGroupResolveTargetBriefUpdate
 class InboxGroupResolveRequest(TypedDict):
     kind: InboxGroupKind
     group_key: str
     verb: InboxBulkVerb
     verb_class: NotRequired[str | None]
+    target: NotRequired[InboxGroupResolveTarget | None]
 class InboxBundleResolution(TypedDict):
     group_key: str
     verb: InboxBulkVerb
@@ -21244,32 +21260,32 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
-class NoteEditReplaceSpan(TypedDict):
+class NoteProgramEditReplaceSpan(TypedDict):
     kind: Literal["replace_span"]
     start: NoteAnchor
     end: NoteAnchor
     text: str
-class NoteEditInsertAfter(TypedDict):
+class NoteProgramEditInsertAfter(TypedDict):
     kind: Literal["insert_after"]
     anchor: NoteAnchor
     text: str
-class NoteEditAppendToSection(TypedDict):
+class NoteProgramEditAppendToSection(TypedDict):
     kind: Literal["append_to_section"]
     end: NoteAnchor
     text: str
-class NoteEditWholeText(TypedDict):
+class NoteProgramEditWholeText(TypedDict):
     kind: Literal["whole_text"]
     text: str
     timeout_ms: int
     base: NotRequired[NoteVersion | None]
-class NoteEditRewrite(TypedDict):
+class NoteProgramEditRewrite(TypedDict):
     kind: Literal["rewrite"]
     text: str
-NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
+NoteProgramEdit = NoteProgramEditReplaceSpan | NoteProgramEditInsertAfter | NoteProgramEditAppendToSection | NoteProgramEditWholeText | NoteProgramEditRewrite
 class NoteForkRequest(TypedDict):
     note_ref: str
     base: NoteVersion
-    edit: NoteEdit
+    edit: NoteProgramEdit
     reason: NotRequired[str | None]
 class NoteForkRecordView(TypedDict):
     note_ref: str
@@ -21348,20 +21364,20 @@ class NoteEditorClosed(TypedDict):
     closed: bool
 class EditNoteRequest(TypedDict):
     note_ref: str
-    edit: NoteEdit
-class NoteEditOutcomeEdited(TypedDict):
+    edit: NoteProgramEdit
+class NoteProgramEditOutcomeEdited(TypedDict):
     outcome: Literal["edited"]
     head: EntityId
-class NoteEditOutcomeRewriteFork(TypedDict):
+class NoteProgramEditOutcomeRewriteFork(TypedDict):
     outcome: Literal["rewrite_fork"]
     fork: EntityId
-class NoteEditOutcomeProposedFork(TypedDict):
+class NoteProgramEditOutcomeProposedFork(TypedDict):
     outcome: Literal["proposed_fork"]
     fork: EntityId
-class NoteEditOutcomeReviewRequired(TypedDict):
+class NoteProgramEditOutcomeReviewRequired(TypedDict):
     outcome: Literal["review_required"]
     receipt: CommitReceipt
-NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
+NoteProgramEditOutcome = NoteProgramEditOutcomeEdited | NoteProgramEditOutcomeRewriteFork | NoteProgramEditOutcomeProposedFork | NoteProgramEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
 class NoteSeal(TypedDict):

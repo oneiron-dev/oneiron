@@ -5,25 +5,57 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::files_intake::Rescanned;
 use crate::owner::folder_sources::{self, AttachedFolder, DetachedFolder, ListedFolder};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/imports/folders", get(list))
-        .route("/imports/folders/attach", post(attach))
-        .route("/imports/folders/rescan", post(rescan))
-        .route("/imports/folders/detach", post(detach))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/imports/folders",
+                summary: "Every attached folder, with its ledger's counts.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/imports/folders/attach",
+                summary: "Attaches a folder and lands its notes; serve rescans it every few minutes from then on.",
+                row: None,
+            },
+            post(attach),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/imports/folders/rescan",
+                summary: "Rescans one attached folder now, or every attached folder.",
+                row: None,
+            },
+            post(rescan),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/imports/folders/detach",
+                summary: "Detaches a folder: no rescan reads it again. Its notes stay.",
+                row: None,
+            },
+            post(detach),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

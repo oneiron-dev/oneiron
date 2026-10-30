@@ -498,7 +498,7 @@ pub fn skill_optimize_tradeoff_pick_by(
         input.choice,
         vault.now_recorded_at(),
     )?;
-    let view = super::sdk_skills::verdict_view(verdict);
+    let view = super::skills::verdict_view(verdict);
     Ok(SkillOptimizeResultView {
         job_ref: None,
         state: None,

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1211 facade rows, 4382 generated types.
+// UniFFI census: 1211 facade rows, 4383 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -1001,7 +1001,7 @@ pub struct ScratchpadSealRequest {
     pub session_id: String,
 }
 
-/// `oneiron::verbs::self::DiaryEntryRequest`.
+/// `oneiron::verbs::self_verbs::DiaryEntryRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DiaryEntryRequest {
@@ -1024,7 +1024,7 @@ pub struct RecordRef {
     pub label: String,
 }
 
-/// `oneiron::verbs::self::DiaryEntryReceipt`.
+/// `oneiron::verbs::self_verbs::DiaryEntryReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DiaryEntryReceipt {
     #[serde(rename = "entry_id")]
@@ -4596,7 +4596,7 @@ pub struct TaskCancelReceipt {
     pub forced: bool,
 }
 
-/// `oneiron::verbs::self::SteerRequest`.
+/// `oneiron::verbs::self_verbs::SteerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SteerRequest {
@@ -4608,7 +4608,7 @@ pub struct SteerRequest {
     pub key: String,
 }
 
-/// `oneiron::verbs::self::SteerReceipt`.
+/// `oneiron::verbs::self_verbs::SteerReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SteerReceipt {
     #[serde(rename = "task_ref")]
@@ -6787,8 +6787,12 @@ pub enum SpendState {
 pub struct SpendPayer {
     #[serde(rename = "party")]
     pub party: String,
-    #[serde(rename = "granted_by")]
-    pub granted_by: String,
+    #[serde(
+        rename = "granted_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub granted_by: Option<String>,
     #[serde(rename = "at_ms")]
     pub at_ms: u64,
 }
@@ -15624,6 +15628,22 @@ pub enum InboxGroupKind {
     Shape,
 }
 
+/// `oneiron::inbox::unified::InboxGroupResolveTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "text")]
+pub enum InboxGroupResolveTarget {
+    #[serde(rename = "fallback")]
+    Fallback,
+    #[serde(rename = "ban")]
+    Ban(String),
+    #[serde(rename = "style_rule")]
+    StyleRule(String),
+    #[serde(rename = "charter_line")]
+    CharterLine(String),
+    #[serde(rename = "brief_update")]
+    BriefUpdate(String),
+}
+
 /// `oneiron::inbox::unified::InboxGroupResolveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -15640,6 +15660,8 @@ pub struct InboxGroupResolveRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub verb_class: Option<String>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<InboxGroupResolveTarget>,
 }
 
 /// `oneiron::inbox::model::InboxBundleResolution`.
@@ -24087,7 +24109,7 @@ pub struct OffRecordRecallRequest {
     pub limit: u64,
 }
 
-/// `oneiron::verbs::memory::CreateNoteRequest`.
+/// `oneiron::verbs::memory_requests::CreateNoteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNoteRequest {
@@ -65603,7 +65625,7 @@ pub struct ScopedReadResultOptionalSharedBriefCitation {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::verbs::memory::AuthorTakeTarget`.
+/// `oneiron::verbs::memory_requests::AuthorTakeTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AuthorTakeTarget {
     #[serde(rename = "subject")]
@@ -65612,7 +65634,7 @@ pub enum AuthorTakeTarget {
     Claim(String),
 }
 
-/// `oneiron::verbs::memory::AuthorTakeRequest`.
+/// `oneiron::verbs::memory_requests::AuthorTakeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorTakeRequest {
@@ -65622,7 +65644,7 @@ pub struct AuthorTakeRequest {
     pub markdown: String,
 }
 
-/// `oneiron::verbs::memory::CreateNoteFromEntityRequest`.
+/// `oneiron::verbs::memory_requests::CreateNoteFromEntityRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNoteFromEntityRequest {
@@ -65696,11 +65718,11 @@ pub struct ScopedReadResultOptionalNoteHistoryView {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::note::documents::NoteEdit`.
+/// `oneiron::note::documents::NoteProgramEdit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
-pub enum NoteEdit {
+pub enum NoteProgramEdit {
     #[serde(rename = "replace_span")]
     ReplaceSpan {
         #[serde(rename = "start")]
@@ -65749,7 +65771,7 @@ pub struct NoteForkRequest {
     #[serde(rename = "base")]
     pub base: NoteVersion,
     #[serde(rename = "edit")]
-    pub edit: NoteEdit,
+    pub edit: NoteProgramEdit,
     #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -65999,20 +66021,20 @@ pub struct NoteEditorClosed {
     pub closed: bool,
 }
 
-/// `oneiron::verbs::memory::EditNoteRequest`.
+/// `oneiron::verbs::memory_requests::EditNoteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EditNoteRequest {
     #[serde(rename = "note_ref")]
     pub note_ref: String,
     #[serde(rename = "edit")]
-    pub edit: NoteEdit,
+    pub edit: NoteProgramEdit,
 }
 
-/// `oneiron::note::documents::NoteEditOutcome`.
+/// `oneiron::note::documents::NoteProgramEditOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
-pub enum NoteEditOutcome {
+pub enum NoteProgramEditOutcome {
     #[serde(rename = "edited")]
     Edited {
         #[serde(rename = "head")]

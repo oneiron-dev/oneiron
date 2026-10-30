@@ -251,7 +251,8 @@ pub(crate) async fn vault_voices_targets_evict(
 /// target's current clone at the locality its clone wire states, or a
 /// reference target's fence at the locality its provider states. A target
 /// this host does not render reads the same metadata and says so. No
-/// provider call.
+/// provider call. It lists the actor it is of; an actor that no longer
+/// reads as this vault's entity names no row, so it lists none (FIX 6080).
 pub(crate) async fn vault_voices_inspect(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -269,7 +270,7 @@ pub(crate) async fn vault_voices_inspect(
         VERB,
         Ok(actor),
         move |server, actor| sdk::inspect_voice_bank_as(server.vault(), &actor, &input, render),
-        move |_| named.map(|named| vec![named]),
+        move |_| Some(named.into_iter().collect()),
     )
     .await
 }

@@ -7,26 +7,58 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{ConnectAccepted, ConnectGrant, EmptyRequest, Offer};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::federation_connect::{self, AcceptConnect, MintConnectGrant, OfferConnect};
 use crate::owner::hooked_row;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/federation/connect", get(identity))
-        .route("/federation/connect/grants", post(mint_grant))
-        .route("/federation/connect/offer", post(offer))
-        .route("/federation/connect/accept", post(accept))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/federation/connect",
+                summary: "This vault's id and host key, what a peer's owner names to offer it a pact.",
+                row: None,
+            },
+            get(identity),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/grants",
+                summary: "Mints the guest grant a Connect with a peer vault governs: named local worlds, read and propose only, inside the vault's Connect guest ceiling. Inert until the pact is Active.",
+                row: None,
+            },
+            post(mint_grant),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/offer",
+                summary: "This host's signed half of a new pact with a peer vault, for the owner to carry to the peer.",
+                row: None,
+            },
+            post(offer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/accept",
+                summary: "Logs the Connect the peer's half signs and answers this host's half of the same pact.",
+                row: None,
+            },
+            post(accept),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/federation/connect/grants`'s body

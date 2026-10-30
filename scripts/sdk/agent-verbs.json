@@ -14513,6 +14513,8 @@
       "scope": "Write",
       "proposes": true,
       "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true,
         "validate": "input.validate()?;"
       },
       "section": false
