@@ -11,12 +11,14 @@
     reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use super::{decode, encode};
+use loro::LoroMap;
+
+use super::{decode, decode_held, encode};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::store::checkpoint_payload::rows::{NOT_SPELLED_BACK, OwnerRef, bad_part};
-use crate::sync::carrier_parts::is_part_key;
+use crate::sync::carrier_parts::{Parts, is_part_key};
 use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified, ValueSplit};
 use crate::workspace_roster::RoomTurn;
 
@@ -43,22 +45,58 @@ fn named(hex: &str) -> Option<EntityId> {
 
 /// Where the turn row under `key` goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
-    let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
     // FIX 11790: a part goes with the manifest that lists it, and a manifest
     // under the turn its key names.
     if is_part_key(key) {
         return Placement::Part;
     }
     if let Some(parts) = crate::sync::room_parts::manifest(value) {
-        return named(key).map_or_else(undecodable, |id| Placement::Manifest {
+        return manifest_place(key, parts);
+    }
+    let Ok(turn) = decode(value) else {
+        return Placement::unclassified(None, SyncUnclassified::Undecodable);
+    };
+    place_turn(key, turn, value)
+}
+
+/// [`entry`] with the row's map: a manifest whose parts have all landed
+/// splits from the joined row like a whole one (FIX 12153). While parts
+/// are missing it keeps today's unclassified answer.
+pub(in crate::sync) fn entry_in(map: &LoroMap, key: &str, value: &[u8]) -> Placement {
+    if is_part_key(key) {
+        return Placement::Part;
+    }
+    if let Some(parts) = crate::sync::room_parts::manifest(value) {
+        if let Some(joined) = crate::sync::room_parts::row_at(map, key) {
+            let Ok(turn) = decode_held(&joined) else {
+                return Placement::unclassified(None, SyncUnclassified::Undecodable);
+            };
+            return place_turn(key, turn, &joined);
+        }
+        return manifest_place(key, parts);
+    }
+    let Ok(turn) = decode(value) else {
+        return Placement::unclassified(None, SyncUnclassified::Undecodable);
+    };
+    place_turn(key, turn, value)
+}
+
+/// A manifest's place while its parts are missing: unclassified, named with
+/// its turn, its parts held through it.
+fn manifest_place(key: &str, parts: Parts) -> Placement {
+    named(key).map_or_else(
+        || Placement::unclassified(None, SyncUnclassified::Undecodable),
+        |id| Placement::Manifest {
             holders: vec![Holder::new(OwnerRef::entity(&id), Vec::new())],
             parts,
             joined: Some(SyncUnclassified::ActorSplit(PARTED_TURN)),
-        });
-    }
-    let Ok(turn) = decode(value) else {
-        return undecodable();
-    };
+        },
+    )
+}
+
+/// A decoded turn row stored as `value` under `key`, split by actor.
+fn place_turn(key: &str, turn: RoomTurn, value: &[u8]) -> Placement {
+    let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
     let (Some(id), Some(room)) = (named(&turn.turn_id), named(&turn.room_id)) else {
         return undecodable();
     };
