@@ -235,6 +235,7 @@ impl Vault {
                 task: None,
                 attempt: None,
                 scope: None,
+                collected: None,
             };
             row.decision = Some(append_reveal_decision_in_txn(
                 self,

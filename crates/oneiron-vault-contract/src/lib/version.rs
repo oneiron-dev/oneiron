@@ -411,19 +411,20 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// Catalog rate currency (FIX 9534): a model catalog cost (the engine's
 /// `llm::LlmCatalogCost`, on every facade, SDK and binding surface that
 /// carries a catalog entry, and in each stored registry row and mesh peer
-/// row) requires `currency`, the provider's three-letter code or `null` when
-/// it named none, and a usage rate snapshot (the host's `UsageCostRates`, on
-/// usage events posted and stored) now requires `currency` as a code or
-/// `null` in place of a code alone. An unpriced call gains the reason
-/// `unknown_currency`: rates with a `null` currency that are not zero
-/// throughout, kept with their snapshot, and no amount. Only the installed
-/// first-party model pack's rows, which have always quoted US dollars, read
-/// a missing `currency` as `USD`: at that pack's decode, and at the decode of
-/// a stored registry row whose source rows name that pack. It carries a
-/// build floor, at the engine revision it merged in, with no `Ping` field: a
-/// reader or writer of catalog rows or usage events runs at or after the
-/// floor, and no other missing-field default or reader of a row without it
-/// is kept. This version stays 3.
+/// row) carries `currency`, the provider's three-letter code or `null` when
+/// it named none (a missing key reads as `null`, FIX 11778), and a usage
+/// rate snapshot (the host's `UsageCostRates`, on usage events posted and
+/// stored) now requires `currency` as a code or `null` in place of a code
+/// alone. An unpriced call gains the reason `unknown_currency`: rates with
+/// a `null` currency that are not zero throughout, kept with their snapshot,
+/// and no amount. Only a legacy pre-9534 stored copy of the installed
+/// first-party model pack's row, which has always quoted US dollars, reads
+/// a missing `currency` key as `USD`: its source rows name that pack (FIX
+/// 11778 narrows the pack decode out; first-party bytes name their own
+/// currency). It carries a build floor, at the engine revision it merged
+/// in, with no `Ping` field: a reader or writer of catalog rows or usage
+/// events runs at or after the floor, and no other missing-field default or
+/// reader of a row without it is kept. This version stays 3.
 ///
 /// Wire health check revisions (FIX 9531): each kept call-volume question is
 /// a health check of its own on the owner's `/v1/owner/wire-health` read,

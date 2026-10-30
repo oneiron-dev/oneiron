@@ -195,6 +195,13 @@ fn in_force_policy_in_txn(
     Ok(Some((head, policy)))
 }
 
+/// The seeds T1 reads from `bytes`, a revision's `policy.json`: each
+/// detector dial's valid seed, by dial key. The skill gate compares these
+/// for a reviewer revision, not the file's text (FIX 10878).
+pub(crate) fn reviewer_policy_seeds(bytes: &[u8]) -> BTreeMap<&'static str, f64> {
+    decode(bytes).0
+}
+
 /// The typed seeds `bytes` carry (`TripwireBounds::decode`'s shape): one
 /// JSON object whose keys are detector dial keys, each a finite number
 /// inside its dial's bounds. A dial left out or out of bounds, and a key

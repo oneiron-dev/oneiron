@@ -12,6 +12,7 @@
 //! send.
 
 mod counterparty;
+mod join;
 mod metadata;
 mod owner;
 mod packet_signature;
@@ -20,6 +21,7 @@ mod wire;
 
 use serde::{Deserialize, Serialize};
 
+use self::join::ReportImportJoin;
 pub use self::metadata::ReportPublisherMetadata;
 pub use self::owner::{
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
@@ -318,6 +320,7 @@ impl Vault {
         self.require_coach_attempt(admitted, COACH_FEEDBACK_DELIVERY_FACET)?;
         self.keep_signature_participation(transport.destination().as_ref(), now)?;
         let mut pass = ReportDeliveryPass::default();
+        let join_cell: std::cell::RefCell<Option<ReportImportJoin>> = std::cell::RefCell::new(None);
         let mut after = None;
         loop {
             // One grant load per page: the page and its sends share the set
@@ -330,6 +333,7 @@ impl Vault {
                     &issue.issue_ref,
                     transport,
                     now,
+                    &join_cell,
                     &grants,
                 ) {
                     Ok(Some(record)) => pass.count(&record),
@@ -364,6 +368,19 @@ impl Vault {
         transport: &mut T,
         now: u64,
     ) -> Result<Option<ReportDeliveryRecord>> {
+        let join_cell = std::cell::RefCell::new(None);
+        self.send_report_signature_with(issue_ref, transport, now, &join_cell)
+    }
+
+    /// [`Self::send_report_signature`] on the run's import join, built
+    /// lazily in `join_cell` on first need.
+    fn send_report_signature_with<T: ReportSignatureTransport + ?Sized>(
+        &self,
+        issue_ref: &str,
+        transport: &mut T,
+        now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
+    ) -> Result<Option<ReportDeliveryRecord>> {
         let id = EntityId::from_hex(issue_ref)?;
         // The content-free projection: this lane carries no text (FIX 8747).
         let txn = self.store.env.read_txn()?;
@@ -381,7 +398,7 @@ impl Vault {
             return Ok(None);
         };
         drop(txn);
-        self.deliver_report_signature(&issue, &payload, transport, now)
+        self.deliver_report_signature(&issue, &payload, transport, now, join_cell)
     }
 
     /// Pass-local send (FIX 9366, one load per pass): same as
@@ -395,6 +412,7 @@ impl Vault {
         issue_ref: &str,
         transport: &mut T,
         now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
         grants: &[StandingConsentGrant],
     ) -> Result<Option<ReportDeliveryRecord>> {
         let id = EntityId::from_hex(issue_ref)?;
@@ -413,7 +431,7 @@ impl Vault {
             return Ok(None);
         };
         drop(txn);
-        self.deliver_report_signature(&issue, &payload, transport, now)
+        self.deliver_report_signature(&issue, &payload, transport, now, join_cell)
     }
 
     /// The lane work after the merged read (FIX 9366): `issue` feeds the
@@ -426,6 +444,7 @@ impl Vault {
         payload: &ReportRoutedPayload,
         transport: &mut T,
         now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<Option<ReportDeliveryRecord>> {
         let ReportRoute::Publisher { publisher_ref } = &payload.route else {
             return Ok(None);
@@ -450,7 +469,7 @@ impl Vault {
             {
                 record.outcome = Some(ReportDeliveryOutcome::Delivered);
                 record.updated_at = now;
-                let publisher = self.delivered_publisher(&record, publisher_ref)?;
+                let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
                 self.with_write_txn_grouped(|txn| {
                     DELIVERIES.put(&self.store, txn, &row, &record)?;
                     if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
@@ -471,7 +490,9 @@ impl Vault {
                 // settled one reads and writes nothing (FIX 7690).
                 if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
                     record_signature_delivery(self, signature, send_ref, outcome, |artifact| {
-                        self.report_publisher_actor(publisher_ref, artifact)
+                        self.with_report_import_join(join_cell, |join| {
+                            self.report_publisher_actor_in(join, publisher_ref, artifact)
+                        })
                     })
                     .map_err(engine_error)?;
                 }
@@ -480,8 +501,14 @@ impl Vault {
         }
         record.updated_at = now;
         let mut built = None;
-        record.hold =
-            self.signature_hold(&mut record, &mut built, &issue, &payload, &*transport)?;
+        record.hold = self.signature_hold(
+            &mut record,
+            &mut built,
+            &issue,
+            &payload,
+            &*transport,
+            join_cell,
+        )?;
         // The frozen bytes and send are written before they can leave:
         // admission reads them under the outbound writer. A signature built
         // now is stored in that same write, so a crash leaves both or
@@ -511,7 +538,7 @@ impl Vault {
         })?;
         if record.hold.is_none() {
             self.dispatch_report_signature(&mut record, transport, now)?;
-            let publisher = self.delivered_publisher(&record, publisher_ref)?;
+            let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
             // The send's outcome lands on its ED-08 signature in the lane's
             // own write (FIX 7690), naming the publisher ACTOR (FIX 7829).
             self.with_write_txn_grouped(|txn| {
@@ -544,9 +571,10 @@ impl Vault {
         issue: &ReportIssue,
         payload: &ReportRoutedPayload,
         transport: &T,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<Option<ReportDeliveryHold>> {
         if record.signature.is_none() {
-            match self.build_report_signature(issue, payload)? {
+            match self.build_report_signature(issue, payload, join_cell)? {
                 Ok(signature) => *built = Some(signature),
                 Err(reason) => {
                     return Ok(Some(ReportDeliveryHold::MetadataUnresolved {
@@ -601,8 +629,9 @@ impl Vault {
         &self,
         issue: &ReportIssue,
         payload: &ReportRoutedPayload,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<std::result::Result<BuiltSignature, &'static str>> {
-        let metadata = match self.resolve_report_publisher_metadata(issue)? {
+        let metadata = match self.resolve_report_publisher_metadata_with(issue, join_cell)? {
             Ok(metadata) => metadata,
             Err(reason) => return Ok(Err(reason)),
         };
@@ -679,6 +708,7 @@ impl Vault {
         &self,
         record: &ReportDeliveryRecord,
         publisher_ref: &str,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<Option<PublisherActor>> {
         if !matches!(record.outcome, Some(ReportDeliveryOutcome::Delivered)) {
             return Ok(None);
@@ -687,7 +717,9 @@ impl Vault {
             return Ok(None);
         };
         match issue_signature(self, frozen.signature).map_err(engine_error)? {
-            Some(signature) => self.report_publisher_actor(publisher_ref, signature.artifact()),
+            Some(signature) => self.with_report_import_join(join_cell, |join| {
+                self.report_publisher_actor_in(join, publisher_ref, signature.artifact())
+            }),
             None => Ok(None),
         }
     }
