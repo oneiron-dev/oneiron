@@ -15,7 +15,7 @@ use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 
 use super::super::error_map::core_engine_error;
-use super::super::openapi::OwnerRoute;
+use super::super::openapi::{OwnerRoute, RestShape};
 use super::super::owner_routes::{OwnerTable, owner};
 use super::super::unix_seconds_now;
 
@@ -29,6 +29,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/packs/defaults/restore",
                 summary: "Restore defaults.",
                 row: None,
+                shape: Some(RestShape::no_body(hub_import_receipts_schema)),
             },
             post(restore_defaults),
         ),
@@ -38,6 +39,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/packs/defaults/import",
                 summary: "Import hub skill.",
                 row: None,
+                shape: Some(RestShape::json(
+                    hub_skill_request_body_schema,
+                    hub_import_receipt_schema,
+                )),
             },
             post(import_hub_skill),
         ),
@@ -47,6 +52,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/packs/defaults/restore-skill",
                 summary: "Restore hub skill.",
                 row: None,
+                shape: Some(RestShape::json(
+                    hub_skill_request_body_schema,
+                    hub_import_receipt_schema,
+                )),
             },
             post(restore_hub_skill),
         ),

@@ -12,8 +12,8 @@ use axum::routing::post;
 use oneiron::skill_optimize::{TradeoffChoice, resolve_skill_edit_tradeoff};
 use serde::Deserialize;
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
-use super::{Settled, unix_seconds};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::{Settled, tradeoff_settled_schema, unix_seconds};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
@@ -26,6 +26,10 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/skills/judge/tradeoff-asks/resolve",
             summary: "The owner's decision on one exact pending tradeoff.",
             row: None,
+            shape: Some(RestShape::json(
+                tradeoff_resolve_body_schema,
+                tradeoff_settled_schema,
+            )),
         },
         post(tradeoff_resolve),
     )]

@@ -35,6 +35,7 @@ pub(super) fn owner_table() -> OwnerTable {
             path: AUTHORITY_CLOCK_REPAIR_PATH.trim_start_matches("/v1/owner"),
             summary: "Repair a damaged authority clock floor (FIX 10106) on its own ingress: the owner's own full human slip and its holder proof headers, which the engine judges, spending the proof's nonce, in the repair's own writer. Answers `sound`, `repaired` or `unproven`; a vault that proves no clock at all answers `authority_clock_corrupt`.",
             row: Some("vault.authority.clock.repair"),
+            shape: None,
         },
         post(repair),
     )]

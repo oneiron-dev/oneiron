@@ -13,7 +13,7 @@ use oneiron::EdgeActorClass;
 use oneiron::memory::MemoryError;
 use oneiron::task_verb::sdk::{SteerReceipt, SteerRequest, steer_child_as_owner};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{CHANGED, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
@@ -26,6 +26,9 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/steer",
             summary: "The steer verb's input (task_ref, instruction, key) and its receipt.",
             row: None,
+            shape: Some(
+                RestShape::json(steer_body_schema, steer_receipt_schema).refusing(&[CHANGED]),
+            ),
         },
         post(steer),
     )]

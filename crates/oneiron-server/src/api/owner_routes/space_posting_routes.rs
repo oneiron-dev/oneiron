@@ -13,7 +13,7 @@ use axum::routing::{get, post};
 use oneiron::channel_identity_autonomy::GroupPostingPreset;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -28,6 +28,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/space-posting",
                 summary: "One space's dial.",
                 row: None,
+                shape: None,
             },
             get(read),
         ),
@@ -37,6 +38,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/space-posting",
                 summary: "Sets one space's dial, and with grant the exact owner-space consent it needs.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_space_posting_body_schema,
+                    space_posting_schema,
+                )),
             },
             post(set),
         ),

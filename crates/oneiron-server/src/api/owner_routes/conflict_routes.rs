@@ -26,7 +26,7 @@ use oneiron::dreamer_consolidation::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -44,6 +44,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conflicts",
                 summary: "Every unanswered contradiction, oldest first.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -53,6 +54,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conflicts/settle",
                 summary: "The owner's answer to one marker.",
                 row: None,
+                shape: Some(RestShape::json(
+                    settle_conflict_body_schema,
+                    conflict_settled_schema,
+                )),
             },
             post(settle),
         ),
@@ -62,6 +67,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conflicts/settled",
                 summary: "The standing settlements, the Dreamer's among them, newest first.",
                 row: None,
+                shape: None,
             },
             get(settled),
         ),
@@ -71,6 +77,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conflicts/revert",
                 summary: "The owner's revert of one settlement.",
                 row: None,
+                shape: Some(RestShape::json(
+                    revert_settlement_body_schema,
+                    settlement_reverted_schema,
+                )),
             },
             post(revert),
         ),
@@ -80,6 +90,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conflicts/review",
                 summary: "Ends the owner's hold on the Dreamer's review of one subject or of every subject in the vault, so it settles them through its ladder again.",
                 row: None,
+                shape: Some(RestShape::json(
+                    review_scope_body_schema,
+                    review_resumed_schema,
+                )),
             },
             post(resume_review),
         ),
@@ -89,6 +103,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conflicts/review/revoke",
                 summary: "Holds the Dreamer's review on exactly that scope; it leaves those conflicts here for the owner until /review ends the hold.",
                 row: None,
+                shape: Some(RestShape::json(
+                    review_scope_body_schema,
+                    review_held_schema,
+                )),
             },
             post(hold_review),
         ),

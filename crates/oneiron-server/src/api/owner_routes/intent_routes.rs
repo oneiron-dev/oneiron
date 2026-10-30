@@ -13,7 +13,7 @@ use axum::response::Json;
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::entity_id;
@@ -26,6 +26,10 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/intents",
             summary: "The owner states an intent in his own words (FIX 8949): `text` (required, his exact words) and an optional `message` (32 hex, the MESSAGE they came from). They land as an Approved, UserStated `profile.intent` claim about him, citing that MESSAGE when one is named. Answers `{claim}`, the claim's id as 32 hex.",
             row: None,
+            shape: Some(RestShape::json(
+                state_intent_body_schema,
+                intent_stated_schema,
+            )),
         },
         post(state_intent),
     )]

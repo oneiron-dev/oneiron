@@ -11,7 +11,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
@@ -27,6 +27,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/wire-health",
                 summary: "Every check this server keeps (`checks`), and the shared connection pool's live pressure (`connection_pool_pressure`, FIX 7656): `{\"state\": \"clear\"}` while no socket waits for the pool, else `{\"state\": \"active\", \"check\": ...}`, a check of kind `inspect_connection_pool_pressure` naming the episode, the `[limits]` row and its bound, the credentials holding the most open request bodies, the pool's connections and the remedy. The mesh listener's sync streams keep their own check of the same shape (`mesh_pool`, FIX 7737), raised while a mesh stream waits for a place under the connection floor. It observes only: it pauses, revokes and refuses nothing, and does not promise that a revocation releases an already-open body.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -36,6 +37,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/wire-health/outcome",
                 summary: "What happened next to one crossing.",
                 row: None,
+                shape: Some(RestShape::json(
+                    record_outcome_body_schema,
+                    outcome_recorded_schema,
+                )),
             },
             post(outcome),
         ),

@@ -17,7 +17,7 @@ use oneiron::share_travel::TravelChoice;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -33,6 +33,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/peer-confidence",
                 summary: "Every owner-set scale.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -42,6 +43,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/peer-confidence",
                 summary: "Sets or clears one peer's scale.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_peer_scale_body_schema,
+                    peer_scale_schema,
+                )),
             },
             post(set),
         ),
@@ -51,6 +56,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/grant-travel",
                 summary: "One federation grant's bound travel choice (`?grant=<id>`), with when it was set; travel and set are null when none is bound, so its windows send no text. An id naming no federation grant is not found.",
                 row: None,
+                shape: None,
             },
             get(get_travel),
         ),
@@ -60,6 +66,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/grant-travel",
                 summary: "Binds or clears one live grant's travel choice.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_grant_travel_body_schema,
+                    grant_travel_schema,
+                )),
             },
             post(set_travel),
         ),

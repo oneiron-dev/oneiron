@@ -34,7 +34,7 @@ use oneiron::EntityId;
 use serde::Deserialize;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
 use super::{KIT_TARGET_ELSEWHERE, Kit, OwnerDevice, kit_target_refused};
 use crate::api::has_json_content_type;
 use crate::auth::CoreAuth;
@@ -55,6 +55,10 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/secrets/anchor-sign",
             summary: "The owner's recovery kit, in this one call, pushes a portable secret's current custody transition signed with his owner anchor to the installs he names; the engine takes it only from an install with no live machine profile.",
             row: None,
+            shape: Some(RestShape::json(
+                anchor_sign_body_schema,
+                anchor_signed_schema,
+            )),
         },
         post(anchor_sign),
     )]
