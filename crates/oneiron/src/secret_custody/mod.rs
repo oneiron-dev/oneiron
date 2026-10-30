@@ -127,7 +127,7 @@ pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
-    restore_secret_custody_in_txn,
+    restore_secret_custody_in_txn, revoke_side_row_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored schema-2 form, its value sealed under its custody key.
@@ -138,7 +138,7 @@ pub use self::found_keys::{
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
     found_key_notices_due_in_txn, note_found_keys_in_txn, raise_found_key_notices_in_txn,
-    ruled_no_secret_in_txn, settle_found_key_in_txn,
+    raise_found_key_notices_page, ruled_no_secret_in_txn, settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};

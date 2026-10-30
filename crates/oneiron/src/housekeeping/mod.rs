@@ -20,12 +20,14 @@
 //! when it must run the vault again for a retirement that comes due.
 
 mod schedule;
+mod sweep_work;
 mod sweeps;
 mod sync_work;
 #[cfg(test)]
 mod tests;
 mod wake;
 
+pub use self::sweep_work::{HardEraseWork, SecretLiftWork};
 pub(crate) use self::wake::note_wake_in_txn;
 
 use std::sync::Arc;
@@ -39,8 +41,8 @@ use crate::error::{ErrorKind, Result};
 
 use self::schedule::SweepState;
 
-/// One sweep the housekeeping pass knows. The engine runs the first twelve; the
-/// rest need a host's authority and are reported, never run.
+/// One sweep the housekeeping pass knows. The engine runs the first thirteen;
+/// the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -74,6 +76,9 @@ pub enum HousekeepingSweep {
     /// no door places files a lift proposal. Idle when no run is queued, and
     /// paused while the owner's switch is off.
     SecretLiftHistory,
+    /// Raises the found-key notices left due past one write's share (OF-560,
+    /// FIX 2648), for a vault no later write comes to.
+    FoundKeyNotices,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -129,7 +134,7 @@ const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -142,6 +147,7 @@ impl HousekeepingSweep {
         Self::PprCacheEviction,
         Self::SharedActMaturity,
         Self::SecretLiftHistory,
+        Self::FoundKeyNotices,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -165,6 +171,7 @@ impl HousekeepingSweep {
             Self::PprCacheEviction => "ppr_cache_eviction",
             Self::SharedActMaturity => "shared_act_maturity",
             Self::SecretLiftHistory => "secret_lift_history",
+            Self::FoundKeyNotices => "found_key_notices",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -184,7 +191,8 @@ impl HousekeepingSweep {
     /// deadline makes the maturity sweep due then (its start notes it), and
     /// it runs hourly besides, for an act an objection withdrawal released.
     /// The lift sweep looks for a queued run every fifteen minutes, and a run
-    /// left unfinished at a pass's deadline is due again at once.
+    /// left unfinished at a pass's deadline is due again at once; the
+    /// found-key drain looks for due notices as often.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -200,7 +208,8 @@ impl HousekeepingSweep {
             Self::EsignExpiry
             | Self::EsignSealBackstop
             | Self::CommitmentLapse
-            | Self::SecretLiftHistory => engine(15 * MINUTE),
+            | Self::SecretLiftHistory
+            | Self::FoundKeyNotices => engine(15 * MINUTE),
             Self::GateDecisionRetention => Runner::Engine {
                 every: HOUR,
                 at_open: true,
@@ -405,6 +414,10 @@ pub enum SweepWork {
         noticed: u64,
     },
     SecretLift(SecretLiftWork),
+    FoundKeyNotices {
+        /// Due records whose notices were raised.
+        records: u64,
+    },
 }
 
 impl SweepWork {
@@ -450,57 +463,9 @@ impl SweepWork {
             } => evicted == 0 && deps_cleaned == 0,
             Self::SharedActs { noticed } => noticed == 0,
             Self::SecretLift(work) => work == SecretLiftWork::default(),
+            Self::FoundKeyNotices { records } => records == 0,
         }
     }
-}
-
-/// The erasure sweep's counts (ARCH-0038 historical carriers).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct HardEraseWork {
-    /// Obligations discharged: receipts finalized and the obligation removed.
-    pub jobs_processed: u64,
-    /// Obligations left for a later run without an attempt (not yet due, a
-    /// live window, an unreadable row).
-    pub jobs_deferred: u64,
-    /// Of those, the ones whose receipt waits for this install's signer to load (FIX 2597).
-    pub jobs_deferred_signer_unavailable: u64,
-    /// Windows no caller held, written down and closed so their carriers
-    /// could be compacted.
-    pub windows_unloaded: u64,
-    /// Obligations whose attempt failed; each keeps its row with a retry time.
-    pub jobs_failed: u64,
-    pub windows_compacted: u64,
-    pub windows_deferred_live: u64,
-    pub windows_deferred_raced: u64,
-    /// Windows whose cut was not proved to root at their tip (FIX 6520).
-    pub windows_deferred_unproved: u64,
-    /// Windows and documents a legal hold keeps as they are (OF-470).
-    pub windows_deferred_held: u64,
-    pub receipts_finalized: u64,
-    /// Obligations past their 30-day deadline.
-    pub deadline_breaches: u64,
-    pub quarantine_rows_expired: u64,
-    /// Receipts queued for a sweep that no obligation covers.
-    pub obligations_missing: u64,
-    pub obligations_undecodable: u64,
-}
-
-/// The lift sweep's counts for one housekeeping run (OF-067). The run's own
-/// receipt counts the whole run, by family.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct SecretLiftWork {
-    /// Rows the census read.
-    pub rows_read: u64,
-    /// Rows rewritten with their handles.
-    pub masked: u64,
-    /// Lift proposals filed.
-    pub proposals: u64,
-    /// Rows that failed again when retried.
-    pub failed: u64,
-    /// A run waits for the owner's switch to come back on.
-    pub paused: bool,
-    /// The run ended and wrote its receipt.
-    pub finished: bool,
 }
 
 fn serialize_error_kind<S: serde::Serializer>(
