@@ -71,7 +71,7 @@ pub(crate) struct Note {
     /// The frontmatter as it decodes, for the secret scan; each part of a
     /// file carries its file's.
     pub(crate) decoded: String,
-    links: Vec<Link>,
+    pub(super) links: Vec<Link>,
     /// For a continuation part, its file's path: the first part's note.
     pub(crate) part_of: Option<String>,
     /// The file's bytes as the walk opened them, kept as its original (FIX
@@ -592,8 +592,10 @@ fn without_extension(path: &str) -> &str {
 /// note: a link an earlier import resolved keeps its note. What resolved
 /// before is judged from the notes the folder still holds, a changed one by
 /// the title it landed with, so a note whose file left the folder no longer
-/// holds its name. A changed note's links wait with its text. A continuation
-/// part links to its file's first part, which it continues.
+/// holds its name. A changed note's links land with its text through the
+/// present-links resolver; one that lands as a fork for review waits with
+/// its text. A continuation part links to its file's first part, which it
+/// continues.
 pub(crate) fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],
@@ -700,14 +702,14 @@ pub(crate) fn resolve_links(
 
 /// The notes a link can name: by path, title or file name, ignoring case and
 /// a `.md` ending; the first in path order wins a tie.
-struct Index {
+pub(super) struct Index {
     by_path: HashMap<String, usize>,
     by_title: HashMap<String, usize>,
     by_stem: HashMap<String, usize>,
 }
 
 impl Index {
-    fn new<'a>(
+    pub(super) fn new<'a>(
         notes: &'a [Note],
         include: impl Fn(usize) -> bool,
         title: impl Fn(usize) -> Option<&'a str>,
@@ -728,7 +730,7 @@ impl Index {
         index
     }
 
-    fn resolve(&self, target: &str) -> Option<usize> {
+    pub(super) fn resolve(&self, target: &str) -> Option<usize> {
         let wanted = key(target);
         [&self.by_path, &self.by_title, &self.by_stem]
             .into_iter()
