@@ -228,6 +228,11 @@ pub struct XlsxProjectArgs {
     pub source: u32,
     pub changes: Vec<XlsxChange>,
     pub limits: PackageLimits,
+    /// The folder and file name the workbook is opened from: an external
+    /// link whose path names it is the workbook's own, and a sheet rename or
+    /// deletion carries the formulas through it and its sheet list.
+    #[serde(default)]
+    pub location: Option<DocumentLocationArgs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

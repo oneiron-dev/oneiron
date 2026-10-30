@@ -3,6 +3,7 @@
 //! Definitions live here; office_body forwards their original names.
 
 use super::*;
+use crate::provenance::made_by::{MadeByClass, MadeByProcess};
 
 /// Removes `artifact`'s office rows: its format record, its deck forks'
 /// office records, its proposals and its export records. The body itself, a Loro document in
@@ -169,6 +170,60 @@ pub(super) fn three_way(
             ));
         }
     })
+}
+
+/// Finish landing an XLSX fork whose base is `base` on the live head `head`:
+/// when one side moved rows or columns and the other wrote cells or names,
+/// the merged document holds the writes at their old addresses, so the
+/// merger's one commit moves them by the same edits (FIX 3036). The head it
+/// leaves, or `None` when the merge already reads so.
+pub(super) fn land_moved_xlsx(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    (base, head): (&[u8], &[u8]),
+    proposal: &LoroDoc,
+    actor: WriteActor,
+) -> Result<Option<Vec<u8>>> {
+    let (_, merged) = vault.loro_body(wtxn, artifact, OfficeBodyKind::Xlsx, None)?;
+    let at = |frontier: &[u8]| -> Result<XlsxBody> {
+        let frontier =
+            loro::Frontiers::decode(frontier).map_err(|_| invalid("invalid body frontier"))?;
+        let doc = merged
+            .fork_at(&frontier)
+            .map_err(|_| invalid("unknown body frontier"))?;
+        xlsx::read(&doc)
+    };
+    let Some(body) = xlsx::landed(
+        &at(base)?,
+        &at(head)?,
+        &xlsx::read(proposal)?,
+        &xlsx::read(&merged)?,
+    )?
+    else {
+        return Ok(None);
+    };
+    let made_by = MadeBy {
+        inputs: Vec::new(),
+        process: MadeByProcess {
+            actor: actor.entity_ref(),
+            class: MadeByClass::Concluded,
+            identity: "office_body.merge".to_owned(),
+            version: "1".to_owned(),
+            params_hash: blake3::hash(b"").to_hex().to_string(),
+        },
+        at: vault.now_recorded_at(),
+        trigger: None,
+    };
+    let (_, commit) = edit_typed_body_in_txn(
+        vault,
+        wtxn,
+        artifact,
+        None,
+        writer(OfficeBodyKind::Xlsx, actor, &made_by),
+        |doc| xlsx::write_body(doc, &body),
+    )?;
+    Ok(Some(commit.frontier))
 }
 
 /// Recalculate a projected workbook in process at `at`, read in `zone`'s

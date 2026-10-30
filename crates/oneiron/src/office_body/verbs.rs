@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    BodyBlockKind, BodyCell, BodyFormat, BodyName, DeckBodyView, DocxBody, DocxBodyOp,
-    OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
+    BodyBlockKind, BodyCell, BodyConditionalFormat, BodyFormat, BodyName, DeckBodyView, DocxBody,
+    DocxBodyOp, OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
     OfficeBodyFork, OfficeBodyHead, OfficeBodyProposal, OfficeRecalcZone, ProposalSettleRequest,
     ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxSheetVisibility,
     XlsxStyle, XlsxTable,
@@ -28,6 +28,7 @@ use crate::typed_body::LiftedSources;
 use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
+use oneiron_docedit::xlsx_body::XlsxLines;
 
 /// `vault.artifacts.body.head`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -278,6 +279,12 @@ pub struct XlsxSheetView {
     pub tables: Vec<XlsxTable>,
     /// Whether its tab shows: visible, hidden or veryHidden.
     pub visibility: XlsxSheetVisibility,
+    /// The conditional formats the body added, by id.
+    pub conditional_formats: Vec<BodyConditionalFormat>,
+    /// The rows with their own height (points) or format, and the column
+    /// ranges with their own width (characters) or format.
+    pub rows: Vec<XlsxLines>,
+    pub columns: Vec<XlsxLines>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -345,6 +352,13 @@ impl From<XlsxBody> for XlsxBodyView {
                     locked: sheet.locked,
                     tables: sheet.tables,
                     visibility: sheet.visibility,
+                    conditional_formats: sheet
+                        .conditional
+                        .into_iter()
+                        .map(|(id, format)| BodyConditionalFormat { id, format })
+                        .collect(),
+                    rows: sheet.rows,
+                    columns: sheet.columns,
                 })
                 .collect(),
             names: body.names.into_values().collect(),

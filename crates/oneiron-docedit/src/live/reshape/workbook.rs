@@ -197,7 +197,7 @@ pub(super) fn in_place(
     let bytes = if changes.is_empty() {
         None
     } else {
-        let projected = project_xlsx(&source, &changes, limits, &resources)
+        let projected = project_xlsx(&source, &changes, limits, &resources, None)
             .map_err(|_| RebuildReason::Projection)?
             .bytes;
         let formulas = book

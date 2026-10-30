@@ -37,6 +37,18 @@ pub(in crate::office_body) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<(
         })
         .collect::<Result<HashMap<String, LoroValue>>>()?;
     office.insert("tables", tables).map_err(loro)?;
+    let lines = book
+        .sheets
+        .iter()
+        .filter(|sheet| !sheet.rows.is_empty() || !sheet.columns.is_empty())
+        .map(|sheet| -> Result<(String, LoroValue)> {
+            Ok((
+                sheet.name.clone(),
+                encode_lines(&sheet.rows, &sheet.columns)?,
+            ))
+        })
+        .collect::<Result<HashMap<String, LoroValue>>>()?;
+    office.insert("lines", lines).map_err(loro)?;
     office
         .insert("axes", Vec::<LoroValue>::new())
         .map_err(loro)?;
@@ -97,12 +109,12 @@ pub(in crate::office_body) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<(
 pub(in crate::office_body) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
     let office = doc.get_map(OFFICE);
     let LoroValue::Map(meta) = office.get_value() else {
-        return Err(invalid("not a schema-1 XLSX body"));
+        return Err(invalid(&format!("not a schema-{SCHEMA} XLSX body")));
     };
     if string(&meta, "kind").as_deref() != Some("xlsx")
         || meta.get("schema") != Some(&LoroValue::I64(i64::from(SCHEMA)))
     {
-        return Err(invalid("not a schema-1 XLSX body"));
+        return Err(invalid(&format!("not a schema-{SCHEMA} XLSX body")));
     }
     let list = |key: &str| match meta.get(key) {
         Some(LoroValue::List(list)) => Ok(list.clone()),
@@ -119,6 +131,11 @@ pub(in crate::office_body) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
         None => None,
         Some(LoroValue::Map(tables)) => Some(tables),
         Some(_) => return Err(invalid("XLSX body tables")),
+    };
+    let held_lines = match meta.get("lines") {
+        None => None,
+        Some(LoroValue::Map(lines)) => Some(lines),
+        Some(_) => return Err(invalid("XLSX body rows and columns")),
     };
     let states = sheet_states(doc)?;
     let styles = list("styles")?
@@ -173,6 +190,10 @@ pub(in crate::office_body) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             }
             Some(_) => return Err(invalid("XLSX body tables")),
         };
+        let (rows, columns) = match held_lines.and_then(|lines| lines.get(&key)) {
+            None => (Vec::new(), Vec::new()),
+            Some(value) => decode_lines(value)?,
+        };
         sheets.push(BodySheet {
             visibility: states.get(&key).copied().unwrap_or_default(),
             key,
@@ -180,8 +201,12 @@ pub(in crate::office_body) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             cells,
             locked: areas,
             tables,
+            conditional: BTreeMap::new(),
+            rows,
+            columns,
         });
     }
+    read_conditional(doc, &mut sheets)?;
     let axes = match meta.get("axes") {
         None => Vec::new(),
         Some(LoroValue::List(list)) => list.iter().map(decode_axis).collect::<Result<Vec<_>>>()?,
