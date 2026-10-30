@@ -190,6 +190,12 @@ impl Vault {
             })
             .collect();
         self.apply_grant_ops(txn, ops)?;
+        // FIX 3393: a member who becomes an Owner holds the own-device grant
+        // pairing would have minted, so the devices they paired before it
+        // reach residence at their next renewal.
+        if role == Role::Owner {
+            self.own_device_grant_for_holder_in_txn(txn, &member.to_hex(), None, now)?;
+        }
         Ok(ids)
     }
     /// Delete the grants that conferred `member`'s standing: its own grants
