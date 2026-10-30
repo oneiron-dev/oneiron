@@ -3,7 +3,7 @@
 //! calendar layer's one expander.
 
 use crate::calendar::SeriesDtStart;
-use crate::calendar::series::expand_window_shifting_gaps;
+use crate::calendar::series::expand_window_shifting_gaps_page;
 use crate::calendar::tz::MAX_SUPPORTED_UTC;
 use crate::claim::ClaimBody;
 use crate::commitment_schedule::{
@@ -142,8 +142,11 @@ pub(super) fn rrule_dtstart(series: &ClaimBody) -> ScheduleResult<u64> {
 ///
 /// Searched in disjoint windows that double from
 /// [`RRULE_DUE_SEARCH_FIRST_SPAN`], so a dense rule answers from a small
-/// window and a sparse one in a few expansions. A start a spring-forward gap
-/// removed is owed at its RFC 5545 shifted instant, never dropped.
+/// window and a sparse one in a few expansions. Each window is walked as one
+/// deadline-bound page due at once (FIX 11998): the page ends soon after its
+/// first start, the only one this search needs, so a dense window is never
+/// walked to its end. A start a spring-forward gap removed is owed at its
+/// RFC 5545 shifted instant, never dropped.
 pub(super) fn next_rrule_due(
     rrule: &str,
     tz: &str,
@@ -155,8 +158,13 @@ pub(super) fn next_rrule_due(
     let mut span = RRULE_DUE_SEARCH_FIRST_SPAN;
     while start <= MAX_SUPPORTED_UTC {
         let end = start.saturating_add(span - 1).min(MAX_SUPPORTED_UTC);
-        let starts = expand_window_shifting_gaps(rrule, dtstart, TimeRange { start, end })?;
-        if let Some(due) = starts.first() {
+        let page = expand_window_shifting_gaps_page(
+            rrule,
+            dtstart,
+            TimeRange { start, end },
+            std::time::Instant::now(),
+        )?;
+        if let Some(due) = page.starts.first() {
             return Ok(Some(*due));
         }
         if end == MAX_SUPPORTED_UTC {
