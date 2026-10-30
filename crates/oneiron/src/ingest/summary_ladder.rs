@@ -53,6 +53,33 @@ fn text(value: &serde_json::Value) -> Result<&str> {
 }
 
 impl ScopedRead<'_> {
+    /// `id`'s live row as this read admits it, as its kind and body: an
+    /// ASSET's body is read through the asset body plane in the read's own
+    /// snapshot, its file's bytes when it has one, never the manifest its
+    /// row keeps. `None` for a missing, withheld or body-less row.
+    fn docs_point_body(&self, id: &EntityId) -> Result<ScopedReadResult<Option<(u8, Vec<u8>)>>> {
+        let vault = self.vault();
+        // A body file is read in the snapshot the read opens: pinned first.
+        let _bodies = vault.pin_all_result_bodies();
+        self.read_projected(&[crate::claim::PointRead::id(*id)], None, |txn, rows| {
+            let Some(row) = rows.into_iter().next().flatten() else {
+                return Ok(None);
+            };
+            let Some(body) = row.body else {
+                return Ok(None);
+            };
+            if row.entity_type != ENTITY_TYPE_ASSET {
+                return Ok(Some((row.entity_type, body)));
+            }
+            let body = vault.with_asset_body_reader_in_txn(txn, id, |reader| {
+                let mut body = Vec::new();
+                std::io::Read::read_to_end(reader, &mut body)?;
+                Ok(body)
+            })?;
+            Ok(body.map(|body| (ENTITY_TYPE_ASSET, body)))
+        })
+    }
+
     /// Fuse lexical and (when supplied by the caller) semantic ranks across
     /// summary and chunk indexes. A conceptual/vector match favors the summary;
     /// an exact text match can put a chunk first. No source body is expanded.
@@ -203,11 +230,11 @@ impl ScopedRead<'_> {
             ));
         }
         let id = EntityId::from_hex(reference)?;
-        let parts = self.get_entity_parts_with_receipt(&id, None)?;
+        let parts = self.docs_point_body(&id)?;
         let expected_hash = parts
             .value
             .as_ref()
-            .and_then(|(kind, _, body)| {
+            .and_then(|(kind, body)| {
                 (*kind == crate::registry::ENTITY_TYPE_ASSET)
                     .then(|| rmp_serde::from_slice::<serde_json::Value>(body).ok())
                     .flatten()
@@ -224,7 +251,7 @@ impl ScopedRead<'_> {
         let expanded = ScopedReadResult {
             value: parts
                 .value
-                .map(|(_, _, body)| crate::batch::export::redacted_memory_body(&body)),
+                .map(|(_, body)| crate::batch::export::redacted_memory_body(&body)),
             receipt: parts.receipt,
         };
         let deep = if let Some(expected_hash) = expected_hash {
@@ -250,12 +277,8 @@ impl ScopedRead<'_> {
     ) -> Result<ScopedReadResult<Option<serde_json::Value>>> {
         let id = EntityId::from_hex(reference)?;
         Ok(self
-            .read(&[crate::claim::PointRead::id(id)], None)?
-            .single()
-            .map(|row| {
-                row.and_then(|row| row.body)
-                    .map(|body| crate::batch::export::redacted_memory_body(&body))
-            }))
+            .docs_point_body(&id)?
+            .map(|parts| parts.map(|(_, body)| crate::batch::export::redacted_memory_body(&body))))
     }
 
     /// An agent chooses each ref. A summary offers a span; the span offers a
@@ -282,8 +305,8 @@ impl ScopedRead<'_> {
         } else {
             (EntityId::from_hex(reference)?, None)
         };
-        let result = self.get_entity_parts_with_receipt(&id, None)?;
-        let Some((kind, _, body)) = result.value else {
+        let result = self.docs_point_body(&id)?;
+        let Some((kind, body)) = result.value else {
             return Ok(ScopedReadResult {
                 value: None,
                 receipt: result.receipt,
