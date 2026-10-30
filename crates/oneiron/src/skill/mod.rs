@@ -42,8 +42,8 @@ pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub(crate) use self::loaded_revision::{
     pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
 };
-pub use self::pack_load::LoadedSkillPack;
 pub(crate) use self::pack_load::skill_loadable;
+pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
 pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_RECORD_BODY_KEYS,
     SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,

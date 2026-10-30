@@ -165,6 +165,58 @@ pub(super) fn mcp_release_error(
     }
 }
 
+/// A refusal the first call kept with nothing beside it, released again for
+/// the waiter `actor` (FIX 10497): `reply`, the first call's `{error}` reply
+/// without its id, judged for this waiter's destination as a result replay
+/// is, by the rows its words name. One naming a row withheld from there
+/// leaves as its code alone, as [`mcp_release_error`] leaves a refusal it
+/// holds: the message goes content-free and the row-naming fields go with
+/// it, while the code, the kind, the hook stop, the retry, the resets, the
+/// reason codes, the kept type feedback and the call's receipt stay as they
+/// are. Anything else, and any reply that is no refusal, goes as it was.
+pub(super) fn mcp_rerelease_refusal(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    reply: Value,
+) -> Value {
+    const WORDS: &str = "the call failed; its detail stays on this device";
+    let mut reply = reply;
+    let denied = reply
+        .get("error")
+        .is_some_and(Value::is_object)
+        && crate::device_local::replay_withheld(
+            &server.vault,
+            actor.destination(),
+            &serde_json::to_vec(&reply).unwrap_or_default(),
+            &[],
+        );
+    if !denied {
+        return reply;
+    }
+    if let Some(error) = reply.get_mut("error").and_then(Value::as_object_mut) {
+        error.insert("message".to_owned(), Value::String(WORDS.to_owned()));
+        if let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) {
+            data.insert("human_message".to_owned(), Value::String(WORDS.to_owned()));
+            for field in [
+                "field",
+                "vault_read",
+                "successor_short_id",
+                "effective_scope",
+                "max_bytes",
+                "received_bytes",
+                "attempted",
+                "replacement",
+                "schemaRef",
+                "row_receipt",
+                "legal_hold",
+            ] {
+                data.remove(field);
+            }
+        }
+    }
+    reply
+}
+
 /// The rows a code run's verb answers name by short ref inside the JSON
 /// each was recorded as, fresh or replayed; `None` when one names no row.
 /// A step `record` keeps, under its seq, as the owner's own agent-pack

@@ -150,6 +150,18 @@ touched.
 oneiron restore FILE
 ```
 
+On a new host, where no vault is yet, a world-kit restore reads the vault's key custody from
+its residence home instead of the folder beside the backup:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id HEX --piece piece-1.txt --piece piece-2.txt --trust signer.json --custody-home https://home.example
+```
+
+The request is signed with the kit. The home answers only to the root it pins for the vault.
+A home that holds no custody head of this backup, or refuses it, fails the restore. The restore
+never falls back to the folder. `--custody-home` needs `--unlock kit`. A restore over an
+existing vault or a rehearsal ignores it. A backup with no custody asks the home nothing.
+
 A restore brings back your **content** as it stood at the backup: notes, claims,
 conversations, tasks, files and receipts. It keeps the vault's **current authority, consent and
 policy** (ARCH-0038, RD-20). Every kind of stored row has one restore class in the engine, and

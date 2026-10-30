@@ -10,9 +10,13 @@ use crate::codebase::RepoRef;
 use crate::context_pack::ContextPackRetrievalBudget;
 use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::query_expansion::HydeExpansion;
 use crate::rerank::{RerankOptions, Reranker};
 use crate::store::RetrievalBlendWeights;
 use crate::temporal::TemporalAnchorMode;
+use crate::vault::RevisionRef;
+
+use super::replay_identity::RetrievalReplayIdentity;
 
 use super::super::builder::PipelineBuilder;
 use super::super::types::{
@@ -25,7 +29,13 @@ use super::super::types::{
 /// Evidence captured under the retrieval transaction; hashing never rescans claims.
 pub(in crate::pipeline) struct RetrievalTraceForkEvidence<'a> {
     pub(in crate::pipeline) candidate_set: &'a [[u8; ENTITY_ID_LEN]],
+    pub(in crate::pipeline) candidate_revisions: &'a [([u8; ENTITY_ID_LEN], Option<RevisionRef>)],
     pub(in crate::pipeline) world_authority: Option<&'a ResolvedWorldAuthority>,
+    pub(in crate::pipeline) replay_identity: &'a RetrievalReplayIdentity,
+    pub(in crate::pipeline) hyde_expansion: Option<&'a HydeExpansion>,
+    pub(in crate::pipeline) extra_text_queries: &'a [String],
+    pub(in crate::pipeline) widen_channel_limits: bool,
+    pub(in crate::pipeline) skip_ret01_abstain: bool,
 }
 
 pub(in crate::pipeline) fn retrieval_trace_fork_hash(
@@ -139,6 +149,16 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
             fork_hash_str(&mut hasher, &parent.wire_form());
         }
     }
+    fork_hash_source_and_model_identity(&mut hasher, builder, evidence.replay_identity);
+    fork_hash_hyde_attempt(
+        &mut hasher,
+        builder,
+        evidence.hyde_expansion,
+        evidence.extra_text_queries,
+        evidence.widen_channel_limits,
+        evidence.skip_ret01_abstain,
+    );
+    fork_hash_candidate_revisions(&mut hasher, evidence.candidate_revisions);
     fork_hash_candidate_set(&mut hasher, evidence.candidate_set);
 
     hasher.finalize().into()
@@ -558,6 +578,116 @@ fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
     fork_hash_str(hasher, "sparse:phonetic");
     // EMB-2: the funnel prefix changes vector-channel scoring space.
     fork_hash_u32(hasher, u32::from(fast_dims.unwrap_or(0)));
+}
+
+fn fork_hash_source_and_model_identity(
+    hasher: &mut Sha256,
+    builder: &PipelineBuilder<'_>,
+    identity: &RetrievalReplayIdentity,
+) {
+    fork_hash_opt_str(hasher, builder.corpus_snapshot_ref.as_deref());
+    fork_hash_opt_str(hasher, builder.vault.config.embedding_transform.as_deref());
+    fork_hash_len(hasher, identity.media_spaces.len());
+    for media in &identity.media_spaces {
+        let space = &media.space;
+        fork_hash_str(hasher, &space.id);
+        fork_hash_len(hasher, space.dimensions);
+        fork_hash_len(hasher, space.accepts.len());
+        for kind in &space.accepts {
+            fork_hash_str(hasher, &format!("{kind:?}"));
+        }
+        fork_hash_len(hasher, space.query_towers.len());
+        for kind in &space.query_towers {
+            fork_hash_str(hasher, &format!("{kind:?}"));
+        }
+        fork_hash_opt_floors(hasher, space.evidence);
+        // The default pair and every keyed pair are the run's effective RET-01
+        // inputs for this space, not a later configuration read.
+        fork_hash_floors(hasher, media.floors);
+        fork_hash_len(hasher, media.kind_overrides.len());
+        for (kind, floors) in &media.kind_overrides {
+            fork_hash_u8(hasher, *kind);
+            fork_hash_floors(hasher, *floors);
+        }
+    }
+    fork_hash_opt_bytes(hasher, identity.analyzer_manifest_hash.as_deref());
+    fork_hash_opt_bytes(hasher, identity.bm25_field_schema_hash.as_deref());
+}
+
+fn fork_hash_hyde_attempt(
+    hasher: &mut Sha256,
+    builder: &PipelineBuilder<'_>,
+    expansion: Option<&HydeExpansion>,
+    extra_text_queries: &[String],
+    widen_channel_limits: bool,
+    skip_ret01_abstain: bool,
+) {
+    if let Some((expander, grounding, options)) = builder.hyde.as_ref() {
+        fork_hash_bool(hasher, true);
+        fork_hash_str(hasher, expander.id());
+        fork_hash_len(hasher, options.channel_limit);
+        fork_hash_bool(hasher, options.retry_once);
+        fork_hash_len(hasher, grounding.bindings.len());
+        for (key, value) in &grounding.bindings {
+            fork_hash_str(hasher, key);
+            fork_hash_str(hasher, value);
+        }
+    } else {
+        fork_hash_bool(hasher, false);
+    }
+    if let Some(expansion) = expansion {
+        fork_hash_bool(hasher, true);
+        fork_hash_str(hasher, &expansion.grounded_query);
+        fork_hash_len(hasher, expansion.embedding.len());
+        for value in &expansion.embedding {
+            fork_hash_f32(hasher, *value);
+        }
+        fork_hash_len(hasher, expansion.subqueries.len());
+        for query in &expansion.subqueries {
+            fork_hash_str(hasher, query);
+        }
+    } else {
+        fork_hash_bool(hasher, false);
+    }
+    fork_hash_len(hasher, extra_text_queries.len());
+    for query in extra_text_queries {
+        fork_hash_str(hasher, query);
+    }
+    fork_hash_bool(hasher, widen_channel_limits);
+    fork_hash_bool(hasher, skip_ret01_abstain);
+}
+
+fn fork_hash_candidate_revisions(
+    hasher: &mut Sha256,
+    revisions: &[([u8; ENTITY_ID_LEN], Option<RevisionRef>)],
+) {
+    fork_hash_len(hasher, revisions.len());
+    for (id, revision) in revisions {
+        fork_hash_raw_bytes(hasher, id);
+        fork_hash_bool(hasher, revision.is_some());
+        if let Some(revision) = revision {
+            fork_hash_raw_bytes(hasher, &revision.0);
+        }
+    }
+}
+
+fn fork_hash_floors(hasher: &mut Sha256, floors: crate::config::VectorEvidenceFloors) {
+    fork_hash_f32(hasher, floors.floor);
+    fork_hash_f32(hasher, floors.strong);
+}
+
+fn fork_hash_opt_floors(hasher: &mut Sha256, floors: Option<crate::config::VectorEvidenceFloors>) {
+    fork_hash_bool(hasher, floors.is_some());
+    if let Some(floors) = floors {
+        fork_hash_floors(hasher, floors);
+    }
+}
+
+fn fork_hash_opt_bytes(hasher: &mut Sha256, value: Option<&[u8]>) {
+    fork_hash_bool(hasher, value.is_some());
+    if let Some(value) = value {
+        fork_hash_bytes(hasher, value);
+    }
 }
 
 fn fork_hash_candidate_set(hasher: &mut Sha256, candidates: &[[u8; ENTITY_ID_LEN]]) {

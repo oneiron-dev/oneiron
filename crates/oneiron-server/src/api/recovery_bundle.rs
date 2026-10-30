@@ -8,6 +8,9 @@
 //! root the same way (`kit_sealed_bundle_index`, FIX 7106), and a kept pad
 //! object whose bytes the home lacks answers typed, never as missing.
 
+// FIX 5846: the kit door to the key custody the home holds.
+pub(super) mod custody;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -20,8 +23,8 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use base64::Engine;
 use oneiron::sync::residence::{
-    BundlePartRead, KIT_BUNDLE_FETCH_PATH, KIT_PAD_INDEX_FETCH_PATH, KitBundleFetch,
-    KitPadIndexFetch, PadObjectUnavailable, SealedBundleEntry, SealedBundleObject,
+    BundlePartRead, KIT_BUNDLE_FETCH_PATH, KIT_CUSTODY_FETCH_PATH, KIT_PAD_INDEX_FETCH_PATH,
+    KitBundleFetch, KitPadIndexFetch, PadObjectUnavailable, SealedBundleEntry, SealedBundleObject,
     kit_bundle_fetch_origin, kit_sealed_bundle_index, kit_sealed_bundle_part, sealed_digest_hex,
     sealed_generation_from_hex, sealed_generation_hex,
 };
@@ -40,6 +43,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route(KIT_BUNDLE_FETCH_PATH, post(part))
         .route(KIT_PAD_INDEX_FETCH_PATH, post(index))
+        .route(KIT_CUSTODY_FETCH_PATH, post(custody::custody_page))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 

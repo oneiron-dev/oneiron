@@ -5,8 +5,8 @@
 //! hands over the key on a private channel. The broker re-checks the request
 //! against its digest and its shape row, adds the auth header, sends once over
 //! verified TLS, strips every form of the key from the reply and answers. A
-//! binary reply ([`Shape::streams`]) streams back in chunks instead, each form
-//! of the key in it redacted as the chunks pass (FIX 6103).
+//! binary or media reply ([`Shape::streams`]) streams back in chunks instead,
+//! each form of the key in it redacted as the chunks pass (FIX 6103, 1896).
 //!
 //! It runs no model and no generated code, and it does not link the engine.
 //! The daemon side ([`BrokerClient`]) and the broker side ([`serve`]) share the
@@ -15,6 +15,7 @@
 
 mod call;
 pub mod cli;
+mod deadline;
 mod digest;
 mod error;
 mod form;
@@ -35,6 +36,7 @@ mod peer;
 mod serve;
 
 pub use call::{CallHeader, Outcome, ReplyHeader};
+pub use deadline::FRAME_DEADLINE;
 pub use digest::{is_auth_header, request_digest};
 pub use error::{BrokerError, Failure, Refusal};
 pub use form::FormData;

@@ -17,6 +17,7 @@
 
 mod activation;
 mod destination;
+mod erasable_keys;
 mod pad_objects;
 
 use std::collections::BTreeSet;
@@ -519,6 +520,7 @@ pub(crate) fn preflight_checkpoint_rows_rejected(
     if let Some(bound) = bound.as_ref() {
         crate::store::training_link::require_live_link_key(&mut plan, bound)?;
         crate::store::host_issuer_custody::plan_host_issuer_seed_custody(&mut plan, bound);
+        erasable_keys::plan_erasable_keys(&mut plan, bound, rows);
     }
     let mut erased = Vec::new();
     for (key, value) in rows {

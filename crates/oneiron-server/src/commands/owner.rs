@@ -48,7 +48,7 @@ pub use self::transfer_commands::{export, import};
 pub use self::vault_key::vault_key;
 pub(super) use self::vault_key::{
     HostUnlock, ensure_page_seal_wrapped, prepare_page_seal, read_secret_file,
-    refuse_orphaned_page_seal,
+    refuse_orphaned_page_seal, wrap_sealed_vault,
 };
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {

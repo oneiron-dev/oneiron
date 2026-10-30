@@ -241,6 +241,7 @@ impl NativeClient {
         let options = oneiron_remote::OpenOptions {
             dimensions,
             device_class: host_device_class(device_class.as_deref())?,
+            hold_checkpoint_root_signer: false,
         };
         let inner = py
             .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))
@@ -250,18 +251,28 @@ impl NativeClient {
 
     /// `open`, then this install's own machine profile from the vault's host
     /// root secret, its exact bytes borrowed for this call (FIX 5342).
-    /// `device_class` is `open`'s.
+    /// `device_class` is `open`'s. `hold_checkpoint_root_signer` holds this
+    /// install's host root as the vault's checkpoint signer for the handle's
+    /// life (FIX 5343); omitted is `false`.
     #[staticmethod]
-    #[pyo3(signature = (path, host_root_secret, dimensions=None, device_class=None))]
+    #[pyo3(signature = (path, host_root_secret, dimensions=None, device_class=None, hold_checkpoint_root_signer=None))]
     fn open_with_host_root(
         py: Python<'_>,
         path: Option<std::path::PathBuf>,
         host_root_secret: &[u8],
         dimensions: Option<usize>,
         device_class: Option<String>,
+        hold_checkpoint_root_signer: Option<bool>,
     ) -> PyResult<Self> {
         let device_class = host_device_class(device_class.as_deref())?;
-        let inner = host_root::open(py, path, host_root_secret, dimensions, device_class)?;
+        let inner = host_root::open(
+            py,
+            path,
+            host_root_secret,
+            dimensions,
+            device_class,
+            hold_checkpoint_root_signer.unwrap_or(false),
+        )?;
         Ok(Self { inner, keep: None })
     }
 
@@ -2500,6 +2511,21 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.skills.optimize.tradeoff_asks.pick", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_optimize_tradeoff_asks_resolve(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.skills.optimize.tradeoff_asks.resolve")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.optimize.tradeoff_asks.resolve", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -9689,6 +9715,21 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.lineage")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.consolidation.lineage", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_candidate_decisions(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.consolidation.candidate_decisions")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consolidation.candidate_decisions", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

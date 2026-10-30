@@ -38,6 +38,15 @@
 //! landed, a re-dirtied turn), because each may change the value the rider
 //! returned to.
 //!
+//! Each turn's words are queued once: a window leaves out every turn whose
+//! current words a round already took, and queues the rest, so a cycle
+//! drains (L07, Dreamer proof run 1: a re-read turn was extracted again in
+//! every Micro round). A turn is taken again when its words change, and
+//! when the projector puts it back because what a round read of it is gone
+//! (a rider, or a queued batch-mate of an erased or demoted turn). A re-tag
+//! that only puts a turn back on the carrier counts toward the wake, but
+//! does not queue its words twice.
+//!
 //! Queued and applied state are rows: a restart between queue and apply
 //! keeps the queued attempt, and the window it planned stays read. The rows
 //! are derived and local. A round applies in the transaction that completes
@@ -68,6 +77,11 @@ use crate::{EntityId, Vault};
 
 use super::read_phase::WakeStop;
 
+mod erasure;
+#[cfg(feature = "sync")]
+pub(crate) use erasure::demote_turns_in_txn;
+pub(crate) use erasure::erase_turn_in_txn;
+
 const POLICY: SideTable<(), ProjectorPolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROJECTOR_POLICY);
 const DEFAULT_POLICY: &str = include_str!("projector_policy_defaults.json");
@@ -77,8 +91,9 @@ const LATEST: SideTable<(), LatestTurn, Named> =
 /// A round the projector queued. Key: round id.
 const ROUND: SideTable<[u8; 32], ProjectionRound, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_ROUND);
-/// The rounds each TURN gave words to, for erasure. Key: TURN id.
-const GIVEN: SideTable<EntityId, Vec<[u8; 32]>, Named> =
+/// The rounds each TURN gave words to, for erasure, and the reading of the
+/// words the last of them took. Key: TURN id.
+const GIVEN: SideTable<EntityId, Given, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_GIVEN);
 /// A turn consumed as a repeat of the held turn. Key: its temporal key.
 const RIDER: SideTable<TurnKey, Rider, Named> =
@@ -117,6 +132,18 @@ struct LatestTurn {
     reading: Option<[u8; 32]>,
 }
 
+/// What one TURN gave the projector's rounds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Given {
+    /// The rounds it gave words to, for erasure.
+    rounds: Vec<[u8; 32]>,
+    /// The reading of the words the latest round that queued it took;
+    /// `None` once those words changed or the projector put it back to be
+    /// read again. A window leaves the turn out while its words still read
+    /// this way.
+    taken: Option<[u8; 32]>,
+}
+
 /// One queued round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProjectionRound {
@@ -147,7 +174,8 @@ struct Held {
 /// What a due wake found new.
 #[derive(Debug, Default)]
 pub(crate) struct ProjectionPlan {
-    /// The window, when its material surprised the projection; else empty.
+    /// The window less the turns whose words a round already took, when its
+    /// material surprised the projection; else empty.
     pub(crate) turns: Vec<EntityId>,
     /// Each turn read: its statements.
     statements: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
@@ -209,6 +237,7 @@ pub(crate) fn plan_in_txn(
     let mut new = BTreeSet::new();
     let mut unread = false;
     let mut repeats = Vec::new();
+    let mut taken = BTreeSet::new();
     for partition in partition_turns_in_txn(vault, txn, window, watermark)? {
         let hash = partition.key.partition_hash();
         for turn in &partition.turns {
@@ -220,6 +249,11 @@ pub(crate) fn plan_in_txn(
                 unread = true;
                 continue;
             };
+            // Words a round already took are read, not queued again.
+            if taken_in_txn(&vault.store, txn, &turn.turn_id)? == Some(reading(&statements)) {
+                taken.insert(turn.turn_id);
+                continue;
+            }
             if held.as_ref().is_some_and(|held| {
                 held.partition == hash && !statements.is_empty() && held.statements == statements
             }) {
@@ -231,7 +265,11 @@ pub(crate) fn plan_in_txn(
         }
     }
     if unread || new.len() >= policy.min_new_statements as usize {
-        plan.turns = window.iter().map(|turn| turn.turn_id).collect();
+        plan.turns = window
+            .iter()
+            .map(|turn| turn.turn_id)
+            .filter(|turn| !taken.contains(turn))
+            .collect();
     } else if let Some(held) = held
         && !repeats.is_empty()
     {
@@ -272,10 +310,18 @@ pub(crate) fn hold_in_txn(
         let fresh = matches!(outcome, EnqueueDreamerAttemptOutcome::Enqueued(_));
         for turn in &payload {
             let mut given = GIVEN.get(store, txn, turn)?.unwrap_or_default();
-            if !given.contains(&id) {
-                given.push(id);
-                GIVEN.put(store, txn, turn, &given)?;
+            if !given.rounds.contains(&id) {
+                given.rounds.push(id);
             }
+            if fresh {
+                given.taken = match plan.statements.get(turn) {
+                    Some(statements) => Some(reading(statements)),
+                    None => turn_statements_in_txn(vault, txn, turn)?
+                        .as_ref()
+                        .map(reading),
+                };
+            }
+            GIVEN.put(store, txn, turn, &given)?;
             let Some(at) = turn_key_in_txn(store, txn, turn)? else {
                 continue;
             };
@@ -401,7 +447,7 @@ fn requeue_riders_in_txn(
 ) -> Result<()> {
     for turn in turns {
         unride_in_txn(store, txn, turn)?;
-        requeue_turn_in_txn(store, txn, turn)?;
+        reread_in_txn(store, txn, turn)?;
     }
     Ok(())
 }
@@ -487,6 +533,8 @@ pub(crate) fn words_changed_in_txn(
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
+    // Its new words, even a return to the taken ones, are queued again.
+    forget_taken_in_txn(store, txn, turn)?;
     let mut read = riders_of_in_txn(store, txn, &BTreeSet::from([*turn]))?;
     if RIDES.get(store, txn, turn)?.is_some() {
         read.insert(*turn);
@@ -500,113 +548,6 @@ pub(crate) fn words_changed_in_txn(
     }
     latest.reading = None;
     LATEST.put(store, txn, &(), &latest)
-}
-
-/// Takes an erased TURN's words out of the projection: every round it gave
-/// words to holds nothing more. The riders that round consumed are
-/// re-dirtied, so a live repeat of what the turn said is read as new, and so
-/// are the other turns of a round still queued, whose attempt cannot read
-/// its batch without the erased turn. The turn rides nothing more: a TURN
-/// erased itself (`gone`) is read no more, and a TURN that lost a MESSAGE
-/// is read again, since no attempt has read the words it keeps.
-pub(crate) fn erase_turn_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    turn: &EntityId,
-    gone: bool,
-) -> Result<()> {
-    if unride_in_txn(store, txn, turn)? && !gone {
-        requeue_turn_in_txn(store, txn, turn)?;
-    }
-    let Some(given) = GIVEN.get(store, txn, turn)? else {
-        return Ok(());
-    };
-    for id in &given {
-        let Some(round) = ROUND.get(store, txn, id)? else {
-            continue;
-        };
-        for at in &round.riders {
-            if let Some(rider) = RIDER.get(store, txn, at)? {
-                RIDER_OF.delete(store, txn, &(rider.after.1, *at))?;
-            }
-            RIDER.delete(store, txn, at)?;
-            RIDES.delete(store, txn, &at.1)?;
-            requeue_turn_in_txn(store, txn, &at.1)?;
-        }
-        let batch: &[_] = if round.applied { &[] } else { &round.turns };
-        for member in batch.iter().filter(|member| *member != turn) {
-            requeue_turn_in_txn(store, txn, member)?;
-        }
-        if let Some(mut latest) = LATEST.get(store, txn, &())?
-            && latest.round == *id
-        {
-            latest.reading = None;
-            LATEST.put(store, txn, &(), &latest)?;
-        }
-        ROUND.delete(store, txn, id)?;
-    }
-    GIVEN.delete(store, txn, turn)?;
-    Ok(())
-}
-
-/// Takes the TURNs a window demotion removes out of the projection, in the
-/// remover's transaction before their rows go (OF-534). Their words are
-/// away, not erased: each round one gave words to holds nothing more and is
-/// retired as [`erase_turn_in_txn`] retires it, but only kept live turns go
-/// back on the carrier, its riders and, while it is queued, its other
-/// turns. A round with a participant under a legal hold stays whole, since
-/// retiring it would change that record's projection; it only stops
-/// holding, and the removed turn keeps its entry for it. A removed turn
-/// rides nothing more. Attempts and their receipts are not read.
-#[cfg(feature = "sync")]
-pub(crate) fn demote_turns_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    turns: &BTreeSet<EntityId>,
-) -> Result<()> {
-    if let Some(latest) = LATEST.get(store, txn, &())?
-        && turns.contains(&latest.key.1)
-    {
-        release_hold_in_txn(store, txn, &latest.round)?;
-    }
-    for turn in turns {
-        unride_in_txn(store, txn, turn)?;
-        let Some(given) = GIVEN.get(store, txn, turn)? else {
-            continue;
-        };
-        let mut kept = Vec::new();
-        for id in given {
-            let Some(round) = ROUND.get(store, txn, &id)? else {
-                continue;
-            };
-            release_hold_in_txn(store, txn, &id)?;
-            if round_held_in_txn(store, txn, &round)? {
-                kept.push(id);
-                continue;
-            }
-            for at in &round.riders {
-                if let Some(rider) = RIDER.get(store, txn, at)? {
-                    RIDER_OF.delete(store, txn, &(rider.after.1, *at))?;
-                }
-                RIDER.delete(store, txn, at)?;
-                RIDES.delete(store, txn, &at.1)?;
-                if !turns.contains(&at.1) {
-                    requeue_turn_in_txn(store, txn, &at.1)?;
-                }
-            }
-            let batch: &[_] = if round.applied { &[] } else { &round.turns };
-            for member in batch.iter().filter(|member| !turns.contains(*member)) {
-                requeue_turn_in_txn(store, txn, member)?;
-            }
-            ROUND.delete(store, txn, &id)?;
-        }
-        if kept.is_empty() {
-            GIVEN.delete(store, txn, turn)?;
-        } else {
-            GIVEN.put(store, txn, turn, &kept)?;
-        }
-    }
-    Ok(())
 }
 
 /// The latest turn holds nothing more while it was queued by round `id`.
@@ -744,6 +685,30 @@ fn turn_class_in_txn(
         &vault.config.assistant_display_names,
     );
     Ok(turn_trust_class(role, facts.imported))
+}
+
+/// The reading of the words the latest round that queued `turn` took,
+/// while it still stands.
+fn taken_in_txn(store: &Store, txn: &heed::RoTxn<'_>, turn: &EntityId) -> Result<Option<[u8; 32]>> {
+    Ok(GIVEN.get(store, txn, turn)?.and_then(|given| given.taken))
+}
+
+/// Forgets the words a round took of `turn`, so the next window queues it.
+fn forget_taken_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<()> {
+    if let Some(mut given) = GIVEN.get(store, txn, turn)?
+        && given.taken.is_some()
+    {
+        given.taken = None;
+        GIVEN.put(store, txn, turn, &given)?;
+    }
+    Ok(())
+}
+
+/// Puts a TURN the projector consumed back on the carrier to be read again:
+/// what a round read of it is gone, so the words it took no longer count.
+fn reread_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<()> {
+    forget_taken_in_txn(store, txn, turn)?;
+    requeue_turn_in_txn(store, txn, turn)
 }
 
 /// The version of one turn's statements.

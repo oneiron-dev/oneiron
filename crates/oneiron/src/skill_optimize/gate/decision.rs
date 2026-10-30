@@ -237,7 +237,14 @@ fn rule_on_proposal(
                     return Ok(Prepared::Ruled(Box::new(standing)));
                 }
                 Ok(Prepared::Score(Box::new(ScoreInputs {
+                    judge_rubric_digest: judge_rubric_digest_in_txn(vault, &*wtxn)?,
                     outcomes,
+                    proposal_instructions: super::rule_policy::gate_instructions_in_txn(
+                        vault, &*wtxn, proposal, &staged,
+                    ),
+                    target_instructions: super::rule_policy::gate_instructions_in_txn(
+                        vault, &*wtxn, &target, &current,
+                    ),
                     proposal: staged,
                     target,
                     target_record: current,
@@ -260,14 +267,14 @@ fn rule_on_proposal(
         skill: inputs.target,
         skill_id: &inputs.target_record.skill_id,
         version: &inputs.target_record.version,
-        instructions: &inputs.target_record.desc,
+        instructions: &inputs.target_instructions,
         held_out_receipts: &inputs.held_out,
     };
     let proposed_case = HeldOutReplayCase {
         skill: inputs.target,
         skill_id: &inputs.target_record.skill_id,
         version: &inputs.proposal.version,
-        instructions: &inputs.proposal.desc,
+        instructions: &inputs.proposal_instructions,
         held_out_receipts: &inputs.held_out,
     };
     // A project goal's measured axes come from its bound live report, read
@@ -286,6 +293,7 @@ fn rule_on_proposal(
     let anchor = anchor_score(
         &crate::skill_optimize::labels::skill_label_anchor(vault, inputs.target)?,
         incumbent.as_ref().map(|incumbent| incumbent.judge.as_str()),
+        judge_revision,
     );
     // Pair responses by their common-rubric scores and freeze the preference
     // before either version's instructions or a label is read; both share it.
@@ -297,6 +305,7 @@ fn rule_on_proposal(
         &inputs.outcomes,
         &blind,
         anchor,
+        inputs.judge_rubric_digest.clone(),
     )?;
     let goal_axes = score_goal_axes(
         scorer,
@@ -429,12 +438,18 @@ enum Prepared {
 /// transaction and carried unchanged to the committing one.
 struct ScoreInputs {
     proposal: SkillRecord,
+    /// Each arm's instructions as the judge compares them (FIX 10878).
+    proposal_instructions: String,
+    target_instructions: String,
     target: EntityId,
     target_record: SkillRecord,
     held_out: Vec<String>,
     outcomes: Vec<(String, bool)>,
     basis: ScoredBasis,
     goal_definition: GoalDefinition,
+    /// The pin of the judge rubric the scoring read, taken in the pre-score
+    /// transaction (FIX 3585).
+    judge_rubric_digest: Option<String>,
 }
 
 /// The one place a durable ruling becomes the caller's answer.

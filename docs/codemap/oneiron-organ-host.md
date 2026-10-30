@@ -41,8 +41,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 6 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
 | `src/sandbox.rs` | src | s | 5 crate-vis | — | What the host does to an organ process between fork and exec |
 | `src/sandbox/fence.rs` | src | s | 5 crate-vis | — | The descendant fence (FIX 7887): a cgroup of its own for each organ process, made under the engine's own… |
-| `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 7 const · 1 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
+| `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 7 const · 2 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `src/seal/binding.rs` | src | m | 9 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |
+| `src/seal/custody_keys.rs` | src | s | 1 struct · 2 fn | CustodySealKeys | A seal key held in secret custody (FIX 1297): its PKCS#8 private key is a custody record's value, named by… |
 | `src/seal/fetch.rs` | src | s | 1 crate-vis | — | The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only, each fetch inside the fetch… |
 | `src/seal/file_keys.rs` | src | s | 1 struct · 3 fn | FileSealKeys | A seal key held in files (OF-415): a PKCS#8 private key and its PEM certificate chain, named by the host's… |
 | `src/seal/observe.rs` | src | s | 5 crate-vis | — | What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5) |

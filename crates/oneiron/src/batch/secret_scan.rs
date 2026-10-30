@@ -50,7 +50,7 @@ pub(crate) use self::mask::spool::{
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
-use self::shapes::Door;
+use self::{shapes::Door, whole_read::JoinedText};
 pub(crate) use self::whole_read::{
     Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,
     release_reads_json_text, release_reads_whole, release_reads_whole_json,
@@ -306,7 +306,7 @@ pub(crate) fn release_joined_strings<S: std::borrow::Borrow<str>>(items: &[S]) -
 /// item, a private key one line per item) is read whole, one item per line,
 /// before each item is read alone.
 fn joined_strings<S: std::borrow::Borrow<str>>(items: &[S], door: Door) -> bool {
-    items.len() > 1 && detect(&items.join("\n"), door).is_some()
+    items.len() > 1 && detect(&Zeroizing::new(items.join("\n")), door).is_some() // (FIX 11563)
 }
 
 /// [`release_joined_strings`] over a MessagePack array's items.
@@ -326,12 +326,12 @@ fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
     let texts: Vec<_> = items
         .iter()
         .filter_map(|item| match item {
-            rmpv::Value::String(text) => Some(String::from_utf8_lossy(text.as_bytes())),
+            rmpv::Value::String(text) => Some(JoinedText::from_bytes(text.as_bytes())),
             rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
-                Some(String::from_utf8_lossy(bytes))
+                Some(JoinedText::from_bytes(bytes))
             }
             rmpv::Value::Array(values) => byte_values(values.iter().map(rmpv::Value::as_u64))
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into()),
+                .map(|bytes| JoinedText::from_computed(&Zeroizing::new(bytes))),
             _ => None,
         })
         .collect();
@@ -341,13 +341,13 @@ fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
 /// [`joined_messagepack`] for JSON items: a string, and an array of byte
 /// values (MessagePack binary projects to one).
 fn joined_json(items: &[serde_json::Value], door: Door) -> bool {
-    let texts: Vec<std::borrow::Cow<'_, str>> = items
+    let texts: Vec<_> = items
         .iter()
         .filter_map(|item| match item {
-            serde_json::Value::String(text) => Some(text.as_str().into()),
+            serde_json::Value::String(text) => Some(JoinedText::Borrowed(text.as_str())),
             serde_json::Value::Array(values) => {
                 byte_values(values.iter().map(serde_json::Value::as_u64))
-                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into())
+                    .map(|bytes| JoinedText::from_computed(&Zeroizing::new(bytes)))
             }
             _ => None,
         })

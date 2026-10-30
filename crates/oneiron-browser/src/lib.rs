@@ -97,7 +97,7 @@ pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
 pub use replay::{OperandGap, ReplayAction, StepStop, TypeOperand};
 pub use request::DestinationRefusal;
 #[cfg(feature = "driver")]
-pub use request::{BrowserRequestHandler, RenderedDocument};
+pub use request::{BrowserBody, BrowserRequestHandler, RenderedDocument, SpooledResponse};
 pub use retention::HandleRetention;
 pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
 pub use secret::{SecretCustody, SecretUse};

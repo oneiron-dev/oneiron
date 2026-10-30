@@ -66,6 +66,7 @@ pub(in crate::sync) use self::own_device::OwnDeviceImport;
 pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
 pub(crate) use self::residence::home_handoff::{HandoffLane, TargetCancel, TargetStanding};
+pub use self::residence::kit_fetch::fetch_custody_with_kit;
 pub use self::residence::{
     OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
     SealedBundleRelay, SealedBundleRelayObservation, SearchSource, ThinItem,

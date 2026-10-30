@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 
 use rmpv::Value;
+use zeroize::Zeroizing;
 
 use super::{Door, byte_values, detect, detect_bytes, sanitize_messagepack};
 
@@ -41,7 +42,8 @@ pub(crate) fn release_reads_whole_json(value: &serde_json::Value) -> bool {
 /// [`release_reads_whole_json`] over the text alone, for JSON whose stored
 /// encoding was already read as stored.
 pub(crate) fn release_reads_json_text(value: &serde_json::Value) -> bool {
-    let mut text = String::new();
+    // The joined text is wiped on drop (FIX 12047).
+    let mut text = Zeroizing::new(String::new());
     json_leaves(value, &mut text);
     detect(&text, Door::Release).is_some()
 }
@@ -132,13 +134,13 @@ fn messagepack_form(value: &serde_json::Value, narrow: bool, narrows: &mut bool)
     }
 }
 
-fn messagepack_leaves(value: &rmpv::Value, out: &mut String) {
+fn messagepack_leaves(value: &rmpv::Value, out: &mut Zeroizing<String>) {
     use rmpv::Value;
     match value {
         Value::String(text) => push_line(out, text.as_bytes()),
         Value::Binary(bytes) | Value::Ext(_, bytes) => push_line(out, bytes),
         Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
-            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
+            Some(bytes) if !bytes.is_empty() => push_line(out, &Zeroizing::new(bytes)),
             _ => values
                 .iter()
                 .for_each(|value| messagepack_leaves(value, out)),
@@ -151,12 +153,12 @@ fn messagepack_leaves(value: &rmpv::Value, out: &mut String) {
     }
 }
 
-fn json_leaves(value: &serde_json::Value, out: &mut String) {
+fn json_leaves(value: &serde_json::Value, out: &mut Zeroizing<String>) {
     use serde_json::Value;
     match value {
         Value::String(text) => push_line(out, text.as_bytes()),
         Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
-            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
+            Some(bytes) if !bytes.is_empty() => push_line(out, &Zeroizing::new(bytes)),
             _ => values.iter().for_each(|value| json_leaves(value, out)),
         },
         Value::Object(fields) => fields.iter().for_each(|(key, value)| {
@@ -167,8 +169,13 @@ fn json_leaves(value: &serde_json::Value, out: &mut String) {
     }
 }
 
-fn push_line(out: &mut String, bytes: &[u8]) {
-    out.push_str(&String::from_utf8_lossy(bytes));
+fn push_line(out: &mut Zeroizing<String>, bytes: &[u8]) {
+    // Borrowed valid UTF-8 copies nothing, else a lossy copy wiped on drop
+    // (FIX 12047).
+    match JoinedText::from_bytes(bytes) {
+        JoinedText::Borrowed(text) => out.push_str(text),
+        JoinedText::Owned(text) => out.push_str(&text),
+    }
     out.push('\n');
 }
 
@@ -191,7 +198,8 @@ pub(crate) enum Encoding<'a> {
 /// [`release_reads_whole`] with the value's encoding read from
 /// `encoding`. An encoding that cannot be written reads as a secret.
 pub(crate) fn release_reads_whole_in(value: &Value, encoding: Encoding<'_>) -> bool {
-    let mut text = String::new();
+    // The joined text is wiped on drop (FIX 12047).
+    let mut text = Zeroizing::new(String::new());
     messagepack_leaves(value, &mut text);
     if detect(&text, Door::Release).is_some() {
         return true;
@@ -433,4 +441,43 @@ fn skip(stored: &[u8], at: usize) -> Option<usize> {
         }
     }
     (at <= stored.len()).then_some(at)
+}
+
+/// An array item's text for the joined read: borrowed when it copies
+/// nothing, else its lossy copy, held wiped (FIX 11563). The joined text
+/// built from these is wiped too, so no lossy copy of an item survives the
+/// read.
+pub(super) enum JoinedText<'a> {
+    /// Valid UTF-8 in place: no copy, nothing to wipe.
+    Borrowed(&'a str),
+    /// A lossy copy, wiped on drop.
+    Owned(Zeroizing<String>),
+}
+
+impl std::borrow::Borrow<str> for JoinedText<'_> {
+    fn borrow(&self) -> &str {
+        match self {
+            JoinedText::Borrowed(text) => text,
+            JoinedText::Owned(text) => text.as_str(),
+        }
+    }
+}
+
+impl<'a> JoinedText<'a> {
+    /// `bytes` as text: borrowed when it is valid UTF-8, else its lossy
+    /// copy, wiped on drop.
+    pub(super) fn from_bytes(bytes: &'a [u8]) -> Self {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => JoinedText::Borrowed(text),
+            Err(_) => JoinedText::from_computed(bytes),
+        }
+    }
+
+    /// `bytes` as text, always copied wiped: for bytes with no owner to
+    /// borrow from, like an array of byte values read into a buffer.
+    pub(super) fn from_computed(bytes: &[u8]) -> Self {
+        JoinedText::Owned(Zeroizing::new(
+            String::from_utf8_lossy(bytes).into_owned(),
+        ))
+    }
 }
