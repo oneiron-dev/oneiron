@@ -202,7 +202,7 @@ impl BatchBuilder<'_> {
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
-        let rows = super::super::vad_postcommit::ops_written_rows(&ops);
+        let mut rows = super::super::vad_postcommit::ops_written_rows(&ops);
         let stale_sweep = crate::federation::StaleSweepWatch::begin(vault);
         let committed = vault.store.group_write(Some(announced), |wtxn| {
             if let Err(err) = target_guard(wtxn) {
@@ -215,15 +215,19 @@ impl BatchBuilder<'_> {
                 return Rows::Discard(Err(err.into()));
             }
             // A generic put of a projector-only `comm.*` class leaves the
-            // batch here, before the gate stages anything for it, as the
-            // projector's source event in this write. A bound writer's puts
-            // stay with the door, judged by its read below.
-            if reader.is_none()
-                && let Err(err) =
-                    crate::comm::route_projector_only_batch_puts_in_txn(vault, wtxn, &mut ops)
-            {
-                return Rows::Discard(Err(err.into()));
-            }
+            // batch here, before the gate stages anything for it, for the
+            // projector. Its source event is written only once the preflight
+            // passes, so a batch the preflight refuses keeps its receipts and
+            // lands no routed event or head. A bound writer's puts stay with
+            // the door, judged by its read below.
+            let routed = if reader.is_none() {
+                match crate::comm::take_projector_only_batch_puts_in_txn(vault, &*wtxn, &mut ops) {
+                    Ok(routed) => routed,
+                    Err(err) => return Rows::Discard(Err(err.into())),
+                }
+            } else {
+                None
+            };
             // A bound writer takes only rows its read reads, judged against
             // their originals before anything stages (FIX 6068); its CLAIMs'
             // record refs are judged over the staged batch below (FIX 1223).
@@ -259,6 +263,24 @@ impl BatchBuilder<'_> {
                     }),
                     Err(err) => Rows::Discard(Err(err.into())),
                 };
+            }
+            // The routed puts' events project here, before the gate, VAD and
+            // lexical staging of the ops that remain. From here an unbound
+            // writer's batch commits or is discarded whole.
+            if let Some(routed) = routed {
+                let written = match routed.record_in_txn(vault, wtxn) {
+                    Ok(written) => written,
+                    Err(err) => return Rows::Discard(Err(err.into())),
+                };
+                // The rows the live mirror takes: the ops that remain, the
+                // routed source events and the heads they wrote.
+                #[cfg(feature = "sync")]
+                {
+                    rows = super::super::vad_postcommit::ops_written_rows(&ops);
+                    rows.extend(written);
+                }
+                #[cfg(not(feature = "sync"))]
+                drop(written);
             }
             let batch = AdmittedBatch {
                 ops,

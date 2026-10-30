@@ -42,10 +42,45 @@ const ROUTED_PREDICATES: [&str; 3] = [
 enum CommPutRoute {
     /// The door writes it as before.
     Door,
-    /// The projector took it: recorded and projected, or a replay.
-    Projector,
+    /// The projector takes it: the source event it records, or `None` for a
+    /// replay, which records nothing.
+    Projector(Option<CommSourceEvent>),
     /// It names a party this write does not hold.
     PartyMissing,
+}
+
+/// The source event a routed put records on its party, for the projector.
+struct CommSourceEvent {
+    party_ref: EntityId,
+    kind: CommEventKind,
+    channel_class: Option<String>,
+    thread_ref: Option<String>,
+    occurred_at: u64,
+}
+
+impl CommSourceEvent {
+    /// Records this event in `wtxn` and projects it there through
+    /// `projection`, which notes the event and the heads its rule writes.
+    fn record_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        projection: &mut RecordedEventProjection,
+    ) -> Result<()> {
+        let event_id = put_source_event_in_txn(
+            vault,
+            wtxn,
+            self.party_ref,
+            self.kind,
+            self.channel_class.as_deref(),
+            self.thread_ref.as_deref(),
+            self.occurred_at,
+        )
+        .map_err(source_event_error)?;
+        projection
+            .project_in_txn(vault, wtxn, event_id, self.kind)
+            .map_err(source_event_error)
+    }
 }
 
 /// Routes one generic claim-door write of a projector-only `comm.*` class
@@ -81,32 +116,83 @@ pub fn route_projector_only_comm_put_in_txn(
         return Ok(false);
     }
     let data = encode_claim_body(body)?;
-    let mut projection = RecordedEventProjection::default();
-    match route_comm_put_in_txn(vault, wtxn, id, &body.predicate, &data, &mut projection)? {
+    match comm_put_route_in_txn(vault, wtxn, id, &body.predicate, &data)? {
         CommPutRoute::Door => Ok(false),
-        CommPutRoute::Projector => Ok(true),
+        CommPutRoute::Projector(event) => {
+            if let Some(event) = event {
+                event.record_in_txn(vault, wtxn, &mut RecordedEventProjection::default())?;
+            }
+            Ok(true)
+        }
         CommPutRoute::PartyMissing => Err(Error::EntityNotFound),
     }
 }
 
+/// A batch's generic puts of the projector-only `comm.*` classes, taken out
+/// of its ops for the projector: the source events they record, in op order.
+pub(crate) struct RoutedBatchPuts {
+    events: Vec<CommSourceEvent>,
+}
+
+impl RoutedBatchPuts {
+    /// Records each routed put's source event in `wtxn` and projects it
+    /// there, in op order against one pass index; an event the projector's
+    /// pass would leave waiting stays pending for that pass. Returns the ids
+    /// this wrote: the source events and the heads their projection wrote.
+    ///
+    /// # Errors
+    /// A source event the projector refuses, or a storage failure.
+    pub(crate) fn record_in_txn(
+        self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let mut projection = RecordedEventProjection::default();
+        for event in &self.events {
+            event.record_in_txn(vault, wtxn, &mut projection)?;
+        }
+        Ok(projection.into_written())
+    }
+}
+
 /// Routes a batch's generic puts of the projector-only `comm.*` classes
-/// through the projector, in the batch's own write, before any op stages.
+/// through the projector, in the batch's own write, before any op stages:
+/// [`take_projector_only_batch_puts_in_txn`], then
+/// [`RoutedBatchPuts::record_in_txn`]. Returns the ids the routing wrote:
+/// the source events and the heads their projection wrote.
+///
+/// # Errors
+/// As those two.
+pub(crate) fn route_projector_only_batch_puts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ops: &mut Vec<BatchOp>,
+) -> Result<BTreeSet<EntityId>> {
+    match take_projector_only_batch_puts_in_txn(vault, wtxn, ops)? {
+        Some(routed) => routed.record_in_txn(vault, wtxn),
+        None => Ok(BTreeSet::new()),
+    }
+}
+
+/// Takes a batch's generic puts of the projector-only `comm.*` classes out
+/// of `ops` for the projector, reading `txn` and writing nothing. Returns
+/// them, or `None` when no put leaves the batch.
 ///
 /// A put routes as [`route_projector_only_comm_put_in_txn`] routes one, when
 /// it is a CLAIM put with every admit flag closed (so no replicated,
 /// engine-history or reserved-door put) whose body decodes to a routed class.
 /// A routed put leaves `ops`, with each ClaimOf edge the batch writes from
-/// its id; its events project in op order against one pass index. A put
-/// stays with the door, as before, when another op of the batch names its
-/// id, or when the party it names is not stored yet (the batch may put it).
+/// its id. A put stays with the door, as before, when another op of the batch
+/// names its id, or when the party it names is not stored yet (the batch may
+/// put it).
 ///
 /// # Errors
 /// A routed body the door refuses, or a storage failure.
-pub(crate) fn route_projector_only_batch_puts_in_txn(
+pub(crate) fn take_projector_only_batch_puts_in_txn(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     ops: &mut Vec<BatchOp>,
-) -> Result<()> {
+) -> Result<Option<RoutedBatchPuts>> {
     let candidates: Vec<(usize, String)> = ops
         .iter()
         .enumerate()
@@ -129,13 +215,13 @@ pub(crate) fn route_projector_only_batch_puts_in_txn(
         })
         .collect();
     if candidates.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let mut mentions: HashMap<EntityId, usize> = HashMap::new();
     for op in ops.iter() {
         note_named_ids(op, |id| *mentions.entry(id).or_default() += 1);
     }
-    let mut projection = RecordedEventProjection::default();
+    let mut events = Vec::new();
     let mut routed = BTreeSet::new();
     for (index, predicate) in candidates {
         let BatchOp::Put { id, data, .. } = &ops[index] else {
@@ -144,41 +230,41 @@ pub(crate) fn route_projector_only_batch_puts_in_txn(
         if mentions.get(id) != Some(&1) {
             continue;
         }
-        if matches!(
-            route_comm_put_in_txn(vault, wtxn, id, &predicate, data, &mut projection)?,
-            CommPutRoute::Projector
-        ) {
+        if let CommPutRoute::Projector(event) =
+            comm_put_route_in_txn(vault, txn, id, &predicate, data)?
+        {
+            events.extend(event);
             routed.insert(*id);
         }
     }
-    if !routed.is_empty() {
-        ops.retain(|op| !leaves_with_routed_put(op, &routed));
+    if routed.is_empty() {
+        return Ok(None);
     }
-    Ok(())
+    ops.retain(|op| !leaves_with_routed_put(op, &routed));
+    Ok(Some(RoutedBatchPuts { events }))
 }
 
-/// Routes one generic put of `data`, a body of the routed class `predicate`,
-/// at `id`, as [`route_projector_only_comm_put_in_txn`] says.
-fn route_comm_put_in_txn(
+/// Where one generic put of `data`, a body of the routed class `predicate`,
+/// at `id` goes, as [`route_projector_only_comm_put_in_txn`] says, read in
+/// `txn`.
+fn comm_put_route_in_txn(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     id: &EntityId,
     predicate: &str,
     data: &[u8],
-    projection: &mut RecordedEventProjection,
 ) -> Result<CommPutRoute> {
-    if !claim_class_descriptor_in_txn(&vault.store, wtxn, predicate)?
+    if !claim_class_descriptor_in_txn(&vault.store, txn, predicate)?
         .is_some_and(|descriptor| descriptor.projector_only)
     {
         return Ok(CommPutRoute::Door);
     }
-    let body =
-        crate::claim::validate_claim_body_and_decode_in_txn(&vault.store, wtxn, data, false)?;
-    if let Some(resident) = vault.store.port_entity_record(&*wtxn, id)?
+    let body = crate::claim::validate_claim_body_and_decode_in_txn(&vault.store, txn, data, false)?;
+    if let Some(resident) = vault.store.port_entity_record(txn, id)?
         && resident.entity_type == ENTITY_TYPE_CLAIM
         && resident.body == data[..]
     {
-        return Ok(CommPutRoute::Projector);
+        return Ok(CommPutRoute::Projector(None));
     }
     let claim = CommClaim::from_claim_body(&body)?;
     let stated = matches!(
@@ -234,28 +320,18 @@ fn route_comm_put_in_txn(
         ),
         _ => return Ok(CommPutRoute::Door),
     };
-    match vault.store.port_entity_record(&*wtxn, &party_ref)? {
-        None => return Ok(CommPutRoute::PartyMissing),
+    match vault.store.port_entity_record(txn, &party_ref)? {
+        None => Ok(CommPutRoute::PartyMissing),
         // The projector writes a comm head only on a PERSON party.
-        Some(party) if party.entity_type != ENTITY_TYPE_PERSON => {
-            return Ok(CommPutRoute::Door);
-        }
-        Some(_) => {}
+        Some(party) if party.entity_type != ENTITY_TYPE_PERSON => Ok(CommPutRoute::Door),
+        Some(_) => Ok(CommPutRoute::Projector(Some(CommSourceEvent {
+            party_ref,
+            kind,
+            channel_class,
+            thread_ref,
+            occurred_at,
+        }))),
     }
-    let event_id = put_source_event_in_txn(
-        vault,
-        wtxn,
-        party_ref,
-        kind,
-        channel_class.as_deref(),
-        thread_ref.as_deref(),
-        occurred_at,
-    )
-    .map_err(source_event_error)?;
-    projection
-        .project_in_txn(vault, wtxn, event_id, kind)
-        .map_err(source_event_error)?;
-    Ok(CommPutRoute::Projector)
 }
 
 fn source_event_error(error: CommError) -> Error {
