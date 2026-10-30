@@ -12,13 +12,6 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// FIX 8907: `verbs` (the SDK home, once `task_verb::sdk`) still names these
-// task types as `super::…`; this private import keeps those bytes.
-use crate::task_verb::{
-    AttemptHandle, QueueTaskBrief, TaskAskSpec, TaskAskWord, TaskAssignee, TaskCreateSpec,
-    TaskReportBody, TaskTtl,
-};
-
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
 pub mod config;
