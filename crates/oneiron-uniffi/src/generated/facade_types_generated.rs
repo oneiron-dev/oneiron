@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1213 facade rows, 4399 generated types.
+// UniFFI census: 1213 facade rows, 4400 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1165.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -36648,6 +36648,15 @@ pub struct AnnotationPinRequest {
     pub locator: AnnotationLocator,
 }
 
+/// `oneiron::anchored_annotation::wire::AnnotationBodyAnchorView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationBodyAnchorView {
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "locator")]
+    pub locator: AnnotationLocator,
+}
+
 /// `oneiron::anchored_annotation::wire::AnnotationAnchorView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AnnotationAnchorView {
@@ -36659,6 +36668,8 @@ pub struct AnnotationAnchorView {
     pub locator: AnnotationLocator,
     #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
     pub quote: Option<String>,
+    #[serde(rename = "body", default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<AnnotationBodyAnchorView>,
 }
 
 /// `oneiron::anchored_annotation::wire::AnnotationThreadOpenRequest`.
