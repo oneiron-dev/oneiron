@@ -216,6 +216,8 @@ pub(crate) fn sanitize_messagepack_credentials_in(
 
 /// [`release_parts_read_whole`] for one body decoded from `bytes`.
 pub(crate) fn release_body_reads_whole_as_stored(value: &Value, bytes: &[u8]) -> bool {
+    let _l15 = crate::stage_timing::stage("scan.release_whole_read");
+    crate::stage_timing::record("count.release_whole_read", 1);
     let mut judged = value.clone();
     sanitize_messagepack(&mut judged, true, Door::Release);
     release_reads_whole_in(

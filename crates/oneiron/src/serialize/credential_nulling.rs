@@ -49,6 +49,8 @@ fn writer_credential_key(key: &str) -> bool {
 /// A structure that still reads as a secret once its parts are judged, read
 /// whole as the release walks read it, is nulled whole.
 pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
+    let _l15 = crate::stage_timing::stage("scan.null_credentials");
+    crate::stage_timing::record("count.null_credentials", 1);
     null_whole(key, value, release_reads_whole_json)
 }
 
