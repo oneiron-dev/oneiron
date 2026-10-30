@@ -560,6 +560,7 @@ fn retain_evidence_in_txn(
     if let Some(raw) =
         crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*txn, evidence)?
     {
+        let raw = vault.materialized_row_in_txn(&*txn, evidence, raw)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("feedback triage evidence header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_ASSET
