@@ -110,6 +110,16 @@ fn apply_remote_change(
                 .first()
                 .ok_or_else(|| ingest_error("remote resource has no event"))?;
             let source = pull_source_record_id(provider, seat, &primary.uid);
+            // Archived before any semantic write, once the bytes are known to
+            // parse: a later write renders over exactly this copy.
+            let source_blob_ref = super::resource::archive_remote_source(
+                vault,
+                system,
+                &seat.config.calendar_ref,
+                &primary.uid,
+                &object.ics,
+                now,
+            )?;
             crate::calendar::ingest::preflight_connector_feed(vault, system, &source, &feed, now)?;
             for parsed in &feed.events {
                 let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
@@ -159,6 +169,7 @@ fn apply_remote_change(
                     last_sequence: primary.sequence,
                     content_hash: super::remote::ics_content_hash(&object.ics, &primary.uid)?,
                     last_seen_at: now,
+                    source_blob_ref: Some(source_blob_ref),
                 },
             )?;
             Ok(())
@@ -331,6 +342,16 @@ pub(super) fn reconcile_remote_object(
         let Ok(parsed) = parse_remote_object(object) else {
             continue;
         };
+        // The refreshed copy is the base a rebased write renders over.
+        let source_blob_ref = super::resource::archive_remote_source(
+            vault,
+            &seat.config.system,
+            &seat.config.calendar_ref,
+            uid,
+            &object.ics,
+            now,
+        )
+        .ok();
         let _ = write_remote_object(
             vault,
             &CalendarRemoteObjectRow {
@@ -342,6 +363,7 @@ pub(super) fn reconcile_remote_object(
                 last_sequence: parsed.sequence,
                 content_hash: parsed.content_hash,
                 last_seen_at: now,
+                source_blob_ref,
             },
         );
     }

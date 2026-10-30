@@ -3,11 +3,14 @@
 //! Directory module. `claims` holds the `comm.*` claim family; `records` the
 //! COMM_RECORD storage and codec; `parties` the party identity doors;
 //! `stop_hold` the send hold of a STOP, standing or not projected here yet;
-//! `projector` the ordered projector pass; `projection_writes` the
+//! `projector` the ordered projector pass; `receipt_import` its import of
+//! delivered connector send receipts; `projection_writes` the
 //! deterministic claim writes; `consent` the human gates, send overrides and
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
 //! reads the human clear takes across a party's redirect shells;
 //! `descriptor` the synced ARCH-0057 claim-class descriptors;
+//! `generic_put_routing` the generic claim door's and batch builder's
+//! routing of the projector-only classes through the projector;
 //! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
@@ -15,10 +18,12 @@
 mod claims;
 mod consent;
 mod descriptor;
+mod generic_put_routing;
 mod opt_out_slots;
 mod parties;
 mod projection_writes;
 mod projector;
+mod receipt_import;
 mod records;
 mod stop_hold;
 mod thread_membership;
@@ -53,12 +58,19 @@ pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
     seed_claim_class_descriptors,
 };
+pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
+pub(crate) use self::generic_put_routing::{
+    route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
+};
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
     CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
     resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
 };
-pub(crate) use self::projector::record_comm_actor_send_receipt_in_txn;
+pub(crate) use self::projector::{
+    record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
+    run_comm_projector_housekeeping_step,
+};
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,
@@ -376,12 +388,15 @@ impl CommProjectorIndex {
     }
 }
 
-/// Index changes one committed event authorizes. Empty for events that mutate
-/// no indexed row.
+/// Index changes one committed event authorizes, and the comm heads its rule
+/// wrote. Empty for events that mutate no indexed row and write no head.
 #[derive(Debug, Default)]
 struct ProjectorIndexDelta {
     consumed_gate_ids: Vec<(PartyChannelKey, EntityId)>,
     projected_thread_transition: Option<(PartyThreadKey, (u64, bool))>,
+    /// The heads the rule minted, superseded or retracted. The index reads
+    /// none of them; an in-write projection reports them to its writer.
+    heads: Vec<EntityId>,
 }
 
 /// One source COMM_RECORD event, resolved to the projector rule it fires.

@@ -6,7 +6,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::booking::BookingError;
-use crate::booking::lifecycle::digest_with;
 use crate::side_table::{self, Raw, SideTable};
 
 use super::rules::BookingAntiAbuseRuleRow;
@@ -15,27 +14,25 @@ use super::rules::BookingAntiAbuseRuleRow;
 // Storage layout
 // -------------------------------------------------------------------------
 
-/// Booking-only `vault_meta` prefix. Every row this module stores — rule
-/// rows, owner notices, rate counters, and the slot-list response cache —
-/// lives under it. Quarantine records are the one deliberate exception:
-/// those ride the gate's existing pending-consent rows so the inbox's
-/// pending-review pattern can enumerate them.
+/// Booking-only `vault_meta` prefix. The node-local rows this module stores —
+/// rule proposals, rate counters, the slot-list response cache, and
+/// quarantined confirms' restorable submissions — live under it. Activated
+/// rule rows are POLICY_MANIFEST rows (FIX 9628), and quarantine records ride
+/// the gate's existing pending-consent rows so the inbox's pending-review
+/// pattern can enumerate them.
 pub const BOOKING_ANTI_ABUSE_META_PREFIX: &[u8] = b"booking:anti_abuse:v1:";
 
 /// Key tags under the prefix, one byte-string per row family, kept distinct
 /// so a prefix scan can pick out exactly one family.
-pub(super) const RULE_KEY_TAG: &[u8; 5] = b"rule\x00";
-pub(super) const NOTICE_KEY_TAG: &[u8; 7] = b"notice\x00";
 pub(super) const RATE_KEY_TAG: &[u8; 5] = b"rate\x00";
 pub(super) const CACHE_KEY_TAG: &[u8; 6] = b"cache\x00";
+pub(super) const PROPOSAL_KEY_TAG: &[u8; 9] = b"proposal\x00";
+pub(super) const SUBMISSION_KEY_TAG: &[u8; 11] = b"submission\x00";
 
-/// One activated rule row. Key: `"rule\0"` + hash32 (the row id digest).
-pub(super) const RULE: SideTable<([u8; 5], [u8; 32]), BookingAntiAbuseRuleRow, Raw> =
-    SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
-
-/// One owner-visible activation notice. Key: `"notice\0"` + hash32 (the row id
-/// + version digest).
-pub(super) const NOTICE: SideTable<([u8; 7], [u8; 32]), String, Raw> =
+/// One retained rule change awaiting its holder (FIX 9627). Key:
+/// `"proposal\0"` + hash32 (the proposed row's version hash, the digest the
+/// owner's approve-once press names).
+pub(super) const RULE_PROPOSAL: SideTable<([u8; 9], [u8; 32]), BookingAntiAbuseRuleRow, Raw> =
     SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
 
 impl crate::side_table::RawValue for BookingAntiAbuseRuleRow {
@@ -63,7 +60,6 @@ const ANTI_ABUSE_WIRE_VERSION: u8 = 0;
 /// Domain tags for `digest_with`: persisted keys and hashes can never be
 /// replayed across purposes because the domain differs.
 pub(super) const RULE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.rule_key.v0";
-const NOTICE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.notice_key.v0";
 pub(super) const RATE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.rate_key.v0";
 pub(super) const CACHE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.cache_key.v0";
 pub(super) const QUARANTINE_RATE_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.quarantine_rate.v0";
@@ -74,15 +70,6 @@ pub(super) const QUARANTINE_CLAIM_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.q
 pub(super) const IP_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.ip.v0";
 pub(super) const EMAIL_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.email.v0";
 pub(super) const SESSION_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.session.v0";
-
-/// Ratified bounds for the slot-list response cache TTL (30-60 seconds).
-/// These bound a value the owner picks; they are not a picked value.
-pub(super) const SLOT_LIST_CACHE_TTL_FLOOR_SECS: u64 = 30;
-pub(super) const SLOT_LIST_CACHE_TTL_CEIL_SECS: u64 = 60;
-
-/// Ratified bounds for the per-email active-future-booking cap (1-2).
-pub(super) const ACTIVE_FUTURE_PER_EMAIL_FLOOR: u8 = 1;
-pub(super) const ACTIVE_FUTURE_PER_EMAIL_CEIL: u8 = 2;
 
 /// One fixed window for every "per minute" counter, mirroring
 /// `task_verb.rs`'s node-local window counter.
@@ -99,6 +86,11 @@ pub(super) const CACHE_BODY_MAX_LEN: usize = 512 * 1024;
 /// both gate store vets: the decision ledger requires a `gate.` prefix and
 /// the pending-consent ledger requires `gate.pending.`.
 pub(super) const QUARANTINE_REASON_CODE: &str = "gate.pending.booking.anti_abuse.borderline";
+
+/// The reason code an owner restore closes a quarantine record's pending
+/// review row with (FIX 7851).
+pub(super) const QUARANTINE_RESTORE_REASON_CODE: &str =
+    "gate.allow.owner_booking_quarantine_restore";
 
 /// Predicate of the minimal CLAIM body a quarantined submission leaves
 /// behind: the durable content the owner reviews from the pending gate row.
@@ -151,37 +143,6 @@ pub(super) fn decode_row<T: DeserializeOwned>(raw: &[u8]) -> Result<T, BookingEr
     }
     rmp_serde::from_slice(body)
         .map_err(|error| refused(format!("booking anti-abuse row does not decode: {error}")))
-}
-
-/// prefix + tag + domain-tagged digest: the one key shape for every family,
-/// kept for tests that plant or inspect rows through the raw `vault_meta`
-/// door directly; production reads and writes now go through [`RULE`] /
-/// [`NOTICE`] directly, keyed by `(tag, digest)`.
-#[cfg(test)]
-fn tagged_key(tag: &[u8], domain: &[u8], material: &[u8]) -> Vec<u8> {
-    let digest = digest_with(domain, material);
-    let mut key =
-        Vec::with_capacity(BOOKING_ANTI_ABUSE_META_PREFIX.len() + tag.len() + digest.len());
-    key.extend_from_slice(BOOKING_ANTI_ABUSE_META_PREFIX);
-    key.extend_from_slice(tag);
-    key.extend_from_slice(&digest);
-    key
-}
-
-pub(super) fn rule_digest(row_id: &str) -> [u8; 32] {
-    digest_with(RULE_KEY_DOMAIN, row_id.as_bytes())
-}
-
-#[cfg(test)]
-pub(super) fn rule_row_key(row_id: &str) -> Vec<u8> {
-    tagged_key(RULE_KEY_TAG, RULE_KEY_DOMAIN, row_id.as_bytes())
-}
-
-pub(super) fn notice_digest(row_id: &str, version: u64) -> [u8; 32] {
-    let mut material = Vec::with_capacity(row_id.len() + 8);
-    material.extend_from_slice(row_id.as_bytes());
-    material.extend_from_slice(&version.to_be_bytes());
-    digest_with(NOTICE_KEY_DOMAIN, &material)
 }
 
 pub(super) use crate::booking::lifecycle::hex_lower;
