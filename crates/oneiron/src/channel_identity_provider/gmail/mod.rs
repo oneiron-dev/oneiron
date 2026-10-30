@@ -34,19 +34,21 @@
 //!   name. Its token callback rechecks the row at credential egress; token
 //!   bytes are never persisted or returned in a page.
 //! * **No new dependency.** The read protocol lives behind the wire trait; the
-//!   send wire [`HttpGmailSendWire`] uses the `reqwest` the crate already
-//!   declares, so the lockfile is untouched.
+//!   send wire [`HttpGmailSendWire`] and the read wire [`HttpGmailReadWire`]
+//!   use the `reqwest` the crate already declares, so the lockfile is untouched.
 //!
 //! Rotation is absent by construction: the member's provider owns revoking and
 //! re-issuing this grant, and the delegated edge table has no `Rotating` state
 //! to step into.
 
 mod http;
+mod http_read;
 mod provider;
 mod run;
 mod send;
 mod send_as;
 pub use self::http::HttpGmailSendWire;
+pub use self::http_read::HttpGmailReadWire;
 pub use self::run::GmailReadAuthority;
 pub use self::send::{
     GMAIL_SEND_PLAN_REF_PREFIX, GmailReplyThread, GmailSendAuthority, GmailSendPlan, GmailSendSink,
