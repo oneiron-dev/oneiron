@@ -187,7 +187,7 @@ fn poll_installed_feed(
         &memory,
         owner,
         &fetcher,
-        None,
+        super::calendar_body_screener(),
         config,
         oneiron::EntityId::now().to_hex(),
     )?;
