@@ -39,6 +39,21 @@ fn decode_seed(hex: &str) -> Result<[u8; 32], String> {
         .map_err(|_| "binding key is not 32 bytes".to_owned())
 }
 
+/// The scope a bench claim is written at: base reality, the owner's
+/// substrate facet (the facet a write stamps when no mask is active), every
+/// relationship and the default project.
+pub(super) fn claim_scope(owner: &str) -> Result<Value, String> {
+    let person = oneiron::EntityId::from_hex(owner).map_err(|e| format!("owner {owner}: {e}"))?;
+    let facet =
+        oneiron::claim::substrate_facet_id(person).map_err(|e| format!("substrate facet: {e}"))?;
+    Ok(json!({
+        "world_id": oneiron::claim::base_world_id().to_hex(),
+        "scope_facet_id": facet.to_hex(),
+        "scope_relationship_id": "all",
+        "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+    }))
+}
+
 impl Agent {
     /// One client for every agent of a run: its pool keeps a connection per
     /// concurrent request, and each blocking client would add its own runtime.
@@ -192,6 +207,8 @@ impl Agent {
                 "learned_at": record.occurred_at(),
                 "confidence": 0.9,
                 "source": "user_stated",
+                // `vault.claims.upsert` takes an explicit four-axis scope.
+                "scope": claim_scope(owner).unwrap_or(Value::Null),
             }),
         };
         let verb = match record {

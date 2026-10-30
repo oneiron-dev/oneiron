@@ -17,7 +17,7 @@ use super::super::agent_health::{COACH_AGENT_HEALTH_FACET, ConcernCardSummary};
 use super::private_sources::digest_item_readable_by_in;
 use super::{
     CLEANUP_GROUP, DIGEST, DigestApplied, DigestCleanup, DigestNoteTombstones, DigestOffer,
-    DigestProposal, JUDGE_ASK_GROUP, NOTE_TOMBSTONE_GROUP, ProactivityDigest,
+    DigestProposal, EVAL_LABEL_ASK_GROUP, JUDGE_ASK_GROUP, NOTE_TOMBSTONE_GROUP, ProactivityDigest,
     ProactivityPresentation, TRAINING_OFFER_GROUP, invalid, load_state,
 };
 use crate::{EntityId, Result, Vault};
@@ -237,10 +237,10 @@ pub(super) fn digest_view_for_in(
 
 /// The text of `groups` and `digest`'s lines under the presentation the
 /// digest was assembled under: each display group and its items, then the
-/// recipient's judge asks, the training offers, the cleanup line, the NOTE
-/// tombstone line, the applied after-notice and the health cards. Assembly
-/// writes the stored text so, from every group; a view rebuilds it from the
-/// groups it keeps.
+/// recipient's judge asks, the eval label asks, the training offers, the
+/// cleanup line, the NOTE tombstone line, the applied after-notice and the
+/// health cards. Assembly writes the stored text so, from every group; a
+/// view rebuilds it from the groups it keeps.
 pub(super) fn render(
     digest: &ProactivityDigest,
     groups: &BTreeMap<String, Vec<DigestProposal>>,
@@ -262,6 +262,18 @@ pub(super) fn render(
             rendered.push_str(&item_line(
                 presentation,
                 &judge_ask_summary(ask),
+                &reference,
+            ));
+        }
+    }
+    if !digest.eval_label_asks.is_empty() {
+        let group = alias(presentation, EVAL_LABEL_ASK_GROUP);
+        rendered.push_str(&group_line(presentation, group));
+        for ask in &digest.eval_label_asks {
+            let reference = ask.id.to_hex();
+            rendered.push_str(&item_line(
+                presentation,
+                &eval_label_ask_summary(ask),
                 &reference,
             ));
         }
@@ -316,6 +328,12 @@ fn judge_ask_summary(ask: &crate::skill_optimize::JudgeAsk) -> String {
         "{}: {reason} ({} vs {})",
         ask.campaign, ask.option_a, ask.option_b
     )
+}
+
+/// One eval label ask as a rendered line: the decision waiting on it and
+/// its two options. The line's ref is the ask's id, which its answer binds.
+fn eval_label_ask_summary(ask: &crate::skill_optimize::EvalLabelAsk) -> String {
+    format!("{} ({} vs {})", ask.decision, ask.option_a, ask.option_b)
 }
 
 /// `presentation`'s line for the display group `group`.

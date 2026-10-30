@@ -1121,7 +1121,7 @@ declare namespace Sdk {
   type GoalAxisScore = { kind: GoalAxisKind; before: number; after: number };
   type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; project?: EntityId | null; roles: TradeoffRole[]; proposal: EntityId; proposal_digest: string; target_digest: string; evidence_digest: string; world_digest: string; axes: Record<string, GoalAxisScore>; gains: string[]; losses: string[] };
   type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin };
-  type SkillTradeoffAsk = { pending: EntityId; skill: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number };
+  type SkillTradeoffAsk = { pending: EntityId; skill: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number; judge_rubric_digest?: string | null };
   type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk; tradeoff_capacity_advisory?: TradeoffCapacityAdvisory[] | null };
   type SkillOptimizeTradeoffPickRequest = { proposal: EntityId; question_digest: string; choice: TradeoffChoice };
   type SkillOptimizeTradeoffResolveRequest = { proposal: EntityId; pending: EntityId; evidence: string; choice: TradeoffChoice };

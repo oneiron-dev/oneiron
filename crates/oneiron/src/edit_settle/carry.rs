@@ -499,12 +499,20 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             self.docx_archive_limits_in_txn(&rtxn, Some(principal))?
         };
+        // The DOCX read runs in the host's memory (FIX 10651); a resource
+        // refusal is the engine's error, never an invalid document (FIX 10587).
+        let resources = crate::office_body::document_resources();
         let read_blocks = |bytes: &[u8]| {
-            oneiron_docedit::docx_body::read_docx_blocks(bytes, limits).map_err(|_| {
-                Error::Artifact(ArtifactError::InvalidEditManifest(
-                    "the held paragraphs' document does not read",
-                ))
-            })
+            resources
+                .docx(|| oneiron_docedit::docx_body::read_docx_blocks(bytes, limits))
+                .map_err(|error| {
+                    if let Some(refusal) = error.resource() {
+                        return crate::office_body::document_refused(refusal);
+                    }
+                    Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "the held paragraphs' document does not read",
+                    ))
+                })
         };
         let blocks = read_blocks(current.as_slice())?;
         // Paragraphs read on the live body: their text compares from the

@@ -1518,6 +1518,37 @@ on its receipt. Either answer closes the run's other open questions.
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.
 
+## Train a head for one detector question
+
+You can train a head for one exact detector question on your own labelled targets, with no
+Coach offer. First upload your rows as one artifact (`POST /v1/core/artifacts`). Each line is one
+JSON object: `{"row", "question_id", "question_version", "corpus_revision", "feature_schema",
+"label_schema", "source", "consent": {"basis", "receipt"}, "label": {"answer": "no" | "yes",
+"unit": "target", "adjudication"}, "input": {"target", "context": [...]}}`. The pins must match
+the plan's question, and `source` is a record that you already assigned to one of the seat's eval
+families (`vault.evals.families.assign`).
+
+`POST /v1/owner/coach/training-runs/prepare` with `{"draft", "corpus": {"rows": <artifact pin>},
+"connector"}` prepares the run. Rows of a training family become the training file, and rows
+of a sealed family in the draft's cohort become the held-out file. Rows of any other family are
+left out and counted under `family_outside_split`. The run pins a split receipt and a consent
+receipt, and the trainer echoes both. Nothing runs yet. `POST
+/v1/owner/coach/training-runs/authorize` with `{"run", "spec"}` is your yes on the spec you saw,
+and the host's Coach queues the run. The same door authorizes any prepared run, including an
+offer's run. A returned head binds no role and is not served yet.
+
+The draft's `plan.starting_checkpoint` must be a checkpoint that is already in custody. To keep
+one of any size, send `PUT /v1/owner/coach/training-checkpoints`. The body is the checkpoint's
+files as raw bytes, one after another (`Content-Type: application/octet-stream`). The
+`x-oneiron-checkpoint` header gives their manifest as JSON: `{"model": "provider/name@revision",
+"files": [{"name", "kind", "source": {"repository", "revision"}, "blake3", "bytes"}]}`, with the
+files in body order. Each `blake3` is 64 hex, and `kind` is `weights` (a `.safetensors` shard),
+`tokenizer`, `config`, `template` or `adapter_config`. The server spools the body to the
+vault's disk as it arrives. Its length is never refused, but the server stops at the disk's
+free-space reserve (`limits.disk_reserve_bytes`). The server keeps every file or none. It
+refuses a body that ends early or runs past its files, and a file whose hash differs from its
+`blake3`. The answer is the pinned checkpoint, which you put in the draft as it is.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the

@@ -5702,6 +5702,7 @@ class SkillTradeoffAsk(TypedDict):
     question: SkillTradeoffQuestion
     jev: NotRequired[JevTradeoffVerdict | None]
     rung: int
+    judge_rubric_digest: NotRequired[str | None]
 class SkillOptimizeTradeoffAskView(TypedDict):
     question_digest: str
     ask: SkillTradeoffAsk
