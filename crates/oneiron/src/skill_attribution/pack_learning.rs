@@ -117,6 +117,36 @@ fn project(
         if let Some(owner) = owner {
             owner.revalidate_in_txn(vault, txn)?;
         }
+        // Recheck the pre-write reads: an erase between them and this writer
+        // must not mint a credit naming the erased id (FIX 10641). Stale
+        // reads refuse so the pass re-runs.
+        {
+            let fresh_receipt =
+                crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt_receipt)?;
+            if fresh_receipt.as_ref() != Some(&receipt) {
+                return Err(Error::InvalidClaimBody(
+                    "the pack receipt changed before its credit was written",
+                ));
+            }
+            let fresh_evidence: Vec<_> = super::codec::evidence_after_in_txn(vault, txn, 0)?
+                .into_iter()
+                .filter(|(_, row)| row.receipt_ref == attempt_receipt)
+                .collect();
+            if fresh_evidence != evidence {
+                return Err(Error::InvalidClaimBody(
+                    "the attribution evidence changed before its credit was written",
+                ));
+            }
+            let fresh_judgments: BTreeMap<_, _> = super::attribution_judgments_in_txn(vault, txn)?
+                .into_iter()
+                .map(|row| (row.sequence, row))
+                .collect();
+            if fresh_judgments != judgments {
+                return Err(Error::InvalidClaimBody(
+                    "the attribution judgments changed before their credit was written",
+                ));
+            }
+        }
         // A matched-fork check recorded for this outcome counts as the
         // skill's contribution or the edge's hop check, and a use that landed
         // late joins the used chain, though both came after the run froze.

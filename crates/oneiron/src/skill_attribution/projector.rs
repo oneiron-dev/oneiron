@@ -96,6 +96,7 @@ pub fn run_attribution_projector_with_decisions(
     let mut revisions = Vec::new();
     let mut unclear = Vec::new();
     let mut causes = Vec::new();
+    let mut settled_environment = Vec::new();
     let mut highest = since_cursor;
     for (sequence, evidence) in pending {
         highest = highest.max(sequence);
@@ -147,6 +148,11 @@ pub fn run_attribution_projector_with_decisions(
             continue;
         }
         let Some(subject) = verdict_subject(verdict, &evidence) else {
+            // A replay that settles to `environment` writes no judgment, so
+            // the old unclear-note row is removed on that path too (FIX 9077).
+            if verdict == AttributionVerdict::Environment {
+                settled_environment.push(sequence);
+            }
             continue;
         };
         judgments.push(AttributionJudgment {
@@ -206,6 +212,9 @@ pub fn run_attribution_projector_with_decisions(
                 &judgment.sequence.to_string(),
             )?;
             mint_edit_proposal_in_txn(vault, wtxn, judgment)?;
+        }
+        for sequence in &settled_environment {
+            delete_unclear_in_txn(vault, wtxn, AttributionLane::Attempt, &sequence.to_string())?;
         }
         // In the cursor's write: a cause that fails to land leaves its
         // evidence for the next pass.
