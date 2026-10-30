@@ -203,6 +203,9 @@ pub struct HubHookQualificationReceipt {
 pub struct HubHookReplay {
     pub hook: String,
     pub entries: Vec<super::HookReplayRow>,
+    /// The test did not replay this hook in full: no entry, or an entry's
+    /// inputs are gone. The verdict still stands.
+    pub unreplayed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -502,6 +505,7 @@ fn qualification_receipt(qualified: PackHookQualification) -> HubHookQualificati
                     .into_iter()
                     .map(super::HookReplayRow::from)
                     .collect(),
+                unreplayed: replay.unreplayed,
             })
             .collect(),
     }
