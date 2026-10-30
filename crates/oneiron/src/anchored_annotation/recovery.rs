@@ -288,7 +288,8 @@ impl Vault {
         let snapshot = match self.read_blob_artifact_version_in_txn(wtxn, artifact_id, pinned)? {
             Some(bytes) => {
                 let limits = self.text_limits_in_txn(wtxn)?;
-                anchor_text(&bytes, &thread.anchor.locator, &limits)
+                // A resource refusal is the engine's error (FIX 10587), never a missing snapshot.
+                anchor_text(&bytes, &thread.anchor.locator, &limits)?
             }
             None => None,
         };
@@ -374,19 +375,21 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             self.text_limits_in_txn(&rtxn)?
         };
-        Ok(unattached
+        // A resource refusal is the engine's error (FIX 10587), never empty offers.
+        let mut offers = Vec::new();
+        for (thread_id, words) in unattached
             .iter()
             .filter_map(|thread| Some((thread.thread.thread_id, thread.snapshot.as_deref()?)))
-            .flat_map(|(thread_id, words)| {
-                find_text(&bytes, format, words, &limits)
-                    .into_iter()
-                    .map(move |locator| ReattachOffer {
-                        thread_id,
-                        version: head.version,
-                        locator,
-                    })
-            })
-            .collect())
+        {
+            for locator in find_text(&bytes, format, words, &limits)? {
+                offers.push(ReattachOffer {
+                    thread_id,
+                    version: head.version,
+                    locator,
+                });
+            }
+        }
+        Ok(offers)
     }
 
     /// One-click reattach of an unattached comment at `locator` in `version`.
@@ -419,7 +422,8 @@ impl Vault {
                 .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
                 .ok_or(Error::EntityNotFound)?;
             let limits = self.text_limits_in_txn(wtxn)?;
-            if anchor_text(&bytes, locator, &limits).as_deref() != Some(snapshot.as_str()) {
+            // A resource refusal is the engine's error (FIX 10587), never a word mismatch.
+            if anchor_text(&bytes, locator, &limits)?.as_deref() != Some(snapshot.as_str()) {
                 return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                     "the words at that place are not the comment's words",
                 )));
