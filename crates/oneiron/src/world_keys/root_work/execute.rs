@@ -131,16 +131,17 @@ fn not_pending(fold: &AuthorityFold, me: EntityId, hash: AuthorityEntryHash) -> 
 }
 
 /// The counted root request signed as entry `hash` that names `me` and has
-/// no result yet, with its change.
+/// no result yet, with its change. The request is the fold's shared body,
+/// not a copy (FIX 12138).
 fn pending_root(
     fold: &AuthorityFold,
     me: EntityId,
     hash: AuthorityEntryHash,
-) -> Option<(OwnerWorkRequest, RootChange)> {
+) -> Option<(std::sync::Arc<OwnerWorkRequest>, RootChange)> {
     fold.pending_owner_work_for(me)
         .find_map(|(pending, request)| match request.work {
             OwnerWorkBody::Root { change, .. } if pending == hash => {
-                Some((request.clone(), change))
+                Some((fold.shared_owner_work_request(&pending)?, change))
             }
             _ => None,
         })

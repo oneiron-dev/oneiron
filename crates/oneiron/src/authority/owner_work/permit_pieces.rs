@@ -27,8 +27,6 @@
 //! the fold read back. Permits that fit one row keep today's inline path and
 //! bytes.
 
-use std::borrow::Cow;
-
 use ed25519_dalek::SigningKey;
 
 use super::*;
@@ -123,27 +121,125 @@ pub(super) fn keep_piece(
     }
 }
 
+/// One permit set's kept join ([`keep_joined`], FIX 12139).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct JoinedPermitSet {
+    /// The kept request's signed entry: what its supersede prunes the join
+    /// by (FIX 12140).
+    request: AuthorityEntryHash,
+    /// The request as the fold keeps it: the `Arc` the fold's requests hold.
+    body: Arc<OwnerWorkRequest>,
+}
+
+/// A request as the fold keeps it ([`joined_request`]): as signed when its
+/// permits ride inline, else with its permits joined, shared.
+pub(super) enum KeptRequest<'r> {
+    Signed(&'r OwnerWorkRequest),
+    Joined(Arc<OwnerWorkRequest>),
+}
+
+impl KeptRequest<'_> {
+    /// The body the fold keeps: a copy of an inline request, the joined one
+    /// itself.
+    pub(super) fn into_shared(self) -> Arc<OwnerWorkRequest> {
+        match self {
+            Self::Signed(request) => Arc::new(request.clone()),
+            Self::Joined(joined) => joined,
+        }
+    }
+}
+
+impl std::ops::Deref for KeptRequest<'_> {
+    type Target = OwnerWorkRequest;
+
+    fn deref(&self) -> &OwnerWorkRequest {
+        match self {
+            Self::Signed(request) => request,
+            Self::Joined(joined) => joined,
+        }
+    }
+}
+
+/// Whether `joined`, a request kept with its permits joined, is `request`
+/// as signed: every field the same but the permits, which `request` carries
+/// in pieces. Each field is named, so a field added later is compared too.
+fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
+    let OwnerWorkRequest {
+        carrier,
+        act,
+        executor,
+        work,
+        privacy_basis,
+    } = request;
+    let (
+        OwnerWorkBody::Custody {
+            change,
+            generation,
+            input,
+            holder,
+            recipients: _,
+            pieces,
+            authority,
+        },
+        OwnerWorkBody::Custody {
+            change: joined_change,
+            generation: joined_generation,
+            input: joined_input,
+            holder: joined_holder,
+            recipients: _,
+            pieces: joined_pieces,
+            authority: joined_authority,
+        },
+    ) = (work, &joined.work)
+    else {
+        return false;
+    };
+    (carrier, act, executor, privacy_basis)
+        == (
+            &joined.carrier,
+            &joined.act,
+            &joined.executor,
+            &joined.privacy_basis,
+        )
+        && (change, generation, input, holder, pieces, authority)
+            == (
+                joined_change,
+                joined_generation,
+                joined_input,
+                joined_holder,
+                joined_pieces,
+                joined_authority,
+            )
+}
+
 /// `request` as the fold keeps it, signed by `signer`, at `work`, the state
 /// at its parents: itself when its permits ride inline; with its permits
 /// joined from its signer's pieces of its commitment when every place is
 /// kept, each run starting where the one before it ended, naming the
 /// request's own carrier (none for a kit request), and the whole set
 /// ascending, without a zero digest and hashing to the commitment
-/// ([`OwnerWorkRequest::validate`]). `None` when they do not join. A set
-/// already joined and verified here skips its hash again (FIX 12014); the
-/// first join still verifies.
+/// ([`OwnerWorkRequest::validate`]). `None` when they do not join.
+///
+/// A set a kept request already joined here ([`keep_joined`]) hands that
+/// request's `Arc` out to a join of the same request, copying no permit
+/// (FIX 12139); a join of another request on the set copies its permits and
+/// skips their hash (FIX 12014). The first join still verifies.
 pub(super) fn joined_request<'r>(
-    work: &mut OwnerWorkState,
+    work: &OwnerWorkState,
     signer: &[u8; 32],
     request: &'r OwnerWorkRequest,
-) -> Option<Cow<'r, OwnerWorkRequest>> {
+) -> Option<KeptRequest<'r>> {
     let OwnerWorkBody::Custody {
         pieces: Some(commitment),
         ..
     } = &request.work
     else {
-        return Some(Cow::Borrowed(request));
+        return Some(KeptRequest::Signed(request));
     };
+    let verified = work.verified_permit_sets.get(&(*signer, *commitment));
+    if let Some(joined) = verified.filter(|joined| joins_as(request, &joined.body)) {
+        return Some(KeptRequest::Joined(Arc::clone(&joined.body)));
+    }
     let carrier = request.kit_root().is_none().then_some(request.carrier);
     let mut permits = Vec::new();
     for index in 0..commitment.pieces {
@@ -157,12 +253,55 @@ pub(super) fn joined_request<'r>(
     if let OwnerWorkBody::Custody { recipients, .. } = &mut joined.work {
         *recipients = permits;
     }
-    let verified = (*signer, *commitment);
-    if !work.verified_permit_sets.contains(&verified) {
+    if verified.is_none() {
         joined.validate().ok()?;
-        work.verified_permit_sets.insert(verified);
     }
-    Some(Cow::Owned(joined))
+    Some(KeptRequest::Joined(Arc::new(joined)))
+}
+
+/// Keeps `body`, the request signed as entry `request` by `signer` and kept
+/// by the fold, as its permit set's join when its permits ride in pieces
+/// (FIX 12139): the same `Arc` the fold's requests hold, so it costs no
+/// permit. A later join of the same request hands it out
+/// ([`joined_request`]); the latest kept on a set stands.
+pub(super) fn keep_joined(
+    work: &mut OwnerWorkState,
+    (signer, request): ([u8; 32], AuthorityEntryHash),
+    body: &Arc<OwnerWorkRequest>,
+) {
+    if let OwnerWorkBody::Custody {
+        pieces: Some(commitment),
+        ..
+    } = &body.work
+    {
+        let joined = JoinedPermitSet {
+            request,
+            body: Arc::clone(body),
+        };
+        work.verified_permit_sets
+            .insert((signer, *commitment), joined);
+    }
+}
+
+/// Drops each kept join whose request a newer request on its secret
+/// superseded, or whose secret an admitted revoke names (FIX 12140): where
+/// the fold records the supersede or the revoke, a request's landing and a
+/// merge. The memo is a cache: a pruned set joins and verifies again on its
+/// next join, and nothing is refused for it.
+pub(super) fn prune_joined(work: &mut OwnerWorkState) {
+    let OwnerWorkState {
+        verified_permit_sets,
+        heads,
+        revoked,
+        ..
+    } = work;
+    verified_permit_sets.retain(|_, joined| {
+        let secret = joined.body.act.target;
+        !revoked.contains(&secret)
+            && !heads
+                .get(&(OwnerWorkKind::Custody, secret))
+                .is_some_and(|held| held.superseded.contains(&joined.request))
+    });
 }
 
 impl Vault {
