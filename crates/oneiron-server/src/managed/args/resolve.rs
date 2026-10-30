@@ -117,6 +117,7 @@ impl ManagedArgs {
             settings_file: args.settings_file.clone(),
             voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),
+            seal_key_handle: nonempty(args.seal_key_handle.as_deref()),
             seal_chain: args.seal_chain_file.clone(),
             seal_trust: args.seal_trust_file.clone(),
             seal_tsa: nonempty(args.seal_tsa_url.as_deref()),
@@ -274,6 +275,7 @@ impl ManagedArgs {
     pub(crate) fn seal_config(&self) -> crate::api::EsignSealConfig {
         crate::api::EsignSealConfig {
             key: self.seal_key.clone(),
+            key_handle: self.seal_key_handle.clone(),
             chain: self.seal_chain.clone(),
             trust: self.seal_trust.clone(),
             tsa: self.seal_tsa.clone(),

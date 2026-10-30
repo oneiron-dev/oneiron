@@ -43,8 +43,8 @@ enum Peer {
 impl BrokerClient {
     /// A broker at `socket` that runs as `broker_uid`. A separate-user broker
     /// must not share the daemon's uid, and a same-user one must.
-    /// `reply_timeout` bounds the wait for a reply, past the broker's own
-    /// send limit.
+    /// `reply_timeout` bounds each call from its frame's write to its reply's
+    /// last byte, past the broker's own call deadline (FIX 8559).
     pub fn new(
         socket: PathBuf,
         broker_uid: u32,
@@ -154,7 +154,8 @@ pub struct BrokerReply {
 /// A reply as it arrives: its outcome first, then its body through
 /// [`Self::next`]. A buffered shape's body comes as one chunk; a streamed
 /// shape's ([`crate::Shape::streams`]) as many, up to [`MAX_STREAM`] bytes.
-/// The whole reply must arrive within the client's reply timeout.
+/// The frame's write and the whole reply must end within the client's reply
+/// timeout.
 #[derive(Debug)]
 pub struct BrokerStream {
     outcome: Outcome,
@@ -212,9 +213,10 @@ impl BrokerConnection {
     }
 
     /// Sends one call with its key, and waits for the reply's outcome; its
-    /// body follows through [`BrokerStream::next`]. The daemon's copy of the
-    /// key is wiped once the frame is written. A reply for another call or
-    /// digest counts as lost.
+    /// body follows through [`BrokerStream::next`]. A body past
+    /// [`crate::MAX_BODY`] goes in chunks, up to [`MAX_STREAM`] bytes (FIX
+    /// 1895). The daemon's copy of the key is wiped once the frame is
+    /// written. A reply for another call or digest counts as lost.
     pub async fn open(
         mut self,
         call: &CallHeader,
@@ -222,10 +224,16 @@ impl BrokerConnection {
         secret: Zeroizing<Vec<u8>>,
     ) -> Result<BrokerStream, BrokerError> {
         call.check(body).map_err(BrokerError::Refused)?;
-        let written = write_call(&mut self.stream, call, body, &secret).await;
-        drop(secret);
-        written.map_err(|_| BrokerError::Lost)?;
+        // One deadline covers the frame's write, the wait and the reply's
+        // read (FIX 8559).
         let deadline = Instant::now() + self.reply_timeout;
+        let written =
+            tokio::time::timeout_at(deadline, write_call(&mut self.stream, call, body, &secret))
+                .await;
+        drop(secret);
+        written
+            .map_err(|_| BrokerError::Lost)?
+            .map_err(|_| BrokerError::Lost)?;
         let (reply, whole): (ReplyHeader, _) = if call.shape.streams() {
             let reply = tokio::time::timeout_at(deadline, read_reply_header(&mut self.stream))
                 .await

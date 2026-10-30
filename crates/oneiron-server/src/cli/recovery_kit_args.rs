@@ -156,8 +156,9 @@ pub struct RecoveryKitIssueArgs {
     /// Where one piece lives, given three times in point order: `paper`,
     /// `password-manager`, `own-email`, `file-elsewhere`, `file-here`,
     /// `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
-    /// `security-key` or `passphrase`. `this-machine` waits for device-piece
-    /// custody.
+    /// `security-key`, `passphrase` or `this-machine`: this install's keystore
+    /// keeps that piece, and a restore here reads it back (refused while the
+    /// keystore is off).
     #[arg(long = "home", value_name = "HOME", required = true)]
     pub homes: Vec<String>,
 

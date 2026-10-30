@@ -57,6 +57,7 @@ type RefusalTally = BTreeMap<RefusalKey, (Instant, Option<MeshPathReceipt>)>;
 struct PathRecorder {
     sink: Arc<dyn PathReceipts>,
     refusals: Arc<StdMutex<RefusalTally>>,
+    unattributed: Arc<dial::Unattributed>,
 }
 
 impl PathRecorder {
@@ -64,6 +65,7 @@ impl PathRecorder {
         Self {
             sink,
             refusals: Arc::default(),
+            unattributed: Arc::default(),
         }
     }
 

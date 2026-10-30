@@ -7704,6 +7704,46 @@ async fn vault_skills_optimize_tradeoff_asks_pick(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_skills_optimize_tradeoff_asks_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.optimize.tradeoff_asks.resolve")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.optimize.tradeoff_asks.resolve", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.skills.optimize.tradeoff_asks.resolve",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_skills_optimize_tradeoff_asks_resolve(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_skills_governance_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -33366,6 +33406,46 @@ async fn vault_consolidation_lineage(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_consolidation_candidate_decisions(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consolidation.candidate_decisions")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consolidation.candidate_decisions", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.consolidation.candidate_decisions",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_consolidation_candidate_decisions(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_consolidation_promote(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38926,6 +39006,12 @@ async fn call_verb_row(
             ))
             .await
         }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
+            Box::pin(vault_skills_optimize_tradeoff_asks_resolve(
+                server, call, input,
+            ))
+            .await
+        }
         "vault.skills.governance.get" => {
             Box::pin(vault_skills_governance_get(server, call, input)).await
         }
@@ -40677,6 +40763,9 @@ async fn call_verb_row(
         }
         "vault.consolidation.lineage" => {
             Box::pin(vault_consolidation_lineage(server, call, input)).await
+        }
+        "vault.consolidation.candidate_decisions" => {
+            Box::pin(vault_consolidation_candidate_decisions(server, call, input)).await
         }
         "vault.consolidation.promote" => {
             Box::pin(vault_consolidation_promote(server, call, input)).await

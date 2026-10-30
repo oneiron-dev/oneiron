@@ -42,6 +42,8 @@ pub(super) fn judge_rubric_digest_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<String>> {
-    Ok(crate::skill_optimize::labels::judge_rubric_in_txn(vault, txn)?
-        .map(|rubric| bytes_to_hex_lower(&rubric.digest)))
+    Ok(
+        crate::skill_optimize::labels::judge_rubric_in_txn(vault, txn)?
+            .map(|rubric| bytes_to_hex_lower(&rubric.digest)),
+    )
 }

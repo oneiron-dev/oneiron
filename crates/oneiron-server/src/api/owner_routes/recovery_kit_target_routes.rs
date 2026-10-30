@@ -55,7 +55,6 @@ use oneiron::authority::{Destination, OwnerWorkRefusal, PeerMachine, RequestCode
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
     KitCoverage, KitIssue, KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceHome,
-    restore_kit,
 };
 use oneiron::settings::{ReadDestination, RecipientLimit, RecipientWhy};
 use oneiron::world_keys::{
@@ -348,16 +347,18 @@ impl Kit {
     }
 
     /// The recovery root seed this kit rebuilds for `vault`, checked by the
-    /// kit's own rules before anything is asked of the home.
+    /// kit's own rules before anything is asked of the home, with this
+    /// machine's own piece of the kit when it keeps one (FIX 2063).
     fn seed(&self, vault: &Vault) -> OwnerResult<RecoveryRootSeed> {
         let vault_id = vault_id(vault)?;
-        let secret = restore_kit(
-            vault_id,
-            KitSecretKind::RecoveryRoot,
-            &self.pieces(),
-            self.passphrase.as_ref(),
-        )
-        .map_err(|error| OwnerError::Invalid(format!("the kit does not open: {error}")))?;
+        let secret = vault
+            .restore_kit_here(
+                vault_id,
+                KitSecretKind::RecoveryRoot,
+                &self.pieces(),
+                self.passphrase.as_ref(),
+            )
+            .map_err(|error| OwnerError::Invalid(format!("the kit does not open: {error}")))?;
         Ok(RecoveryRootSeed::from_restored_kit(secret)?)
     }
 }
@@ -380,10 +381,11 @@ fn request_code(text: &str) -> OwnerResult<RequestCode> {
     RequestCode::from_text(text).map_err(|why| OwnerError::Invalid(format!("code: {why}")))
 }
 
-/// The homes a kit is issued over: a `this_machine` home waits for
-/// device-piece custody.
-fn issue_homes(homes: &[PieceHome; 3]) -> OwnerResult<()> {
-    if homes.contains(&PieceHome::ThisMachine) {
+/// The homes a kit is issued over: a `this_machine` home's piece stays in
+/// this install's keystore (FIX 2063), so it waits for device-piece custody
+/// while the host installed none.
+fn issue_homes(vault: &Vault, homes: &[PieceHome; 3]) -> OwnerResult<()> {
+    if homes.contains(&PieceHome::ThisMachine) && vault.device_keystore_assurance().is_none() {
         return Err(OwnerError::Invalid(
             "a this_machine home waits for device-piece custody; pick another home".to_owned(),
         ));
@@ -427,7 +429,7 @@ fn run_material(
 ) -> OwnerResult<RootWorkDone> {
     let done = match material {
         Material::IssueKit { homes, passphrase } => {
-            issue_homes(&homes)?;
+            issue_homes(vault, &homes)?;
             let passphrase = Zeroizing::new(passphrase);
             let passphrase = passphrase.as_deref().map(passphrase_of).transpose()?;
             let issue = KitIssue {
