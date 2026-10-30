@@ -24,6 +24,11 @@ const SUMMARY_PROMPT: &str = "Summarise what this conversation established, in a
 sentences: who it is about, what they said about their work and plans, and what changed. \
 State only what the conversation says.";
 
+/// The host's framing of every decision-ladder question on the Big rung
+/// (`[models.decisions.big]`): without the rung the Coach's attribution
+/// audit has no seat to ask and fails InvalidConfig (FIX 12026).
+const BIG_WORDING: &str = "Answer the typed question. Reply only in the format it asks for.";
+
 /// The key in `path`, trimmed. An error names the file, never its text.
 pub(super) fn read_key(path: &Path) -> Result<String, String> {
     let key = std::fs::read_to_string(path)
@@ -111,8 +116,10 @@ fn toml_string(value: &str) -> String {
 /// shorthand `default` fills the generative reasoner (the conflict verdict),
 /// the checker and `dreamer_current` (the Dreamer's seat and its narrative
 /// role); the extraction teacher, which no shorthand fills, is named out.
-/// Extraction may leave the device, and the Dreamer runs with a summary
-/// instruction. Key names: `config/models/mod.rs` (`ModelsFile`,
+/// The decision ladder's Local rung (`local_vision`, which abstains on text
+/// with no image) and its Big rung ride the same model, so the Coach's
+/// audits reach a seat. Extraction may leave the device, and the Dreamer
+/// runs with a summary instruction. Key names: `config/models/mod.rs` (`ModelsFile`,
 /// `DreamerFile`), `provider.rs` (`ProviderFile`), `levels.rs` (`RoleFile`).
 pub(super) fn write_models(
     vault: &Vault,
@@ -141,7 +148,10 @@ pub(super) fn write_models(
     }
     section.push_str(&format!(
         "\n[models.roles.extraction_teacher]\nmodel = {rung}\n\n\
+         [models.roles.local_vision]\nmodel = {rung}\n\n\
+         [models.decisions.big]\nversion = \"1\"\nwording = {}\n\n\
          [models.dreamer]\nenabled = true\nsummary_prompt = {}\n",
+        toml_string(BIG_WORDING),
         toml_string(SUMMARY_PROMPT)
     ));
     std::fs::write(path, existing + &section).map_err(|e| format!("write {}: {e}", path.display()))
