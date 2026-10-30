@@ -17,7 +17,7 @@ use super::{
 };
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -158,7 +158,9 @@ pub(crate) fn channel_identity_fact_head_ids_in_txn(
         .collect())
 }
 
-/// Each live head of the identity's family: Active and not stale.
+/// Each live head of the identity's family: Active, Auto or Approved, and
+/// not stale. A Proposed replacement is not live yet, so it never doubles a
+/// head.
 fn for_each_live_head(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -182,6 +184,10 @@ fn for_each_live_head(
         let body = crate::claim::decode_claim_body(&raw.body, true)?;
         if !is_channel_identity_claim_predicate(&body.predicate)
             || body.lifecycle != ClaimLifecycleStatus::Active
+            || !matches!(
+                body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
             || body.stale
         {
             continue;
@@ -191,7 +197,7 @@ fn for_each_live_head(
     Ok(())
 }
 
-/// The family's live heads by predicate: Active and not stale, one each.
+/// The family's live heads by predicate: Active, Auto or Approved, and not stale, one each.
 fn live_heads_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
