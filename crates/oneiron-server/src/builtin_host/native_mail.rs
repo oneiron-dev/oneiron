@@ -32,6 +32,11 @@ pub(crate) struct NativeMailInboxes {
 }
 
 impl NativeMailInboxes {
+    /// The pack the last pass connected, if any.
+    pub(super) fn pack(&self) -> Option<&NativeMailPack> {
+        self.pack.as_ref().map(|(_, pack)| pack)
+    }
+
     /// One pass: the pack follows its check and the host's server, then
     /// every active identity's inbox is read. `basis` names the check the
     /// pack would be built from; `None` drops it.
