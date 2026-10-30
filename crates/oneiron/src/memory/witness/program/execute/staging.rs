@@ -5,10 +5,6 @@ use super::in_txn::WitnessWrite;
 use super::*;
 
 impl Memory<'_> {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the base staging joins the write, its sink and its admission's findings"
-    )]
     pub(super) fn stage_base_landing_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
