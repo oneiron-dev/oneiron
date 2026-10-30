@@ -22,8 +22,8 @@
 //! - `vault.esign.seal.get`: the seal task's receipts for one document
 //!   and its sealed manifest once sealing lands.
 use super::delivery_settlement::EsignDeliveryReceipt;
-use super::document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
-use super::model::{DocumentStatus, EsignAuditActor, EsignDocument};
+use super::document_view::EsignSealTrail;
+use super::model::{DocumentStatus, EsignDocument};
 use super::outbound::{EsignOutboundCommand, EsignOutboundVerb};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -34,6 +34,9 @@ use crate::outbound::{
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+mod draft;
+mod read;
 
 /// A signing document to draft on an existing artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -62,50 +65,6 @@ pub struct EsignDraftView {
     pub recipients: Vec<String>,
     /// How many fields the draft places.
     pub fields: usize,
-}
-
-impl Memory<'_> {
-    /// `vault.esign.create`: drafts a signing document on `document_ref` as
-    /// the bound actor, whose id the draft's trail names.
-    /// # Errors
-    /// A `document_ref` that is no id, or the vault's refusal: a draft that
-    /// does not validate, an item whose PDF moved past its pinned version, a
-    /// project the caller is no member of, or a document already drafted.
-    pub fn esign_create(&self, input: &EsignCreateRequest) -> MemoryResult<EsignDraftView> {
-        let document = document_id(&input.document_ref)?;
-        let vault = self.vault();
-        let actor = EsignAuditActor {
-            actor: self.actor().to_hex(),
-            ip: None,
-            user_agent: None,
-        };
-        let now = vault.now_recorded_at();
-        match &input.draft.lifecycle {
-            Some(rules) => vault.create_esign_document_with_lifecycle(
-                document,
-                &input.draft,
-                actor,
-                now,
-                rules,
-            )?,
-            None => vault.create_esign_document(document, &input.draft, actor, now)?,
-        }
-        let state = vault.esign_document(document)?;
-        Ok(EsignDraftView {
-            document_ref: document.to_hex(),
-            status: state.status,
-            title: state.document.title,
-            expires_at: state.document.expires_at,
-            project_ref: state.document.project.map(|project| project.to_hex()),
-            recipients: state
-                .document
-                .recipients
-                .into_iter()
-                .map(|recipient| recipient.id)
-                .collect(),
-            fields: state.document.fields.len(),
-        })
-    }
 }
 
 fn document_id(document_ref: &str) -> MemoryResult<EntityId> {
@@ -378,35 +337,6 @@ pub struct EsignDispatchView {
 }
 
 impl Memory<'_> {
-    /// `vault.esign.get`: the document's folded state and its trail, with
-    /// its delivery receipts. The row's refs admission reads `document_ref`
-    /// under the caller's scope first, so a project's document reads only in
-    /// its audience. A document whose own trail does not read, or folds to
-    /// no document, answers `trail` `unreadable` with that error and still
-    /// lists its receipts, its `document_unreadable` waits among them
-    /// (FIX 6481); nothing its trail alone proves is filled in.
-    /// # Errors
-    /// A `document_ref` that is no id, or the store's own failure, its
-    /// receipts' read included.
-    pub fn esign_get(&self, input: &EsignGetRequest) -> MemoryResult<EsignDocumentView> {
-        let document = document_id(&input.document_ref)?;
-        let vault = self.vault();
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let trail = match super::ledger::trail_read_in(vault, &txn, document)? {
-            Ok((state, audit, held)) => EsignDocumentTrail::readable(state, audit, held),
-            Err(unreadable) => EsignDocumentTrail::Unreadable {
-                error: MemoryError::from(unreadable),
-            },
-        };
-        let delivery_receipts =
-            super::delivery_settlement::delivery_receipts_in(vault, &txn, document)?;
-        Ok(EsignDocumentView {
-            document_ref: document.to_hex(),
-            delivery_receipts,
-            trail,
-        })
-    }
-
     /// `vault.esign.signing.act`: one recipient ceremony act under the
     /// capability in the request body, the typed twin of the public
     /// `POST /sign/action` door. The capability is the authority; the
@@ -488,75 +418,6 @@ impl Memory<'_> {
         Ok(EsignSigningSignatureView {
             image_ref: input.image_ref.clone(),
             image_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
-        })
-    }
-
-    /// `vault.esign.seal.get`: where the document's seal task stands:
-    /// every `esign.seal` attempt the queue holds for it in creation
-    /// order, the sealed manifest once one attempt sealed it, its delivery
-    /// receipts, and its folded status. The row's refs admission reads
-    /// `document_ref` under the caller's scope first, as `vault.esign.get`
-    /// does. A document whose own trail does not read, or folds to no
-    /// document, answers `trail` `unreadable` with that error, its seal
-    /// attempts, manifest and delivery receipts still listed (FIX 6554).
-    /// # Errors
-    /// A `document_ref` that is no id, or the store's own failure.
-    pub fn esign_seal_get(&self, input: &EsignSealGetRequest) -> MemoryResult<EsignSealView> {
-        let document = document_id(&input.document_ref)?;
-        let vault = self.vault();
-        let attempts = crate::attempt_queue::AttemptQueue::new(vault)
-            .list_kind_bounded(super::ESIGN_SEAL_ATTEMPT_KIND, usize::MAX)?
-            .into_iter()
-            .filter(|record| record.payload.as_slice() == document.as_bytes().as_slice())
-            .map(|record| EsignSealAttemptView {
-                attempt_ref: crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
-                kind: record.kind,
-                state: record.state.as_str().to_owned(),
-                dedupe_key: record.dedupe_key,
-                lease_owner: record.lease_owner,
-                attempt_count: record.attempt_count,
-                created_at: record.created_at,
-                updated_at: record.updated_at,
-                last_error: record.last_error,
-            })
-            .collect();
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let trail = match super::ledger::trail_read_in(vault, &txn, document)? {
-            Ok((state, _, _)) => EsignSealTrail::Readable {
-                status: state.status,
-            },
-            Err(unreadable) => EsignSealTrail::Unreadable {
-                error: MemoryError::from(unreadable),
-            },
-        };
-        let sealed = super::seal::CANONICAL
-            .get(&vault.store, &txn, &document)?
-            .map(|manifest| EsignSealedView {
-                attempt_ref: manifest.attempt_ref,
-                audit_chain_sha256: crate::entity_id::bytes_to_hex_lower(
-                    manifest.audit_chain_sha256.as_slice(),
-                ),
-                rejected: manifest.rejected,
-                items: manifest
-                    .items
-                    .into_iter()
-                    .map(|item| EsignSealedItemView {
-                        original_artifact: item.original_artifact,
-                        original_version: item.original_version,
-                        sealed_artifact: item.sealed_artifact,
-                        sealed_version: item.sealed_version,
-                        sha256: crate::entity_id::bytes_to_hex_lower(item.sha256.as_slice()),
-                    })
-                    .collect(),
-            });
-        let delivery_receipts =
-            super::delivery_settlement::delivery_receipts_in(vault, &txn, document)?;
-        Ok(EsignSealView {
-            document_ref: document.to_hex(),
-            attempts,
-            sealed,
-            delivery_receipts,
-            trail,
         })
     }
 
