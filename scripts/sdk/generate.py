@@ -6,6 +6,7 @@ import json
 import keyword
 import re
 import subprocess
+import sys
 from facade_types import Inventory
 from catalog_fragment import catalog_fragment
 from uniffi_types import UniffiTypes
@@ -2239,4 +2240,7 @@ def main():
         print('\n'.join(INVENTORY.census(FACADE_ROWS)))
         for where, text in INVENTORY.opaques: print(f'  opaque: {where} ({text})')
         for where, text, reason in INVENTORY.fallbacks: print(f'  unread: {where} ({text}): {reason}')
+        # FIX 11534: docs/agent-sdk mirrors the generated facade types, so it follows every regeneration.
+        docs=subprocess.run([sys.executable,str(ROOT/'packages/oneiron/scripts/agent-docs.py')])
+        if docs.returncode: print(f'  agent-docs.py exited {docs.returncode}: run it by hand')
 if __name__=='__main__': main()
