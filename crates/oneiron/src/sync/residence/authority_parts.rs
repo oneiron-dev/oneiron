@@ -26,8 +26,9 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 
 /// The most bytes one part of an authority entry carries either way: inside
-/// one request frame once base64 and the RPC envelope are added.
-pub const AUTHORITY_ENTRY_PART_MAX: usize = 4 * 1024 * 1024;
+/// one request frame once base64 and the RPC envelope are added, under the
+/// home's default inbound WebSocket frame bound (4 MiB) as well as the floor.
+pub const AUTHORITY_ENTRY_PART_MAX: usize = 2 * 1024 * 1024;
 
 /// The most entry bytes one tail or range page carries inline: inside the
 /// RPC reply once base64 is added.
