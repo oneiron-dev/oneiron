@@ -25,6 +25,7 @@ impl SyncClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         self.root_bootstrapped = false;
+        self.leaf_key_sends = Default::default();
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
@@ -35,8 +36,8 @@ impl SyncClient {
     /// and the root doc is replaced with a fresh one so Phase 1 re-runs from
     /// an empty VV. Clearing the PERSISTENT queue is the connection
     /// manager's half (`SyncQueue::clear_all`, which preserves the `h:`/`m:`
-    /// metadata, the `x:` quarantine family, and delete-bearing `q:` rows +
-    /// their `d:` markers).
+    /// metadata, the `e:` embedding jobs, the `x:` quarantine family, and
+    /// delete-bearing `q:` rows + their `d:` markers).
     pub fn reset_for_re_bootstrap(&mut self) {
         self.cancel_lfs_download();
         for key in self.manager.loaded_keys() {

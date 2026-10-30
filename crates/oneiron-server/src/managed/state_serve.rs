@@ -54,6 +54,9 @@ mod carrier_watch;
 mod control;
 /// Supervised boot, serve and shutdown: [`serve_managed`].
 mod coordinator;
+/// The vault's deletion marker, as `Ping` reports it and the deletion gate
+/// reads it (FIX 11710).
+mod deletion;
 /// The backup before an idle reap (`prepare_idle_reap`).
 mod idle_backup;
 /// The managed routers and the reap freeze gate in front of them.

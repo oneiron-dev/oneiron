@@ -66,7 +66,7 @@ use super::types::WindowKey;
 use crate::Vault;
 use crate::authority::{AuthorityFold, OwnerWorkBody};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncEngineContext};
 use crate::secret_custody::{
     CustodyApplied, CustodyTransition, RelayedInput, SecretCustodyStatus,
     apply_custody_transition_in_txn, completed_custody_groups_in_txn, custody_transitions,
@@ -227,12 +227,22 @@ pub(crate) fn admit_custody_carrier(
     if key.is_some_and(|key| *key != transition_window(&transition)) {
         return Err(refused("outside its signing month's base window"));
     }
-    let rtxn = vault.store.env.read_txn()?;
+    // Reading this vault's own authority is the store's work: its fault is
+    // this machine's, never the peer's refused update (FIX 5925).
+    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
     let vault_id = vault
-        .authority_view_readonly_in_txn(&rtxn)?
+        .authority_view_readonly_in_txn(&rtxn)
+        .map_err(admission_read_fault)?
         .vault_id
         .ok_or_else(|| refused("the vault has no authority genesis"))?;
     transition.verify_signed(&vault_id)
+}
+
+/// A failure reading this vault's own state while admitting a window's
+/// custody row (FIX 5925): the store's fault, typed so the server closes it
+/// as its own and never as the peer's refused update.
+fn admission_read_fault(error: impl Into<Error>) -> Error {
+    Error::sync_engine(SyncEngineContext::WindowAdmissionRead, error.into())
 }
 
 /// [`admit_custody_carrier`] over every row `map` holds.

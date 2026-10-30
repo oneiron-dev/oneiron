@@ -72,7 +72,8 @@ pub use seat_quota::{RunnerSeatQuota, runner_seat_quotas};
 mod owner_doors;
 pub use owner_doors::{
     RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
-    RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt,
+    RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt, RunnerWorkResumeChoice, RunnerWorkResumeRequest,
+    RunnerWorkResumeView, SkippedRunnerSeatView,
 };
 mod work_binding;
 pub use work_binding::{
