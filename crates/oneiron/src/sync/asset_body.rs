@@ -14,13 +14,10 @@
 //! ([`asset_body_file_of_row`]). A peer's bytes are read as a manifest only
 //! where a reference binds them.
 
+pub(crate) mod client;
 mod landing;
 pub(crate) mod references;
 mod send;
-#[allow(
-    dead_code,
-    reason = "the socket hooks call it: client inbound dispatch and upkeep, server handler (NOTES)"
-)]
 pub(crate) mod session;
 
 use std::collections::BTreeSet;

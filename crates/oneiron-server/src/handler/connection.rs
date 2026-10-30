@@ -248,6 +248,8 @@ enum ConnEvent {
     Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
     Direct(Option<Vec<u8>>),
     AppDelivery,
+    /// The socket's by-reference body transfers are due a poll (FIX 5489).
+    AssetBodies,
     /// A verb RPC run off the loop ended; its answer is already queued.
     Answered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
 }
@@ -285,6 +287,7 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         SyncMessage::RootUpdate(_) => false,
         SyncMessage::Ephemeral(_)
         | SyncMessage::LfsChunks(_)
+        | SyncMessage::AssetBody { .. }
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }

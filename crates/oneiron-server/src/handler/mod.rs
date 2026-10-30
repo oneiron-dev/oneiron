@@ -7,6 +7,7 @@
 //! 4. Ongoing: bidirectional incremental sync via WindowSync + ephemeral state
 
 mod app_tier;
+mod asset_bodies;
 mod conn_state;
 mod connection;
 mod documents;

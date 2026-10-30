@@ -8,7 +8,8 @@
 //! now, from the body it holds. One transfer runs each way at a time; the
 //! bodies still owed wait their turn, and an attempt that fails is asked for
 //! again, from its first byte, [`ASSET_BODY_RETRY`] later. The window's
-//! references are the restartable queue: a new connection scans them again
+//! references are the restartable queue: a poll scans the socket's windows
+//! again every [`ASSET_BODY_RETRY`], the first poll of a connection at once
 //! ([`AssetBodySession::note_window`]). Nothing here holds a writer while it
 //! waits on the network, and no body length is refused.
 //!
@@ -43,17 +44,19 @@ use crate::sync::types::WindowKey;
 /// The Data frames one poll sends at most, by default (a call, FIX 5489):
 /// sixteen frames of [`ASSET_BODY_FRAME_BYTES`], one MiB. It paces a send
 /// beside the socket's other traffic; it bounds no body.
-pub(crate) const ASSET_BODY_FRAMES_PER_POLL: usize = 16;
+pub const ASSET_BODY_FRAMES_PER_POLL: usize = 16;
 
 /// What a session reads its side through, as the socket that owns it
 /// resolves it.
-pub(crate) struct AssetBodyPeer<'a> {
-    pub(crate) vault: &'a Vault,
+pub struct AssetBodyPeer<'a> {
+    pub vault: &'a Vault,
     /// The lease vault the window's receipts verify against.
-    pub(crate) lease_vault_id: u64,
+    pub lease_vault_id: u64,
     /// The live document of a window this socket moves bodies for, under
     /// its scope; `None` for any other window.
-    pub(crate) window: &'a dyn Fn(&WindowKey) -> Option<LoroDoc>,
+    pub window: &'a dyn Fn(&WindowKey) -> Option<LoroDoc>,
+    /// The windows this socket moves bodies for now, which a poll scans.
+    pub windows: &'a dyn Fn() -> Vec<WindowKey>,
 }
 
 /// Runs `f` over the peer a sync client over `manager` is: its vault, its
@@ -63,10 +66,12 @@ pub(crate) fn with_manager_peer<T>(
     f: impl FnOnce(&AssetBodyPeer<'_>) -> T,
 ) -> T {
     let window = |key: &WindowKey| manager.window(key).map(|loaded| loaded.doc.clone());
+    let windows = || manager.loaded_keys();
     f(&AssetBodyPeer {
         vault: manager.vault(),
         lease_vault_id: manager.materializer().lease_vault_id(),
         window: &window,
+        windows: &windows,
     })
 }
 
@@ -108,7 +113,9 @@ struct Receiving {
 /// One socket's body transfers. Make one per connection: a new connection
 /// starts every transfer again from its first byte.
 #[derive(Default)]
-pub(crate) struct AssetBodySession {
+pub struct AssetBodySession {
+    /// When a poll next scans the socket's windows; `None` before the first.
+    next_scan: Option<Instant>,
     owed: HashMap<(WindowKey, EntityId), Owed>,
     /// The bodies this connection found held here, by owner and BLAKE3.
     held: HashSet<(EntityId, [u8; 32])>,
@@ -127,7 +134,7 @@ impl AssetBodySession {
     /// # Errors
     ///
     /// [`TransportError::Storage`] for a storage error.
-    pub(crate) fn note_window(
+    pub fn note_window(
         &mut self,
         peer: &AssetBodyPeer<'_>,
         window: &WindowKey,
@@ -176,7 +183,7 @@ impl AssetBodySession {
     ///
     /// [`TransportError::UnknownTag`] for any frame while the file plane is
     /// off, as before it; a frame that does not decode.
-    pub(crate) fn handle_frame(
+    pub fn handle_frame(
         &mut self,
         peer: &AssetBodyPeer<'_>,
         tag: u8,
@@ -216,12 +223,14 @@ impl AssetBodySession {
     /// The frames to send now: at most `frames` Data frames of the body this
     /// side sends, and its End once the last byte went; then a Want for the
     /// next body this side is owed whose ask is due at `now`, once no body
-    /// comes in. `socket_max` is the socket's frame bound.
+    /// comes in. Every [`ASSET_BODY_RETRY`] it first scans the socket's
+    /// windows for bodies owed ([`Self::note_window`]). `socket_max` is the
+    /// socket's frame bound.
     ///
     /// # Errors
     ///
-    /// A frame that does not encode.
-    pub(crate) fn poll(
+    /// A frame that does not encode, and a storage error in the scan.
+    pub fn poll(
         &mut self,
         peer: &AssetBodyPeer<'_>,
         now: Instant,
@@ -231,6 +240,14 @@ impl AssetBodySession {
         let mut out = Vec::new();
         if !ASSET_FILE_PLANE {
             return Ok(out);
+        }
+        if self.next_scan.is_none_or(|next| next <= now) {
+            self.next_scan = Some(now + ASSET_BODY_RETRY);
+            for key in (peer.windows)() {
+                if let Some(doc) = (peer.window)(&key) {
+                    self.note_window(peer, &key, &doc)?;
+                }
+            }
         }
         if let Some(sending) = &mut self.sending {
             let sent = sending.poll(peer, frames, socket_max)?;
@@ -341,20 +358,19 @@ impl AssetBodySession {
         now: Instant,
         socket_max: usize,
     ) -> Result<Option<Vec<u8>>, TransportError> {
-        let due: Vec<(WindowKey, EntityId)> = self
+        let mut due: Vec<(WindowKey, EntityId)> = self
             .owed
             .iter()
             .filter(|(_, owed)| owed.next_ask <= now)
             .map(|(key, _)| key.clone())
             .collect();
-        for key in due {
+        while let Some(key) = due.pop() {
             let Some(owed) = self.owed.get_mut(&key) else {
                 continue;
             };
-            let (window, id) = &key;
-            let carrier = (peer.window)(window).and_then(|doc| {
-                let carrier = map_get_bytes(&doc.get_map("entities"), &id.to_hex())?;
-                (bound_in(&doc, id, &carrier).as_ref() == Some(&owed.body)).then_some(carrier)
+            let carrier = (peer.window)(&key.0).and_then(|doc| {
+                let carrier = map_get_bytes(&doc.get_map("entities"), &key.1.to_hex())?;
+                (bound_in(&doc, &key.1, &carrier).as_ref() == Some(&owed.body)).then_some(carrier)
             });
             let Some(carrier) = carrier else {
                 self.owed.remove(&key);
@@ -370,21 +386,23 @@ impl AssetBodySession {
             let spool = match peer.vault.asset_body_spool(body.facts()) {
                 Ok(spool) => spool,
                 Err(error) => {
-                    tracing::warn!(entity = %id.to_hex(), %error, "asset body spool did not open");
+                    let entity = body.id.to_hex();
+                    tracing::warn!(%entity, %error, "asset body spool did not open");
                     continue;
                 }
             };
+            let (window, _) = key;
             let attempt: [u8; 16] = rand::random();
             let want = encode_asset_body_want(&AssetBodyWant {
                 attempt,
-                body: address(window, &body),
+                body: address(&window, &body),
                 max_frame_bytes: asset_body_frame_bytes(ASSET_BODY_FRAME_BYTES as u32, socket_max)
                     as u32,
             })
             .into_result()?;
             self.receiving = Some(Receiving {
                 attempt,
-                window: window.clone(),
+                window,
                 body,
                 spool,
             });
