@@ -4,10 +4,11 @@
 
 use heed::{RoTxn, RwTxn};
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ppr;
-use crate::registry::ENTITY_TYPE_ASSET;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM};
 use crate::store::Store;
 
 use super::holders::artifact_hashes;
@@ -173,7 +174,9 @@ pub(crate) fn hold_asset_reference_in_txn(
 /// once the last step claim pinning it as its response let go of it (FIX
 /// 6225). Only that version goes: its record, its born-from rows and its
 /// generated `blob.version` claim, a ledger event and no holder of the bytes
-/// it records. HEAD falls back to the greatest version that stays; HIGHWATER
+/// it records; the claim and an emptied artifact are erased as replicated
+/// rows are (FIX 8501), and what this vault serves of the version goes with
+/// it (FIX 8504). HEAD falls back to the greatest version that stays; HIGHWATER
 /// stays, so its number is never issued again. Its hash's reference rows go
 /// when no version that stays and no retained claim of the artifact names
 /// it, and its bytes then by the delete rule above; an artifact left with no
@@ -224,6 +227,7 @@ pub(crate) fn release_response_version_in_txn(
         }
     }
     tear_in_txn(store, wtxn, &record.claim_id, &mut cleanup)?;
+    crate::artifact_hosting::retire_released_version_in_txn(store, wtxn, artifact, version)?;
     if !chain_holds(store, wtxn, artifact, content_hash)? {
         ASSET_REF.delete(store, wtxn, &(*content_hash, *artifact))?;
         if forget_released_pair_in_txn(store, wtxn, artifact, content_hash)? {
@@ -285,18 +289,52 @@ fn chain_holds(
 
 /// Tears `id`, a released version's ledger claim or an emptied artifact,
 /// with its machine history, as a local delete does, folding its graph and
-/// vector accounting into `cleanup`.
+/// vector accounting into `cleanup`. A row that was here is erased as a
+/// replicated row is (FIX 8501): its permanent `dt:` marker refuses a
+/// peer's copy sent again, and its tombstone, staged in the window the row
+/// rode, takes the copies peers hold. Neither id is minted again: a
+/// response artifact's is fresh, and HIGHWATER keeps a version's number.
 fn tear_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     cleanup: &mut BlobArtifactLifecycleCleanup,
 ) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, &*wtxn, id)?;
     let (_existed, had_vector, had_graph_mutation, neighbors) =
         crate::batch::deindex_entity_with_machine_history(store, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     cleanup.had_vector |= had_vector;
     cleanup.had_graph_mutation |= had_graph_mutation;
     cleanup.neighbors.extend(neighbors);
-    Ok(())
+    match raw.as_deref().and_then(EntityMetadataHeader::parse) {
+        Some(header) => {
+            let window = torn_row_window(&header, raw.as_deref().unwrap_or_default());
+            let value = crate::deletion::TombstoneValueV2 {
+                reason: crate::deletion::TombstoneReason::UserHardDelete,
+                deleted_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
+                request_id: *id.as_bytes(),
+            };
+            crate::deletion::stage_engine_row_hard_erasure_at_in_txn(
+                store, wtxn, id, window, &value,
+            )
+        }
+        None => Ok(()),
+    }
+}
+
+/// The window a torn row rode: a CLAIM's world's month when its body names a
+/// world, else the base month of its learned-at, as sync placed it.
+fn torn_row_window(header: &EntityMetadataHeader, raw: &[u8]) -> String {
+    let mut window = crate::deletion::window_label_from_timestamp(header.learned_at);
+    if header.entity_type == ENTITY_TYPE_CLAIM
+        && let Some(world) = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+            .and_then(|body| body.world)
+    {
+        window.push('@');
+        window.push_str(&world.to_hex());
+    }
+    window
 }

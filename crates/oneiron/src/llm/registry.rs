@@ -29,9 +29,10 @@ pub struct SkippedRegistryRow {
     pub key: String,
     pub error: Error,
 }
-/// One priced model registry row. Key: string (model id). A stored copy of
-/// the installed pack's row reads under that pack's currency contract (FIX
-/// 9534).
+/// One priced model registry row. Key: string (model id). A legacy
+/// pre-9534 stored copy of the installed pack's row whose cost names no
+/// `currency` key reads under that pack's currency contract (FIX 9534,
+/// narrowed by FIX 11778).
 const REGISTRY_ROW: StoredRows = StoredRows;
 /// Bounded recent benchmark-score change history for one model. Key: string (model id) + NUL.
 const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =

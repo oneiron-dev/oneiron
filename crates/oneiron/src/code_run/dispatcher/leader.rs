@@ -585,9 +585,9 @@ impl HostSelfDispatcher<'_> {
         let slip = vault.mint_capability_slip(issuer, claims)?;
         let signed_at = slip.claims.issued_at;
         let version = ProjectProofVersion::V3;
-        let challenge = body
-            .authority_at(version)
-            .write_challenge(child, version, signed_at, &[])?;
+        let challenge =
+            body.authority_at(version)
+                .write_challenge(child, version, signed_at, &[])?;
         Ok(ProjectWriteProof {
             slip_wire: slip.to_token()?,
             holder_signature: issuer.binding_proof(&slip, &challenge)?,
