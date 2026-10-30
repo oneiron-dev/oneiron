@@ -98,26 +98,15 @@ pub(super) fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
     Ok(entity_id_from_hash_material(SEAT_QUOTA_DOMAIN, &parts)?)
 }
 
-/// Records what `attempt`'s capture read of `seat`'s quota, in the routing
-/// writer: a spend, or a completed run's clearing of a spent seat. Any other
-/// capture proves nothing and records nothing. A replay, and an older
-/// capture settling after a newer reading, keep the head.
+/// Records what `attempt`'s capture read of quota `id`, in the routing
+/// writer: a spend, or a completed run's clearing of a spent seat. The id
+/// comes from the current seat or the capture hop's frozen identity when the
+/// seat was removed (FIX 11984). Any other capture proves nothing and records
+/// nothing. A replay, and an older capture settling after a newer reading,
+/// keep the head.
 ///
 /// # Errors
 /// A record that does not encode or decode; a store failure.
-pub(super) fn record_seat_quota_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    seat: &RunnerSeat,
-    attempt: &AttemptRecord,
-    spent: Option<&SeatSpent>,
-) -> ByoaResult<()> {
-    let id = seat_quota_id(seat)?;
-    record_seat_quota_by_id_in_txn(vault, wtxn, id, attempt, spent)
-}
-
-/// Records a capture against the frozen quota identity it ran under, even
-/// when the owner's current policy no longer holds that seat (FIX 11984).
 pub(super) fn record_seat_quota_by_id_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
