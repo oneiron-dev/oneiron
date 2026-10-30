@@ -2,6 +2,10 @@
 //! grants: the single-use authority and the door that applies it.
 
 use crate::batch::{BatchOp, apply_session_bundle_claim_puts};
+use crate::claim::transition::{
+    ClaimTransitionKind, TransitionDelta, stage_owner_machine_transition,
+    stage_system_machine_transition,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, encode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -55,7 +59,7 @@ pub(in crate::gate) fn put_preauthorized_claim_status_in_txn(
             "preauthorized claim status update does not bind current claim row",
         ));
     }
-    let mut updated = current;
+    let mut updated = current.clone();
     match grant {
         PreauthorizedClaimStatusGrant::TimeoutDemotion => {
             updated.approval = ClaimApprovalStatus::Proposed;
@@ -66,6 +70,14 @@ pub(in crate::gate) fn put_preauthorized_claim_status_in_txn(
         PreauthorizedClaimStatusGrant::FoldDecline => {
             updated.lifecycle = ClaimLifecycleStatus::Retracted;
         }
+    }
+    // A MACHINE-born claim's live row is its signed history's projection: the
+    // rewrite stages the transition that projects it in this writer, and the
+    // row carries what the history then projects (FIX 12025).
+    if updated != current
+        && crate::authority::machine_claim_needs_history(&vault.store, &*wtxn, &current)?
+    {
+        updated = stage_status_transition(vault, wtxn, *id, &current, grant)?;
     }
     let data = encode_claim_body(&updated)?;
     crate::claim::validate_claim_body_bytes(&data, false)?;
@@ -88,4 +100,55 @@ pub(in crate::gate) fn put_preauthorized_claim_status_in_txn(
             .text_index_trusted
             .load(std::sync::atomic::Ordering::Acquire),
     )
+}
+
+/// The signed transition that projects `grant` on a MACHINE-born claim. No
+/// person answered a lapse, so it is the engine's own principal's, the one
+/// its `Demoted` settlement names; a decline is the owner's retraction; a
+/// clear is the MACHINE author's own grant, which the fold records as `Auto`.
+fn stage_status_transition(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    current: &ClaimBody,
+    grant: PreauthorizedClaimStatusGrant,
+) -> Result<ClaimBody> {
+    let now = vault.store.clock.now_recorded_at();
+    match grant {
+        PreauthorizedClaimStatusGrant::TimeoutDemotion => stage_system_machine_transition(
+            vault,
+            wtxn,
+            id,
+            ClaimTransitionKind::ConfirmLapse,
+            TransitionDelta::None,
+            crate::ports::storage_service_principal()?,
+            now,
+        ),
+        PreauthorizedClaimStatusGrant::FoldDecline => {
+            // The fold never moves a validity end outside the claim's own.
+            let end = current.valid_to.map_or(now, |old| old.min(now));
+            let end = current.valid_from.map_or(end, |start| start.max(end));
+            stage_owner_machine_transition(
+                vault,
+                wtxn,
+                id,
+                ClaimTransitionKind::Retract,
+                TransitionDelta::ValidTo(end),
+                now,
+            )
+        }
+        PreauthorizedClaimStatusGrant::FoldClear => {
+            let author = crate::memory::claim_author(current)
+                .ok_or(Error::InvalidClaimBody("machine claim names no author"))?;
+            stage_system_machine_transition(
+                vault,
+                wtxn,
+                id,
+                ClaimTransitionKind::Approve,
+                TransitionDelta::None,
+                author,
+                now,
+            )
+        }
+    }
 }
