@@ -192,7 +192,7 @@ impl InboxMarkWriteScope {
                     vault.authorize_shared_content_write_in_txn(
                         txn,
                         id,
-                        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+                        &memory.write_actor(),
                     )?;
                 }
                 Ok(true)

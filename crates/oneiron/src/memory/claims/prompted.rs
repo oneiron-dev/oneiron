@@ -61,7 +61,7 @@ impl Memory<'_> {
         };
         let class = MadeByClass::of_source(self.claim_source(&input.source)?);
         Ok(RowBirth::prompted(
-            WriteActor::new(self.actor, self.actor_class),
+            self.write_actor(),
             class,
             door,
             &held,

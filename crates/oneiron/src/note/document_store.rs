@@ -305,7 +305,7 @@ impl Memory<'_> {
         let kind = NoteKind::Plugin("brief".into());
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.vault().new_entity_id()?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let body = encode_note_body(&NoteBody {
             kind,
             author_ref: super::NoteActor::Actor(self.actor()),
@@ -646,7 +646,7 @@ pub(super) fn require_note_writer(
             memory.vault(),
             txn,
             id,
-            crate::WriteActor::new(memory.actor(), memory.actor_class()),
+            memory.write_actor(),
         )?
     {
         if memory.actor_class() != EdgeActorClass::Human {

@@ -6,7 +6,7 @@ use crate::gate::{
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
-use crate::{EdgeActorClass, EntityId, WriteActor};
+use crate::{EdgeActorClass, EntityId};
 
 use super::amend::{
     apply_compliance_amendment_in_txn, compliance_amendment_notices_in_txn,
@@ -49,7 +49,7 @@ impl Memory<'_> {
                     &[],
                 ));
             }
-            let actor = WriteActor::new(self.actor(), self.actor_class());
+            let actor = self.write_actor();
             let can_activate = policy.actor_ceiling(
                 self.actor_class().gate_actor_class(),
                 Some(&self.actor().to_hex()),
