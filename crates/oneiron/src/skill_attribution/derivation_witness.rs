@@ -290,18 +290,6 @@ fn live_pairs_in_txn(
     pairs_in_txn(store, txn, attempt, generation, true)
 }
 
-/// The edges that landed for `attempt`'s try `generation` after its lease
-/// ended, read only through `txn`: the late landings its credit reconciles.
-/// A row with an erased end, or that no longer decodes, names none.
-pub(super) fn landed_pairs_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    attempt: AttemptId,
-    generation: u32,
-) -> Result<Vec<(EntityId, EntityId)>> {
-    pairs_in_txn(store, txn, attempt, generation, false)
-}
-
 /// The edges that landed late for every lease generation of `attempt`'s try,
 /// oldest generation first, read only through `txn`: the late landings its
 /// credit reconciles (FIX 11361 residual of CALL-B8). A row with an erased
