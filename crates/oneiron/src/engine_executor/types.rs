@@ -379,6 +379,12 @@ pub trait JsCodeModeHost {
     /// refused for it. A host with no run to keep it by checks nothing.
     fn start_callable_check(&mut self, _seq: u64, _program: CallableProgram<'_>) {}
 
+    /// The actor this host's run writes as: who a callable skill's call is
+    /// made for. A host with no such actor answers `None`.
+    fn caller_entity(&self) -> Option<EntityId> {
+        None
+    }
+
     /// [`Self::dispatch_self_nested`] for a caller whose step `cancel` may
     /// stop (FIX 600). A host that runs the nested step overrides it and
     /// runs that step under a child of `cancel`, so a stop of the caller

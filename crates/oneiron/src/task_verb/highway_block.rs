@@ -9,6 +9,9 @@
 //!
 //! When such an ask settles, its continuation moves the TASK once: met
 //! lands the saved result, unmet requeues, proceed resumes, stop fails it.
+//! Each move keeps a lifecycle receipt naming the ask; a settling move's is
+//! its TASK's settled row, unless the owner's answer or a review the owner
+//! accepted already kept that row as its anchor (FIX 5079).
 //! A hold, an unknown or no answer changes nothing and is never recorded as
 //! the owner's permission. Asks an agent supplied itself carry no
 //! continuation; the agent's Progress is their exit.
@@ -35,12 +38,15 @@ use super::consts::{
     TASK_BLOCK_QUESTION_ID_DOMAIN, TASK_BLOCK_QUESTION_PREDICATE, TASK_EXTERNAL_ATTEMPT_KIND,
 };
 use super::consult_payload::ConsultPayloadRef;
-use super::highway::{attempt_hex, not_found};
+use super::consult_result::TaskVerbBody;
+use super::highway::{attempt_hex, not_found, stamp_fields};
 use super::highway_post::envelope_actor_class;
 use super::highway_report::{
     DONE_MET_OPTION, DONE_UNMET_OPTION, fail_final_in, fail_unmet_in, land_done_in, requeue,
     short_digest,
 };
+use super::highway_types::{TaskLifecycleRecord, TaskVia};
+use super::lifecycle_receipt;
 use super::settlement_anchor::{
     SETTLEMENT_ANCHOR_ASK, anchor_kept_review_in_txn, anchor_settlement_in_txn, owner_answered,
 };
@@ -54,6 +60,8 @@ const BLOCK_PROCEED_OPTION: &str = "proceed";
 const BLOCK_STOP_OPTION: &str = "stop";
 /// Failure reason of a TASK its owner stopped.
 const BLOCK_STOPPED_REASON: &str = "stopped at the owner's answer";
+/// The lifecycle call a settled ask's continuation records (FIX 5079).
+const BLOCK_CONTINUATION_CALL: &str = "block_continuation";
 
 /// What a blocked TASK waits on its owner for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -520,9 +528,14 @@ pub(super) fn continue_blocked_task_in(
         _ => return Ok(()),
     };
     moved.map_err(continuation_refusal)?;
-    let settled = body.terminal().is_some();
-    vault
-        .memory(asker, class)
+    let settled_at = body.terminal().map(|terminal| terminal.finished_at);
+    let settled = settled_at.is_some();
+    let memory = vault.memory(asker, class);
+    // FIX 5079: the move keeps its own lifecycle receipt, as a report's does.
+    let lifecycle = memory
+        .keeps_lifecycle()
+        .then(|| continuation_lifecycle(&memory, &continuation, group_ref, option, &body, now));
+    memory
         .rewrite_task_in_txn(txn, task_ref, body, now)
         .map_err(continuation_refusal)?;
     // FIX 1140: a TASK the answer settled wakes its peer-result waiters when
@@ -545,9 +558,101 @@ pub(super) fn continue_blocked_task_in(
         // A review the owner accepted before the TASK settled anchors the
         // settlement, on that row when the ask kept one.
         anchor_kept_review_in_txn(vault, txn, task_ref, continuation.attempt)?;
+    }
+    // After the anchors, so a settled row one of them kept stands, as its
+    // reporter and anchor name the settlement (FIX 5079).
+    keep_continuation_receipt_in(
+        vault,
+        txn,
+        lifecycle.as_ref(),
+        task_ref,
+        group_ref,
+        settled_at,
+    )?;
+    if settled {
         // The routing projection counts this settlement on the folds whose
         // runs worked this TASK before it settled (FIX 11807).
         crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, task_ref);
+    }
+    Ok(())
+}
+
+/// The lifecycle receipt one continuation's move owes (FIX 5079): by
+/// `memory`, the asker's, on the try that blocked, at the time the move
+/// settled the TASK, if it did. It names the ask, the option it chose and,
+/// for a Done, the result, and its outcome is where the TASK stands after
+/// the move, as a report's is.
+fn continuation_lifecycle(
+    memory: &Memory<'_>,
+    continuation: &BlockContinuation,
+    group_ref: EntityId,
+    option: &TaskAskOptionId,
+    body: &TaskVerbBody,
+    now: u64,
+) -> TaskLifecycleRecord {
+    let outcome = match &body.state {
+        Some(TaskExecutionState::Terminal(record)) => record.disposition.as_str(),
+        Some(TaskExecutionState::Working { .. }) => "working",
+        Some(TaskExecutionState::Blocked { .. }) => "blocked",
+        Some(TaskExecutionState::Interrupted { .. }) => "interrupted",
+        None | Some(TaskExecutionState::Queued) => "queued",
+    };
+    let mut lifecycle = memory.lifecycle_record(
+        &TaskVia::Wire,
+        BLOCK_CONTINUATION_CALL,
+        outcome,
+        Some(continuation.task),
+        continuation.attempt,
+        body.terminal().map_or(now, |terminal| terminal.finished_at),
+    );
+    stamp_fields(&mut lifecycle.fields, body.brief.as_ref());
+    lifecycle
+        .fields
+        .insert("ask_ref".to_owned(), group_ref.to_hex());
+    lifecycle
+        .fields
+        .insert("option".to_owned(), option.as_str().to_owned());
+    if let BlockPurpose::Done { result_ref, .. } = continuation.purpose {
+        lifecycle
+            .fields
+            .insert("result_ref".to_owned(), result_ref.to_hex());
+    }
+    lifecycle
+}
+
+/// Keeps `lifecycle`, the receipt of one continuation's move, in the
+/// transaction that made it, under an id its TASK and ask derive; `None`
+/// when its surface keeps no record. A move that settled the TASK at
+/// `settled_at` marks it as the settling write's, so a replayed Done and a
+/// status read name it, unless an anchor already kept the settled row of
+/// that time: that row stands, and this keeps none beside it.
+fn keep_continuation_receipt_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    lifecycle: Option<&TaskLifecycleRecord>,
+    task_ref: EntityId,
+    group_ref: EntityId,
+    settled_at: Option<u64>,
+) -> Result<()> {
+    let Some(lifecycle) = lifecycle else {
+        return Ok(());
+    };
+    if let Some(at) = settled_at
+        && lifecycle_receipt::settled_in(vault, txn, task_ref, at)
+            .map_err(continuation_refusal)?
+            .is_some()
+    {
+        return Ok(());
+    }
+    let id = lifecycle_receipt::receipt_id(
+        BLOCK_CONTINUATION_CALL,
+        &[task_ref.as_bytes(), group_ref.as_bytes()],
+    )
+    .map_err(continuation_refusal)?;
+    lifecycle_receipt::stamp_record_in(vault, txn, lifecycle, id.clone(), None)
+        .map_err(continuation_refusal)?;
+    if settled_at.is_some() {
+        lifecycle_receipt::mark_settled_in(vault, txn, &id).map_err(continuation_refusal)?;
     }
     Ok(())
 }

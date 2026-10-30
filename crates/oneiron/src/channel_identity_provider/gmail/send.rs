@@ -72,7 +72,6 @@ const MAX_SUBJECT_BYTES: usize = 600;
 const MAX_DISPLAY_NAME_BYTES: usize = 256;
 /// Gmail accepts 35 MB raw; a plain-text member reply needs far less.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
-const MAX_REFERENCES: usize = 64;
 const MAX_HYGIENE_HEADERS: usize = 8;
 
 /// The reply half of a send: the Gmail thread it joins and its RFC parents.
@@ -89,12 +88,12 @@ pub struct GmailReplyThread {
 
 impl GmailReplyThread {
     /// Builds the reply half from the parent's Gmail thread id, the parent's
-    /// RFC `Message-ID`, and the parent's own `References` chain.
+    /// RFC `Message-ID`, and the parent's own `References` chain. The full
+    /// deduped chain is kept; the render folds it across lines.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] for a malformed thread id or Message-ID, or a
-    /// chain longer than 64 entries.
+    /// [`Error::InvalidConfig`] for a malformed thread id or Message-ID.
     pub fn new<S: AsRef<str>>(
         gmail_thread_id: &str,
         in_reply_to: &str,
@@ -109,11 +108,6 @@ impl GmailReplyThread {
         let mut references = canonical_message_id_list(parent_references)?;
         references.retain(|reference| reference != &in_reply_to);
         references.push(in_reply_to.clone());
-        if references.len() > MAX_REFERENCES {
-            return Err(Error::InvalidConfig(format!(
-                "gmail reply References exceeds {MAX_REFERENCES} entries"
-            )));
-        }
         Ok(Self {
             gmail_thread_id: gmail_thread_id.to_owned(),
             in_reply_to,

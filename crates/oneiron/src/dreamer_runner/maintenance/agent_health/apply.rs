@@ -380,9 +380,9 @@ impl Vault {
             };
             // A gate that ruled nothing new since the last settle leaves the
             // card as it is.
-            let ruling =
-                skill_edit_verdict_in_txn(self, txn, candidate)?.map(|verdict| verdict.id);
-            if standing.state == AgentHealthApplicationState::Pending && ruling == standing.verdict {
+            let ruling = skill_edit_verdict_in_txn(self, txn, candidate)?.map(|verdict| verdict.id);
+            if standing.state == AgentHealthApplicationState::Pending && ruling == standing.verdict
+            {
                 return Ok(Some(standing));
             }
             self.settle_standing_in_txn(txn, &key, card, standing, now)

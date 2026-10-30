@@ -57,7 +57,7 @@ use self::input::{
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
 pub(crate) use self::revoked::{
-    custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
+    EraseOwnerAct, custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
     settle_revoked_in_txn,
 };
 use super::carrier_custody::CUSTODY_CARRIER_LEAF_WIRE;

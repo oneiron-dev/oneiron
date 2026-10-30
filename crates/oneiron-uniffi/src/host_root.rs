@@ -41,12 +41,16 @@ impl Oneiron {
     /// opens and says so in `host_root_profile`. The handle binds the
     /// embedded owner actor, as `open` does, and carries no owner proof.
     /// `device_class` is `open`'s (FIX 5577).
-    #[uniffi::constructor(default(device_class = None))]
+    /// `hold_checkpoint_root_signer` holds this install's host root as the
+    /// vault's checkpoint signer for the handle's life (FIX 5343); omitted
+    /// is `false`.
+    #[uniffi::constructor(default(device_class = None, hold_checkpoint_root_signer = None))]
     pub fn open_with_host_root(
         path: Option<String>,
         options: Option<OpenOptions>,
         host_root_secret: Vec<u8>,
         device_class: Option<String>,
+        hold_checkpoint_root_signer: Option<bool>,
     ) -> Result<Arc<Self>, OneironError> {
         let host_root_secret = Zeroizing::new(host_root_secret);
         // Crash output never carries world text: the engine's hook goes in
@@ -60,6 +64,7 @@ impl Oneiron {
             &oneiron_remote::OpenOptions {
                 dimensions,
                 device_class,
+                hold_checkpoint_root_signer: hold_checkpoint_root_signer.unwrap_or(false),
             },
             host_root_secret.as_slice(),
         )?;

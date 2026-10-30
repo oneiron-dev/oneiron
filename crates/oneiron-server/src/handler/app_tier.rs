@@ -449,6 +449,17 @@ fn answer_app_message(
             && crate::livequery::machine_handoff_method(&request.method)
         {
             let peer = state.peer_machine(&server.vault);
+            // FIX 11113: counted as the bound path counts, under the machine
+            // the upgrade proved.
+            let actor = match &peer {
+                oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
+                oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
+            };
+            let _ = server.wire_telemetry.record(
+                &request.method,
+                &actor,
+                oneiron_vault_contract::now_ts(),
+            );
             let conn = connection
                 .as_deref()
                 .map_or(0, crate::livequery::connection::Connection::conn_id);

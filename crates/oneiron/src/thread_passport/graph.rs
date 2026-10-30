@@ -23,6 +23,13 @@ pub(super) struct PassportPinKey {
     claim_id: EntityId,
 }
 
+impl PassportPinKey {
+    /// The passport's claim id: a ULID, so its order is recording order.
+    pub(super) const fn claim_id(&self) -> EntityId {
+        self.claim_id
+    }
+}
+
 impl PassportRow {
     pub(super) fn pin_key(&self) -> PassportPinKey {
         PassportPinKey {

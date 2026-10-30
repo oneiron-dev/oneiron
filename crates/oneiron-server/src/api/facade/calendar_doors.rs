@@ -313,6 +313,7 @@ use oneiron::calendar::meeting::{
     CalendarMeetingRequest, CalendarOutcomePolicy,
 };
 use oneiron::claim::ScopedReadResult;
+use oneiron::policy_manifest_doors;
 
 pub(crate) async fn vault_calendar_outcome_policy_get(
     server: &Arc<SyncServer>,
@@ -323,7 +324,14 @@ pub(crate) async fn vault_calendar_outcome_policy_get(
         server,
         auth,
         "vault.calendar.outcome_policy.get",
-        move |_, memory, owner| meeting::outcome_policy_get(&memory, &owner),
+        move |server, _, owner| {
+            Ok(CalendarOutcomePolicy {
+                grace_secs: policy_manifest_doors::calendar_outcome_grace_as_owner(
+                    server.vault(),
+                    &owner,
+                )?,
+            })
+        },
     )
     .await
 }
@@ -337,7 +345,15 @@ pub(crate) async fn vault_calendar_outcome_policy_set(
         server,
         auth,
         "vault.calendar.outcome_policy.set",
-        move |_, memory, owner| meeting::outcome_policy_set(&memory, &owner, &input),
+        move |server, _, owner| {
+            Ok(CalendarOutcomePolicy {
+                grace_secs: policy_manifest_doors::set_calendar_outcome_grace_as_owner(
+                    server.vault(),
+                    &owner,
+                    input.grace_secs,
+                )?,
+            })
+        },
     )
     .await
 }

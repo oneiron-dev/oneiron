@@ -20,10 +20,10 @@ use rmpv::Value;
 
 /// One backfill identity: question id + `backfill` family + version, unit and frontier.
 #[derive(Clone, Copy)]
-struct BackfillKey {
-    question: EntityId,
+pub(super) struct BackfillKey {
+    pub(super) question: EntityId,
     version: u32,
-    unit: EntityId,
+    pub(super) unit: EntityId,
     frontier: [u8; 32],
 }
 impl SideKey for BackfillKey {
@@ -45,7 +45,7 @@ impl SideKey for BackfillKey {
         })
     }
 }
-const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
+pub(super) const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
     SideTable::new(&side_table::TYPED_QUESTION);
 
 /// The host obtains `source_frontier` before asking a provider. Admission
@@ -772,7 +772,7 @@ pub(super) struct ScopeFold {
     principal: String,
     taint: ClaimSource,
     position: Option<(EntityId, EntityId, EntityId)>,
-    rel: Option<EntityId>,
+    rel: crate::claim::RelationshipScope,
     scope: Vec<(Value, Value)>,
     sensitivity: u8,
 }
@@ -828,11 +828,19 @@ impl ScopeFold {
         if let Some(inherited) = crate::claim::claim_evidence_taint(body) {
             self.taint = crate::dreamer_consolidation::source_meet(self.taint, inherited);
         }
-        if let Some(id) = body.rel {
-            if self.rel.is_some_and(|existing| existing != id) {
+        if let Some(ids) = &body.rel {
+            // The answer reaches only the relationships every source does
+            // (the meet; `all` is its identity). Sources in disjoint
+            // relationships conflict, as one-relationship sources always
+            // did; an explicitly empty source carries its empty set.
+            let met = crate::claim::meet_relationship_scopes(self.rel.as_ref(), Some(ids));
+            if met.as_ref().is_some_and(|met| met.is_empty())
+                && !ids.is_empty()
+                && self.rel.as_ref().is_some_and(|folded| !folded.is_empty())
+            {
                 return Err(SourceConflict::Relationship);
             }
-            self.rel = Some(id);
+            self.rel = met;
         }
         if let Some(value) = &body.scope {
             let Value::Map(entries) = value else {
@@ -888,8 +896,8 @@ impl ScopeFold {
                 *candidate = candidate.clone().with_world(world);
             }
         }
-        if let Some(id) = self.rel {
-            *candidate = candidate.clone().with_relationship(id);
+        if self.rel.is_some() {
+            *candidate = candidate.clone().with_relationships(self.rel);
         }
         if !scope.is_empty() {
             *candidate = candidate.clone().with_scope(Value::Map(scope));
@@ -899,4 +907,4 @@ impl ScopeFold {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct EntityIdBytes([u8; 16]);
+pub(super) struct EntityIdBytes([u8; 16]);
