@@ -6,6 +6,7 @@
 //! OF-247 `InboundSurfaceEventInput` values without starting a browser or
 //! touching a live LinkedIn session.
 
+mod conversation_parse;
 mod inbox_sync;
 mod normalize_keys;
 mod sandbox_host;
