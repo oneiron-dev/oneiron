@@ -4,6 +4,7 @@ use oneiron::booking::{
     BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     BookingSolver, BookingVerbReceipt, BookingVerbRequest, SessionKey, SlotOracle, SolveRequest,
     SolveResult, VaultActiveHoldSource, run_booking_lifecycle_attempt,
+    run_booking_lifecycle_attempt_with_invites,
 };
 use oneiron::dreamer_runner::DreamerHomeNodeClass;
 use oneiron::memory::ProducerRows;
@@ -12,6 +13,7 @@ use oneiron::{CalendarSel, DreamerRunnerStore, EntityId, Vault};
 use super::constants::BOOKING_LIFECYCLE_LEASE_OWNER;
 use super::helpers::engine_read_error;
 use super::page_token::page_event_type_configs_listed;
+use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -27,47 +29,82 @@ use crate::server::SyncServer;
 /// receipt identity — belongs to the writer. The turn claims the attempt this
 /// call enqueued, never the oldest one queued, because a receipt carries its
 /// visitor's hold or action tokens and must go back to that visitor only.
+///
+/// Beside the receipt, the rows the turn's oracle read that no receipt kept
+/// (FIX 5483): a writer that commits takes its solves' rows into its receipt,
+/// so these are a taken confirm's, which writes none.
 pub(super) async fn run_booking_verb(
     server: &Arc<SyncServer>,
     request: BookingVerbRequest,
     exclude_session: Option<SessionKey>,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
-) -> Result<BookingVerbReceipt, ApiError> {
-    let vault: &Vault = &server.vault;
+) -> Result<(BookingVerbReceipt, Vec<EntityId>), ApiError> {
     let local_node_id = local_booking_node_id(server)?;
     let attempt = oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(
-        vault,
+        &server.vault,
         request,
         now,
         public_authority,
     )?;
-    let turn = run_booking_lifecycle_attempt(
-        vault,
-        attempt,
-        |oracle_request: &BookingOracleRequest| {
+    // The turn sends each committed revision's invite on the calendar
+    // host's real sink (FIX 7850), whose blocking clients run off the
+    // runtime, so the whole turn does.
+    let turn_server = Arc::clone(server);
+    let line_push_allowance = server.config.line.monthly_push_allowance();
+    let (turn, unkept) = tokio::task::spawn_blocking(move || {
+        let vault: &Vault = &turn_server.vault;
+        // The writer's oracle lists every row its solves read (FIX 5483).
+        let producers = ProducerRows::default();
+        let binding_claims = std::cell::RefCell::new(Vec::new());
+        let make_oracle = |oracle_request: &BookingOracleRequest| {
             let page_ref = oracle_request.page_ref.ok_or_else(|| {
                 BookingError::SlotOracle(
                     "booking attempt names no page in committed state".to_owned(),
                 )
             })?;
+            let (calendars, claims) = page_calendar_bindings(vault, page_ref)?;
+            *binding_claims.borrow_mut() = claims.clone();
             Ok(ServerBookingOracle {
                 vault,
                 page_ref,
                 exclude_session_key: oracle_request.exclude_session_key.or(exclude_session),
                 now_utc: now,
-                calendars: page_calendar_bindings(vault, page_ref)?.0,
-                producers: None,
+                calendars,
+                producers: Some(&producers),
+                read_claims: claims,
             })
-        },
-        &BookingLifecycleConsumerInput {
+        };
+        let input = BookingLifecycleConsumerInput {
             local_node_id,
             lease_owner: BOOKING_LIFECYCLE_LEASE_OWNER.to_owned(),
             now_utc: now,
-        },
-    )?;
+        };
+        let turn = match CalendarSendClients::new() {
+            Ok(clients) => {
+                let mut sink = CalendarChannelSink::new(vault, line_push_allowance, &clients);
+                run_booking_lifecycle_attempt_with_invites(
+                    vault,
+                    attempt,
+                    make_oracle,
+                    &input,
+                    &mut sink,
+                )
+            }
+            // No send client: the revision commits and sends no invite.
+            Err(error) => {
+                tracing::warn!(%error, "booking lifecycle runs without an invite sink");
+                run_booking_lifecycle_attempt(vault, attempt, make_oracle, &input)
+            }
+        };
+        let mut unkept = binding_claims.into_inner();
+        unkept.extend(producers.take());
+        turn.map(|turn| (turn, unkept))
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("booking lifecycle turn stopped"))??;
     match turn {
-        BookingLifecycleTurn::Executed(receipt) => Ok(receipt),
+        BookingLifecycleTurn::Executed(receipt) => Ok((receipt, unkept)),
         BookingLifecycleTurn::NoHomeNode => {
             Err(ApiError::invalid_state(Some("booking_no_home_node_writer")))
         }
@@ -128,6 +165,9 @@ pub(super) struct ServerBookingOracle<'a> {
     /// Where a listing oracle lists every row its solves read (FIX 4777);
     /// `None` lists none.
     producers: Option<&'a ProducerRows>,
+    /// The `booking.event_type` claims the calendar binding was read from,
+    /// which a lifecycle writer lists beside its solves' rows (FIX 5483).
+    read_claims: Vec<EntityId>,
 }
 
 impl SlotOracle for ServerBookingOracle<'_> {
@@ -136,6 +176,14 @@ impl SlotOracle for ServerBookingOracle<'_> {
             Some(producers) => solver.solve_listing(request, None, producers),
             None => solver.solve(request),
         })
+    }
+
+    fn take_read_rows(&self) -> Vec<EntityId> {
+        let mut rows = self.read_claims.clone();
+        if let Some(producers) = self.producers {
+            rows.extend(producers.take());
+        }
+        rows
     }
 
     fn solve_moving(
@@ -184,6 +232,7 @@ pub(super) fn booking_oracle<'a>(
         now_utc: now,
         calendars: page_calendar_bindings(&server.vault, page_ref)?.0,
         producers: None,
+        read_claims: Vec::new(),
     })
 }
 
@@ -205,6 +254,7 @@ pub(super) fn booking_oracle_listing<'a>(
         now_utc: now,
         calendars,
         producers: Some(producers),
+        read_claims: Vec::new(),
     };
     Ok((oracle, claims))
 }

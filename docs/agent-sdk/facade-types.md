@@ -2498,7 +2498,7 @@ export type PackSetupAccount = { id: string; label: string; sign_up?: string | n
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupAuth` */
 export type PackSetupAuth = "oauth" | "api_key" | "bot_token" | "app_password" | "session" | "webhook" | "local"
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupSecret` */
-export type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null }
+export type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null; optional?: boolean }
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupRisk` */
 export type PackSetupRisk = "low" | "medium" | "high"
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupPermission` */

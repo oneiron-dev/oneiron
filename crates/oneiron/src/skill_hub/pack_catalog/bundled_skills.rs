@@ -134,6 +134,18 @@ impl Vault {
         Ok(())
     }
 
+    /// The pack that minted `source` as skill `id`'s provenance alias, when
+    /// a pack bundled the skill under it (CUA E10: a site seed's
+    /// provenance). `None` for a standalone or other-hub alias.
+    pub(in crate::skill_hub) fn pack_skill_alias_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        source: &HubRef,
+    ) -> Result<Option<String>> {
+        PACK_SKILL_ALIAS.get(&self.store, txn, &pack_skill_alias_key(id, source)?)
+    }
+
     /// Whether a holder other than `pack_name` keeps the bundled skill
     /// `old_id` Active: a standalone or unmarked alias, or another mounted
     /// pack whose receipt still lists it.

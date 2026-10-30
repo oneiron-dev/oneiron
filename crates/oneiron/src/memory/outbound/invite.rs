@@ -51,6 +51,20 @@ impl CalendarInviteSurfaceMethod {
     }
 }
 
+/// What issued one invite, as its host bound it (FIX 8796). It rides beside
+/// the five-field body, never inside it, so no caller asserts its own
+/// trigger or session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalendarInviteOrigin {
+    /// A caller's own act (`agent_immediate`). `session_ref` is the session
+    /// its host bound, when it bound one: the intent's trigger ref and its
+    /// TASK's originating session. With none, the trigger ref is the invite
+    /// revision's own ref.
+    Immediate { session_ref: Option<String> },
+    /// A Dreamer gap-queue job's act (`gap_queue`), fired by `queue_ref`.
+    GapQueue { queue_ref: String },
+}
+
 /// C7's exact five-field invite payload.
 ///
 /// Closed on purpose: an [`OutboundDraftInput`] here would let a caller choose
@@ -94,19 +108,22 @@ impl CalendarInviteSurfaceInput {
         )
     }
 
-    /// Trigger ref carried onto the intent.
+    /// The invite revision's own ref, the trigger ref of an immediate act
+    /// whose host bound no session.
     #[must_use]
     pub fn trigger_ref(&self) -> String {
         format!("calendar.invite:{}:{}", self.uid, self.sequence)
     }
 
-    /// The generic outbound draft this invite schedules.
+    /// The generic outbound draft this invite schedules for `origin`.
     ///
     /// One named site for the whole invite→draft encoding, so the seam CAL-04
     /// (ONE-1786) picks up is testable before its half exists. What is pinned
     /// here: the verb is CAL-04's `calendar.invite`, the channel is the
-    /// `calendar` connector, and `recipient`/`ics_blob_ref` ride the typed
-    /// `target`/`content_ref` fields.
+    /// `calendar` connector, `recipient`/`ics_blob_ref` ride the typed
+    /// `target`/`content_ref` fields, and the trigger is the host-bound
+    /// `origin`'s: an immediate act with its session, or a gap-queue job with
+    /// its queue ref.
     ///
     /// KNOWN HOLE, CLOSED BY CAL-04 (ONE-1786): `method`, `uid`, and
     /// `sequence` had no typed home on [`OutboundDraftInput`] or
@@ -118,7 +135,14 @@ impl CalendarInviteSurfaceInput {
     /// back into a method, uid, or sequence and the public surface above is
     /// unchanged.
     #[must_use]
-    pub fn outbound_draft(&self) -> OutboundDraftInput {
+    pub fn outbound_draft(&self, origin: &CalendarInviteOrigin) -> OutboundDraftInput {
+        let (trigger, trigger_ref) = match origin {
+            CalendarInviteOrigin::Immediate { session_ref } => (
+                "agent_immediate",
+                session_ref.clone().unwrap_or_else(|| self.trigger_ref()),
+            ),
+            CalendarInviteOrigin::GapQueue { queue_ref } => ("gap_queue", queue_ref.clone()),
+        };
         OutboundDraftInput {
             verb: CALENDAR_INVITE_OUTBOUND_VERB.to_owned(),
             channel: CALENDAR_INVITE_OUTBOUND_CHANNEL.to_owned(),
@@ -127,10 +151,8 @@ impl CalendarInviteSurfaceInput {
             content_ref: Some(self.ics_blob_ref.clone()),
             idempotency_key: Some(self.idempotency_key()),
             dedupe_key: None,
-            // This surface carries no session, so it uses the queue trigger
-            // class rather than fabricating an originating-session ref.
-            trigger: "gap_queue".to_owned(),
-            trigger_ref: self.trigger_ref(),
+            trigger: trigger.to_owned(),
+            trigger_ref,
             job_ref: None,
             occurred_at: None,
             mention: self.mention.clone(),
