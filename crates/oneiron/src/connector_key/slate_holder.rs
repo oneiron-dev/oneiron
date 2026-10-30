@@ -40,9 +40,9 @@ const HOLDER_NARROWS: SideTable<EntityId, KeySlateNarrows, Named> =
 /// elicitation row's key) and the facet set.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct KeySlateNarrows {
-    rows: BTreeMap<String, SlateHolderNarrow>,
-    facets: Option<SlateFacetNarrow>,
+pub(crate) struct KeySlateNarrows {
+    pub(crate) rows: BTreeMap<String, SlateHolderNarrow>,
+    pub(crate) facets: Option<SlateFacetNarrow>,
 }
 
 /// What a key's calls meet after a holder's narrow: the slate they meet,
@@ -119,6 +119,18 @@ pub(super) fn narrowed_setting_in_txn(
         .get(store, txn, key_id)?
         .and_then(|narrows| narrows.rows.get(row_key).map(|row| row.disposition));
     Ok(narrow.map_or(base, |narrow| narrow.max(base)))
+}
+
+/// Key `key_id`'s holder narrows over `HOLDER_NARROWS` (FIX 9230): the whole
+/// overlay — rows by row key plus the facet narrow — for the per-grant-key
+/// overlays in the consent, slate and reach views. `None` is no overlay
+/// stored. Keyed by the per-grant key's id, as the table is.
+pub(crate) fn narrowed_settings_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+) -> Result<Option<KeySlateNarrows>> {
+    HOLDER_NARROWS.get(store, txn, key_id)
 }
 
 /// The owner's ruling on slate `slate_id`, in his stamping writer: each
