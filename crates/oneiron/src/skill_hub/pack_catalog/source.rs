@@ -12,6 +12,7 @@ pub struct PackSource {
     pub(super) sections: Vec<PackSection>,
     pub(super) hooks: Vec<super::PackHook>,
     pub(super) organs: Vec<super::PackOrgan>,
+    pub(super) lenses: Vec<super::PackLens>,
 }
 impl PackSource {
     /// Every file of any size and count is read whole (FIX 8202): no byte,
@@ -114,9 +115,16 @@ impl PackSource {
                         file.path.as_str(),
                         "identity.md" | "policy.md" | "skills.json"
                     ))
-                && !["skills/", "knowledge/", "scripts/", "hooks/", "organs/"]
-                    .iter()
-                    .any(|prefix| file.path.starts_with(prefix))
+                && ![
+                    "skills/",
+                    "knowledge/",
+                    "scripts/",
+                    "hooks/",
+                    "organs/",
+                    "lenses/",
+                ]
+                .iter()
+                .any(|prefix| file.path.starts_with(prefix))
             {
                 return Err(invalid("unknown pack source facet"));
             }
@@ -129,6 +137,7 @@ impl PackSource {
         }
         let hooks = super::hooks::parse_source_hooks(&manifest, &files)?;
         let organs = super::organs::parse_source_organs(&manifest, &files)?;
+        let lenses = super::lenses::parse_source_lenses(&manifest, &files)?;
         Ok(Self {
             files,
             manifest,
@@ -136,6 +145,7 @@ impl PackSource {
             sections,
             hooks,
             organs,
+            lenses,
         })
     }
     pub fn entity_id(&self) -> Result<crate::EntityId> {
@@ -155,6 +165,14 @@ impl PackSource {
     }
     pub fn organs(&self) -> &[super::PackOrgan] {
         &self.organs
+    }
+    pub fn lenses(&self) -> &[super::PackLens] {
+        &self.lenses
+    }
+    /// The lens this source carries in its folder `name`.
+    #[must_use]
+    pub fn lens(&self, name: &str) -> Option<&super::PackLens> {
+        self.lenses.iter().find(|lens| lens.name == name)
     }
     pub fn has_code(&self) -> bool {
         self.manifest.kind == super::PackKind::Connector
