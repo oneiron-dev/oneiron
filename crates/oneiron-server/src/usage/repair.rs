@@ -57,21 +57,16 @@ impl UsageScope {
     }
 }
 
-/// Why a reviewed row was not removed, as the remove's refusal names it at
-/// the head of its message: `usage_event_changed` or `usage_event_decodable`
-/// (FIX 7038). `None` for every other refusal.
+/// Why a reviewed row was not removed, as the remove's refusal names it in
+/// its typed reason codes: `usage_event_changed` or `usage_event_decodable`
+/// (FIX 7038, 11007). `None` for every other refusal.
 pub(crate) fn removal_conflict_reason(error: &MemoryError) -> Option<&'static str> {
     if error.code != MEMORY_CODE_INVALID_STATE {
         return None;
     }
     [USAGE_EVENT_CHANGED, USAGE_EVENT_DECODABLE]
         .into_iter()
-        .find(|reason| {
-            error
-                .message
-                .strip_prefix(*reason)
-                .is_some_and(|rest| rest.starts_with(':'))
-        })
+        .find(|reason| error.reason_codes.iter().any(|code| code == reason))
 }
 
 impl UsageLedger {
@@ -275,13 +270,17 @@ fn is_hash(text: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// A reviewed row that is no longer what its review read.
+/// A reviewed row that is no longer what its review read: `reason` is its
+/// typed reason code (FIX 11007), which every surface carries beside the
+/// message.
 fn conflict(reason: &str, why: &str) -> MemoryError {
-    MemoryError::new(
+    let mut error = MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{reason}: {why}"),
         &["List the undecodable usage events again, and remove what that list shows."],
-    )
+    );
+    error.reason_codes.push(reason.to_owned());
+    error
 }
 
 /// A usage store failure in the repair's write, which then commits nothing.
