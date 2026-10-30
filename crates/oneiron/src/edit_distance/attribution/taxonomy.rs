@@ -1,6 +1,7 @@
 //! Amendment taxonomy: classes, causes, evidence and judgment types.
 
 use super::origin::UNKNOWN_EXECUTOR;
+use crate::edit_distance::OpSpan;
 use crate::edit_distance::myers::myers_line_diff;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -269,15 +270,39 @@ pub struct AmendmentJudgment {
     pub rejected: bool,
 }
 
+/// One recorded change a judged hunk's substitution was located at (FIX
+/// 11344): the retained artifact and the change's op span, so the miner
+/// admits by position instead of by a digest of cut text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HunkRange {
+    pub artifact: EntityId,
+    pub peer_id: u64,
+    pub counter: i32,
+    pub len: u32,
+}
+
+impl HunkRange {
+    /// The range naming `span` of `artifact`'s retained window.
+    #[must_use]
+    pub fn from_span(artifact: EntityId, span: &OpSpan) -> Self {
+        Self {
+            artifact,
+            peer_id: span.peer_id,
+            counter: span.counter,
+            len: span.len,
+        }
+    }
+}
+
 /// One changed hunk as judged: the label it stands at after the floor, and
-/// the identities of the substitutions it made.
+/// the recorded changes its substitutions were located at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HunkLabel {
     pub class: AmendmentClass,
-    /// The miner's digests of the hunk's normalized substitutions, at the
-    /// miner's own extraction granularity; empty when the hunk makes none.
-    /// Identities, never the hunk's text.
-    pub substitution_refs: Vec<String>,
+    /// The miner's ranges for the hunk's substitutions, at the miner's own
+    /// extraction granularity; empty when the hunk makes none, or when the
+    /// amendment measured no recorded window. Ranges, never the hunk's text.
+    pub ranges: Vec<HunkRange>,
 }
 
 impl AmendmentJudgment {
