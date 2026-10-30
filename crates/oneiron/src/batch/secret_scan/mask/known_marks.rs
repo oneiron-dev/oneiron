@@ -45,7 +45,7 @@ pub(super) fn unmarked_known(
     keep: impl Fn(&[u8]) -> bool,
     prior: &KeyPlaces,
 ) -> Result<Vec<KnownMark>> {
-    if is_sealed(bytes) {
+    if is_sealed(bytes, None) {
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
@@ -76,7 +76,7 @@ pub(super) fn unmarked_known(
     let mut visit = |path: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
         read_leaf(path, member).map_err(Stop::Fail)
     };
-    match walk_members(bytes, &mut visit) {
+    match walk_members(bytes, &mut visit, None) {
         Ok(()) | Err(Stop::Refuse(_)) => Ok(found),
         Err(Stop::Fail(error)) => Err(error),
     }

@@ -138,11 +138,17 @@ pub(crate) fn is_container(bytes: &[u8]) -> bool {
 /// malformed, in a method or filter no reader here decodes, met inside
 /// itself, or past the byte floor. Its members are not read, so no mark can
 /// place a key in it.
-pub(crate) fn is_sealed(bytes: &[u8]) -> bool {
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
+pub(crate) fn is_sealed(bytes: &[u8], digest: Option<&[u8; 32]>) -> bool {
     matches!(
-        walk_members(bytes, &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> {
-            Ok(())
-        }),
+        walk_members(
+            bytes,
+            &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> { Ok(()) },
+            digest,
+        ),
         Err(Stop::Refuse(_))
     )
 }
@@ -163,7 +169,7 @@ pub(super) fn holds_spans(bytes: &[u8]) -> bool {
 /// walk does not read is left to the scan of the file's own bytes: no reader
 /// shows it either.
 fn hidden_member(bytes: &[u8]) -> bool {
-    classify(bytes).is_none() || !is_sealed(bytes)
+    classify(bytes).is_none() || !is_sealed(bytes, None)
 }
 
 /// Whether a key at `path` in the member `bytes` stands as its handle text
@@ -266,6 +272,10 @@ struct Budget {
     /// The BLAKE3 of each container the walk is inside, the file first: this
     /// walk's own, never kept or logged.
     ancestors: Vec<[u8; 32]>,
+    /// The walk's root file's checked BLAKE3, taken for the root
+    /// container's entry instead of hashing the file again (FIX 12270).
+    /// `None` hashes as before.
+    root_digest: Option<[u8; 32]>,
 }
 
 impl Budget {
@@ -279,12 +289,20 @@ impl Budget {
             expanded: MAX_EXPANDED_BYTES,
             hidden: false,
             ancestors: Vec::new(),
+            root_digest: None,
         }
     }
 
     /// This budget, its walk reading the bytes no reader shows too.
     fn reading_hidden(mut self) -> Self {
         self.hidden = true;
+        self
+    }
+
+    /// This budget, its walk taking the root container's entry from
+    /// `digest`, the BLAKE3 the caller checked the file against (FIX 12270).
+    fn with_root_digest(mut self, digest: Option<&[u8; 32]>) -> Self {
+        self.root_digest = digest.copied();
         self
     }
 
@@ -328,7 +346,19 @@ impl Budget {
     /// is left once its members are read, so a container met again beside
     /// itself is read again.
     fn enter_container(&mut self, bytes: &[u8]) -> Walked<()> {
-        let digest = *blake3::hash(bytes).as_bytes();
+        // The walk enters its root file first, so the first entry takes
+        // the caller's checked digest instead of hashing the file again;
+        // members hash as before (FIX 12270).
+        let digest = match self.root_digest.take() {
+            Some(digest) => {
+                debug_assert!(
+                    blake3::hash(bytes).as_bytes() == &digest,
+                    "a caller's root digest names other bytes"
+                );
+                digest
+            }
+            None => *blake3::hash(bytes).as_bytes(),
+        };
         if self.ancestors.contains(&digest) {
             return Err(Stop::Refuse(REASON_ARCHIVE_CYCLE));
         }
@@ -346,20 +376,32 @@ impl Budget {
 /// each container's order: a ZIP's entries, a gzip file's payload, a PDF's
 /// streams and each object's text strings. A member that is itself a
 /// container is handed whole, then walked. Plain bytes hold no members.
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
 pub(super) fn walk_members(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+    digest: Option<&[u8; 32]>,
 ) -> Walked<()> {
-    retained_iterative::walk(bytes, &mut Budget::new(), visit)
+    retained_iterative::walk(bytes, &mut Budget::new().with_root_digest(digest), visit)
 }
 
 /// [`walk_members`], and the bytes no reader shows beside each container's
 /// members (FIX 2470), each handed as a member too: what a scan reads.
+/// `digest` is the root file's checked BLAKE3, taken for the root's entry
+/// (FIX 12270); `None` hashes as before.
 fn walk_members_with_hidden(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+    digest: Option<&[u8; 32]>,
 ) -> Walked<()> {
-    retained_iterative::walk(bytes, &mut Budget::new().reading_hidden(), visit)
+    retained_iterative::walk(
+        bytes,
+        &mut Budget::new().reading_hidden().with_root_digest(digest),
+        visit,
+    )
 }
 
 /// [`walk_members`] over a retained repository blob (FIX 7608, rule 5):
@@ -382,7 +424,7 @@ pub(super) fn scan_readable_members(bytes: &[u8]) -> Result<()> {
         let _secrets_nulled = scan_payload(member)?;
         Ok(())
     };
-    match walk_members(bytes, &mut scan) {
+    match walk_members(bytes, &mut scan, None) {
         Ok(()) | Err(Stop::Refuse(_)) => Ok(()),
         Err(Stop::Fail(error)) => Err(error),
     }
@@ -390,11 +432,17 @@ pub(super) fn scan_readable_members(bytes: &[u8]) -> Result<()> {
 
 /// `rules` over each member under `bytes` and each run of bytes no reader
 /// shows: the first hit's reason, or why the walk read no further.
-fn members_hit(bytes: &[u8], rules: fn(&[u8]) -> Option<&'static str>) -> Option<&'static str> {
+/// `digest` is the root file's checked BLAKE3, taken for the root's entry
+/// (FIX 12270); `None` hashes as before.
+fn members_hit(
+    bytes: &[u8],
+    rules: fn(&[u8]) -> Option<&'static str>,
+    digest: Option<&[u8; 32]>,
+) -> Option<&'static str> {
     let mut scan = |_: &[MemberStep], member: &[u8]| -> Walked<()> {
         rules(member).map_or(Ok(()), |reason| Err(Stop::Refuse(reason)))
     };
-    match walk_members_with_hidden(bytes, &mut scan) {
+    match walk_members_with_hidden(bytes, &mut scan, digest) {
         Ok(()) => None,
         Err(Stop::Refuse(reason)) => Some(reason),
         Err(Stop::Fail(_)) => Some(REASON_UNREADABLE),
@@ -404,7 +452,7 @@ fn members_hit(bytes: &[u8], rules: fn(&[u8]) -> Option<&'static str>) -> Option
 /// The release doors' rules over each member under `bytes` and the bytes no
 /// reader shows.
 pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
-    members_hit(bytes, release_hit)
+    members_hit(bytes, release_hit, None)
 }
 
 /// [`super::scan_file_content`] over text, which is valid UTF-8. Text with
@@ -424,8 +472,12 @@ pub(crate) fn scan_text_content(text: &str) -> Option<&'static str> {
 /// The write door's rules over each member under `bytes` and the bytes no
 /// reader shows: what a masked reader's copy, and an unmarked container, is
 /// read by before it is served (FIX 2470, 2480).
-pub(super) fn write_members_hit(bytes: &[u8]) -> Option<&'static str> {
-    members_hit(bytes, write_payload_hit)
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
+pub(super) fn write_members_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
+    members_hit(bytes, write_payload_hit, digest)
 }
 
 /// `bytes` with each key `places` names overwritten: the spans at a place
@@ -441,12 +493,18 @@ pub(crate) fn masked_copy(bytes: &[u8], places: &KeyPlaces) -> Result<Vec<u8>> {
 /// 2475).
 ///
 /// [`SecretError::MaskedCopyWithheld`]: crate::error::SecretError::MaskedCopyWithheld
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
 pub(crate) fn served_masked_copy(
     bytes: &[u8],
     places: &KeyPlaces,
     handles: &PlaceHandles,
+    digest: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>> {
-    masked_copy_in(bytes, places, Some(handles), Budget::new()).map_err(withheld)
+    masked_copy_in(bytes, places, Some(handles), Budget::new().with_root_digest(digest))
+        .map_err(withheld)
 }
 
 /// [`masked_copy`] of a retained repository blob, under its whole read

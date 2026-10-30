@@ -293,7 +293,9 @@ pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
 ///
 /// `digest` is the BLAKE3 of `bytes` when the caller holds one it computed
 /// from, or checked against, these exact bytes: the mark is read by it and
-/// the bytes are not hashed again (speed). `None` hashes them here.
+/// the bytes are not hashed again (speed). `None` hashes them here. The
+/// walks over an unmarked container and a marked file's rebuild take it
+/// for the root file's entry (FIX 12270).
 pub(crate) fn sighted_bytes_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -324,18 +326,22 @@ pub(crate) fn sighted_bytes_in_txn(
         }
         // A sealed file goes to the owner and a granted agent only: no mark
         // covers what it holds.
-        if secret_scan::is_sealed(&bytes) {
+        if secret_scan::is_sealed(&bytes, digest) {
             return Err(Error::Secret(SecretError::SealedFileWithheld));
         }
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        if secret_scan::write_tree_hit(&bytes).is_some() {
+        if secret_scan::write_tree_hit(&bytes, digest).is_some() {
             // A hidden-only key is served the rebuilt copy, hidden bytes
             // dropped (FIX 11553).
-            let copy =
-                secret_scan::served_masked_copy(&bytes, &KeyPlaces::new(), &PlaceHandles::new())?;
-            if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+            let copy = secret_scan::served_masked_copy(
+                &bytes,
+                &KeyPlaces::new(),
+                &PlaceHandles::new(),
+                digest,
+            )?;
+            if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
                 return Err(masked_copy_withheld(reason));
             }
             return Ok(copy);
@@ -343,8 +349,8 @@ pub(crate) fn sighted_bytes_in_txn(
         return Ok(bytes);
     };
     let handles = file.place_handles(store, txn)?;
-    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles)?;
-    if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles, digest)?;
+    if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
         return Err(masked_copy_withheld(reason));
     }
     Ok(copy)
