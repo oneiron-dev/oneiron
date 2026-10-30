@@ -152,11 +152,23 @@ impl<'a> ServedChannelSink<'a> {
     ///
     /// The client could not be built.
     pub fn client() -> Result<reqwest::blocking::Client> {
+        Self::client_with_timeout(Duration::from_secs(20))
+    }
+
+    /// The outbound network boundary every served HTTP call is built on: no
+    /// proxy, no redirects, a five-second connect, and `timeout` for the
+    /// whole request. [`Self::client`] is it with the send bound; a read that
+    /// moves a larger body (a calendar feed or a CalDAV report) names its own.
+    ///
+    /// # Errors
+    ///
+    /// The client could not be built.
+    pub fn client_with_timeout(timeout: Duration) -> Result<reqwest::blocking::Client> {
         reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(20))
+            .timeout(timeout)
             .build()
             .map_err(|_| Error::InvalidConfig("served send client unavailable".to_owned()))
     }
