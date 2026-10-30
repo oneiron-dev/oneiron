@@ -78,13 +78,11 @@ pub struct OrganSpec {
     /// What a third-party organ's fence lets it read besides the system's
     /// own files and its program: dirs, each with all under it, or files.
     /// A pack build is its program alone, and inputs cross as sealed
-    /// regions on its socket, so a pack organ names none. A first-party
-    /// organ is not fenced and ignores it.
+    /// regions on its socket, so a pack organ names none. It writes only
+    /// its own scratch dir, which the host makes for each process and
+    /// removes as it ends; outputs cross as sealed regions too. A
+    /// first-party organ is not fenced and ignores it.
     pub read_dirs: Vec<PathBuf>,
-    /// What a third-party organ's fence lets it write besides the system's
-    /// temp dir. Outputs cross as sealed regions on its socket, so a pack
-    /// organ names none. A first-party organ ignores it.
-    pub write_dirs: Vec<PathBuf>,
 }
 
 /// One ask verb an install grant names.
@@ -168,7 +166,6 @@ impl OrganSpec {
                 ..FetchGrant::default()
             },
             read_dirs: Vec::new(),
-            write_dirs: Vec::new(),
         }
     }
 }

@@ -1,7 +1,7 @@
 //! What the host does to an organ process between fork and exec.
 //!
 //! Built: the socket moves to fd 3 and every other inherited descriptor
-//! closes at exec (`oneiron_spawn::command_with_fds`, which the caller starts
+//! closes at exec (`oneiron_spawn::command_with_fds`, which [`command`] starts
 //! the organ through), a clean environment, cwd `/`, its own process group (so
 //! a kill reaches what it forks), rlimits (core 0, open files, file size;
 //! data on Linux), `no_new_privs` and a new user and network namespace where
@@ -11,14 +11,14 @@
 //!
 //! A third-party organ also starts inside a filesystem fence (FIX 7885,
 //! ARCH-0075): it reads the system's own files, its program and its spec's
-//! read dirs, writes its write dirs and the system's temp dir, and touches
-//! nothing else. On Linux the fence is Landlock (ABI 3 or later): the
-//! ruleset is built before the fork, and the child restricts itself to it
-//! beside `no_new_privs`. On macOS the organ starts through Seatbelt's
-//! `sandbox-exec` (`seatbelt`). A fence that does not apply fails the start,
-//! so the organ never runs unfenced; a host with no fence refuses
-//! third-party organs (`Unavailable::ThirdPartyUnconfined`,
-//! [`filesystem_confined`]).
+//! read dirs, writes its own scratch dir (`scratch`), which is its
+//! `TMPDIR`, and touches nothing else. On Linux the fence is Landlock (ABI 3
+//! or later, `landlock`): the ruleset is built before the fork, and the
+//! child restricts itself to it beside `no_new_privs`. On macOS the organ
+//! starts through Seatbelt's `sandbox-exec` (`seatbelt`), with no network.
+//! A fence that does not apply fails the start, so the organ never runs
+//! unfenced; a host with no fence refuses third-party organs
+//! (`Unavailable::ThirdPartyUnconfined`, [`filesystem_confined`]).
 //!
 //! A first-party organ's data and file-size limits start at its memory
 //! grant and grow with what its own buffers are granted (`memory.grow`):
@@ -37,6 +37,7 @@
 
 use std::ffi::OsString;
 use std::io;
+use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -46,10 +47,14 @@ use crate::isolation::{DescendantFence, NamespaceFact, OrganIsolation};
 use crate::spec::{OrganSpec, OrganTier};
 
 mod fence;
+#[cfg(target_os = "linux")]
+mod landlock;
+mod scratch;
 #[cfg(target_os = "macos")]
 mod seatbelt;
 
 pub(crate) use fence::Cell;
+pub(crate) use scratch::Scratch;
 
 /// Limits as the kernel takes them, worked out before the fork.
 #[derive(Debug)]
@@ -73,22 +78,25 @@ struct Plan {
     landlock: Option<std::os::fd::OwnedFd>,
 }
 
-/// What [`confine`] set up that the start reads back once the child runs.
+/// What [`command`] set up that the start reads back once the child runs.
 pub(crate) struct Confined {
     /// The pipe the child writes its outcomes to: read once it has exec'd.
     #[cfg(target_os = "linux")]
     status: Option<(io::PipeReader, io::PipeWriter)>,
     cell: Result<Cell, String>,
+    /// A third-party organ's scratch dir, which lives as long as it does.
+    scratch: Option<Scratch>,
 }
 
-/// Configures `command`, made by `oneiron_spawn::command_with_fds` with the
-/// organ socket on fd 3, to start the organ confined.
+/// The command that starts `spec`'s organ confined, with `socket` on its
+/// fd 3, and what the start reads back once the child runs. A third-party
+/// organ gets its scratch dir here, before its fence is built around it.
 ///
 /// # Errors
-/// The pipe the child reports its isolation on could not be made, or a
-/// third-party organ's filesystem fence could not be built.
-pub(crate) fn confine(command: &mut Command, spec: &OrganSpec) -> io::Result<Confined> {
-    let grant = rlim(Some(spec.memory_bytes));
+/// A third-party organ on a platform with no fence; or its scratch dir or
+/// its filesystem fence could not be made, or the pipe the child reports
+/// its isolation on; the error names which.
+pub(crate) fn command(spec: &OrganSpec, socket: RawFd) -> io::Result<(Command, Confined)> {
     let first_party = spec.tier == OrganTier::FirstParty;
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     if !first_party {
@@ -96,15 +104,36 @@ pub(crate) fn confine(command: &mut Command, spec: &OrganSpec) -> io::Result<Con
             "this platform has no filesystem fence for a third-party organ",
         ));
     }
+    let scratch = if first_party {
+        None
+    } else {
+        Some(Scratch::new()?)
+    };
+    let (program, args) = argv(spec, scratch.as_ref());
+    let mut command = oneiron_spawn::command_with_fds(&program, &[(socket, 3)]);
+    command.args(&args);
+    let confined = confine(&mut command, spec, scratch)?;
+    Ok((command, confined))
+}
+
+/// Configures `command`, made by `oneiron_spawn::command_with_fds` with the
+/// organ socket on fd 3, to start the organ confined; a third-party organ
+/// in `scratch`, its `TMPDIR`.
+fn confine(
+    command: &mut Command,
+    spec: &OrganSpec,
+    scratch: Option<Scratch>,
+) -> io::Result<Confined> {
+    let grant = rlim(Some(spec.memory_bytes));
+    let first_party = spec.tier == OrganTier::FirstParty;
     let cell = fence::cell();
     #[cfg(target_os = "linux")]
     let status = Some(io::pipe()?);
     #[cfg(target_os = "linux")]
-    let landlock = if first_party {
-        None
-    } else {
-        Some(landlock_ruleset(spec)?)
-    };
+    let landlock = scratch
+        .as_ref()
+        .map(|scratch| landlock::ruleset(spec, scratch.path()))
+        .transpose()?;
     let plan = Plan {
         #[cfg(target_os = "linux")]
         data: grant,
@@ -138,6 +167,9 @@ pub(crate) fn confine(command: &mut Command, spec: &OrganSpec) -> io::Result<Con
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(scratch) = &scratch {
+        command.env("TMPDIR", scratch.path());
+    }
     // SAFETY: the closure runs in the child between fork and exec, after the
     // descriptors are in place. It only makes async-signal-safe calls
     // (open, write, close, setpgid, setrlimit, prctl, landlock_restrict_self,
@@ -150,6 +182,7 @@ pub(crate) fn confine(command: &mut Command, spec: &OrganSpec) -> io::Result<Con
         #[cfg(target_os = "linux")]
         status,
         cell,
+        scratch,
     })
 }
 
@@ -160,13 +193,16 @@ fn rlim(value: Option<u64>) -> libc::rlim_t {
         .unwrap_or(libc::RLIM_INFINITY)
 }
 
-/// The program and arguments that start `spec`'s organ: a third-party organ
-/// on macOS starts through Seatbelt (`seatbelt`), every other as it is.
-pub(crate) fn argv(spec: &OrganSpec) -> (PathBuf, Vec<OsString>) {
+/// The program and arguments that start `spec`'s organ: a third-party organ,
+/// the one with a `scratch` dir, on macOS starts through Seatbelt
+/// (`seatbelt`); every other as it is.
+fn argv(spec: &OrganSpec, scratch: Option<&Scratch>) -> (PathBuf, Vec<OsString>) {
     #[cfg(target_os = "macos")]
-    if spec.tier == OrganTier::ThirdParty {
-        return seatbelt::argv(spec);
+    if let Some(scratch) = scratch {
+        return seatbelt::argv(spec, scratch.path());
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = scratch;
     (spec.program.clone(), spec.args.clone())
 }
 
@@ -192,15 +228,6 @@ fn fence_available() -> bool {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn fence_available() -> bool {
     false
-}
-
-/// A third-party organ's Landlock ruleset (FIX 7885): its program and read
-/// dirs read-only and its write dirs read-write, beside the system set.
-#[cfg(target_os = "linux")]
-fn landlock_ruleset(spec: &OrganSpec) -> io::Result<std::os::fd::OwnedFd> {
-    let mut read = vec![spec.program.as_path()];
-    read.extend(spec.read_dirs.iter().map(PathBuf::as_path));
-    oneiron_container::landlock_ruleset(&read, &spec.write_dirs)
 }
 
 impl Plan {
@@ -269,8 +296,9 @@ fn errno() -> i32 {
 
 impl Confined {
     /// What the start isolated the organ with, once the child has exec'd,
-    /// and the cell it is fenced in, if it joined one.
-    pub(crate) fn started(self) -> (OrganIsolation, Option<Cell>) {
+    /// the cell it is fenced in, if it joined one, and its scratch dir, if
+    /// it has one: the process holds both until it is reaped.
+    pub(crate) fn started(self) -> (OrganIsolation, Option<Cell>, Option<Scratch>) {
         #[cfg(target_os = "linux")]
         let (namespaces, joined) = match self.status {
             Some((mut reader, writer)) => {
@@ -319,7 +347,7 @@ impl Confined {
             namespaces,
             descendants,
         };
-        (isolation, cell)
+        (isolation, cell, self.scratch)
     }
 }
 

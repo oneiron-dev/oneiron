@@ -213,12 +213,12 @@ pub fn landlock_abi() -> i32 {
     unsafe { libc::syscall(libc::SYS_landlock_create_ruleset, 0, 0, 1) as i32 }
 }
 
-/// A Landlock ruleset built from arguments, for a process the engine starts
-/// on the host (an organ, FIX 7885): the container fence's `PATHS` as it
-/// marks them (the system set read-only; `/tmp`, `/dev/shm` and `/dev/null`
-/// read-write), `read` read-only and `write` read-write. A path that does
-/// not exist is skipped. Built before a fork, so the child only restricts
-/// itself with it ([`landlock_restrict`]).
+/// A Landlock ruleset of its arguments alone, for a process the engine
+/// starts on the host (an organ, FIX 7885): `read` may be read and run,
+/// `write` also written, and nothing else. The caller names every path, the
+/// system's own among them; the container's `PATHS` play no part. A path
+/// that does not exist is skipped. Built before a fork, so the child only
+/// restricts itself with it ([`landlock_restrict`]).
 ///
 /// # Errors
 /// The kernel's Landlock ABI is below 3, or a rule could not be made.
@@ -255,12 +255,9 @@ pub fn landlock_ruleset<R: AsRef<Path>, W: AsRef<Path>>(
     }
     // SAFETY: successful create_ruleset returns an owned descriptor.
     let ruleset = unsafe { OwnedFd::from_raw_fd(fd as i32) };
-    let system = PATHS
-        .iter()
-        .map(|&(path, writable)| (Path::new(path), writable));
     let read = read.iter().map(|path| (path.as_ref(), false));
     let write = write.iter().map(|path| (path.as_ref(), true));
-    for (path, writable) in system.chain(read).chain(write) {
+    for (path, writable) in read.chain(write) {
         let name = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
         // SAFETY: name is NUL terminated; O_PATH obtains only a path handle.
         let fd = unsafe { libc::open(name.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
