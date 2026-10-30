@@ -432,7 +432,8 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
 /// withdrawal, from whichever replica minted it, confers nothing. Every
 /// view of this vault's own log takes it, cached or not; the base a later
 /// generation resumes from and a checkpoint image, which folds the log
-/// afresh, never do: a local withdrawal is no row of the log.
+/// afresh, never do: a local withdrawal is no row of the log. The signed
+/// `SlipGrantRevoke` the same withdrawal logs is, and carries it to both.
 fn fold_authority_checkpoint_tail_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,

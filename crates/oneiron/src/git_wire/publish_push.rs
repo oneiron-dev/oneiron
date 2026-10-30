@@ -10,6 +10,7 @@
 //! a protected branch the mirror guards stays guarded. A read that cannot
 //! prove what the mirror holds is an error, never an absent branch.
 
+use std::path::Path;
 use std::time::Duration;
 
 use super::argv::FrozenGitArgv;
@@ -95,7 +96,13 @@ impl GitWire<'_> {
 
     /// Pushes exactly `commit` to `name` at the https mirror `url`, only
     /// while the mirror's branch holds `expected` (`None`: while it does not
-    /// exist). Run once: the caller never sends it again.
+    /// exist), in one child that inherits the hold this thread took on
+    /// `hold`: a child that outlives its host keeps the mirror held until it
+    /// exits. Run once: the caller never sends it again.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one exact push names its repository, mirror, branch, commit, lease, hold, credential"
+    )]
     pub fn push_publish(
         &self,
         repo: &GitWireRepo,
@@ -103,11 +110,13 @@ impl GitWire<'_> {
         name: &GitRefName,
         commit: &GitOid,
         expected: Option<&GitOid>,
+        hold: &Path,
         authorization: &str,
     ) -> Result<GitPublishPushOutcome> {
         let env = self.egress_env(repo, url, authorization, PUBLISH_PUSH_TIMEOUT)?;
         let argv = FrozenGitArgv::publish_push(url, name, commit, expected)?;
-        let output = spawn_git(&env, &GitCommandSpec::wire(&repo.repo_root, &argv))?;
+        let command = GitCommandSpec::wire(&repo.repo_root, &argv).holding(hold);
+        let output = spawn_git(&env, &command)?;
         Ok(push_outcome(&output, commit, name))
     }
 

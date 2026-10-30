@@ -5,8 +5,10 @@
 //! the artifact still names is refused whichever carrier wins its key.
 //!
 //! Rows keep the window map's grammar (`sync::withdrawn_cutoffs`): an
-//! artifact's newest withdrawn generation under its lowercase id, eight bytes
-//! big-endian; a session's epoch floor under `epoch_floor/` and its id, its
+//! artifact's newest withdrawn generation and its replacement under its
+//! lowercase id, the shared nine-byte cutoff (FIX 931: the generation eight
+//! bytes big-endian, then the tag of an epoch keyframe or a Shell); a
+//! session's epoch floor under `epoch_floor/` and its id, its
 //! epoch and the turn it ended at, eight bytes big-endian each. A fence whose
 //! artifact body the window no longer holds stays. A floor of a session this
 //! vault removed goes, as every export drops it.
@@ -17,6 +19,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "sync")]
 use super::ByteBudget;
 use super::{CanonicalSnapshot, id, insert};
+use crate::deletion::{WithdrawnCutoff, WithdrawnReplacement};
 use crate::error::Result;
 
 /// The window root map of cutoffs, as sync files it.
@@ -28,8 +31,14 @@ const EPOCH_FLOOR: &str = "epoch_floor/";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum CanonicalCutoff {
-    /// The newest withdrawn generation of an artifact.
-    Withdrawn { artifact: [u8; 16], generation: u64 },
+    /// The newest withdrawn generation of an artifact, and whether a Shell,
+    /// its header alone, stands in for it rather than an epoch keyframe (FIX
+    /// 931).
+    Withdrawn {
+        artifact: [u8; 16],
+        generation: u64,
+        shell: bool,
+    },
     /// A session's epoch floor: the removed epoch and the turn it ended at.
     EpochFloor {
         session: [u8; 16],
@@ -50,7 +59,18 @@ impl CanonicalCutoff {
     /// The bytes the window map holds for it.
     fn value(&self) -> Vec<u8> {
         match self {
-            Self::Withdrawn { generation, .. } => generation.to_be_bytes().to_vec(),
+            Self::Withdrawn {
+                generation, shell, ..
+            } => WithdrawnCutoff {
+                generation: *generation,
+                replacement: if *shell {
+                    WithdrawnReplacement::Shell
+                } else {
+                    WithdrawnReplacement::EpochKeyframe
+                },
+            }
+            .encode()
+            .to_vec(),
             Self::EpochFloor {
                 epoch, turn_end, ..
             } => [epoch.to_be_bytes(), turn_end.to_be_bytes()].concat(),
@@ -73,9 +93,11 @@ pub(super) fn capture(
     use crate::sync::withdrawn_cutoffs::{CarriedCutoff, admit_withdrawn_cutoff_carrier};
     for (key, value) in super::binary_rows_within(doc, WITHDRAWN_CUTOFFS, budget)? {
         let row = match admit_withdrawn_cutoff_carrier(&key, &loro::LoroValue::from(value)) {
-            Ok(CarriedCutoff::Withdrawn(artifact, generation)) => CanonicalCutoff::Withdrawn {
+            // The tag rides the row as the live map held it (FIX 931).
+            Ok(CarriedCutoff::Withdrawn(artifact, cutoff)) => CanonicalCutoff::Withdrawn {
                 artifact: *artifact.as_bytes(),
-                generation,
+                generation: cutoff.generation,
+                shell: cutoff.replacement == WithdrawnReplacement::Shell,
             },
             Ok(CarriedCutoff::EpochFloor(session, epoch, turn_end)) => {
                 if crate::ports::removed_in_txn(&vault.store, txn, &session)? {

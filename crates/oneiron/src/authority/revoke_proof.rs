@@ -1,5 +1,6 @@
 //! Log-derived, typed restrictive facts (actor revocations, slip withdrawals,
-//! slip burns and machine removals), independent of roster survivors.
+//! a Grant's slip withdrawals, slip burns and machine removals), independent
+//! of roster survivors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,6 +27,9 @@ enum Restriction {
     },
     /// A verified `SlipRevoke`: the withdrawn id.
     SlipRevoke([u8; 32]),
+    /// A verified `SlipGrantRevoke`: the Grant, in hex as a slip's claims
+    /// name it, whose every slip is withdrawn.
+    SlipGrantRevoke(String),
     /// A verified `SlipConsume`: every id its proven branch had burnt, the
     /// single-use ancestors it spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
@@ -65,6 +69,9 @@ impl RevokeFacts {
                     state.slips.revoked.insert(*slip_id);
                     state.slips.explicit_revoked.insert(*slip_id);
                 }
+                Restriction::SlipGrantRevoke(grant_ref) => {
+                    state.slips.revoke_grant(grant_ref.clone());
+                }
                 Restriction::SlipBurn(burnt) => {
                     state.slips.consumed.extend(burnt.iter().copied());
                 }
@@ -85,7 +92,8 @@ pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::RevokeActor { .. }
         | AuthorityOp::SlipRevoke { .. }
-        | AuthorityOp::SlipConsume { .. } => true,
+        | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::SlipGrantRevoke { .. } => true,
         op => removes_machine(op),
     }
 }
@@ -221,6 +229,9 @@ impl RevokeFacts {
             }
             let restriction = match &entry.op {
                 AuthorityOp::SlipRevoke { slip_id } => Restriction::SlipRevoke(*slip_id),
+                AuthorityOp::SlipGrantRevoke { grant_ref } => {
+                    Restriction::SlipGrantRevoke(grant_ref.to_hex())
+                }
                 AuthorityOp::SlipConsume { .. } => Restriction::SlipBurn(BTreeSet::new()),
                 _ => continue,
             };

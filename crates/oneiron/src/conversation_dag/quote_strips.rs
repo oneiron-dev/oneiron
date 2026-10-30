@@ -9,12 +9,13 @@
 //! [`super::ReplyStrip`] rules: a strip never shows replacement text as
 //! the historical quotation, and an erased message shows none.
 
-use super::graph::{conversation_of, invalid, require_type};
+use super::graph::{conversation_of, counted_edge_ids, invalid, require_type};
 use super::quote::{
-    QuoteAnchor, field, message_fields, owning_turn_in, read_pointer, scalar_slice,
-    witness_turn_quotes,
+    QuoteAnchor, field, message_body_quotes, message_fields, owning_turn_in, read_pointer,
+    scalar_slice, witness_turn_quotes,
 };
 use super::thread_projection::selected_thread_in_txn;
+use crate::edge::EdgeKind;
 use crate::entity_doc::CursorResolution;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -177,11 +178,14 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
         let reply = EntityId::from_hex(&turn.turn_id)?;
         selected.insert(reply);
         // Each message's quote is kept in its room row, by citing MESSAGE.
+        let mut cited = BTreeSet::new();
         for (citer, quote) in &turn.quotes {
             let citer = EntityId::from_hex(citer)?;
+            cited.insert(citer);
             let pointer = Some((quote.target_turn, quote.anchor));
             facts.extend(fact_in(vault, &txn, reply, citer, pointer, turn.at)?);
         }
+        facts.extend(message_facts_in(vault, &txn, reply, turn.at, &cited)?);
     }
     // A native append lands no room row, so only the DAG chain holds it.
     for reply in chain {
@@ -227,10 +231,13 @@ fn ordinary_quote_facts(vault: &Vault, txn: &RoTxn<'_>, room: EntityId) -> Resul
             .ok_or(Error::EntityNotFound)?
             .occurred
             .start;
+        let mut cited = BTreeSet::new();
         for (citer, quote) in quotes {
+            cited.insert(citer);
             let pointer = Some((quote.target_turn, quote.anchor));
             facts.extend(fact_in(vault, txn, reply, citer, pointer, at)?);
         }
+        facts.extend(message_facts_in(vault, txn, reply, at, &cited)?);
     }
     facts.sort_by_key(|fact| (fact.at, fact.reply, fact.order, fact.citer));
     Ok(QuoteSelection {
@@ -240,8 +247,9 @@ fn ordinary_quote_facts(vault: &Vault, txn: &RoTxn<'_>, room: EntityId) -> Resul
 }
 
 /// [`fact_in`] for a native DAG reply: its TURN's reply pointer, cited by
-/// that TURN, at its valid-time start.
-fn dag_fact_in(vault: &Vault, txn: &RoTxn<'_>, reply: EntityId) -> Result<Option<QuoteFact>> {
+/// that TURN, and its door-added MESSAGEs' pointers, each cited by its
+/// MESSAGE, at its valid-time start.
+fn dag_fact_in(vault: &Vault, txn: &RoTxn<'_>, reply: EntityId) -> Result<Vec<QuoteFact>> {
     let body = require_type(&vault.store, txn, &reply, ENTITY_TYPE_TURN)?;
     let at = vault
         .store
@@ -249,7 +257,46 @@ fn dag_fact_in(vault: &Vault, txn: &RoTxn<'_>, reply: EntityId) -> Result<Option
         .ok_or(Error::EntityNotFound)?
         .occurred
         .start;
-    fact_in(vault, txn, reply, reply, read_pointer(&body)?, at)
+    let mut facts = Vec::new();
+    facts.extend(fact_in(vault, txn, reply, reply, read_pointer(&body)?, at)?);
+    facts.extend(message_facts_in(vault, txn, reply, at, &BTreeSet::new())?);
+    Ok(facts)
+}
+
+/// The quote facts the door-added MESSAGEs of `reply` cite (FIX 11084):
+/// each MESSAGE's metadata pointer with a quote, the reply the containing
+/// TURN and the citer the MESSAGE, at the TURN's time. A MESSAGE whose
+/// quote the TURN's row already keeps (`cited`) is not read twice.
+fn message_facts_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    reply: EntityId,
+    at: u64,
+    cited: &BTreeSet<EntityId>,
+) -> Result<Vec<QuoteFact>> {
+    let mut facts = Vec::new();
+    for message in counted_edge_ids(&vault.store, txn, &reply, EdgeKind::PartOf, true)? {
+        if cited.contains(&message) {
+            continue;
+        }
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_MESSAGE,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &message)?
+        else {
+            continue;
+        };
+        facts.extend(fact_in(
+            vault,
+            txn,
+            reply,
+            message,
+            message_body_quotes(&body),
+            at,
+        )?);
+    }
+    facts.sort_by_key(|fact| (fact.order, fact.citer));
+    Ok(facts)
 }
 
 /// The quote fact `citer`, a MESSAGE of `reply` or `reply` itself, cites
