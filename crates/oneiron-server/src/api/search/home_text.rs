@@ -56,7 +56,7 @@ pub(crate) async fn ask_home_text(
         .is_some_and(|budgets| limit > budgets.search_limit);
     let asked = async {
         match forwarded {
-            Some(proof) => home.search_for(query, limit, proof).await,
+            Some(proof) => home.search_for(query, limit, proof, caller.locality).await,
             None => home.search(query, limit).await,
         }
     };
