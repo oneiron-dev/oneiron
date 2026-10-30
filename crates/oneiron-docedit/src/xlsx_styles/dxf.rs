@@ -154,26 +154,28 @@ fn dxf_element(format: &XlsxDifferentialFormat, num_fmts: &List, dxfs: &List) ->
 /// The id of number format `code` in a `dxf`: the workbook's or an existing
 /// `dxf`'s for the same code, else one past every id either uses.
 fn code_id(num_fmts: &List, dxfs: &List, code: &str) -> u32 {
+    fn id(entry: &Element) -> Option<u32> {
+        entry
+            .attrs
+            .get("numFmtId")
+            .and_then(|id| id.trim().parse::<u32>().ok())
+    }
     let held: Vec<&Element> = num_fmts
         .entries
         .iter()
         .chain(dxfs.entries.iter().filter_map(|dxf| dxf.child("numFmt")))
         .collect();
-    let id = |entry: &Element| {
-        entry
-            .attrs
-            .get("numFmtId")
-            .and_then(|id| id.trim().parse::<u32>().ok())
-    };
     if let Some(same) = held
         .iter()
+        .copied()
         .find(|entry| entry.attrs.get("formatCode").map(String::as_str) == Some(code))
-        .and_then(|entry| id(entry))
+        .and_then(id)
     {
         return same;
     }
     held.iter()
-        .filter_map(|entry| id(entry))
+        .copied()
+        .filter_map(id)
         .map(|held| held.saturating_add(1))
         .max()
         .unwrap_or(0)
