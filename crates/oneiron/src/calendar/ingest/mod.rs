@@ -47,8 +47,8 @@ mod admission;
 pub mod door;
 pub(crate) use admission::ensure_ics_import_actor;
 pub(in crate::calendar) use admission::{
-    admit_connector_event, connector_event_ref, delete_connector_resource,
-    preflight_connector_feed, sweep_connector_resource,
+    ConnectorAdmissionSource, admit_connector_event, connector_event_ref,
+    delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
 };
 pub mod feed_door;
 mod fetch;

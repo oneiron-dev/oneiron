@@ -162,6 +162,7 @@ pub(super) fn next_rrule_due(
             rrule,
             dtstart,
             TimeRange { start, end },
+            None,
             std::time::Instant::now(),
         )?;
         if let Some(due) = page.starts.first() {

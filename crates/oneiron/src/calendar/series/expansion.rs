@@ -34,9 +34,41 @@ pub struct ExpansionPage {
     /// The occurrence starts this page walked: ascending, unique, inside
     /// the window.
     pub starts: Vec<u64>,
-    /// Where the walk resumes when the deadline ended the page: the same
-    /// window from this instant on. `None` once the window is walked.
-    pub resume_from: Option<u64>,
+    /// Where the next page resumes when the deadline ended this one. `None`
+    /// once the window is walked.
+    pub resume: Option<ExpansionCursor>,
+}
+
+/// Where the next page of a deadline-ended expansion resumes.
+///
+/// It resumes only the rule, start and window whose page returned it. A
+/// rule with `COUNT` also carries the recurrence period its walk resumes at
+/// and the occurrences it yielded before that period, so a resumed page
+/// starts there instead of re-walking from the seed, and `COUNT` still
+/// bounds the whole series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpansionCursor {
+    /// The next page walks the window from this instant on.
+    pub from: u64,
+    /// Where a counted walk resumes; `None` walks from the rule's seed.
+    walk: Option<CountedWalk>,
+}
+
+/// A counted rule's walk position between pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CountedWalk {
+    /// The start of the recurrence period the walk resumes at: its wall
+    /// clock read as UTC seconds.
+    period: i64,
+    /// Occurrences the rule yielded before that period.
+    counted: u32,
+}
+
+/// The recurrence period a counted walk is in, and the step that opened it.
+struct WalkPeriod {
+    start: DateTime<Tz>,
+    end: DateTime<Tz>,
+    first_step: usize,
 }
 
 /// Wall-clock slack on the `UNTIL` bound the recurrence engine is given.
@@ -87,12 +119,13 @@ pub fn expand_window(
     dtstart: SeriesDtStart<'_>,
     window: TimeRange,
 ) -> Result<Vec<u64>, CalendarError> {
-    expand(rrule, dtstart, window, GapPolicy::Refuse, None).map(|page| page.starts)
+    expand(rrule, dtstart, window, None, GapPolicy::Refuse, None).map(|page| page.starts)
 }
 
 /// [`expand_window`] walked under `deadline`: one [`ExpansionPage`], and
-/// where the next resumes when the deadline ended it. The pages a caller
-/// walks from `window.start` to the window's end name exactly the starts
+/// where the next resumes when the deadline ended it. The first page takes
+/// no `resume`; each later page takes the cursor its predecessor returned,
+/// with the same rule, start and window. The pages name exactly the starts
 /// [`expand_window`] names; none is refused or cut for its size.
 ///
 /// # Errors
@@ -102,9 +135,17 @@ pub fn expand_window_page(
     rrule: &str,
     dtstart: SeriesDtStart<'_>,
     window: TimeRange,
+    resume: Option<ExpansionCursor>,
     deadline: Instant,
 ) -> Result<ExpansionPage, CalendarError> {
-    expand(rrule, dtstart, window, GapPolicy::Refuse, Some(deadline))
+    expand(
+        rrule,
+        dtstart,
+        window,
+        resume,
+        GapPolicy::Refuse,
+        Some(deadline),
+    )
 }
 
 /// [`expand_window_page`] with RFC 5545 §3.3.5's reading of a spring-forward
@@ -124,12 +165,14 @@ pub(crate) fn expand_window_shifting_gaps_page(
     rrule: &str,
     dtstart: SeriesDtStart<'_>,
     window: TimeRange,
+    resume: Option<ExpansionCursor>,
     deadline: Instant,
 ) -> Result<ExpansionPage, CalendarError> {
     expand(
         rrule,
         dtstart,
         window,
+        resume,
         GapPolicy::ShiftForward,
         Some(deadline),
     )
@@ -148,15 +191,18 @@ fn expand(
     rrule: &str,
     dtstart: SeriesDtStart<'_>,
     window: TimeRange,
+    resume: Option<ExpansionCursor>,
     gaps: GapPolicy,
     deadline: Option<Instant>,
 ) -> Result<ExpansionPage, CalendarError> {
     if window.start > window.end {
         return Err(CalendarError::InvalidRecurrenceWindow);
     }
+    // A resumed page walks the rest of the same window.
+    let from = resume.map_or(window.start, |cursor| cursor.from.max(window.start));
     let tz = dtstart.tz;
     let seed = wall_clock_at(dtstart.dtstart_utc, tz)?;
-    let first = wall_clock_at(window.start, tz)?;
+    let first = wall_clock_at(from, tz)?;
 
     let (parsed, until_utc) = parse_rule(rrule, tz)?;
     let rule = parsed
@@ -181,22 +227,59 @@ fn expand(
     // bound on the clock and before it on the timeline.
     let end = until_utc.map_or(window.end, |until| until.min(window.end));
     let last = wall_clock_at(end, tz)?;
+    // A counted walk resumes at the period its last page stopped in, and
+    // any other rule at the period that holds the page's first wall clock.
+    let resumed = resume.and_then(|cursor| cursor.walk).and_then(|walk| {
+        super::reseed::resumed_count(&parsed, &rule, walk.period, walk.counted)
+            .map(|moved| (walk, moved))
+    });
+    let (seed, rule, walk) = match resumed {
+        Some((walk, (seed, rule))) => (seed, rule, Some(walk)),
+        None => {
+            let (seed, rule) = super::reseed::reseeded(&parsed, rule, seed, first);
+            (seed, rule, None)
+        }
+    };
+    // Only a counted walk a deadline may end tracks its period: the next
+    // page needs it to resume without re-walking from the seed.
+    let counted = deadline.is_some() && rule.get_count().is_some();
+    let (freq, week_start) = (rule.get_freq(), rule.get_week_start());
     // The engine's own `limit` keeps a rule that never fires from cycling; the
     // walk itself is bounded by the window and never by a step count.
-    let (seed, rule) = super::reseed::reseeded(&parsed, rule, seed, first);
     let series = RRuleSet::new(seed).rrule(rule).limit();
 
     let mut starts = Vec::new();
-    // The latest start this page walked, and where the next page resumes
-    // once the deadline ends this one.
+    // The latest start this page walked, the period of the occurrence the
+    // walk is at, and where the next page resumes once the deadline ends
+    // this one.
     let mut latest = None;
-    let mut resume_from = None;
+    let mut period: Option<WalkPeriod> = None;
+    let mut next = None;
     for (step, occurrence) in (&series).into_iter().enumerate() {
+        if counted
+            && period
+                .as_ref()
+                .is_none_or(|period| occurrence >= period.end)
+        {
+            period = super::reseed::period_of(freq, week_start, &occurrence).map(|(start, end)| {
+                WalkPeriod {
+                    start,
+                    end,
+                    first_step: step,
+                }
+            });
+        }
         if let (Some(deadline), Some(walked)) = (deadline, latest)
             && step % EXPANSION_DEADLINE_CHECK_STEPS == 0
             && Instant::now() >= deadline
         {
-            resume_from = walked.checked_add(1).filter(|_| walked < end);
+            next = walked
+                .checked_add(1)
+                .filter(|_| walked < end)
+                .map(|from| ExpansionCursor {
+                    from,
+                    walk: resumed_walk(period.as_ref(), &seed, walk),
+                });
             break;
         }
         if step == EXPANSION_SCAN_CHECK_STEPS {
@@ -235,7 +318,7 @@ fn expand(
         if start > end {
             break;
         }
-        if start >= window.start {
+        if start >= from {
             starts.push(start);
             latest = latest.max(Some(start));
         }
@@ -247,8 +330,32 @@ fn expand(
     starts.dedup();
     Ok(ExpansionPage {
         starts,
-        resume_from,
+        resume: next,
     })
+}
+
+/// Where a counted walk the deadline ended resumes: at the period of the
+/// occurrence it stopped before, counting every occurrence the series
+/// yielded before that period. A period that does not start past `seed` is
+/// the one this walk began in, so the walk resumes where this page did.
+fn resumed_walk(
+    period: Option<&WalkPeriod>,
+    seed: &DateTime<Tz>,
+    walk: Option<CountedWalk>,
+) -> Option<CountedWalk> {
+    let Some(period) = period.filter(|period| period.start > *seed) else {
+        return walk;
+    };
+    let counted = u32::try_from(period.first_step)
+        .ok()
+        .and_then(|before| walk.map_or(0, |walk| walk.counted).checked_add(before));
+    match counted {
+        Some(counted) => Some(CountedWalk {
+            period: period.start.timestamp(),
+            counted,
+        }),
+        None => walk,
+    }
 }
 
 /// Expands a stored `calendar.series_master` value over `window`.

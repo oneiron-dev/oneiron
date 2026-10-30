@@ -7,6 +7,11 @@
 //! its reader ([`CommitmentReminderWorder`]) and files the text behind the
 //! content ref. The send reads the filed text first and the fixed wording
 //! while none is filed, so no reminder waits for its wording.
+//!
+//! The owner approves the words the send reads at that moment. A wording
+//! filed after the reminder's proposal was approved is kept beside them, a
+//! version of the same artifact under its own run prefix, and never sent
+//! (FIX 12167).
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +25,7 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 
 use super::reminder::{ReminderRef, civil_time, quoted_promise, reminder_text};
+use super::wake_approval::approved_commitment_wake;
 use super::wake_event::{CommitmentWakePhase, validate_wake_string};
 
 /// Attempt kind for one reminder's queued wording.
@@ -28,6 +34,9 @@ pub const COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND: &str = "commitment.reminder.
 pub const COMMITMENT_REMINDER_WORDING_MAX_BYTES: usize = 4_096;
 const WORDING_MEDIA_TYPE: &str = "text/plain";
 const WORDING_RUN_PREFIX: &str = "commitment-reminder-wording:";
+/// The run prefix of a wording filed after the owner approved its reminder:
+/// kept beside the approved words, never sent.
+const UNSENT_WORDING_RUN_PREFIX: &str = "commitment-reminder-wording-unsent:";
 
 /// Who words the owner's reminders in place of the fixed wording: the host's
 /// model, in the voice of the persona `persona_ref` names when set.
@@ -178,7 +187,9 @@ impl Vault {
 
     /// Files `text` as the wording the reminder `content_ref` sends: a new
     /// version when it differs from the one filed, nothing when it is the
-    /// same.
+    /// same. Once a proposal that sends the reminder is approved, the new
+    /// version is kept beside the approved words and the send still reads
+    /// those.
     ///
     /// # Errors
     ///
@@ -190,11 +201,11 @@ impl Vault {
         text: &str,
         now: u64,
     ) -> Result<()> {
-        if ReminderRef::parse(content_ref).is_none() {
+        let Some(reminder) = ReminderRef::parse(content_ref) else {
             return Err(Error::InvalidClaimBody(
                 "reminder wording names no reminder",
             ));
-        }
+        };
         let text = text.trim();
         if text.is_empty() || text.len() > COMMITMENT_REMINDER_WORDING_MAX_BYTES {
             return Err(Error::InvalidClaimBody(
@@ -224,11 +235,20 @@ impl Vault {
         {
             return Ok(());
         }
+        let run_prefix = if self.commitment_reminder_approved(&reminder.instance_id, content_ref)? {
+            tracing::info!(
+                content_ref,
+                "a reminder wording filed after its approval is kept beside the approved words"
+            );
+            UNSENT_WORDING_RUN_PREFIX
+        } else {
+            WORDING_RUN_PREFIX
+        };
         self.append_blob_artifact_version(
             &artifact_id,
             text.as_bytes(),
             &BlobVersionProvenance::AgentRun {
-                run_ref: format!("{WORDING_RUN_PREFIX}{content_ref}"),
+                run_ref: format!("{run_prefix}{content_ref}"),
             },
             self.dreamer_authority()?,
             at,
@@ -237,8 +257,9 @@ impl Vault {
         Ok(())
     }
 
-    /// The wording filed for the reminder `content_ref`, its latest version,
-    /// when a worder filed one.
+    /// The wording filed for the reminder `content_ref` to send, its latest
+    /// such version, when a worder filed one. Versions kept beside an
+    /// approval are passed over.
     pub(super) fn filed_commitment_reminder_wording(
         &self,
         content_ref: &str,
@@ -248,23 +269,47 @@ impl Vault {
             Some(body) if body.media_type == WORDING_MEDIA_TYPE => {}
             _ => return Ok(None),
         }
-        let Some(head) = self.blob_artifact_head(&artifact_id)? else {
-            return Ok(None);
-        };
-        let Some(record) = self.blob_artifact_version_metadata(&artifact_id, head.version)? else {
-            return Ok(None);
-        };
-        if !matches!(
-            &record.provenance,
-            BlobVersionProvenance::AgentRun { run_ref } if run_ref.starts_with(WORDING_RUN_PREFIX)
-        ) {
-            return Ok(None);
+        for version in self.blob_artifact_versions(&artifact_id)?.iter().rev() {
+            let Some(record) =
+                self.blob_artifact_version_metadata(&artifact_id, version.version)?
+            else {
+                return Ok(None);
+            };
+            match &record.provenance {
+                BlobVersionProvenance::AgentRun { run_ref }
+                    if run_ref.starts_with(UNSENT_WORDING_RUN_PREFIX) => {}
+                BlobVersionProvenance::AgentRun { run_ref }
+                    if run_ref.starts_with(WORDING_RUN_PREFIX) =>
+                {
+                    let Some(bytes) =
+                        self.read_blob_artifact_version(&artifact_id, record.version)?
+                    else {
+                        return Ok(None);
+                    };
+                    return String::from_utf8(bytes).map(Some).map_err(|_| {
+                        Error::InvalidClaimBody("a filed reminder wording is not text")
+                    });
+                }
+                _ => return Ok(None),
+            }
         }
-        let Some(bytes) = self.read_blob_artifact_version(&artifact_id, head.version)? else {
-            return Ok(None);
-        };
-        String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|_| Error::InvalidClaimBody("a filed reminder wording is not text"))
+        Ok(None)
+    }
+
+    /// Whether an approved wake proposal about the commitment `instance_id`
+    /// that still stands sends the reminder `content_ref`.
+    fn commitment_reminder_approved(
+        &self,
+        instance_id: &EntityId,
+        content_ref: &str,
+    ) -> Result<bool> {
+        for claim in self.claims_for_subject(instance_id)? {
+            if approved_commitment_wake(self, &claim)
+                .is_ok_and(|approved| approved.content_ref() == Some(content_ref))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
