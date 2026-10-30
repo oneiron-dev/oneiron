@@ -22,7 +22,7 @@ impl Vault {
     /// # Errors
     ///
     /// Storage errors.
-    pub(super) fn report_publisher_actor(
+    pub(super::super) fn report_publisher_actor(
         &self,
         publisher_ref: &str,
         artifact: EntityId,

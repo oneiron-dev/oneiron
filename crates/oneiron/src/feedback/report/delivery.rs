@@ -33,9 +33,14 @@ use crate::edit_distance::publisher::{
     IssueSignature, PublisherActor, PublisherError, SignatureDeliveryOutcome,
     emit_issue_signature_in_txn, issue_signature, record_signature_delivery,
     record_signature_delivery_in_txn, record_signature_hold_in_txn,
+    record_signature_local_in_txn,
 };
 use crate::outbound::{
-    OutboundDispatchOutcome, OutboundExecutionOutcome, OutboundExecutionRequest, connector_actor_id,
+    OutboundDispatchError, OutboundDispatchOutcome, OutboundExecutionOutcome,
+    OutboundExecutionRequest, connector_actor_id, outbound_dispatch_attempt_id,
+};
+use crate::outbound_intent_ledger::{
+    IntentLedgerError, IntentResolution, read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -352,6 +357,10 @@ impl Vault {
         let id = EntityId::from_hex(issue_ref)?;
         // The content-free projection: this lane carries no text (FIX 8747).
         let Some(payload) = self.report_signature_payload(&id)? else {
+            // The issue no longer routes to a publisher: a lane it left behind
+            // keeps an unanswered signature no run will ever send, so it reads
+            // as no lane's (FIX 11631).
+            self.retire_unrouted_signature(&id)?;
             return Ok(None);
         };
         let ReportRoute::Publisher { publisher_ref } = &payload.route else {
@@ -371,13 +380,40 @@ impl Vault {
             .as_ref()
             .is_some_and(ReportDeliveryOutcome::is_final)
         {
-            // A finished lane whose write-back never ran settles here; a
-            // settled one reads and writes nothing (FIX 7690).
-            if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
-                record_signature_delivery(self, signature, send_ref, outcome, |artifact| {
-                    self.report_publisher_actor(publisher_ref, artifact)
-                })
-                .map_err(engine_error)?;
+            // A send that was uncertain may have been confirmed since: its frozen
+            // send resolves against the outbound ledger without resending, and a
+            // confirmed delivery lands on the lane and its signature in one write
+            // (FIX 11629). Any other resolution replays the saved outcome.
+            if !matches!(record.outcome, Some(ReportDeliveryOutcome::Delivered))
+                && self.resolve_signature_send_delivered(&record)?
+            {
+                record.outcome = Some(ReportDeliveryOutcome::Delivered);
+                record.updated_at = now;
+                let publisher = self.delivered_publisher(&record, publisher_ref)?;
+                self.with_write_txn_grouped(|txn| {
+                    DELIVERIES.put(&self.store, txn, &row, &record)?;
+                    if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                        record_signature_delivery_in_txn(
+                            self,
+                            txn,
+                            signature,
+                            send_ref,
+                            outcome,
+                            publisher.as_ref(),
+                        )
+                        .map_err(engine_error)?;
+                    }
+                    Ok(())
+                })?;
+            } else {
+                // A finished lane whose write-back never ran settles here; a
+                // settled one reads and writes nothing (FIX 7690).
+                if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                    record_signature_delivery(self, signature, send_ref, outcome, |artifact| {
+                        self.report_publisher_actor(publisher_ref, artifact)
+                    })
+                    .map_err(engine_error)?;
+                }
             }
             return Ok(Some(record));
         }
@@ -593,6 +629,57 @@ impl Vault {
             Some(signature) => self.report_publisher_actor(publisher_ref, signature.artifact()),
             None => Ok(None),
         }
+    }
+
+    /// Whether the outbound ledger confirms the lane's frozen send as delivered
+    /// (FIX 11629): call 0 of its dispatch attempt, resolved without resending.
+    /// `false` for no row, any other resolution, or a row that does not read —
+    /// the replay then keeps the saved outcome. Only storage failures propagate.
+    fn resolve_signature_send_delivered(&self, record: &ReportDeliveryRecord) -> Result<bool> {
+        let Some(send) = &record.send else {
+            return Ok(false);
+        };
+        let attempt = match outbound_dispatch_attempt_id(&send.send_ref) {
+            Ok(attempt) => attempt,
+            Err(OutboundDispatchError::Engine(error)) => return Err(error),
+            Err(_) => return Ok(false),
+        };
+        let txn = self.store.env.read_txn()?;
+        let row = match read_intent_for_attempt_in_txn(self, &txn, attempt, 0) {
+            Ok(row) => row,
+            Err(IntentLedgerError::Engine(error)) => return Err(error),
+            Err(_) => return Ok(false),
+        };
+        Ok(matches!(
+            row.as_ref().map(IntentResolution::from_record),
+            Some(Ok(IntentResolution::Delivered))
+        ))
+    }
+
+    /// Marks the signature of `id`'s lane Local when the issue no longer routes
+    /// to a publisher (FIX 11631): its send will never leave, so an unanswered
+    /// signature reads as no lane's. Only a lane still addressable by the issue's
+    /// publisher route is read; any other send state stands.
+    fn retire_unrouted_signature(&self, id: &EntityId) -> Result<()> {
+        let signature = {
+            let txn = self.store.env.read_txn()?;
+            let Some(issue) = self.report_issue_in_txn(&txn, id)? else {
+                return Ok(());
+            };
+            let ReportRoute::Publisher { publisher_ref } = &issue.route else {
+                return Ok(());
+            };
+            let key = ReportDeliveryKey::signature(&issue.issue_ref, publisher_ref);
+            DELIVERIES
+                .get(&self.store, &txn, &key.row()?)?
+                .and_then(|record| record.signature.map(|frozen| frozen.signature))
+        };
+        let Some(signature) = signature else {
+            return Ok(());
+        };
+        self.with_write_txn_grouped(|txn| {
+            record_signature_local_in_txn(self, txn, signature).map_err(engine_error)
+        })
     }
 }
 

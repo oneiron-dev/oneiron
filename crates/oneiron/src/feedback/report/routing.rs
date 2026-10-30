@@ -107,6 +107,7 @@ impl Vault {
     pub(super) fn report_artifact_route(&self, subject: &str) -> Result<Option<ReportRoute>> {
         let subject = subject.strip_prefix("skill:").unwrap_or(subject);
         let mut publishers = std::collections::BTreeSet::new();
+        let mut artifacts = std::collections::BTreeSet::new();
         let txn = self.store.env.read_txn()?;
         for row in IMPORTS.iter_from(&self.store, &txn, &[])? {
             let (_, receipt) = row?;
@@ -115,6 +116,7 @@ impl Vault {
                 || receipt.ref_string == subject
             {
                 publishers.extend(receipt.publisher);
+                artifacts.extend(EntityId::from_hex(&receipt.entity).ok());
             }
         }
         for pack in self.installed_packs()? {
@@ -124,14 +126,36 @@ impl Vault {
                 || pack.skills.iter().any(|skill| skill == subject)
             {
                 if pack.publisher != "vault" {
+                    artifacts.extend(
+                        pack.skills
+                            .iter()
+                            .filter_map(|skill| EntityId::from_hex(skill).ok()),
+                    );
                     publishers.insert(pack.publisher);
                 }
             }
         }
         // Multiple source aliases must not silently pick a different maker.
-        Ok((publishers.len() == 1).then(|| ReportRoute::Publisher {
-            publisher_ref: publishers.into_iter().next().expect("one publisher"),
-        }))
+        if publishers.len() != 1 {
+            return Ok(None);
+        }
+        let publisher_ref = publishers.into_iter().next().expect("one publisher");
+        // An owner-authored pack (`vault.packs.put`) names its holder as publisher
+        // but has no publisher ACTOR, so it routes to the owner inbox (ARCH-0056,
+        // FIX 11630). A publisher with an actor for a matched artifact routes as
+        // before; with no artifact to check, the route stands.
+        if artifacts.is_empty() {
+            return Ok(Some(ReportRoute::Publisher { publisher_ref }));
+        }
+        for artifact in artifacts {
+            if self
+                .report_publisher_actor(&publisher_ref, artifact)?
+                .is_some()
+            {
+                return Ok(Some(ReportRoute::Publisher { publisher_ref }));
+            }
+        }
+        Ok(None)
     }
 
     /// No transport runs here. The owner decides whether the report's exact
