@@ -292,6 +292,9 @@ impl EngineNativeExecutor<'_> {
                 .runtime
                 .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
             self.keep_step_feedback(&checking);
+            // The rows its callables answered from join the record, however
+            // the step ends (FIX 5763).
+            record.callable_rows.keep(&host.callable_rows);
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
