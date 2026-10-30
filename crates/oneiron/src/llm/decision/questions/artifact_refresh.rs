@@ -523,7 +523,7 @@ impl Asking<'_> {
                         &artifact,
                         Some(pin),
                         sheet,
-                        Some(span.frontier.as_slice()),
+                        Some((span.frontier.as_slice(), span.version)),
                     )?,
                     _ => None,
                 };
