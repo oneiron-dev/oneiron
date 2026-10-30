@@ -110,6 +110,7 @@ impl StoredBody {
             },
             lines: self.lines,
             complete: self.complete,
+            input_rows: None,
             preview: CodeRunOutputPreview {
                 codec: self.preview_codec.clone(),
                 text: self.preview_text.clone(),

@@ -4,7 +4,7 @@ use super::LiveLeaseBackend;
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
-use crate::ai_host::live_lease::LiveLease;
+use crate::ai_host::live_lease::LeaseLine;
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
@@ -770,6 +770,10 @@ pub(crate) struct ScopeMeter<'a> {
     pub(crate) scope: &'a SpendScopeId,
     pub(crate) guard: BudgetGuard,
     pub(crate) payer: Option<PayerPerson>,
+    /// The entry's one live lease on `guard`, lent to its other calls on
+    /// the same meter so they look before they are admitted and book once
+    /// (FIX 11747).
+    pub(crate) lease: LeaseLine,
 }
 
 impl<'a> ScopeMeter<'a> {
@@ -782,6 +786,7 @@ impl<'a> ScopeMeter<'a> {
             .guard_for_scope(scope)
             .map_err(|error| EngineRunError::Binding(error.to_string()))?;
         Ok(Self {
+            lease: LeaseLine::new(scope.clone(), guard.clone()),
             scope,
             guard,
             payer,
@@ -818,9 +823,10 @@ pub(crate) fn enter_engine_native_run(
     planned: Option<&PlannedModel>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
-        scope,
         guard,
         payer,
+        lease,
+        ..
     }) = spend
     else {
         let own = planned
@@ -841,8 +847,8 @@ pub(crate) fn enter_engine_native_run(
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
-    let limit = guard.read().limit_units;
-    let live = LiveLease::new(vault, Some(scope.clone()), guard, limit, 0);
+    // The lease the entry's door and planner runner were lent: one ledger.
+    let live = lease.on(vault);
     let entered = enter_on(
         vault,
         provider,

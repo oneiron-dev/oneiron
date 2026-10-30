@@ -8,7 +8,6 @@
 use std::io::BufReader;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -18,7 +17,7 @@ use oneiron::settings::backup::BackupPolicy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::has_json_content_type;
 use crate::api::transfer::{self, BodyReader};
 use crate::auth::CoreAuth;
@@ -30,8 +29,27 @@ use crate::server::SyncServer;
 /// once, never the body's length.
 const BODY_PIECE: usize = 16 * 1024;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/settings/backup", get(read).put(put))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/settings/backup",
+                summary: "The owner's backup setting (FIX 5621): `stored`, his choice {enabled, every_hours, keep} or null while he has made none, and `effective`, what the schedule follows now (the stored choice whole, else this server's `[backup]` section; null on a server started without its vault's backup storage).",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/settings/backup",
+                summary: "Stores the owner's backup choice, the whole {enabled, every_hours, keep} (every_hours and keep each greater than zero; enabled false is a choice, not a reset), and answers as the GET does. The schedule's next tick reads it; it prunes nothing and stops no backup already being written. `enabled` gates only scheduled backups; `keep` applies to every backup this server takes.",
+                row: None,
+            },
+            axum::routing::put(put),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `PUT /v1/owner/settings/backup`'s body (FIX 11611): [`BackupPolicy`].
