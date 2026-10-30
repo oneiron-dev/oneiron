@@ -304,7 +304,7 @@ impl WorkflowBinder<'_> {
                 }),
                 SpendPayer {
                     party: payer,
-                    granted_by: payer,
+                    granted_by: Some(payer),
                     at_ms: funding.shown_at_ms,
                 },
                 crate::unix_seconds_now(),
