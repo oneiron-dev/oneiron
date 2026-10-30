@@ -8,9 +8,10 @@
 //! - his own statement at `/v1/owner/intents` ([`Vault::record_owner_intent`]);
 //! - his yes to the optional ask a gap scan raises when one of his turns
 //!   states an intent ("I will", "I'll") and nothing followed. The ask quotes
-//!   the sentence; a yes lands exactly those words at the scan after it, no
-//!   or no answer changes nothing. The words must still read as they were
-//!   asked, or nothing lands.
+//!   the sentence, or, when it is too long for a question, its first part
+//!   and where it stands (FIX 9294); a yes lands exactly the whole sentence's
+//!   words at the scan after it, no or no answer changes nothing. The words
+//!   must still read as they were asked, or nothing lands.
 
 use rmpv::Value;
 
@@ -44,6 +45,10 @@ const INTENT_CLAIM_DOMAIN: &[u8] = b"oneiron.dreamer.intent_ask.claim.v1";
 const ASK_PAGE: usize = 256;
 /// What the gap scan reads as a stated intent, lowercased.
 const MARKERS: [&str; 2] = ["i will ", "i'll "];
+/// The longest question text an ask holds, as `DecisionQuestion::validate`
+/// bounds it (FIX 9294): a sentence too long to quote whole within it is
+/// quoted by its first part and a locator.
+const QUESTION_TEXT_BYTES: usize = 16_384;
 
 fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
@@ -167,23 +172,51 @@ fn intent_sentence(text: &str) -> Option<(usize, usize)> {
     (start < end).then_some((start, end))
 }
 
-/// The ask's question over `words`, the sentence `turn` states its intent in.
-fn intent_question(turn: EntityId, words: &str) -> Result<DecisionQuestion> {
+/// The ask's question over `words`, the sentence `turn` states its intent in
+/// at the bytes `at` of its text. Its id is derived from the whole sentence,
+/// so a yes lands exactly those words however the text quotes them.
+fn intent_question(turn: EntityId, at: (usize, usize), words: &str) -> Result<DecisionQuestion> {
     Ok(DecisionQuestion {
         id: EntityId::derive(
             INTENT_QUESTION_DOMAIN,
             &[turn.as_bytes().as_slice(), words.as_bytes()],
         )?,
         version: 1,
-        text: format!(
-            "Your conversation holds these words: \"{words}\". Keep them as your own stated \
-             intent? Yes records exactly these words as your intent; no, or no answer, changes \
-             nothing."
-        ),
+        text: intent_question_text(turn, at, words),
         class: DecisionClass::Judgment,
         contract: AnswerContract::Noul,
         accept_type: false,
     })
+}
+
+/// The question's text: `words` quoted whole, or, past the question's bound
+/// (FIX 9294), its first part with where the whole sentence stands.
+fn intent_question_text(turn: EntityId, (start, end): (usize, usize), words: &str) -> String {
+    let whole = format!(
+        "Your conversation holds these words: \"{words}\". Keep them as your own stated \
+         intent? Yes records exactly these words as your intent; no, or no answer, changes \
+         nothing."
+    );
+    if whole.len() <= QUESTION_TEXT_BYTES {
+        return whole;
+    }
+    let quoted = |part: &str| {
+        format!(
+            "Your conversation holds a sentence too long to quote whole: {} bytes, at bytes \
+             {start}..{end} of the text of turn {}. It begins: \"{part}...\". Keep the whole \
+             sentence as your own stated intent? Yes records exactly its words as your intent; \
+             no, or no answer, changes nothing.",
+            words.len(),
+            turn.to_hex(),
+        )
+    };
+    let mut cut = QUESTION_TEXT_BYTES
+        .saturating_sub(quoted("").len())
+        .min(words.len());
+    while !words.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    quoted(&words[..cut])
 }
 
 /// The MESSAGE the words at `start..end` of `record` came from; none for a
@@ -226,7 +259,7 @@ fn ask_one(vault: &Vault, turn: EntityId, record: &TurnText) -> Result<()> {
     };
     let message = intent_message(record, start, end)?;
     vault.queue_decision_ask(&HumanDecisionRequest {
-        question: intent_question(turn, &text[start..end])?,
+        question: intent_question(turn, (start, end), &text[start..end])?,
         principal: crate::vault::embedded_owner_actor_id()?,
         evidence: std::iter::once(turn).chain(message).collect(),
         reason: HumanAskReason::OwnerSelected,
@@ -309,7 +342,7 @@ fn land_answer(vault: &Vault, ask: &DecisionAsk) -> Result<()> {
         return Ok(());
     };
     let words = &text[start..end];
-    if intent_question(turn, words)?.id != ask.question.id {
+    if intent_question(turn, (start, end), words)?.id != ask.question.id {
         return Ok(());
     }
     let message = intent_message(&record, start, end)?;
