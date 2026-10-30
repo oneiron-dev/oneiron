@@ -436,6 +436,8 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.federation.connect.disconnect"
         | "vault.federation.connect.export"
         | "vault.federation.connect.rejoin"
+        | "vault.federation.connect.world_privacy.export"
+        | "vault.federation.connect.world_privacy.receive"
         | "vault.guests.share"
         | "vault.guests.reshare"
         | "vault.guests.revoke"

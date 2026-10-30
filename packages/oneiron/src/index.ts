@@ -1492,6 +1492,12 @@ export class Oneiron {
         export: (input: Facade.ConnectExportRequest): Facade.ConnectDelivery => this.#call(() => this.#client.vaultFederationConnectExport(input) as Facade.ConnectDelivery),
         /** The owner admits a peer host signed update through guest admission into the retained foreign-world vault. */
         rejoin: (input: Facade.ConnectDelivery): Facade.ConnectRejoined => this.#call(() => this.#client.vaultFederationConnectRejoin(input) as Facade.ConnectRejoined),
+        world_privacy: {
+          /** The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask. */
+          export: (input: Facade.ForeignWorldPrivacyExportRequest): Facade.ForeignWorldPrivacyDelivery => this.#call(() => this.#client.vaultFederationConnectWorldPrivacyExport(input) as Facade.ForeignWorldPrivacyDelivery),
+          /** The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers. */
+          receive: (input: Facade.ForeignWorldPrivacyDelivery): Facade.WorldPrivacyRequest => this.#call(() => this.#client.vaultFederationConnectWorldPrivacyReceive(input) as Facade.WorldPrivacyRequest),
+        },
       },
     },
     trusted_contacts: {

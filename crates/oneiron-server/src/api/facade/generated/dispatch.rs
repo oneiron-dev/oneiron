@@ -11743,6 +11743,92 @@ async fn vault_federation_connect_rejoin(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_federation_connect_world_privacy_export(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.world_privacy.export")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input(
+        "vault.federation.connect.world_privacy.export",
+        &value,
+    )?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.federation.connect.world_privacy.export",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_federation_connect_world_privacy_export(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_world_privacy_receive(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.world_privacy.receive")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input(
+        "vault.federation.connect.world_privacy.receive",
+        &value,
+    )?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.federation.connect.world_privacy.receive",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_federation_connect_world_privacy_receive(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_trusted_contacts_name(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -39324,6 +39410,18 @@ async fn call_verb_row(
         }
         "vault.federation.connect.rejoin" => {
             Box::pin(vault_federation_connect_rejoin(server, call, input)).await
+        }
+        "vault.federation.connect.world_privacy.export" => {
+            Box::pin(vault_federation_connect_world_privacy_export(
+                server, call, input,
+            ))
+            .await
+        }
+        "vault.federation.connect.world_privacy.receive" => {
+            Box::pin(vault_federation_connect_world_privacy_receive(
+                server, call, input,
+            ))
+            .await
         }
         "vault.trusted_contacts.name" => {
             Box::pin(vault_trusted_contacts_name(server, call, input)).await

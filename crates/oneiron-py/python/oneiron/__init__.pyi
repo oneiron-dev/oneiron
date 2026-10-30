@@ -1821,6 +1821,8 @@ class Oneiron:
             """The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."""
         def rejoin(self, spec: Facade.ConnectDelivery) -> Facade.ConnectRejoined:
             """The owner admits a peer host signed update through guest admission into the retained foreign-world vault."""
+        @property
+        def world_privacy(self) -> "Oneiron._VaultFederationConnectWorldPrivacyVerbs": ...
     class _VaultFederationConnectGrantsVerbs:
         def mint(self, spec: Facade.MintConnectGrant) -> Facade.ConnectGrant:
             """The owner mints an inert Connect guest grant inside the named local-world ceiling."""
@@ -1829,6 +1831,11 @@ class Oneiron:
             """The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."""
         def accept(self, spec: Facade.AcceptRescopeConnect) -> Facade.ConnectRescoped:
             """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
+    class _VaultFederationConnectWorldPrivacyVerbs:
+        def export(self, spec: Facade.ForeignWorldPrivacyExportRequest) -> Facade.ForeignWorldPrivacyDelivery:
+            """The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask."""
+        def receive(self, spec: Facade.ForeignWorldPrivacyDelivery) -> Facade.WorldPrivacyRequest:
+            """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
             """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""

@@ -3213,6 +3213,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_federation_connect_world_privacy_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.federation.connect.world_privacy.export",
+                js_json(input),
+            )
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_world_privacy_receive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.federation.connect.world_privacy.receive",
+                js_json(input),
+            )
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_trusted_contacts_name(
         &self,
         input: serde_json::Value,

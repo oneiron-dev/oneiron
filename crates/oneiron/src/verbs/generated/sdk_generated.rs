@@ -1916,6 +1916,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.federation.connect.world_privacy.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::ForeignWorldPrivacyExportRequest,
+                >(),
+            ),
+            (
+                "vault.federation.connect.world_privacy.receive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::ForeignWorldPrivacyDelivery,
+                >(),
+            ),
+            (
                 "vault.trusted_contacts.name",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::TrustedContactNameRequest,
@@ -13103,6 +13115,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.federation.connect.world_privacy.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.world_privacy.receive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.trusted_contacts.name" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20197,6 +20223,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.federation.connect.rejoin" => {
             let _input: crate::task_verb::sdk::ConnectDelivery = decode(value.clone())?;
         }
+        "vault.federation.connect.world_privacy.export" => {
+            let _input: crate::policy_model::ForeignWorldPrivacyExportRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.connect.world_privacy.receive" => {
+            let _input: crate::policy_model::ForeignWorldPrivacyDelivery = decode(value.clone())?;
+        }
         "vault.trusted_contacts.name" => {
             let _input: crate::task_verb::sdk::TrustedContactNameRequest = decode(value.clone())?;
         }
@@ -23935,6 +23968,12 @@ pub fn invoke(
         "vault.federation.connect.rejoin" => {
             encode(vault_federation_connect_rejoin(memory, decode(value)?)?)
         }
+        "vault.federation.connect.world_privacy.export" => encode(
+            vault_federation_connect_world_privacy_export(memory, decode(value)?)?,
+        ),
+        "vault.federation.connect.world_privacy.receive" => encode(
+            vault_federation_connect_world_privacy_receive(memory, decode(value)?)?,
+        ),
         "vault.trusted_contacts.name" => {
             encode(vault_trusted_contacts_name(memory, decode(value)?)?)
         }
@@ -28893,6 +28932,26 @@ pub fn vault_federation_connect_rejoin(
     input: crate::task_verb::sdk::ConnectDelivery,
 ) -> MemoryResult<crate::task_verb::sdk::ConnectRejoined> {
     crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.rejoin", &input)
+}
+pub fn vault_federation_connect_world_privacy_export(
+    memory: &Memory<'_>,
+    input: crate::policy_model::ForeignWorldPrivacyExportRequest,
+) -> MemoryResult<crate::policy_model::ForeignWorldPrivacyDelivery> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.world_privacy.export",
+        &input,
+    )
+}
+pub fn vault_federation_connect_world_privacy_receive(
+    memory: &Memory<'_>,
+    input: crate::policy_model::ForeignWorldPrivacyDelivery,
+) -> MemoryResult<crate::policy_model::WorldPrivacyRequest> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.world_privacy.receive",
+        &input,
+    )
 }
 pub fn vault_trusted_contacts_name(
     memory: &Memory<'_>,

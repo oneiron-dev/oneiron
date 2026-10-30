@@ -374,6 +374,8 @@ pub enum AgentVerb {
     VaultFederationConnectDisconnect,
     VaultFederationConnectExport,
     VaultFederationConnectRejoin,
+    VaultFederationConnectWorldPrivacyExport,
+    VaultFederationConnectWorldPrivacyReceive,
     VaultTrustedContactsName,
     VaultTrustedContactsList,
     VaultTrustedContactsConsent,
@@ -1613,6 +1615,8 @@ impl AgentVerb {
         Self::VaultFederationConnectDisconnect,
         Self::VaultFederationConnectExport,
         Self::VaultFederationConnectRejoin,
+        Self::VaultFederationConnectWorldPrivacyExport,
+        Self::VaultFederationConnectWorldPrivacyReceive,
         Self::VaultTrustedContactsName,
         Self::VaultTrustedContactsList,
         Self::VaultTrustedContactsConsent,
@@ -2859,6 +2863,12 @@ impl AgentVerb {
             Self::VaultFederationConnectDisconnect => "vault.federation.connect.disconnect",
             Self::VaultFederationConnectExport => "vault.federation.connect.export",
             Self::VaultFederationConnectRejoin => "vault.federation.connect.rejoin",
+            Self::VaultFederationConnectWorldPrivacyExport => {
+                "vault.federation.connect.world_privacy.export"
+            }
+            Self::VaultFederationConnectWorldPrivacyReceive => {
+                "vault.federation.connect.world_privacy.receive"
+            }
             Self::VaultTrustedContactsName => "vault.trusted_contacts.name",
             Self::VaultTrustedContactsList => "vault.trusted_contacts.list",
             Self::VaultTrustedContactsConsent => "vault.trusted_contacts.consent",
@@ -4126,6 +4136,8 @@ impl AgentVerb {
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectExport
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyExport
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -5394,6 +5406,8 @@ impl AgentVerb {
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectExport
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyExport
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -6806,6 +6820,8 @@ impl AgentVerb {
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectExport
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyExport
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -7817,6 +7833,7 @@ impl AgentVerb {
                 | Self::VaultFederationConnectRescopeAccept
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsConsent
                 | Self::VaultTrustedContactsRevoke
@@ -8744,6 +8761,8 @@ impl AgentVerb {
             Self::VaultFederationConnectDisconnect => &["spec"],
             Self::VaultFederationConnectExport => &["spec"],
             Self::VaultFederationConnectRejoin => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyExport => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyReceive => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -9984,6 +10003,8 @@ impl AgentVerb {
             Self::VaultFederationConnectDisconnect => &["spec"],
             Self::VaultFederationConnectExport => &["spec"],
             Self::VaultFederationConnectRejoin => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyExport => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyReceive => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -11950,6 +11971,12 @@ impl AgentVerb {
             }
             Self::VaultFederationConnectRejoin => {
                 "The owner admits a peer host signed update through guest admission into the retained foreign-world vault."
+            }
+            Self::VaultFederationConnectWorldPrivacyExport => {
+                "The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask."
+            }
+            Self::VaultFederationConnectWorldPrivacyReceive => {
+                "The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."
             }
             Self::VaultTrustedContactsName => {
                 "A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."

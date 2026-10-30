@@ -1851,6 +1851,16 @@ export_facade! {
     let output = client.vault_federation_connect_rejoin(&input)?;
     crate::codec::lift_record("vault.federation.connect.rejoin", &output)
 };
+"vault.federation.connect.world_privacy.export" => fn vault_federation_connect_world_privacy_export(&self, input: ForeignWorldPrivacyExportRequest) -> ForeignWorldPrivacyDelivery = |client| {
+    let input: oneiron::policy_model::ForeignWorldPrivacyExportRequest = crate::codec::lower_record("vault.federation.connect.world_privacy.export", input)?;
+    let output = client.vault_federation_connect_world_privacy_export(&input)?;
+    crate::codec::lift_record("vault.federation.connect.world_privacy.export", &output)
+};
+"vault.federation.connect.world_privacy.receive" => fn vault_federation_connect_world_privacy_receive(&self, input: ForeignWorldPrivacyDelivery) -> WorldPrivacyRequest = |client| {
+    let input: oneiron::policy_model::ForeignWorldPrivacyDelivery = crate::codec::lower_record("vault.federation.connect.world_privacy.receive", input)?;
+    let output = client.vault_federation_connect_world_privacy_receive(&input)?;
+    crate::codec::lift_record("vault.federation.connect.world_privacy.receive", &output)
+};
 "vault.trusted_contacts.name" => fn vault_trusted_contacts_name(&self, input: TrustedContactNameRequest) -> TrustedContact = |client| {
     let input: oneiron::task_verb::sdk::TrustedContactNameRequest = crate::codec::lower_record("vault.trusted_contacts.name", input)?;
     let output = client.vault_trusted_contacts_name(&input)?;
