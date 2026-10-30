@@ -47,7 +47,11 @@ impl ResidentLend<'_> {
         let (model, host_binding, ladder, role) = match own {
             Some((model, locality, ladder)) => (
                 model.clone(),
-                HostInferenceBinding::Advertised { model, locality },
+                HostInferenceBinding::Advertised {
+                    model,
+                    locality,
+                    keyless: ladder.all_keyless_own_server(),
+                },
                 ladder,
                 None,
             ),

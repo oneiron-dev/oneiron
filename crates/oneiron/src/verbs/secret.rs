@@ -68,6 +68,9 @@ pub enum RevealDecision {
     Denied,
     /// Its window closed; reveal again.
     Expired,
+    /// Its secret was erased before its value went out; the receipt's
+    /// `cause` names why (FIX 8350).
+    Unavailable,
 }
 
 /// `reveal.wait`'s answer. `Debug` never prints the value.
@@ -120,6 +123,11 @@ pub struct RevealReceipt {
     pub lease: Option<String>,
     pub asked_at: u64,
     pub delivered_at: Option<u64>,
+    /// Why the reveal closed with no value, `None` otherwise (FIX 8350).
+    pub cause: Option<String>,
+    /// The reach of the standing grant that answered it: `project`,
+    /// `every_project`, `task` or `run` (FIX 2354).
+    pub scope: Option<String>,
 }
 
 /// `reveal.describe`'s input: one handle.
@@ -190,6 +198,30 @@ pub fn wait_reveal_as_caller(
     let reveal = EntityId::from_hex(input.reveal.trim())
         .map_err(|_| MemoryError::bad_request("reveal is not a reveal id"))?;
     let wait = memory.vault().wait_secret_reveal(&asker, &reveal)?;
+    Ok(wait_answer(wait))
+}
+
+/// `reveal.wait` made again by the step that collected it, resumed after a
+/// park (FIX 2360): the value its first wait delivered, read again under
+/// `lease`, the T1 lease its kept answer names. Nothing is spent, stamped or
+/// extended; a lapsed lease answers `expired`.
+pub fn replay_reveal_as_caller(
+    memory: &Memory<'_>,
+    input: RevealWaitRequest,
+    lease: EntityId,
+) -> MemoryResult<RevealWaitAnswer> {
+    let asker = memory.reveal_asker()?;
+    let reveal = EntityId::from_hex(input.reveal.trim())
+        .map_err(|_| MemoryError::bad_request("reveal is not a reveal id"))?;
+    let wait = memory
+        .vault()
+        .replay_secret_reveal(&asker, &reveal, &lease)?;
+    Ok(wait_answer(wait))
+}
+
+/// The guest's answer to a wait: the decision, the value as text or base64,
+/// and the receipt.
+fn wait_answer(wait: crate::secret_custody::SecretRevealWait) -> RevealWaitAnswer {
     let (value, value_base64) = match wait.value.as_deref() {
         None => (None, None),
         Some(bytes) => match std::str::from_utf8(bytes) {
@@ -200,17 +232,18 @@ pub fn wait_reveal_as_caller(
             ),
         },
     };
-    Ok(RevealWaitAnswer {
+    RevealWaitAnswer {
         decision: match wait.decision {
             SecretRevealDecision::Pending => RevealDecision::Pending,
             SecretRevealDecision::Granted => RevealDecision::Granted,
             SecretRevealDecision::Denied => RevealDecision::Denied,
             SecretRevealDecision::Expired => RevealDecision::Expired,
+            SecretRevealDecision::Unavailable => RevealDecision::Unavailable,
         },
         value,
         value_base64,
         receipt: wait.receipt.map(reveal_receipt),
-    })
+    }
 }
 
 /// `reveal.describe` on a handle, for the calling agent.
@@ -284,6 +317,17 @@ pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
         fields.remove("value_base64");
     }
     kept
+}
+
+/// The T1 lease a kept `granted` answer of `reveal.wait` names: the lease a
+/// replay of its step reads the value again under (FIX 2360). `None` for any
+/// other answer.
+pub(crate) fn kept_reveal_lease(output: &serde_json::Value) -> Option<EntityId> {
+    if output.get("decision")?.as_str()? != "granted" {
+        return None;
+    }
+    let lease = output.get("receipt")?.get("lease")?.as_str()?;
+    EntityId::from_hex(lease).ok()
 }
 
 /// A reply to `verb` as a call receipt digests it and a verb hook reads it
@@ -476,10 +520,17 @@ impl Memory<'_> {
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let origin = task_create_origin_in_txn(self, &txn, self.task_host())?;
-        drop(txn);
         // The leased try is the run a run-bound secret's record names
-        // (FIX 8028).
+        // (FIX 8028); its task ref is the task a task's grant names
+        // (FIX 2354).
         let attempt = origin.as_ref().and_then(|origin| origin.parent_attempt());
+        let task = match attempt {
+            Some(attempt) => crate::AttemptQueue::new(self.vault())
+                .get_in_txn(&txn, attempt)?
+                .and_then(|record| record.task_ref),
+            None => None,
+        };
+        drop(txn);
         // The provider is the host's: the one its ladder served this
         // program's turn from, never a field the agent sends.
         Ok(RevealAsker::new(
@@ -489,7 +540,8 @@ impl Memory<'_> {
         )
         .with_provider(self.model_provider())
         .with_reader(self.read_key()?)
-        .with_attempt(attempt))
+        .with_attempt(attempt)
+        .with_task(task))
     }
 }
 
@@ -510,5 +562,7 @@ pub(crate) fn reveal_receipt(receipt: SecretRevealReceipt) -> RevealReceipt {
         lease: receipt.lease.map(|lease| lease.to_hex()),
         asked_at: receipt.asked_at,
         delivered_at: receipt.delivered_at,
+        cause: receipt.cause.map(|cause| cause.as_str().to_owned()),
+        scope: receipt.scope.map(|scope| scope.as_str().to_owned()),
     }
 }

@@ -525,6 +525,7 @@ impl<'v> DocumentWriter<'v> {
                 diary_reads: tail.diary_reads,
                 sources: tail.sources,
                 thread_roots: Default::default(),
+                holder_requests: Vec::new(),
             },
         ))
     }

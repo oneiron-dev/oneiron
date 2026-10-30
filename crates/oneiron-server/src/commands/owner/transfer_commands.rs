@@ -31,6 +31,7 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         format: Some(args.format),
         include_secrets: Some(args.include_secrets),
         delivery: None,
+        secrets_recipient: None,
     };
     // The archive is written to a file as it is built (FIX 2766), never held
     // whole: to `--out`, or to a spool under the vault's own staging
