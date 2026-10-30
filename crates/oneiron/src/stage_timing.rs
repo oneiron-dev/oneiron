@@ -86,3 +86,19 @@ pub fn take_json() -> String {
     json.push('}');
     json
 }
+
+/// Bench-only A/B switches: `L15_TRY=a,b` in the server's environment turns
+/// on the named candidate paths for the life of the process.
+pub fn try_on(name: &str) -> bool {
+    static ON: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    ON.get_or_init(|| {
+        std::env::var("L15_TRY")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect()
+    })
+    .iter()
+    .any(|s| s == name)
+}
