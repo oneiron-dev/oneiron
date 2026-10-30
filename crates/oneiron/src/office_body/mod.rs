@@ -70,7 +70,7 @@ pub use pptx::{
     DeckGateView, DeckNodeView, DeckOracleRequest, DeckPreview, DeckPreviewRequest,
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
-pub(crate) use pptx::{deck_log_ops, live_refused};
+pub(crate) use pptx::{deck_json_values, deck_log_ops, live_refused};
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
     OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,
