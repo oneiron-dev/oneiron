@@ -366,9 +366,10 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut rows: BTreeMap<HealSourceRef, HealResidue> = BTreeMap::new();
         for pending in self.pending_heal_refs_in_txn(&txn, &COACH_PROPOSALS)? {
+            // A tray row that does not decode lists its claim unproved (FIX 11857).
             let stamped_predicate = if pending.body.is_none() {
-                soft(self.store.pending_gate_consent_in_txn(&txn, &pending.claim))?
-                    .flatten()
+                self.store
+                    .lenient_tray_in_txn(&txn, &pending.claim)?
                     .and_then(|record| record.predicate)
             } else {
                 None
