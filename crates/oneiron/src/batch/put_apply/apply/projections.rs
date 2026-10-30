@@ -5,13 +5,13 @@ use super::authority::observe_authority_put;
 /// P6: stage the projections — refinement and proposal observations, SKILL and
 /// claim indexes, authority observation, entity indexes, short ids, and
 /// embeddings — and report the applied put.
-pub(super) fn stage_put_projections<R>(
+pub(super) fn stage_put_projections(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
     dispatch: &super::admission::Dispatch,
-    revision: &super::admission::RevisionSlot<R>,
+    revision: &super::admission::RevisionSlot,
     body_changed: bool,
     consolidation_dirty: bool,
     previous_skill_record: &Option<crate::skill::SkillRecord>,
@@ -113,7 +113,11 @@ pub(super) fn stage_put_projections<R>(
     )?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::super::person_substrate::ensure_person_substrate(
-            store, wtxn, fixed.id, fixed.occurred, fixed.learned_at,
+            store,
+            wtxn,
+            fixed.id,
+            fixed.occurred,
+            fixed.learned_at,
         )?;
     }
     crate::agent_def::stage_birth_custody_put(store, wtxn, &fixed.id, fixed.entity_type, data)?;
