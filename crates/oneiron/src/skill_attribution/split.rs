@@ -5,6 +5,7 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::learning::TypeRef;
 use crate::learning_setting::{
     ATTRIBUTION_UNCLEAR_FLOOR, setting_value, setting_value_in_scope_sourced_in_txn,
@@ -15,10 +16,6 @@ use super::types::{
     AttributionLane, AttributionShare, AttributionSplit, AttributionVerdict, HunkVerdict,
     JudgeRequest, UnclearNote, UnclearReason,
 };
-
-/// Longest judge note one unclear hunk keeps, in bytes. A note is a short
-/// reason for the Dreamer to cluster, not a transcript.
-const MAX_NOTE_BYTES: usize = 1024;
 
 /// The `attribution_unclear_floor` in force for this vault.
 ///
@@ -228,7 +225,7 @@ fn split_from_answers(
         } else {
             0.0
         };
-        let note = bounded_note(answer.note);
+        let note = trimmed_note(answer.note);
         let reason = held_reason(lane, answer.verdict, answer.confidence, floor);
         if matches!(
             reason,
@@ -306,17 +303,27 @@ fn narrow(share: f64) -> f32 {
     share.clamp(0.0, 1.0) as f32
 }
 
-/// The judge's note, trimmed and cut at a character boundary within
-/// [`MAX_NOTE_BYTES`]; an empty note is no note.
-fn bounded_note(note: Option<String>) -> Option<String> {
+/// The judge's note, trimmed; an empty note is no note. The note is kept
+/// whole: the vault-holding callers measure it (FIX 5465).
+fn trimmed_note(note: Option<String>) -> Option<String> {
     let note = note?;
     let trimmed = note.trim();
     if trimmed.is_empty() {
         return None;
     }
-    let mut end = trimmed.len().min(MAX_NOTE_BYTES);
-    while !trimmed.is_char_boundary(end) {
-        end -= 1;
-    }
-    Some(trimmed[..end].to_owned())
+    Some(trimmed.to_owned())
+}
+
+/// Measures a split's unclear notes against the engine's text row (OF-520):
+/// the longest note kept. The split keeps every note whole; past the row
+/// the vault's port asks.
+pub(crate) fn measure_split_notes(vault: &Vault, split: &AttributionSplit) {
+    let longest = split
+        .unclear
+        .iter()
+        .filter_map(|note| note.note.as_ref())
+        .map(String::len)
+        .max()
+        .unwrap_or(0);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
 }

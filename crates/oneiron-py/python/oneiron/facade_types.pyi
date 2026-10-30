@@ -8856,6 +8856,7 @@ class OfferAnswerRecord(TypedDict):
     offer_digest: str
     intent: NotRequired[OfferIntent | None]
     at: int
+OfferCheckOutcome = Literal["held", "broken", "currency_mismatch", "promised_score_unknown", "promised_cost_unknown", "unverifiable_no_calls", "unverifiable_no_meter", "unverifiable_not_bound", "unverifiable_no_model_role", "unverifiable_mixed_model", "unverifiable_no_usage", "unverifiable_unpriced_model", "unverifiable_unknown_currency", "unverifiable_unpriced_cache", "unverifiable_mixed_currency", "unverifiable_sum_overflow", "unverifiable_unclassified"]
 class OfferCheck(TypedDict):
     id: EntityId
     offer: EntityId
@@ -8863,6 +8864,7 @@ class OfferCheck(TypedDict):
     observed_monthly_cost: NotRequired[float | None]
     observed_score: NotRequired[float | None]
     held: NotRequired[bool | None]
+    outcome: OfferCheckOutcome
     note: NotRequired[str | None]
     at: int
     source_rows: NotRequired[list[EntityId] | None]
