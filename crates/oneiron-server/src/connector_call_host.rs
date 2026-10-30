@@ -79,6 +79,7 @@ mod remote_task;
 mod reply_read;
 mod resume;
 mod sent;
+mod served_calls;
 mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
@@ -87,6 +88,7 @@ use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
+pub(crate) use served_calls::ServerConnectorCalls;
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);

@@ -51,7 +51,8 @@ mod telegram;
 
 use self::content::trusted_contact_check_in_text;
 pub use self::host::{
-    LINE_API_BASE, SLACK_API_BASE, ServedEndpoints, ServedTransports, TELEGRAM_API_BASE,
+    LINE_API_BASE, SLACK_API_BASE, ServedConnectorCalls, ServedEndpoints, ServedTransports,
+    TELEGRAM_API_BASE,
 };
 use self::line_wire::{
     fresh_line_reply_token, line_archived_audience, line_destination, line_retry_key, line_text,
