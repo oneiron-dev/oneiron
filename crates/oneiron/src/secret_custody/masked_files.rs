@@ -17,11 +17,13 @@
 //! (`batch::secret_scan::container`); in a text member a key reads as its
 //! custody handle, `[secret sc12]` (FIX 7944). A container the write door
 //! kept no keys in is still read whole before a masked reader gets it, the
-//! bytes no reader shows included (FIX 2470): one that holds a key no mark
-//! places is refused. A sealed one, which no reader here reads whole
-//! (encrypted, malformed, past the byte floor), is stored as it is (owner
-//! ruling C2): the owner and a granted agent read its bytes
-//! (`reveal::file`), and a masked reader gets
+//! bytes no reader shows included (FIX 2470). One whose only key sits in
+//! those bytes is served its copy rebuilt without them, as a marked file's
+//! copy is, once the scan reads that copy clean (FIX 11553, 12268); one that
+//! holds a key no mark places elsewhere is refused. A sealed one, which no
+//! reader here reads whole (encrypted, malformed, past the byte floor), is
+//! stored as it is (owner ruling C2): the owner and a granted agent read its
+//! bytes (`reveal::file`), and a masked reader gets
 //! [`SecretError::SealedFileWithheld`], never the raw bytes. A file a masked
 //! reader cannot be served is [`SecretError::MaskedCopyWithheld`] with the
 //! scan's reason (FIX 2475).
@@ -286,9 +288,11 @@ pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
 
 /// `bytes`, read from the store, as `sight` reads them. A file the write
 /// door kept no keys in is served as it is, once a container's members and
-/// the bytes no reader shows read clean to the write door. A masked copy is
-/// read by the write door's rules before it is served (FIX 2480); a file
-/// this reader cannot be served masked is
+/// the bytes no reader shows read clean to the write door; a container whose
+/// only key sits in those bytes is served its copy rebuilt at its root
+/// without them, once that copy reads clean (FIX 11553, 12268). A masked
+/// copy is read by the write door's rules before it is served (FIX 2480); a
+/// file this reader cannot be served masked is
 /// [`SecretError::MaskedCopyWithheld`] (FIX 2475).
 ///
 /// `digest` is the BLAKE3 of `bytes` when the caller holds one it computed
@@ -330,17 +334,22 @@ pub(crate) fn sighted_bytes_in_txn(
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        if secret_scan::write_tree_hit(&bytes).is_some() {
-            // A hidden-only key is served the rebuilt copy, hidden bytes
-            // dropped (FIX 11553).
-            let copy =
-                secret_scan::served_masked_copy(&bytes, &KeyPlaces::new(), &PlaceHandles::new())?;
-            if let Some(reason) = secret_scan::write_tree_hit(&copy) {
-                return Err(masked_copy_withheld(reason));
-            }
-            return Ok(copy);
+        let Some(reason) = secret_scan::write_tree_hit(&bytes) else {
+            return Ok(bytes);
+        };
+        // A key only in the bytes no reader shows is gone from the copy
+        // rebuilt at the root, which leaves them out as a marked file's copy
+        // does: that copy is served once the write door's scan reads it
+        // clean. A key in what a reader shows, or in a member container's
+        // own hidden bytes, stays in it, and the file is refused (FIX 11553,
+        // 12268).
+        let Some(copy) = secret_scan::root_rebuilt_copy(&bytes) else {
+            return Err(masked_copy_withheld(reason));
+        };
+        if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+            return Err(masked_copy_withheld(reason));
         }
-        return Ok(bytes);
+        return Ok(copy);
     };
     let handles = file.place_handles(store, txn)?;
     let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles)?;
