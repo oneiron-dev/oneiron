@@ -63,6 +63,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
     let mut vault_config = config.base_vault_config();
+    // The supervisor delivered this vault's data key at boot (FIX 4531).
+    vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export
     // takes the managed default, and unset training follows the export.
@@ -248,6 +250,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // A managed vault's attested owner's queued work is judged by this
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
+    // Served sends reach this host's provider APIs and mail server (FIX 4435).
+    crate::builtin_host::install_served_transports(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -349,6 +353,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         state.background_admission(WriteKind::BackgroundOther),
     )
     .await?;
+    // A cold restore's fresh recipients, for the carrier watch's first look
+    // (FIX 11851): captured before `verified` spends the restore. `None`
+    // without a restore, and the watch's first look is then unplanned as
+    // today.
+    #[cfg(target_os = "linux")]
+    let restore_fresh = restore
+        .as_ref()
+        .map(|restore| restore.fresh_recipients().to_vec());
     // Every fallible step is done: a cold restore's receipt and `verified`
     // go out before ctl serves or ready is said.
     if let Some(restore) = restore {
@@ -382,6 +394,17 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&vault),
             managed.clone(),
             shutdown.clone(),
+            restore_fresh.clone(),
+        );
+    } else if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
+        // A process host's argv escrow recipient files as they stand later: a
+        // file replaced after the start seals at the next look (FIX 11852).
+        super::carrier_watch::spawn_argv_watch(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh,
         );
     }
 
@@ -459,10 +482,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.push(sync_server.spawn_connector_settler_admitted(admitted()));
     // The backup schedule, the owner's setting over `[backup]` (FIX 5621),
     // started while it is off too: each tick is admitted like a served write
-    // and holds it through its policy read, its backup and its pruning.
+    // and holds it through its policy read, its backup and its pruning. It
+    // and the custody publication run on past the vault's deletion, so its
+    // backups go at their deadline (FIX 11710).
     let tick = crate::owner::schedule::SCHEDULE_TICK;
-    ladder_workers.extend(sync_server.spawn_backup_schedule_admitted(tick, admitted()));
-    ladder_workers.extend(sync_server.spawn_custody_publication_admitted(admitted()));
+    ladder_workers
+        .extend(sync_server.spawn_backup_schedule_admitted(tick, state.backup_admission()));
+    ladder_workers.extend(sync_server.spawn_custody_publication_admitted(state.backup_admission()));
     ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));

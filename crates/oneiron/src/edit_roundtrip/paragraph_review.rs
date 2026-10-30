@@ -39,6 +39,10 @@ pub struct ParagraphJudgment {
     pub labels: SlideReviewLabels,
     pub frontier: [u8; 32],
     pub judged_version: Option<u64>,
+    /// The document's live body when it was asked: an edit to it never
+    /// exported withdraws the paragraphs it changed (FIX 2115).
+    #[serde(default)]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// One typed ask over paragraphs, by their stable block ids.
@@ -73,13 +77,20 @@ impl Vault {
         {
             return Err(invalid("invalid paragraph ask selection"));
         }
+        let judged_live = self.office_body_pin(artifact)?;
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Docx)?;
         let limits = {
             let rtxn = self.store.env.read_txn()?;
             self.docx_archive_limits_in_txn(&rtxn, Some(ask.principal))?
         };
-        let blocks =
-            read_docx_blocks(&bytes, limits).map_err(|_| invalid("paragraph ask document"))?;
+        // The DOCX read runs in the host's memory (FIX 10651); a resource
+        // refusal is the engine's error, never an invalid document (FIX 10587).
+        let resources = crate::office_body::document_resources();
+        let blocks = resources
+            .docx(|| read_docx_blocks(&bytes, limits))
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "paragraph ask document")
+            })?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let sources = [EvidenceVersion {
             id: *artifact,
@@ -165,6 +176,7 @@ impl Vault {
                 labels: request.labels.clone(),
                 frontier,
                 judged_version: Some(version),
+                judged_live: judged_live.clone(),
             });
         }
         if judgments.is_empty() {
@@ -217,7 +229,14 @@ pub(crate) fn carry_paragraph_judgments(
     run_ref: &str,
     limits: oneiron_docedit::ArchiveLimits,
 ) -> Result<EditProposal> {
-    let blocks = read_docx_blocks(head, limits).map_err(|_| invalid("paragraph carry document"))?;
+    // The DOCX read runs in the host's memory (FIX 10651); a resource
+    // refusal is the engine's error, never an invalid document (FIX 10587).
+    let resources = crate::office_body::document_resources();
+    let blocks = resources
+        .docx(|| read_docx_blocks(head, limits))
+        .map_err(|error| {
+            crate::office_body::document_error(error.resource(), "paragraph carry document")
+        })?;
     let author = carried
         .first()
         .map(|row| row.author.clone())

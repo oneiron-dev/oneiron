@@ -88,6 +88,7 @@ pub enum AgentVerb {
     VaultBudgetsResidentSharesSet,
     VaultRunnersSeatsQuotas,
     VaultRunnersSeatsTopUp,
+    VaultRunnersSeatsResume,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -254,6 +255,7 @@ pub enum AgentVerb {
     VaultSkillsOptimizePreferencesSet,
     VaultSkillsOptimizeTradeoffAsks,
     VaultSkillsOptimizeTradeoffAsksPick,
+    VaultSkillsOptimizeTradeoffAsksResolve,
     VaultSkillsGovernanceGet,
     VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
@@ -573,6 +575,7 @@ pub enum AgentVerb {
     VaultSettingsInferenceDefaults,
     VaultSettingsInferenceDefaultsReplace,
     VaultLensesPropose,
+    VaultLensesProposeFromPack,
     VaultLensesActivate,
     VaultLensesDeactivate,
     VaultLensesList,
@@ -1090,6 +1093,7 @@ pub enum AgentVerb {
     VaultConsolidationHomeGet,
     VaultConsolidationHomePick,
     VaultConsolidationLineage,
+    VaultConsolidationCandidateDecisions,
     VaultConsolidationPromote,
     VaultConsolidationPin,
     VaultConsolidationFrontier,
@@ -1322,6 +1326,7 @@ impl AgentVerb {
         Self::VaultBudgetsResidentSharesSet,
         Self::VaultRunnersSeatsQuotas,
         Self::VaultRunnersSeatsTopUp,
+        Self::VaultRunnersSeatsResume,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -1488,6 +1493,7 @@ impl AgentVerb {
         Self::VaultSkillsOptimizePreferencesSet,
         Self::VaultSkillsOptimizeTradeoffAsks,
         Self::VaultSkillsOptimizeTradeoffAsksPick,
+        Self::VaultSkillsOptimizeTradeoffAsksResolve,
         Self::VaultSkillsGovernanceGet,
         Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
@@ -1807,6 +1813,7 @@ impl AgentVerb {
         Self::VaultSettingsInferenceDefaults,
         Self::VaultSettingsInferenceDefaultsReplace,
         Self::VaultLensesPropose,
+        Self::VaultLensesProposeFromPack,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
@@ -2324,6 +2331,7 @@ impl AgentVerb {
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
+        Self::VaultConsolidationCandidateDecisions,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationPin,
         Self::VaultConsolidationFrontier,
@@ -2559,6 +2567,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => "vault.budgets.resident_shares.set",
             Self::VaultRunnersSeatsQuotas => "vault.runners.seats.quotas",
             Self::VaultRunnersSeatsTopUp => "vault.runners.seats.top_up",
+            Self::VaultRunnersSeatsResume => "vault.runners.seats.resume",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -2725,6 +2734,9 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => "vault.skills.optimize.preferences.set",
             Self::VaultSkillsOptimizeTradeoffAsks => "vault.skills.optimize.tradeoff_asks",
             Self::VaultSkillsOptimizeTradeoffAsksPick => "vault.skills.optimize.tradeoff_asks.pick",
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => {
+                "vault.skills.optimize.tradeoff_asks.resolve"
+            }
             Self::VaultSkillsGovernanceGet => "vault.skills.governance.get",
             Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
@@ -3058,6 +3070,7 @@ impl AgentVerb {
                 "vault.settings.inference_defaults.replace"
             }
             Self::VaultLensesPropose => "vault.lenses.propose",
+            Self::VaultLensesProposeFromPack => "vault.lenses.propose_from_pack",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
@@ -3585,6 +3598,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
+            Self::VaultConsolidationCandidateDecisions => "vault.consolidation.candidate_decisions",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationPin => "vault.consolidation.pin",
             Self::VaultConsolidationFrontier => "vault.consolidation.frontier",
@@ -3823,6 +3837,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -3989,6 +4004,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -4308,6 +4324,7 @@ impl AgentVerb {
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
@@ -4803,6 +4820,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -5086,6 +5104,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -5252,6 +5271,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -5571,6 +5591,7 @@ impl AgentVerb {
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
@@ -6066,6 +6087,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -6318,6 +6340,7 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultClaimsSeed
                 | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultTasksLinearProvenance
@@ -6404,7 +6427,18 @@ impl AgentVerb {
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultProductivityTree
+                | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
                 | Self::VaultEsignNoticesDispatch
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
+                | Self::VaultEsignSigningAct
+                | Self::VaultEsignSigningPdf
+                | Self::VaultEsignSigningImage
+                | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSealGet
                 | Self::VaultClaimsSeed
                 | Self::VaultSummariesRead
                 | Self::VaultSummariesProposalsRead
@@ -6495,6 +6529,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -6647,6 +6682,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -6964,6 +7000,7 @@ impl AgentVerb {
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
@@ -7374,17 +7411,6 @@ impl AgentVerb {
                 | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
-                | Self::VaultEsignCreate
-                | Self::VaultEsignGet
-                | Self::VaultEsignLinksIssue
-                | Self::VaultEsignSendForSignature
-                | Self::VaultEsignRemind
-                | Self::VaultEsignVoid
-                | Self::VaultEsignSigningAct
-                | Self::VaultEsignSigningPdf
-                | Self::VaultEsignSigningImage
-                | Self::VaultEsignSigningSignature
-                | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -7425,6 +7451,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -7609,6 +7636,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiHoldResume
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -7703,6 +7731,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizeGoalBind
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksGrantSet
@@ -7911,6 +7940,7 @@ impl AgentVerb {
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesResultSetAction
@@ -8295,6 +8325,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordRoomsSuggestSave
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
+                | Self::VaultLensesProposeFromPack
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::VaultGraphAsk
@@ -8420,6 +8451,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
+            Self::VaultRunnersSeatsResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -8586,6 +8618,7 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -8905,6 +8938,7 @@ impl AgentVerb {
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
             Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesProposeFromPack => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
@@ -9422,6 +9456,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
+            Self::VaultConsolidationCandidateDecisions => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
             Self::VaultConsolidationFrontier => &["spec"],
@@ -9655,6 +9690,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
+            Self::VaultRunnersSeatsResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -9821,6 +9857,7 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -10140,6 +10177,7 @@ impl AgentVerb {
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
             Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesProposeFromPack => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
@@ -10657,6 +10695,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
+            Self::VaultConsolidationCandidateDecisions => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
             Self::VaultConsolidationFrontier => &["spec"],
@@ -11052,6 +11091,9 @@ impl AgentVerb {
             }
             Self::VaultRunnersSeatsTopUp => {
                 "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."
+            }
+            Self::VaultRunnersSeatsResume => {
+                "The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
@@ -11548,6 +11590,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsOptimizeTradeoffAsksPick => {
                 "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."
+            }
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => {
+                "The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."
             }
             Self::VaultSkillsGovernanceGet => {
                 "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."
@@ -12487,6 +12532,9 @@ impl AgentVerb {
             }
             Self::VaultLensesPropose => {
                 "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."
+            }
+            Self::VaultLensesProposeFromPack => {
+                "Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it."
             }
             Self::VaultLensesActivate => {
                 "The owner selects a proposed lens revision for its pack slot."
@@ -13980,6 +14028,9 @@ impl AgentVerb {
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."
+            }
+            Self::VaultConsolidationCandidateDecisions => {
+                "The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

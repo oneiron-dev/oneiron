@@ -2,6 +2,7 @@
 mod dispatch_key;
 mod field_admission;
 mod fold;
+mod lane_scope;
 mod ledger;
 mod lifecycle;
 mod model;

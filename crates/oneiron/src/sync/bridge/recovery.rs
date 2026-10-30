@@ -98,15 +98,16 @@ fn preflight_in_txn(
         {
             return Err(refusal.err);
         }
-        // A file-plane ASSET the ingest skipped as the same body keeps its row (FIX 5393),
-        // and a pad row rests as its reference (KS-5).
+        // A file-plane ASSET the ingest skipped as the same body keeps its row, inline or by
+        // reference (FIX 5393, FIX 5489), and a pad row rests as its reference (KS-5).
         let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?;
         let landed = match stored {
             Some(stored) if stored == entity.blob => true,
             Some(stored) => {
-                crate::sync::asset_body::file_echo_equal(
+                crate::sync::asset_body::doc_echo_equal(
                     &vault.store,
                     txn,
+                    doc,
                     &id,
                     &stored,
                     &entity.blob,

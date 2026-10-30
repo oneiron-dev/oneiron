@@ -6,9 +6,9 @@ use super::{
     NoteAccessRequest, NoteActor, NoteFork, NoteProgramEdit, NoteReadRequest, NoteVerdict,
     NoteVersion,
 };
+use crate::EntityId;
 use crate::claim::ScopedReadResult;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::{EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
 
 /// Fork the exact live-head version a caller read, without changing that head.
@@ -193,7 +193,7 @@ impl Memory<'_> {
             note,
             Some(&input.base),
             &input.edit,
-            WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
         )?;
         self.read_note_fork(&NoteForkReadRequest {
             note_ref: input.note_ref.clone(),
@@ -248,11 +248,9 @@ impl Memory<'_> {
             }
             forks.push(side_id(&member.fork_ref)?);
         }
-        let bundle = self.vault().open_note_proposal(
-            &forks,
-            &input.explainer,
-            WriteActor::new(self.actor(), self.actor_class()),
-        )?;
+        let bundle =
+            self.vault()
+                .open_note_proposal(&forks, &input.explainer, self.write_actor())?;
         self.read_note_proposal(&NoteProposalRequest {
             proposal_ref: bundle.id.to_hex(),
             reason: input.reason.clone(),
@@ -327,7 +325,7 @@ impl Memory<'_> {
         self.vault().review_note_proposal(
             side_id(&input.proposal_ref)?,
             verdict,
-            WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
         )?;
         self.read_note_proposal(input)
     }

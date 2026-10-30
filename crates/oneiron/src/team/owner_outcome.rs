@@ -12,6 +12,10 @@
 //! content than the team delivered, so it settles nothing. The outcome rests
 //! on the decision's own receipt, in the decision's transaction. A team
 //! already settled keeps its first outcome: one run is one observation.
+//!
+//! The verdict also settles every critique a persisted review gave of that
+//! claim (OF-420, FIX 2970): the outcome names those critics, and each
+//! critique's outcome is recorded on its own critic's reliability cell.
 
 use serde::{Deserialize, Serialize};
 
@@ -153,11 +157,31 @@ pub fn bind_team_deliverable_in_txn(
     }
 }
 
+/// The claims bound as `team_ref`'s deliverables: the work an outcome no
+/// owner verdict gave the team settles (FIX 12106).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn team_deliverables_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    team_ref: &str,
+) -> Result<Vec<EntityId>> {
+    Ok(TEAM_DELIVERABLE
+        .scan_from(&vault.store, txn, &[])?
+        .into_iter()
+        .filter(|(_, binding)| binding.team_ref == team_ref)
+        .map(|(_, binding)| binding.claim)
+        .collect())
+}
+
 /// Settles the team whose deliverable `decision` reviewed, inside the
 /// decision's transaction. `reviewed` is the claim as the owner reviewed it.
-/// The caller passes only a decision its host authenticated as the owner's.
-/// `None`: the decision reviewed no bound deliverable, accepted other
-/// content, or the team was already settled.
+/// The caller passes only a decision its host authenticated as the owner's,
+/// and `owner`, the principal that decided it: the actor of each critique
+/// outcome the settlement records. `None`: the decision reviewed no bound
+/// deliverable, accepted other content, or the team was already settled.
 ///
 /// # Errors
 ///
@@ -168,6 +192,7 @@ pub(crate) fn settle_team_owner_verdict_in_txn(
     txn: &mut heed::RwTxn<'_>,
     decision: &GateDecisionRecord,
     reviewed: &ClaimBody,
+    owner: EntityId,
 ) -> Result<Option<TeamReceipt>> {
     let Some(claim) = decision.claim_id else {
         return Ok(None);
@@ -186,27 +211,61 @@ pub(crate) fn settle_team_owner_verdict_in_txn(
     let receipt = team_receipt_in_txn(vault, txn, &binding.team_ref)?.ok_or(
         Error::CorruptedIndex("team deliverable without its receipt"),
     )?;
-    let outcome = TeamOutcome {
+    let mut outcome = TeamOutcome {
         receipt: crate::receipt::gate_decision_receipt(decision).receipt_id,
         anchor: Anchor::OwnerVerdict,
         success,
         at: decision.created_at,
+        critics: None,
     };
+    let reviews = crate::critic::review::name_deliverable_critics_in_txn(
+        vault,
+        txn,
+        std::slice::from_ref(&binding.claim),
+        &mut outcome,
+    );
     match &receipt.outcome {
-        Some(existing) if *existing == outcome => Ok(Some(receipt)),
+        // The same verdict again scores its critics again: a critique whose
+        // outcome did not land the first time lands now, and one that did
+        // keeps its one outcome and evidence (FIX 12132).
+        Some(existing) if *existing == outcome => {
+            if let Some(reviews) = &reviews {
+                crate::critic::review::record_deliverable_outcomes_in_txn(
+                    vault,
+                    txn,
+                    reviews,
+                    &outcome,
+                    Some(owner),
+                );
+            }
+            Ok(Some(receipt))
+        }
         Some(_) => Ok(None),
         // The verdict settles on the reviewed claim, whose body the caller
-        // read and the fingerprint above checks: the one entity row the
-        // outcome was read from. The decision's word, the anchor, its time
-        // and its receipt id are recorded values (FIX 7103).
+        // read and the fingerprint above checks, and its critics on the
+        // verdict claims of the reviews of it: the entity rows the outcome
+        // was read from. The decision's word, the anchor, its time and its
+        // receipt id are recorded values (FIX 7103).
         None => {
+            let sources = std::iter::once(binding.claim)
+                .chain(reviews.iter().flatten().map(|review| review.verdict_claim))
+                .collect();
             let settled = settle_team_outcome_sourced_in_txn(
                 vault,
                 txn,
                 &binding.team_ref,
                 &outcome,
-                Some(vec![binding.claim]),
+                Some(sources),
             )?;
+            if let Some(reviews) = &reviews {
+                crate::critic::review::record_deliverable_outcomes_in_txn(
+                    vault,
+                    txn,
+                    reviews,
+                    &outcome,
+                    Some(owner),
+                );
+            }
             // The owner's acceptance anchors the settlement of the TASK the
             // team ran, on its settled row.
             if let Some(task) = binding

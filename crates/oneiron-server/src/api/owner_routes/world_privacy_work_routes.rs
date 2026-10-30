@@ -13,7 +13,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
@@ -24,17 +23,43 @@ use oneiron::policy_model::{WorldPrivacyReceipt, WorldPrivacySetInput};
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, revision_hex};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/worlds/privacy/settings", get(settings).post(set))
-        .route("/worlds/privacy/reassert", post(reassert))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/worlds/privacy/settings",
+                summary: "A world's settings as this install folds them, and the revision a change names as its seen.",
+                row: None,
+            },
+            get(settings),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/settings",
+                summary: "A holder sets a world's settings as his own act: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+                row: None,
+            },
+            post(set),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/reassert",
+                summary: "The owner re-asserts a world's complete settings at its current revision after a pin change: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+                row: None,
+            },
+            post(reassert),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,13 +6,12 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
@@ -20,10 +19,27 @@ use crate::server::SyncServer;
 use crate::wire_health::{self, HealthCheck};
 use crate::wire_telemetry::ConnectionPoolPressure;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/wire-health", get(list))
-        .route("/wire-health/outcome", post(outcome))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/wire-health",
+                summary: "Every check this server keeps (`checks`), and the shared connection pool's live pressure (`connection_pool_pressure`, FIX 7656): `{\"state\": \"clear\"}` while no socket waits for the pool, else `{\"state\": \"active\", \"check\": ...}`, a check of kind `inspect_connection_pool_pressure` naming the episode, the `[limits]` row and its bound, the credentials holding the most open request bodies, the pool's connections and the remedy. The mesh listener's sync streams keep their own check of the same shape (`mesh_pool`, FIX 7737), raised while a mesh stream waits for a place under the connection floor. It observes only: it pauses, revokes and refuses nothing, and does not promise that a revocation releases an already-open body.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/wire-health/outcome",
+                summary: "What happened next to one crossing.",
+                row: None,
+            },
+            post(outcome),
+        ),
+    ]
 }
 
 #[derive(Debug, Serialize)]

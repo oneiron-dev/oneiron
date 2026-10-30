@@ -172,16 +172,15 @@ pub(super) struct StoredExecutor {
     /// The anchored task outcome this receipt's fold counted, so the
     /// settle-time refold moves that count between the folded head and the
     /// head the judgment names now instead of recounting (FIX 11618,
-    /// FIX 11707). Absent on a row written before refolds, and on a fold
-    /// that counted none.
+    /// FIX 11707). Absent on a fold that counted none yet (a holding
+    /// judgment, or no anchored outcome joined).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<String>,
     /// The head the fold counted on, in aggregate-key wire form, so the
     /// settle-time refold moves the outcome count off the old head when a
     /// receipt is re-judged onto another executor or scope (FIX 11707).
-    /// Absent on a row folded before the head was kept, and on a fold that
-    /// counted nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Absent (`None`) only on a fold that counted nothing yet: the named
+    /// row encodes the head always, `None` as explicit nil (FIX 11916).
     pub(super) head: Option<StoredHead>,
 }
 

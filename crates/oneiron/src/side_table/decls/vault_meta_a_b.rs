@@ -33,7 +33,8 @@ side_tables! {
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
-    AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson;
+    AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson
+        => crate::agent_dispatch::spend_handoff::erase_spend_scope_actor_in_txn;
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
     AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson Authored
@@ -259,8 +260,8 @@ side_tables! {
     BOOKING_PUBLICATION_WRITE_STAGE: VaultMeta b"booking.public_write.in_txn/" Raw;
     /// Booking token and checkout lease rows (digest domains keep them apart). Key: hash32.
     BOOKING_TOKEN: VaultMeta b"booking.token.v1:" VersionedNamed;
-    /// Booking anti-abuse rules, notices, rate counters and slot-list caches. Key: tag NUL + hash32
-    /// (rule, notice, rate, cache).
+    /// Booking anti-abuse rule proposals, rate counters, slot-list caches and quarantined
+    /// submissions. Key: tag NUL + hash32 or id16 (proposal, rate, cache, submission).
     BOOKING_ANTI_ABUSE: VaultMeta b"booking:anti_abuse:v1:" Raw;
     /// Companion shortlist proposal. Key: bytes32.
     BOOKING_COMPANION_PROPOSAL: VaultMeta b"booking:companion_proposal:v1:" VersionedNamed;

@@ -112,6 +112,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A holder's delivery and ack of a removal archive are facts about bytes
     // that left the vault: a restore stands them as the live vault holds them.
     (&t::SHARED_ACT_REMOVAL_DELIVERY, LIVE),
+    (
+        &t::SHARED_ACT_REMOVAL_EXPORT_RECORDS,
+        SHARED_VAULT_MEMBERSHIP,
+    ),
     // An archive delivered to a removed Owner has left the vault: a restore
     // neither revives a purged one nor drops one still within its term.
     (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
@@ -124,6 +128,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
+    (&t::SKILL_CALLABLE_CASE, CONTENT),
+    (&t::SKILL_CALLABLE_CASE_INDEX, CONTENT),
     (&t::SKILL_CALLABLE_GATE, CONTENT),
     // A restore cannot refund a spent exploration slice or re-open a trial's
     // exposure: trials, their routed runs and the slice ledger stand as the
@@ -140,6 +146,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK, CONTENT),
     (&t::SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT, CONTENT),
     (&t::SKILL_ATTRIBUTION_CURSOR, CONTENT),
+    (&t::SKILL_ATTRIBUTION_DECISION_RECEIPTS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DERIVATION_WITNESS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_REVISION, CONTENT),
@@ -151,6 +158,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_ATTRIBUTION_LATE_CREDIT, CONTENT),
     (&t::SKILL_ATTRIBUTION_POSITIVE_CURSOR, CONTENT),
     (&t::SKILL_ATTRIBUTION_POSITIVE_PROPOSAL, CONTENT),
+    (&t::SKILL_ATTRIBUTION_SITE_EXPOSURE, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_RECEIPT_CAPTURED, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR, CONTENT),
@@ -251,7 +259,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_BROWSER_WORKFLOW_ATTEMPT, CONTENT),
     (&t::TASK_BY_OWNER_BACKFILLED, CONTENT),
     (&t::TASK_BY_OWNER_FORWARD, CONTENT),
-    (&t::TASK_CONSULT_PARTY_BACKFILLED, CONTENT),
     (&t::TASK_CREATE_ORIGIN, CONTENT),
     (&t::TASK_FACT_SUPPRESSED, LIVE),
     (&t::TASK_FOLLOW_UP_MARKER, CONTENT),

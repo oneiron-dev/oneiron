@@ -140,6 +140,15 @@
 //! the same way — never a defaulted class. See
 //! `resolve_persisted_actor_class`.
 
+mod actor_stamp;
+// Opaque actor stamp tokens: a commit names one in its writer's place (FIX
+// 10930).
+pub use actor_stamp::ActorStamp;
+pub(crate) use actor_stamp::{
+    actor_stamp, actor_stamp_in_txn, actor_stamp_tokens_remain_in_txn,
+    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn,
+    release_held_actor_stamps_in_txn, resolve_actor_stamp, resolve_actor_stamp_in_txn,
+};
 mod actor_substrate;
 mod archive;
 pub mod birth;
@@ -164,13 +173,8 @@ pub mod text_commit;
 mod writes;
 pub(crate) use writes::EdgeProvenanceWrite;
 
-#[cfg(test)]
-pub(crate) use self::actor_substrate::encode_actor_class_evidence;
-pub(crate) use self::actor_substrate::{
-    EVIDENCE_KEY_ACTOR_CLASS, decode_actor_class_evidence, decode_model_entity_body,
-    resolve_persisted_actor_class,
-};
 pub use self::actor_substrate::{MODEL_SUBSTRATE_FIELD_MAX_BYTES, validate_actor_class};
+pub(crate) use self::actor_substrate::{decode_model_entity_body, resolve_persisted_actor_class};
 use self::actor_substrate::{encode_model_entity_body, validate_model_substrate_field};
 pub use self::codec::{
     EdgeProvenanceClaimBody, decode_edge_provenance_body, derive_confirmation_status,

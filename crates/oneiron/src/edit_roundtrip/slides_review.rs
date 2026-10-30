@@ -227,6 +227,10 @@ pub struct SlideJudgment {
     #[serde(default)]
     pub location: Option<SlideLocation>,
     pub band_mode: BandMode,
+    /// The ceiling rung of the dial the ladder ran under: an enforced in-band
+    /// answer from that rung stands with no reasoning step, since no stronger
+    /// rung is left to read it again (FIX 10745).
+    pub ceiling: DecisionRung,
     pub renderer: String,
     pub frontier: [u8; 32],
     /// The unit's `state.media`: its image's ref and whether its pixels rode
@@ -240,6 +244,10 @@ pub struct SlideJudgment {
     /// media entries.
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
+    /// The deck's live body when it was reviewed: an edit to it never
+    /// exported withdraws the slides it changed (FIX 2115).
+    #[serde(default)]
+    pub judged_live: Option<crate::office_body::LivePin>,
     pub comment: String,
     /// Runtime display words pinned so settle can recheck comment semantics.
     pub labels: SlideReviewLabels,

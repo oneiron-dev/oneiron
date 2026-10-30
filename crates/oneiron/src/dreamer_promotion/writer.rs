@@ -1,19 +1,38 @@
 //! The one-candidate promotion writer and its landed re-read. A refusal
 //! keeps the reason text its outcome has always carried, and the kind of
 //! the engine error behind it when one refused it (FIX 7271), so the scoped
-//! sink logs a kind and never the text.
+//! sink logs a kind and never the text. A gate's refusal also keeps the
+//! gate's own outcome and reason codes (FIX 10355), so the sink's one error
+//! and the log name why the gate refused.
 
 use super::*;
 use crate::dreamer_consolidation::evidence::ResolvedConflictOutput;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, GateError};
 
-/// Why one candidate was not written: the reason its outcome keeps, and the
-/// kind of the engine error that refused it. A structural guard's refusal
-/// has no kind; none is read back out of text.
+/// A gate refusal's outcome and reason codes, as the gate wrote them: static
+/// codes, never the candidate's text (FIX 10355).
+pub(super) type GateCodes = (&'static str, Vec<&'static str>);
+
+/// The outcome and reason codes of `error` when the gate refused the write.
+pub(super) fn gate_codes(error: &Error) -> Option<GateCodes> {
+    match error {
+        Error::Gate(GateError::GateWriteRejected {
+            outcome,
+            reason_codes,
+        }) => Some((*outcome, reason_codes.clone())),
+        _ => None,
+    }
+}
+
+/// Why one candidate was not written: the reason its outcome keeps, the
+/// kind of the engine error that refused it, and the gate's codes when the
+/// gate refused it. A structural guard's refusal has no kind; none is read
+/// back out of text.
 #[derive(Debug)]
 pub(super) struct PromotionRejection {
     pub(super) reason: String,
     pub(super) kind: Option<ErrorKind>,
+    pub(super) gate: Option<GateCodes>,
 }
 
 impl PromotionRejection {
@@ -22,13 +41,15 @@ impl PromotionRejection {
         Self {
             reason: reason.into(),
             kind: None,
+            gate: None,
         }
     }
 
     /// An engine error's refusal, its text as the outcome carried it.
-    fn engine(error: Error) -> Self {
+    pub(super) fn engine(error: Error) -> Self {
         Self {
             kind: Some(error.kind()),
+            gate: gate_codes(&error),
             reason: error.to_string(),
         }
     }
@@ -37,6 +58,7 @@ impl PromotionRejection {
     fn engine_in(context: &str, error: Error) -> Self {
         Self {
             kind: Some(error.kind()),
+            gate: gate_codes(&error),
             reason: format!("{context}: {error}"),
         }
     }
@@ -48,7 +70,20 @@ impl PromotionRejection {
         Self {
             reason,
             kind: Some(Error::from(error).kind()),
+            gate: None,
         }
+    }
+
+    /// Records this refusal of `id` in `outcome`: its kind and gate codes
+    /// when it carries them, then its reason.
+    pub(super) fn record(self, id: EntityId, outcome: &mut PromotionOutcome) {
+        if let Some(kind) = self.kind {
+            outcome.rejected_kinds.push((id, kind));
+        }
+        if let Some((gate_outcome, reason_codes)) = self.gate {
+            outcome.rejected_gates.push((id, gate_outcome, reason_codes));
+        }
+        outcome.rejected.push((id, self.reason));
     }
 }
 
@@ -483,11 +518,25 @@ pub(super) fn promote_one_answering(
     // a hint is a stale side CLAIM, and a machine claim birth refuses every
     // stale birth (claim/machine_birth.rs), so a hint would fail the whole
     // candidate. The belief itself still lands.
-    let hints: Vec<&str> = if envelope.machine_signature().is_some() {
+    let signed = envelope.machine_signature().is_some();
+    let hints: Vec<&str> = if signed {
         Vec::new()
     } else {
         prospective_queries.iter().map(String::as_str).collect()
     };
+    // A newborn claim has no earlier revision for idle publication to index,
+    // so its own words reach the lexical index in its birth batch, as a
+    // reaction's do (reaction/write.rs). A signed promotion indexes its
+    // prospective queries there too, since it carries no hint claims: an
+    // agent's recall finds the belief the pass landed.
+    let birth_text = birth_lexical_text(
+        &probe_body,
+        if signed {
+            prospective_queries.as_slice()
+        } else {
+            &[]
+        },
+    );
     // The checker's turn, waited for here, before the batch announces its
     // write (FIX 8751, 8701): the gate inside never waits for capacity.
     let checker = checker
@@ -505,6 +554,7 @@ pub(super) fn promote_one_answering(
                 candidate.learned_at,
                 &hints,
             )
+            .text(&candidate.claim_id, &[("val", birth_text.as_str())])
             .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
     } else {
         // Preserve the original single-pass transaction for every None caller.
@@ -520,6 +570,7 @@ pub(super) fn promote_one_answering(
                     candidate.learned_at,
                     &hints,
                 )
+                .text(&candidate.claim_id, &[("val", birth_text.as_str())])
                 .apply_recording_gate_decisions(wtxn)?;
             finish_promotion(wtxn)
         })
@@ -532,6 +583,20 @@ pub(super) fn promote_one_answering(
     // predicate, source, and taint. A failure cannot roll back the committed
     // writes; it rejects the candidate, and the caller must not complete the attempt.
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
+}
+
+/// What a promoted claim's birth batch indexes under `val`: its value as the
+/// embedder projects a claim (embed.rs `claim_text`), then `queries`.
+fn birth_lexical_text(body: &crate::claim::ClaimBody, queries: &[String]) -> String {
+    let mut text = body
+        .value
+        .as_str()
+        .map_or_else(|| body.value.to_string(), str::to_owned);
+    for query in queries {
+        text.push(' ');
+        text.push_str(query);
+    }
+    text
 }
 
 /// Re-reads a landed claim and checks it is the claim we wrote. A missing

@@ -29,6 +29,10 @@ pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
 /// OF-578: the functional role the attempt's executor ran as, frozen with
 /// `model` and `executor_seat`; its value is the role's serde token.
 pub const FIELD_EXECUTOR_ROLE: &str = "executor_role";
+/// FIX 8259: the lease generation (`AttemptRecord.attempt_count`) the attempt
+/// settled under, frozen at the terminal seal. Absent on receipts sealed
+/// before the stamp existed.
+pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
@@ -412,15 +416,40 @@ impl ReceiptRecord {
 
     /// Re-keys a frozen project stamp naming erased `project` to the opaque
     /// `erased` scope (FIX 6038): the run stays apart from the vault's and no
-    /// longer names the project. `true` when the stamp named it.
+    /// longer names the project. The frozen attribution's project is
+    /// re-keyed the same way (FIX 11364), so neither copy names it. `true`
+    /// when either named it.
     pub(crate) fn rescope_task_project(&mut self, project: EntityId, erased: EntityId) -> bool {
-        match self.fields.get_mut(FIELD_TYPE_REF_PROJECT) {
+        let stamped = match self.fields.get_mut(FIELD_TYPE_REF_PROJECT) {
             Some(stamp) if *stamp == project.to_hex() => {
                 *stamp = erased.to_hex();
                 true
             }
             _ => false,
+        };
+        self.rescope_attribution_project(project, erased) || stamped
+    }
+
+    /// Re-keys the frozen `manifest.attribution`'s project naming `project`
+    /// to `erased`; `true` when it named it. An attribution that does not
+    /// decode is left as it is: its reader refuses it as before.
+    fn rescope_attribution_project(&mut self, project: EntityId, erased: EntityId) -> bool {
+        let Some(encoded) = self.fields.get_mut(FIELD_MANIFEST_ATTRIBUTION) else {
+            return false;
+        };
+        let decoded = serde_json::from_str::<super::PackAttributionFields>(encoded.as_str());
+        let Ok(mut attribution) = decoded else {
+            return false;
+        };
+        if attribution.project != Some(project) {
+            return false;
         }
+        attribution.project = Some(erased);
+        let Ok(rekeyed) = serde_json::to_string(&attribution) else {
+            return false;
+        };
+        *encoded = rekeyed;
+        true
     }
 
     /// The executor model the attempt behind this receipt was stamped with,
@@ -428,6 +457,14 @@ impl ReceiptRecord {
     #[must_use]
     pub fn executor_model(&self) -> Option<&str> {
         self.fields.get(FIELD_MODEL).map(String::as_str)
+    }
+
+    /// The lease generation the attempt settled under (FIX 8259), read from
+    /// the recorded field alone. `None` on receipts that predate the stamp,
+    /// or whose stamp does not parse.
+    #[must_use]
+    pub fn lease_generation(&self) -> Option<u32> {
+        self.fields.get(FIELD_LEASE_GENERATION)?.parse().ok()
     }
 
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never

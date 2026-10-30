@@ -129,7 +129,9 @@ mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 mod claim_vad_owed;
-pub(crate) use claim_vad_owed::{owe_claim_vad_in_txn, settle_claim_vad_in_txn};
+pub(crate) use claim_vad_owed::{
+    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+};
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
@@ -143,6 +145,7 @@ pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
+mod idempotency_intent;
 mod inference_snapshot_custody;
 mod key_custody;
 mod key_encoding;
@@ -183,8 +186,8 @@ pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use asset_body::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
-    asset_body_file_of_row, asset_file_in_txn, file_put_body_in_txn, short_content_hash_in_txn,
-    stage_asset_body_in_txn,
+    CheckedAssetBody, asset_body_file_of_row, asset_file_in_txn, asset_file_of_raw_in_txn,
+    file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
 };
 #[cfg(unix)]
 #[allow(
@@ -290,6 +293,12 @@ use structural_kind_registry::*;
 pub(crate) use structural_kind_registry::{
     STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
     structural_kind_registry_key,
+};
+// FIX 10379: the intent a keyed request's route writes under, counted by
+// each write it commits.
+#[doc(hidden)]
+pub use idempotency_intent::{
+    IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent,
 };
 // KS-2B2: the host's row-held responses in `sync_state`, read by the engine.
 #[cfg(feature = "sync")]

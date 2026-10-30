@@ -5,9 +5,15 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use std::collections::BTreeSet;
+
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
-    ChannelIdentityState, DelegatedGrant, DelegatedProvisionRequest, SelfHeldShape,
+    ChannelIdentityState, DelegatedGrant, DelegatedProvisionRequest,
+    PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE, PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
+    PREDICATE_CHANNEL_IDENTITY_CHANNEL, SelfHeldShape,
+    channel_identity_correctable_head_ids_in_txn,
 };
 use crate::channel_identity_lifecycle::{
     BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
@@ -186,12 +192,48 @@ impl Memory<'_> {
             .vault
             .channel_identity_facts(&id)?
             .ok_or_else(|| MemoryError::not_found("channel identity has no live facts"))?;
+        // A correction written in a world this reader cannot see stays
+        // unseen: its fact shows as the row seeded it (FIX 9933).
+        let corrected = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            channel_identity_correctable_head_ids_in_txn(&self.vault.store, &txn, &id)?
+        };
+        self.produced_from(corrected.values().copied());
+        let mut withheld = BTreeSet::new();
+        for (predicate, head) in &corrected {
+            if self.get_entity(&head.to_hex())?.value.is_none() {
+                withheld.insert(*predicate);
+            }
+        }
+        let channel = if withheld.contains(PREDICATE_CHANNEL_IDENTITY_CHANNEL) {
+            row.channel().to_owned()
+        } else {
+            facts.channel
+        };
+        let address_or_handle = if withheld.contains(PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE) {
+            row.address_or_handle().to_owned()
+        } else {
+            facts.address_or_handle
+        };
+        let binding = if withheld.contains(PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE)
+            || withheld.contains(PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET)
+            || withheld.contains(PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF)
+        {
+            row.binding()
+        } else {
+            facts.binding
+        };
         Ok(ChannelIdentityView {
             identity_ref: id,
-            channel: facts.channel,
-            address_or_handle: facts.address_or_handle,
+            channel,
+            address_or_handle,
             shape: facts.shape,
-            binding: facts.binding,
+            binding,
             custody: if row.is_delegated() {
                 ChannelIdentityCustody::Delegated
             } else {
@@ -422,25 +464,41 @@ impl Memory<'_> {
             } => {
                 // FIX 6424 part 3: a retry of a kept delegated bind binds the
                 // row its first call provisioned; it is never provisioned
-                // twice.
-                let provisioned = self
-                    .vault
-                    .get_channel_identity(&identity_id)
-                    .ok()
-                    .flatten()
-                    .is_some();
-                if !provisioned {
-                    self.vault.provision_delegated_identity(
+                // twice. FIX 6905: the check and the provision share one
+                // writer keyed on the kept id, so of two concurrent first
+                // calls one provisions and the other finds its row; an
+                // already-exists for that same id reads as provisioned.
+                let vault = self.vault;
+                vault.with_write_txn(|wtxn| {
+                    let provisioned = |wtxn: &heed::RwTxn<'_>| {
+                        vault
+                            .get_channel_identity_in_txn(wtxn, &identity_id)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                    };
+                    if provisioned(wtxn) {
+                        return Ok(());
+                    }
+                    let request = DelegatedProvisionRequest {
+                        channel,
+                        address_or_handle,
+                        binding,
+                        grant,
+                    };
+                    match vault.provision_delegated_identity_in_txn(
+                        wtxn,
                         &identity_id,
-                        DelegatedProvisionRequest {
-                            channel,
-                            address_or_handle,
-                            binding,
-                            grant,
-                        },
+                        request,
                         requested_at,
-                    )?;
-                }
+                    ) {
+                        Ok(_) => Ok(()),
+                        Err(crate::Error::Record(
+                            crate::error::RecordError::ChannelIdentityAlreadyExists,
+                        )) if provisioned(wtxn) => Ok(()),
+                        Err(error) => Err(error),
+                    }
+                })?;
                 fulfillment_mode
             }
         };

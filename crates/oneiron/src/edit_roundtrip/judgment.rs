@@ -43,6 +43,10 @@ pub struct SheetCellAnswer {
     /// the answer was judged against.
     #[serde(default)]
     pub judged_version: Option<u64>,
+    /// For a folder column: the file's live body when it was read, so an
+    /// edit to it never exported withdraws the answer (FIX 2115).
+    #[serde(default)]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// What each row's call read beside its own cells: the row's cells in
@@ -70,6 +74,10 @@ pub struct SheetAnswerBundle {
     /// A sheet-row ask's read columns; a folder column reads its files.
     #[serde(default)]
     pub reads: Option<SheetRowReads>,
+    /// The workbook's live body when it was asked, so an edit to it never
+    /// exported withdraws the answers it changed (FIX 2115).
+    #[serde(default)]
+    pub base_live: Option<crate::office_body::LivePin>,
 }
 
 impl SheetAnswerBundle {
@@ -231,6 +239,7 @@ impl Vault {
         {
             return Err(invalid("invalid sheet ask selection"));
         }
+        let base_live = self.office_body_pin(artifact)?;
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Xlsx)?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let in_rows = |row: u32| (rows.start.row..=rows.end.row).contains(&row);
@@ -320,6 +329,7 @@ impl Vault {
                 decision,
                 source: None,
                 judged_version: Some(version),
+                judged_live: None,
             });
         }
         let bundle = SheetAnswerBundle {
@@ -343,6 +353,7 @@ impl Vault {
                 last_col: rows.end.col,
                 header_row,
             }),
+            base_live,
         };
         Ok(ArtifactAskRun {
             proposal: self.stage_sheet_answers(artifact, bundle, ask.run_ref, version, frontier)?,
@@ -412,7 +423,14 @@ impl EditSession for NativeCellSession {
             self.limits,
             &crate::office_body::document_resources(),
         )
-        .map_err(|_| failed())?;
+        .map_err(|error| {
+            // A resource refusal is the engine's error (FIX 10587), never a failed write.
+            if let Some(refusal) = error.resource() {
+                crate::office_body::document_refused(refusal)
+            } else {
+                failed()
+            }
+        })?;
         let changes = plan
             .ops
             .iter()
@@ -458,7 +476,14 @@ impl EditSession for NativeCellSession {
             self.limits,
             &crate::office_body::document_resources(),
         )
-        .map_err(|_| failed())?
+        .map_err(|error| {
+            // A resource refusal is the engine's error (FIX 10587), never a failed write.
+            if let Some(refusal) = error.resource() {
+                crate::office_body::document_refused(refusal)
+            } else {
+                failed()
+            }
+        })?
         .bytes;
         Ok(AppliedEdit {
             bytes,

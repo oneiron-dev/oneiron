@@ -6,7 +6,7 @@
 //! dependency or capacity blocks it. A successful grant atomically reserves
 //! incremental bytes in the device ledger and lives until terminal release
 //! or reap. Unknown capacity admits and records under the lead ruling.
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -511,6 +511,16 @@ impl DeviceAdmission {
     /// Fit, else idle unload, then an approved smaller profile, then wait.
     /// Unknown capacity has already admitted inside `grant`.
     pub fn resolve_pressure(self: &Arc<Self>, ticket: &WorkTicket) -> PressureDecision {
+        self.resolve_pressure_excluding(ticket, &BTreeSet::new())
+    }
+
+    /// One pressure pass, excluding victims already tried. A victim must be
+    /// idle both in its executor row and across its tickets and load holds.
+    pub fn resolve_pressure_excluding(
+        self: &Arc<Self>,
+        ticket: &WorkTicket,
+        tried: &BTreeSet<String>,
+    ) -> PressureDecision {
         match self.grant(ticket) {
             Ok(Some(grant)) => return PressureDecision::Grant(grant),
             Err(stop) => return PressureDecision::Stop(stop),
@@ -530,6 +540,13 @@ impl DeviceAdmission {
                 executor.idle
                     && (UNLOAD_EXTERNAL || !executor.external)
                     && executor.worker_id != ticket.request.worker_id
+                    && !tried.contains(&executor.worker_id)
+                    && !state
+                        .tickets
+                        .values()
+                        .any(|ticket| ticket.request.worker_id == executor.worker_id)
+                    && !state.load_waiters.contains_key(&executor.worker_id)
+                    && !self.ledger.has_hold(&load_holder(&executor.worker_id))
             })
             .map(|executor| executor.worker_id.clone());
         if let Some(worker) = idle {

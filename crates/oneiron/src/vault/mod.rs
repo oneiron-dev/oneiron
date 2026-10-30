@@ -133,6 +133,10 @@ pub struct Vault {
     /// rewrites the manifest. Reopening cleanly also restores trust via
     /// the regular handshake path.
     pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
+    /// The owed claim VAD count at which the write door's last drain tried
+    /// debts and settled none, `0` when none stalled (FIX 11923): while the
+    /// count stands, writes skip that drain.
+    pub(crate) owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
     /// state mutex and nothing else: the fixed-order drop transaction and the
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
@@ -207,6 +211,11 @@ pub struct Vault {
     /// memory only.
     pub(crate) managed_owner_check:
         std::sync::OnceLock<std::sync::Arc<dyn crate::authority::ManagedOwnerCheck>>,
+    /// The served host's provider APIs and mail server its served sinks send
+    /// through (OF-187), installed once per open vault
+    /// ([`Vault::install_served_transports`]). In memory only.
+    pub(crate) served_transports:
+        std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`

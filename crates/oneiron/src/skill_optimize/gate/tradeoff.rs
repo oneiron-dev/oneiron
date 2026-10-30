@@ -198,11 +198,19 @@ impl JevTradeoffVerdict {
 #[serde(deny_unknown_fields)]
 pub struct SkillTradeoffAsk {
     pub pending: EntityId,
+    /// The ACTIVE skill the pending verdict revises, stamped from the
+    /// verdict at ask creation (FIX 10383).
+    pub skill: EntityId,
     pub question: SkillTradeoffQuestion,
     pub jev: Option<JevTradeoffVerdict>,
     /// The highest rung of `question.roles` the ask has reached. Every role
     /// at or below it may answer.
     pub rung: u32,
+    /// The pin (BLAKE3, lower hex) of the judge rubric in force when `jev`
+    /// was asked; `None` while none was. A kept `jev` answers the same
+    /// question again only under this rubric: after a rubric edit Jev is
+    /// asked again (FIX 12083).
+    pub judge_rubric_digest: Option<String>,
 }
 
 impl SkillTradeoffAsk {

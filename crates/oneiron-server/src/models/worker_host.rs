@@ -36,7 +36,7 @@ mod probe;
 mod process;
 mod session;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -50,10 +50,11 @@ use oneiron::llm::{
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
     ExecutorRegistration, InferenceWorker, PressureDecision, UnloadOutcome, WorkEnvelope,
-    WorkRequest, WorkTicket, WorkerPolicy, WorkerProbe, WorkerSpec,
+    WorkRequest, WorkTicket, WorkerActivity, WorkerPolicy, WorkerProbe, WorkerSpec,
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
+use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
@@ -168,22 +169,72 @@ impl BoundWork {
             self.armed = false;
             return Ok(None);
         };
-        let grant = match ticket.resolve_pressure() {
-            PressureDecision::Grant(grant) => {
-                self.armed = false;
-                return Ok(Some(grant));
+        let mut tried = BTreeSet::new();
+        let mut victim_changes = Vec::new();
+        loop {
+            match ticket.resolve_pressure_excluding(&tried) {
+                PressureDecision::Grant(grant) => {
+                    self.armed = false;
+                    return Ok(Some(grant));
+                }
+                PressureDecision::Stop(stop) => return Err(stop),
+                PressureDecision::UnloadIdle(worker) => {
+                    if let Some(victim) = hosted_worker(&worker) {
+                        victim_changes.push(victim.subscribe_changed());
+                    }
+                    let _ = unload_idle_worker(&worker).await;
+                    tried.insert(worker);
+                    continue;
+                }
+                PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
             }
-            PressureDecision::Stop(stop) => return Err(stop),
-            PressureDecision::UnloadIdle(worker) => {
-                let _ = unload_idle_worker(&worker).await;
-                ticket.wait_execution_grant().await?
+
+            // Arm every wake before the final no-room check. A deferred
+            // victim whose own demand drops is heard through its worker watch;
+            // admission hears grants, releases, loads and fresh idle rows.
+            let changed = ticket.pressure_change();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            match ticket.resolve_pressure_excluding(&tried) {
+                PressureDecision::Grant(grant) => {
+                    self.armed = false;
+                    return Ok(Some(grant));
+                }
+                PressureDecision::Stop(stop) => return Err(stop),
+                PressureDecision::UnloadIdle(_) => continue,
+                PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
             }
-            PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {
-                ticket.wait_execution_grant().await?
+            let victim_wake = async move {
+                if victim_changes.is_empty() {
+                    std::future::pending::<()>().await;
+                } else {
+                    select_all(victim_changes.into_iter().map(|mut receiver| {
+                        Box::pin(async move {
+                            let _ = receiver.changed().await;
+                        })
+                    }))
+                    .await;
+                }
+            };
+            tokio::pin!(victim_wake);
+            let deadline = ticket.deadline();
+            tokio::select! {
+                () = changed.as_mut() => {},
+                _ = victim_wake => {},
+                () = async {
+                    if let Some(deadline) = deadline {
+                        tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    ticket.cancel();
+                    return Err(AdmissionStop::Deadline);
+                }
             }
-        };
-        self.armed = false;
-        Ok(Some(grant))
+            tried.clear();
+            victim_changes = Vec::new();
+        }
     }
 
     #[must_use]
@@ -333,6 +384,15 @@ async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
     }
 }
 
+/// Returns one hosted supervisor by id for a victim-watch subscription.
+fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
+    HOST.get().and_then(|host| {
+        host.lock()
+            .get(worker_id)
+            .map(|hosted| hosted.worker.clone())
+    })
+}
+
 /// Takes a device ticket for one bound call before its worker acquire. No
 /// device means the route keeps its existing unmediated path. `envelope` is
 /// the call's incremental charge beyond the worker's steady declaration.
@@ -396,6 +456,13 @@ pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
             external,
             idle,
         });
+}
+
+/// Publishes one worker-reported activity snapshot to both admission and
+/// the supervisor without deriving either side from the other.
+pub(super) fn report_device_activity(worker: &InferenceWorker, activity: WorkerActivity) {
+    register_device_executor(&worker.spec().worker_id, activity.is_idle());
+    worker.report(activity);
 }
 
 /// Cross-checks a worker's own device capacity report with the pre-load
