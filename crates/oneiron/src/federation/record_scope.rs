@@ -107,7 +107,7 @@ pub(crate) fn backfill_task_base(
         id,
         crate::registry::ENTITY_TYPE_TASK,
         data,
-        false,
+        RowPut::Birth,
     )
 }
 
@@ -119,6 +119,19 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
 }
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
+}
+/// What a put is to the row it writes: [`stamp_put`] mints a first position
+/// for a row stored with none only at its local birth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowPut {
+    /// A local put of a row not stored before it, or a sweep that settles a
+    /// stored row's first position.
+    Birth,
+    /// A local put of a row stored before it: a row stored with no position,
+    /// as a replicated row is, keeps none (FIX 11925).
+    LocalReput,
+    /// A peer's replicated row.
+    Replicated,
 }
 /// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
 /// a peer hears "my tasks" only where it may read them). An axis left `None`
