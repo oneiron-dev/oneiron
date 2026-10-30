@@ -142,6 +142,11 @@ pub struct RepoProposal {
     /// The class a host stamped beside the actor (FIX 6867); `None` keeps
     /// the trusted and owner ingress as it is.
     pub actor_class: Option<u8>,
+    /// The verified credential lineage its owner opener carried, frozen at
+    /// admission: that lineage and its forks never settle it (FIX 8838).
+    /// Empty for a trusted, run or bundle proposal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opener_lineage: Vec<[u8; 32]>,
 }
 
 /// The complete reviewed operation identity. File bytes remain on `RepoProposal`.
@@ -331,6 +336,7 @@ impl Vault {
             RepoProposalReview::Explicit(catalog),
             ProposalBase::CurrentCheckout,
             None,
+            None,
             |_| Ok(Ok(())),
         )?;
         Ok(proposed.unwrap_or_else(|never| match never {}))
@@ -359,6 +365,7 @@ impl Vault {
             review,
             ProposalBase::CurrentCheckout,
             None,
+            Some(owner),
             |txn| {
                 guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
                 if let Some(session) = session {
