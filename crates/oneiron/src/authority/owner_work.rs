@@ -123,8 +123,9 @@ pub(super) struct OwnerWorkState {
     /// hands it out and copies no permit; one of another request on the set
     /// hashes no bytes again. The first join still verifies. A piece that
     /// changes a set drops its entry, and a merge keeps only the left's
-    /// entries on unchanged sets.
-    verified_permit_sets: BTreeMap<([u8; 32], CustodyPermitPieces), Arc<OwnerWorkRequest>>,
+    /// entries on unchanged sets. An entry whose request is superseded or
+    /// whose secret is revoked is pruned (FIX 12140).
+    verified_permit_sets: BTreeMap<([u8; 32], CustodyPermitPieces), permit_pieces::JoinedPermitSet>,
 }
 
 /// One admitted request as this install reads it. The body is the fold
@@ -430,7 +431,12 @@ fn apply_request(
     heads.live.insert(hash);
     custody::note_custody_revoke(work, &request);
     let body = request.into_shared();
-    permit_pieces::keep_joined(work, key, &body);
+    permit_pieces::keep_joined(work, (key, hash), &body);
+    // Only a custody request supersedes custody heads or revokes a secret,
+    // and the joins it ends leave the memo (FIX 12140).
+    if body.kind() == OwnerWorkKind::Custody {
+        permit_pieces::prune_joined(work);
+    }
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
@@ -550,6 +556,9 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
         let superseded = &held.superseded;
         held.live.retain(|hash| !superseded.contains(hash));
     }
+    // A join whose request the right superseded, or whose secret it
+    // revoked, leaves the memo (FIX 12140).
+    permit_pieces::prune_joined(merged);
 }
 
 /// The fold's view of every request and result, under this install's pin and

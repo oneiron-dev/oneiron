@@ -67,7 +67,7 @@ pub(super) fn apply_kit_request(
         return Ok(());
     }
     let body = request.into_shared();
-    permit_pieces::keep_joined(work, *key, &body);
+    permit_pieces::keep_joined(work, (*key, hash), &body);
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
