@@ -196,8 +196,7 @@ families! {
         CODE_DOCUMENT_INGRESS CODE_DOCUMENT_PATH;
     Class::Owner(Getter::CodeRevision) => CODE_REVISION_FORK CODE_REVISION_FORK_PARENT_INDEX
         CODE_REVISION_FRONTIER CODE_REVISION_INTEGRITY CODE_REVISION_PARENT_INDEX
-        CODE_REVISION_PROMOTION CODE_REVISION_PROPOSAL CODE_REVISION_QUEUE_ROOT
-        CODE_REVISION_RECORD
+        CODE_REVISION_PROMOTION CODE_REVISION_PROPOSAL CODE_REVISION_RECORD
         CODE_REVISION_SESSION_INDEX;
     Class::Owner(Getter::Codebase) => SECRET_SNAPSHOT_CODEBASE_CUSTODY CODEBASE_FORK_INDEX
         CODEBASE_PROJECT_INDEX CODEBASE_REPO_INDEX CODEBASE_SCOPE_INDEX CODEBASE_SNAPSHOT;
@@ -209,6 +208,9 @@ families! {
     // audience, the verified subject, a phase and a generation; its tokens
     // stay in the slot's sealed custody record.
     Class::Structure => CLOUD_REGISTRATION;
+    // A tested queue revision's kept chain root: two ids, no payload (FIX
+    // 7390, 7391).
+    Class::Structure => CODE_REVISION_QUEUE_ROOT;
     // A code run's response owner and wait holder hold ids, status and an
     // actor's id or its erasure, never the reply (FIX 6589).
     Class::Structure => CODE_RUN_RESPONSE_OWNER CODE_RUN_WAIT_HOLDER;
