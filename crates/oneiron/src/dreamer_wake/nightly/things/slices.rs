@@ -3,14 +3,15 @@
 //! project make one child, which lists that project's prior claims as a
 //! one-project branch always has. A part whose project is not known (one of
 //! its TURNs has no exposure) is a child of its own, as before. Inside a
-//! child each part is sliced on a line: a bound thing off any private
-//! thread puts the parts whose exposure agrees (`exposure`) on one line,
-//! and every other part, as each part of a structural topic or of a private
-//! thread's thing, is a line of its own. The child's extraction never puts
-//! TURNs of two lines in one slice, and cuts each line into slices of its
-//! configured TURN size, so what were sibling children of one project
-//! before are slices inside one child: a thing's agent reads them all, and
-//! the per-slice path runs them as it ran before.
+//! child each part is sliced on a line: a bound thing puts the parts whose
+//! exposure agrees (`exposure`) on one line, a private thread's thing only
+//! the parts its whole audience reads, turn by turn (FIX 7730), and every
+//! other part, as each part of a structural topic, is a line of its own.
+//! The child's extraction never puts TURNs of two lines in one slice, and
+//! cuts each line into slices of its configured TURN size, so what were
+//! sibling children of one project before are slices inside one child: a
+//! thing's agent reads them all, and the per-slice path runs them as it ran
+//! before.
 
 use std::collections::BTreeMap;
 
@@ -33,7 +34,10 @@ pub(super) fn cut(
     draft: Draft,
     exposures: &BTreeMap<EntityId, Option<Exposure>>,
 ) -> NightlyThingPlan {
-    let combines = draft.key.entity.is_some() && draft.key.audience.is_none();
+    let combines = draft.key.entity.is_some();
+    // One private thread's parts combine only where the same people read
+    // every TURN of each: never beside words fewer or other people read.
+    let private = draft.key.audience.is_some();
     let mut children: Vec<Vec<Gathered>> = Vec::new();
     let mut projects: BTreeMap<EntityId, usize> = BTreeMap::new();
     for (index, turns) in draft.turns {
@@ -43,7 +47,7 @@ pub(super) fn cut(
             .map(|turn| exposures.get(&turn.turn_id).and_then(Option::as_ref))
             .collect();
         let class = if combines {
-            Exposure::of_part(&of)
+            Exposure::of_part(&of).filter(|class| !private || class.readers.is_some())
         } else {
             None
         };
