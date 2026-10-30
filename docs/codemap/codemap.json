@@ -111035,7 +111035,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 15,
       "re-export": 2,
       "struct": 3,
@@ -111069,7 +111069,7 @@
      "path": "src/managed/state_serve/carrier_watch.rs",
      "purpose": "A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -112789,6 +112789,16 @@
      "purpose": "A rerank call over more documents than one provider request carries (FIX 9514)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/rerank/outcome.rs",
+     "purpose": "A rerank call that stops short (FIX 11228)",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -114554,6 +114564,7 @@
      "path": "src/server/core/usage.rs",
      "purpose": "The usage meter the trusted host binds to this vault before work starts",
      "surface": {
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -114622,7 +114633,7 @@
      "path": "src/server/lifecycle.rs",
      "purpose": "Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -115268,7 +115279,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -115280,7 +115291,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -115330,6 +115341,22 @@
      "purpose": "The repair of stored usage events that no longer decode (FIX 6476)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetrievalMeterBatch",
+      "RetrievalMeterBuffer"
+     ],
+     "path": "src/usage/retrieval_buffer.rs",
+     "purpose": "The recall doors' retrieval-meter rows, buffered in memory and written in one grouped write per flush (FIX…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -116514,7 +116541,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 105,
+     "files": 106,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116619,7 +116646,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -116670,7 +116697,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1453,
+   "source_files": 1455,
    "test_files": 182
   },
   "oneiron-spawn": {
