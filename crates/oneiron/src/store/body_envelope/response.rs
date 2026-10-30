@@ -473,9 +473,7 @@ impl ResponseFamily {
                     .map(|row| crate::store::media_job_owners(&row))
                     .unwrap_or_default())
             }
-            Self::TypedQuestion => {
-                Ok(crate::llm::decision::questions::typed_question_owners(key))
-            }
+            Self::TypedQuestion => Ok(crate::llm::decision::questions::typed_question_owners(key)),
         }
     }
 
