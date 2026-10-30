@@ -171,7 +171,8 @@ pub(super) fn fail_ended_in_txn(
 
 /// The invitations and reminders of `document` that ended unsent or wait
 /// unexported, oldest first: every failed delivery row that carries an end
-/// reason, and every one still queued whose read waits now (FIX 6455).
+/// reason, and every one still queued whose read waits now (FIX 6455). Only
+/// delivery rows are read, through the attempt kind index (FIX 6422).
 pub(super) fn delivery_receipts_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -180,12 +181,7 @@ pub(super) fn delivery_receipts_in(
     let document = document.to_hex();
     let now = vault.now_recorded_at();
     let mut receipts = Vec::new();
-    for entry in vault.store.attempt_records.iter(txn)? {
-        let (key, raw) = entry?;
-        let row = crate::attempt_queue::decode_record(&raw, AttemptId::from_bytes(&key)?)?;
-        if row.kind != DELIVERY_KIND {
-            continue;
-        }
+    for row in AttemptQueue::new(vault).kind_rows_in_txn(txn, DELIVERY_KIND)? {
         let Ok(notice) = notice_of(&row) else {
             continue;
         };
