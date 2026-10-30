@@ -10,7 +10,8 @@ pub struct NapiLegalHoldBound {
     pub legal_basis_ref: Option<String>,
     pub jurisdiction: Option<String>,
     pub issuing_authority_ref: Option<String>,
-    pub ends_at: Option<u64>,
+    /// Seconds since the epoch, as the other N-API timestamps carry it.
+    pub ends_at: Option<i64>,
 }
 
 #[napi(object)]
@@ -33,7 +34,9 @@ pub(super) fn legal_hold_from_engine(notice: LegalHoldNotice) -> NapiLegalHoldNo
             legal_basis_ref: bound.legal_basis_ref,
             jurisdiction: bound.jurisdiction,
             issuing_authority_ref: bound.issuing_authority_ref,
-            ends_at: bound.ends_at,
+            ends_at: bound
+                .ends_at
+                .map(|at| i64::try_from(at).unwrap_or(i64::MAX)),
         },
         works_self_hosted: notice.works_self_hosted,
         self_hosted_note: notice.self_hosted_note,
