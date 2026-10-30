@@ -163,14 +163,16 @@ impl Vault {
             ));
         }
         let message = export_message(metadata, provenance)?;
+        // An author erased before the seal holds the export (FIX 7348).
+        let author = metadata.author.ok_or(Error::EntityNotFound)?;
         let oid = write_commit(
             git,
             repo,
             GitCommitRequest {
                 tree,
                 parents,
-                author_name: metadata.author.to_hex(),
-                author_email: format!("{}@actor.invalid", metadata.author.to_hex()),
+                author_name: author.to_hex(),
+                author_email: format!("{}@actor.invalid", author.to_hex()),
                 authored_at: i64::try_from(revision.finalized_at)
                     .map_err(|_| Error::ArithmeticOverflow("export timestamp"))?,
                 message: message.into_bytes(),
@@ -218,7 +220,7 @@ impl Vault {
             required_objects: vec![oid],
             required_lfs_oids: Vec::new(),
             provenance_claim_id: intent,
-            actor_id: metadata.author,
+            actor_id: author,
             occurred: TimeRange {
                 start: revision.finalized_at,
                 end: revision.finalized_at,

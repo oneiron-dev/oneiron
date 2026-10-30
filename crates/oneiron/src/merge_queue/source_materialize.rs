@@ -7,24 +7,30 @@
 //! with a protected keep-ref (CALL 3). It is no anchor, clone, store, lease
 //! or owner path, and no shared ref names its HEAD. The checker's drain and
 //! the owner's recover only put back a MISSING projection, at the recorded
-//! queue head with its recorded tree; an open landing or rollback intent,
-//! an unproved head, an occupied path or changed bytes hold by name with
-//! the work kept (CALL 6). Nothing is reset, deleted to make room, timed
-//! out or followed to the published tip, and no approval is revived.
+//! queue head with its recorded tree; with a landing or rollback intent
+//! open, at the exact head its journal proves, for the existing recover to
+//! reconcile (FIX 7705). An unproved head, an occupied path or changed
+//! bytes hold by name with the work kept (CALL 6). Nothing is reset,
+//! deleted to make room, timed out or followed to the published tip, and
+//! no approval is revived. Once custody withholds a file of the import,
+//! its source copy is erased and is not put back until custody clears it
+//! (FIX 7708).
 use std::path::Path;
 
 use super::MergeQueue;
 use super::check_inputs::{QueueCheckHold, QueueCheckHoldReason};
 use super::check_store::{CHECK_WORK, QueueCheckRequest, QueueCheckWork};
+use super::landing::is_content_write;
 use super::source::{BoundQueueSource, NO_SOURCE, queue_source_root, served_store_folder};
-use super::source_types::{PreparedQueueInit, ServedQueueSource};
-use super::types::QueueRecord;
+use super::source_types::{PreparedQueueInit, QUEUE_SOURCE_DIR, ServedQueueSource};
+use super::types::{EffectIntent, QueueRecord};
 use crate::code_revision::CodeImportManifest;
 use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};
+use crate::repo_mutation::RepoMutationStatus;
 use crate::{EntityId, Vault};
 
 /// A queue source path that holds something other than its worktree.
@@ -174,6 +180,12 @@ impl Vault {
         let git = GitWire::new(self)?;
         let served = self.bound_served_store(&git, bound)?;
         let _guard = lock_repository(served.common_dir())?;
+        if let Some(path) = self.erase_withheld_copy(&git, &served, bound)? {
+            return Ok(Err(format!(
+                "{path}: custody now withholds an imported file, so the queue source copy is \
+                 erased and is not put back until custody clears it"
+            )));
+        }
         if bound.root.symlink_metadata().is_ok() {
             return self.open_bound_queue_source(bound);
         }
@@ -202,6 +214,80 @@ impl Vault {
             ));
         }
         Ok(Ok(queue))
+    }
+
+    /// FIX 7708: erases every served queue source copy whose import custody
+    /// now withholds a file, so the withheld bytes leave the disk: the
+    /// engine-owned worktree goes through the journaled GitWire remove; the
+    /// object store and every row stay. How many copies were erased.
+    ///
+    /// # Errors
+    /// A store or object store failure.
+    pub fn erase_withheld_queue_sources(&self) -> Result<usize> {
+        let dir = self.store.env.path().canonicalize()?.join(QUEUE_SOURCE_DIR);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Ok(0);
+        };
+        let mut erased = 0_usize;
+        for entry in entries.flatten() {
+            let Some(store) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if store.is_empty() || !store.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                continue;
+            }
+            // A store whose binding does not prove is left for its own
+            // queue's hold; the sweep reads on.
+            let bound = match self.store_queue_source(&store) {
+                Ok(Some(bound)) if bound.root.symlink_metadata().is_ok() => bound,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "a queue source binding did not read");
+                    continue;
+                }
+            };
+            let git = GitWire::new(self)?;
+            let served = match self.bound_served_store(&git, &bound) {
+                Ok(served) => served,
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "a queue source's store did not open");
+                    continue;
+                }
+            };
+            let _guard = lock_repository(served.common_dir())?;
+            if self.erase_withheld_copy(&git, &served, &bound)?.is_some() {
+                erased += 1;
+            }
+        }
+        Ok(erased)
+    }
+
+    /// The first file of `bound`'s import that custody now withholds, its
+    /// registered source copy first erased (FIX 7708); `None` when custody
+    /// withholds none. The caller holds the store's writer.
+    fn erase_withheld_copy(
+        &self,
+        git: &GitWire<'_>,
+        served: &GitWireRepo,
+        bound: &BoundQueueSource,
+    ) -> Result<Option<String>> {
+        let withheld = {
+            let txn = self.store.env.read_txn()?;
+            match self.get_codebase_snapshot_in_txn(&txn, &bound.manifest.anchor.snapshot)? {
+                Some(snapshot) => self
+                    .codebase_withheld_paths_in_txn(&txn, &snapshot.fork_hash)?
+                    .into_iter()
+                    .next(),
+                None => None,
+            }
+        };
+        let Some(path) = withheld else {
+            return Ok(None);
+        };
+        if bound.root.symlink_metadata().is_ok() {
+            let _removed = git.remove_worktree(served, &bound.root, 0)?;
+        }
+        Ok(Some(path))
     }
 
     /// The bound source's served object store, opened again from its
@@ -258,12 +344,8 @@ impl Vault {
                 "this store's queue is not bound to this source; nothing is put back".to_owned(),
             ));
         }
-        if queue.intent.is_some() {
-            return Ok(Err(
-                "held_recovery: a landing or rollback intent is open and its applied prefix \
-                 cannot be proved without the queue source; nothing is guessed or reset"
-                    .to_owned(),
-            ));
+        if let Some(intent) = &queue.intent {
+            return self.intent_source_head(git, served, bound, &rows, intent);
         }
         let head = queue.pointers.head.clone();
         let tree = if head == bound.baseline_commit {
@@ -308,6 +390,62 @@ impl Vault {
                  is guessed"
             )));
         }
+        Ok(Ok((commit, tree)))
+    }
+
+    /// The head a missing projection is put back at while `intent` is open
+    /// (FIX 7705), with its tree: a rollback's expected head, or a landing's
+    /// exact applied prefix, the post commit of its last applied content
+    /// write after the intent opened, else the batch's base. The existing
+    /// recover then reconciles it. A write with no post commit, or a head
+    /// the store does not keep, holds by name.
+    fn intent_source_head(
+        &self,
+        git: &GitWire<'_>,
+        served: &GitWireRepo,
+        bound: &BoundQueueSource,
+        rows: &MergeQueue<'_>,
+        intent: &EffectIntent,
+    ) -> Result<std::result::Result<(GitOid, String), String>> {
+        let head = match intent {
+            EffectIntent::Rollback { expected_head, .. } => expected_head.clone(),
+            EffectIntent::Landing { batch, after_seq } => {
+                let batch = rows.batch(batch)?;
+                let applied = self
+                    .repo_mutation_oplog_for_canonical(&bound.repo_ref)?
+                    .into_iter()
+                    .filter(|entry| {
+                        entry.seq > *after_seq
+                            && entry.status == RepoMutationStatus::Applied
+                            && is_content_write(entry)
+                    })
+                    .last();
+                match applied {
+                    None => batch.expected_head,
+                    Some(entry) => match entry.post_commit {
+                        Some(commit) => commit,
+                        None => {
+                            return Ok(Err(
+                                "held_recovery: a landing's applied write recorded no post \
+                                 commit, so its prefix cannot be put back; nothing is guessed"
+                                    .to_owned(),
+                            ));
+                        }
+                    },
+                }
+            }
+        };
+        let commit = GitOid::parse_hex(head.clone())?;
+        let tree = git
+            .commit_trees(served, std::slice::from_ref(&commit))
+            .ok()
+            .and_then(|trees| trees.get(&commit).map(|tree| tree.as_str().to_owned()));
+        let Some(tree) = tree else {
+            return Ok(Err(format!(
+                "held_recovery: the open intent's proved head {head} is not kept in the store; \
+                 nothing is guessed"
+            )));
+        };
         Ok(Ok((commit, tree)))
     }
 

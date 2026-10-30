@@ -13,9 +13,8 @@ use super::check_store::{
 use super::storage::{BATCHES, check_row_size};
 use super::tested_types::QueueSealSource;
 use super::{
-    BatchState, MergeBatch, MergeQueue, QueueBatchDrive, QueueCheckReceipt, QueueExportHold,
-    QueueExportHoldReason, QueueRevisionIntent, QueueRevisionLink, QueueRevisionSeal,
-    QueueSealTarget,
+    BatchState, MergeBatch, MergeQueue, QueueBatchDrive, QueueExportHold, QueueExportHoldReason,
+    QueueRevisionIntent, QueueRevisionLink, QueueRevisionSeal, QueueSealTarget,
 };
 use super::{CheckPhase, QueueCheckTarget, QueueReceiptLink, QueueTestedTarget};
 use crate::code_revision::{CodeRevision, queue_aggregation_session, queue_revision_id};
@@ -325,17 +324,17 @@ impl QueueRevisionSeal {
                 "the seal's source no longer names this revision",
             ));
         }
-        let prefix = format!("{}:", tested.store);
-        let receipts: Vec<QueueCheckReceipt> = CHECK_WORK
-            .scan_from(&vault.store, txn, prefix.as_bytes())?
-            .into_iter()
-            .flat_map(|(_, work)| work.receipts)
-            .collect();
+        // Each link's receipts by index, never every work row (FIX 7349).
         for link in tested.fast.iter().chain(std::iter::once(&tested.slow)) {
+            let receipts = super::receipt_index::indexed_receipts_in_txn(
+                &vault.store,
+                txn,
+                &tested.store,
+                &link.inputs_digest,
+                Some(link.verdict_ref.as_deref()),
+            )?;
             if !receipts.iter().any(|receipt| {
-                receipt.inputs_digest == link.inputs_digest
-                    && receipt.verdict_ref == link.verdict_ref
-                    && receipt.tests_passed == Some(true)
+                receipt.verdict_ref == link.verdict_ref && receipt.tests_passed == Some(true)
             }) {
                 return Err(Error::ConcurrentWrite(
                     "a receipt the seal stands on is gone",

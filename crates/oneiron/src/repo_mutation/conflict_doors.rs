@@ -172,7 +172,7 @@ impl Vault {
             ours: tree(&sides[0])?,
             theirs: tree(&sides[1])?,
         };
-        super::conflict::record_queue_conflict_claim(
+        let recorded = super::conflict::record_queue_conflict_claim(
             self,
             repo.repo_ref(),
             overlap,
@@ -183,7 +183,16 @@ impl Vault {
                 crate::merge_queue::MergeQueue::of_repo(self, repo.clone())
                     .attach_queue_conflict_in_txn(txn, link)
             },
-        )
+        );
+        // A refused claim keeps none of the side commits it made: the next
+        // try makes its own, so a retried handoff never grows the pins (FIX
+        // 7305). The shared base stays pinned.
+        if recorded.is_err() {
+            for side in &sides {
+                let _released = wire.delete_keep_ref(repo, side, 0);
+            }
+        }
+        recorded
     }
 }
 

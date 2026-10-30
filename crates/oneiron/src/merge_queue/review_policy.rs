@@ -82,8 +82,9 @@ impl Default for QueueReviewThresholds {
 pub struct QueueReviewPolicy {
     pub catalog: LensCatalog,
     pub thresholds: QueueReviewThresholds,
-    /// The Owner or Granted agent who set it.
-    pub set_by: EntityId,
+    /// The Owner or Granted agent who set it; `None` once that actor was
+    /// erased (FIX 8519): the policy stands, its setter no longer named.
+    pub set_by: Option<EntityId>,
     /// When it was set, Unix seconds.
     pub set_at: u64,
 }
@@ -234,6 +235,33 @@ impl Vault {
         self.queue_review_policy_in_txn(&txn)
     }
 
+    /// FIX 8519: an erased actor's id leaves the review policy it set, in
+    /// the erase's writer. The policy stands; a row that does not read is
+    /// left for an owner to set or clear.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn erase_review_policy_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        if crate::typed_body::names_no_actor(self, wtxn, actor)? {
+            return Ok(());
+        }
+        let Some(bytes) = MERGE_QUEUE_REVIEW_POLICY.get_bytes(&self.store, wtxn, &())? else {
+            return Ok(());
+        };
+        let Ok(mut policy) = MERGE_QUEUE_REVIEW_POLICY.decode_value(&bytes) else {
+            return Ok(());
+        };
+        if policy.set_by != Some(*actor) {
+            return Ok(());
+        }
+        policy.set_by = None;
+        MERGE_QUEUE_REVIEW_POLICY.put(&self.store, wtxn, &(), &policy)
+    }
+
     /// Sets the vault's review policy in the setter's writer `txn`, or with
     /// `None` clears it. No seed and no history row: the row is the policy.
     ///
@@ -251,4 +279,16 @@ impl Vault {
                 .map(drop),
         }
     }
+}
+
+/// The actor scrub `MERGE_QUEUE_REVIEW_POLICY` declares (FIX 8519).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn erase_review_policy_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    vault.erase_review_policy_actor_in_txn(wtxn, actor)
 }

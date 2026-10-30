@@ -2675,7 +2675,7 @@ declare namespace Sdk {
   type QueueReviewPolicyState = "absent" | "set" | "unreadable";
   type QueueReviewMode = "land_on_green" | "review" | "held";
   type QueueReviewThresholds = { critics?: number; votes?: number };
-  type QueueReviewPolicy = { catalog: LensCatalog; thresholds: QueueReviewThresholds; set_by: EntityId; set_at: number };
+  type QueueReviewPolicy = { catalog: LensCatalog; thresholds: QueueReviewThresholds; set_by?: EntityId | null; set_at: number };
   type QueueReviewPolicyView = { state: QueueReviewPolicyState; mode: QueueReviewMode; policy?: QueueReviewPolicy | null; hold?: string | null };
   type QueueReviewPolicyInput = { catalog: LensCatalog; thresholds?: QueueReviewThresholds };
   type QueueReviewPolicySetRequest = { policy?: QueueReviewPolicyInput | null };

@@ -4,7 +4,10 @@ use rmpv::Value;
 use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeCommitMetadata {
-    pub author: EntityId,
+    /// The canonical author; `None` when the author was erased before the
+    /// seal (FIX 7348): the record keeps its modes and the chain seals, and
+    /// its export alone holds.
+    pub author: Option<EntityId>,
     pub message: String,
     /// Unlisted tested files are ordinary mode 100644 files.
     pub file_modes: BTreeMap<[u8; 32], u32>,
@@ -13,7 +16,16 @@ impl CodeCommitMetadata {
     #[must_use]
     pub fn new(author: EntityId, message: impl Into<String>) -> Self {
         Self {
-            author,
+            author: Some(author),
+            message: message.into(),
+            file_modes: BTreeMap::new(),
+        }
+    }
+    /// Metadata whose author was erased before the seal (FIX 7348).
+    #[must_use]
+    pub fn authorless(message: impl Into<String>) -> Self {
+        Self {
+            author: None,
             message: message.into(),
             file_modes: BTreeMap::new(),
         }
@@ -47,7 +59,9 @@ pub(super) fn validate(revision: &super::CodeRevision) -> Result<()> {
 pub(super) fn to_value(meta: Option<&CodeCommitMetadata>) -> Value {
     meta.map_or(Value::Nil, |m| {
         Value::Array(vec![
-            Value::Binary(m.author.as_bytes().to_vec()),
+            m.author.map_or(Value::Nil, |author| {
+                Value::Binary(author.as_bytes().to_vec())
+            }),
             Value::from(m.message.clone()),
             Value::Array(
                 m.file_modes
@@ -68,7 +82,11 @@ pub(super) fn from_value(value: &Value) -> Result<Option<CodeCommitMetadata>> {
         .as_array()
         .filter(|f| f.len() == 3)
         .ok_or_else(invalid)?;
-    let author = super::codec::entity_value(&fields[0], "author")?;
+    let author = if fields[0].is_nil() {
+        None
+    } else {
+        Some(super::codec::entity_value(&fields[0], "author")?)
+    };
     let message = fields[1].as_str().ok_or_else(invalid)?.to_owned();
     let mut file_modes = BTreeMap::new();
     for pair in fields[2].as_array().ok_or_else(invalid)? {

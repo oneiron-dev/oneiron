@@ -397,11 +397,18 @@ fn gap_blocker(revision: EntityId, gap: &ExportGap) -> CodeExportPreviewBlocker 
             "Restore the revision's provenance claim; a revision without active provenance \
              does not export.",
         ),
-        ExportGap::Author(author) => CodeExportPreviewBlocker::new(
+        ExportGap::Author(Some(author)) => CodeExportPreviewBlocker::new(
             entity(*author),
             CodeExportPreviewBlockReason::Unavailable,
             "this revision's author record is gone",
             "Restore the author's record; the export names its author.",
+        ),
+        ExportGap::Author(None) => CodeExportPreviewBlocker::new(
+            entity(revision),
+            CodeExportPreviewBlockReason::Unavailable,
+            "this revision's author was erased before it was sealed",
+            "Land the same change again as a fresh combined proposal under a live author; the \
+             export names its author.",
         ),
     }
 }

@@ -248,6 +248,10 @@ pub struct RepoMutationOplogEntry {
     pub finished_at_ms: Option<u64>,
     pub pre_action_fork_hash: RepoForkHash,
     pub expected_post_action_fork_hash: Option<RepoForkHash>,
+    /// The commit a committing write leaves HEAD at, recorded before it
+    /// applies (FIX 7705): a queue source put back mid-landing stands at the
+    /// exact applied prefix. `None` for a direct write.
+    pub post_commit: Option<String>,
     pub status: RepoMutationStatus,
     pub failure: Option<String>,
 }

@@ -14,9 +14,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // image holds it, as the wakes its landing did record do.
     (&t::MEMORY_TURN_WAKE_UNPERSISTED, CONTENT),
     (&t::MERGE_QUEUE_BATCH, CONTENT),
+    // Derived beside each batch, restored with it (FIX 7067).
+    (&t::MERGE_QUEUE_BATCH_INDEX, CONTENT),
     // A restore never revives a revoked approval: the live one stands.
     (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
     (&t::MERGE_QUEUE_CHECK_WORK, CONTENT),
+    // Derived beside each work row's receipts, restored with it (FIX 7349).
+    (&t::MERGE_QUEUE_RECEIPT_INDEX, CONTENT),
     // A restore never revives a cleared review policy: the live one stands.
     (&t::MERGE_QUEUE_REVIEW_POLICY, LIVE),
     (&t::MERGE_QUEUE_STATE, CONTENT),

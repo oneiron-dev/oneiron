@@ -89,6 +89,9 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: std::sync::Mutex<HashSet<LifecycleJobKey>>,
     /// Housekeeping passes in flight, scheduled or asked for by the owner.
     pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
+    /// Whether this server's merge queue checker ran a pass yet: its first
+    /// asks again for a check that needed host configuration (FIX 7310).
+    pub(crate) queue_driver_started: std::sync::atomic::AtomicBool,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
