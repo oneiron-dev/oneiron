@@ -220,9 +220,9 @@ async fn open(
         standing(&vault, home, enrolled)
     })
     .await??;
-    // Over the mesh when the home has a paired address and a listener runs
-    // here; otherwise at the home's URL.
-    let mesh = mesh.filter(|_| paired);
+    // Over the mesh when the home has a paired or enrolled (FIX 3374) address
+    // and a listener runs here; otherwise at the home's URL.
+    let mesh = mesh.filter(|mesh| paired || mesh.pins_home(home));
     if mesh.is_none() {
         direct(&url)?;
     }

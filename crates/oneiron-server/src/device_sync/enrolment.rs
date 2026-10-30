@@ -4,7 +4,9 @@
 //! pairs its owner-grade credential, and this install keeps what it dials
 //! with: the home's MACHINE, sync node id and `/ws` URL, the credential, and
 //! the authority checkpoint pin the link named (OF-469), which the first
-//! connection adopts.
+//! connection adopts. The home also binds this machine's mesh endpoint and
+//! grants it the sync ALPN, and names its own mesh address, which serve
+//! dials first (FIX 3374).
 //!
 //! The record and the credential sit beside this install's key directory,
 //! outside the vault, one pair per vault id, so a copy of the vault never
@@ -32,6 +34,10 @@ pub(crate) struct DeviceEnrolment {
     /// The checkpoint the link pinned, when the home had an attested one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) authority_checkpoint_pin: Option<oneiron::authority::AuthorityCheckpointPin>,
+    /// The home's mesh address, when its mesh listener ran at enrolment
+    /// (FIX 3374): serve dials it first, and the home's URL after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) home_mesh: Option<oneiron::authority::MeshMachineAddress>,
 }
 
 impl DeviceEnrolment {
@@ -154,6 +160,9 @@ struct Paired {
     /// (FIX 8636): this machine's identity and class stand as they were.
     #[serde(default)]
     re_paired: bool,
+    /// The home's own mesh address, when its listener runs (FIX 3374).
+    #[serde(default)]
+    mesh: Option<oneiron::authority::MeshMachineAddress>,
 }
 
 #[derive(Deserialize)]
@@ -291,6 +300,7 @@ pub(crate) fn enrol(
         home_node_id: home.sync_node_id,
         home_url,
         authority_checkpoint_pin: paired.pin,
+        home_mesh: paired.mesh,
     };
     record.validate()?;
     files.write(&format!("v2.cred.{slip}.{}", hex(key.as_bytes())), &record)?;
