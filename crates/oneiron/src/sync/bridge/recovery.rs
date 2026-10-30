@@ -2,14 +2,17 @@
 
 use super::Materializer;
 use crate::batch::EdgeValueFields;
+use crate::edge::EdgeKind;
 use crate::error::{ArtifactError, Result};
-use crate::recovery::CanonicalSnapshot;
+use crate::recovery::{CanonicalBaseEdge, CanonicalSnapshot};
 use crate::sync::ingest::{
     EntityStep, IngestCtx, authority_parent_order, ingest_entity_in_txn, is_authority_row,
 };
+use crate::sync::loro_support::TombstoneIndex;
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use loro::LoroDoc;
+use std::collections::{HashMap, HashSet};
 
 /// All writes here are speculative LMDB pages. The transaction is ALWAYS
 /// aborted: a bad later entity/edge cannot publish an earlier valid record.
@@ -59,7 +62,7 @@ fn preflight_in_txn(
 ) -> Result<()> {
     crate::recovery::validate_window_documents(doc)?;
     snapshot.preflight_note_recovery(vault, txn)?;
-    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let ingest = IngestCtx::new(
         vault,
         &snapshot.window,
@@ -119,88 +122,28 @@ fn preflight_in_txn(
         }
     }
     // FIX 5972: a `regenerates` link is proven on its MESSAGEs' axes, so it
-    // lands after every other base edge.
-    let (regenerates, ordinary): (Vec<_>, Vec<_>) = snapshot
-        .base_edges
-        .iter()
-        .partition(|edge| edge.kind == crate::edge::EdgeKind::Regenerates as u8);
-    for edge in ordinary.into_iter().chain(regenerates) {
-        let source = EntityId::from_bytes(edge.source)?;
-        let target = EntityId::from_bytes(edge.target)?;
-        let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(crate::Error::InvalidKey)?;
-        let fields = crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
-        if kind == crate::edge::EdgeKind::AddressedTo {
-            let trusted_soft = crate::recovery::trusted_soft_addressing_edge(
-                snapshot,
-                &source,
-                &target,
-                &edge.value,
-            )?;
-            if trusted_soft
-                && !matches!(
-                    crate::batch::stored_entity_type(&vault.store, txn, &target)?,
-                    Some(
-                        crate::registry::ENTITY_TYPE_PERSON
-                            | crate::registry::ENTITY_TYPE_AGENT_DEF
-                    )
-                )
-            {
-                return Err(ArtifactError::InvalidRecoveryArtifact(
-                    "retained addressing recipient missing or not a PERSON or AGENT_DEF",
-                )
-                .into());
-            }
-            if !trusted_soft
-                && !crate::conversation_dag::addressed_to_echo_in_txn(
-                    &vault.store,
-                    txn,
-                    &source,
-                    &target,
-                    fields,
-                )?
-            {
-                return Err(
-                    crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
-                );
-            }
-        } else if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
-            let mandated_at =
-                vault.identity_topology_mandated_shell_edge_in_txn(txn, &source, kind, &target)?;
-            if !mandated_at.is_some_and(|at| {
-                fields.created_at == at && kind.default_weight() == Some(fields.weight)
-            }) {
-                return Err(reserved);
-            }
-        }
-        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &source)?
-            || !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &target)?
-        {
-            return Err(ArtifactError::InvalidRecoveryArtifact(
-                "edge endpoint missing at recovery",
-            )
-            .into());
-        }
-        crate::batch::validate_replayed_facet_of_edge(&vault.store, txn, source, kind, target)?;
-        // A stored pair, or the canonical artifact's own link onto an erased
-        // shell, is restored as it is held; a new pair its MESSAGEs refute
-        // is left out, as the forward pass quarantines it, and one still
-        // missing an axis waits for the forward pass.
-        if kind == crate::edge::EdgeKind::Regenerates
-            && !crate::edge::regeneration_stored(&vault.store, txn, &source, &target)?
-            && crate::edge::regeneration_pair(&vault.store, txn, &source, &target)?
-                == crate::edge::Regeneration::Refuses
-        {
-            continue;
-        }
-        vault
-            .batch_in()
-            .edge_with_value_fields(
-                &source,
-                kind,
-                &target,
-                EdgeValueFields::from_decoded(fields),
-            )
-            .apply(txn)?;
+    // lands after every other base edge. FIX 8857: the conversation DAG's
+    // own links go through its shared replay doors after the edges they
+    // read: ChildOf membership with the ordinary edges, then SpawnedBy and
+    // RepliesTo, then Parent, each chain from its root.
+    let rank = |kind: u8| match EdgeKind::try_from_u8(kind) {
+        Some(EdgeKind::SpawnedBy | EdgeKind::RepliesTo) => 1,
+        Some(EdgeKind::Parent) => 2,
+        Some(EdgeKind::Regenerates) => 3,
+        _ => 0,
+    };
+    let mut edges: Vec<&CanonicalBaseEdge> = snapshot.base_edges.iter().collect();
+    edges.sort_by_key(|edge| rank(edge.kind));
+    let (parents, rest): (Vec<_>, Vec<_>) =
+        edges.into_iter().partition(|edge| rank(edge.kind) == 2);
+    let (regenerates, ordinary): (Vec<_>, Vec<_>) =
+        rest.into_iter().partition(|edge| rank(edge.kind) == 3);
+    for edge in ordinary {
+        land_edge(vault, snapshot, txn, edge)?;
+    }
+    land_parents(vault, txn, &snapshot.window, &tombstones, &parents)?;
+    for edge in regenerates {
+        land_edge(vault, snapshot, txn, edge)?;
     }
     for tombstone in &snapshot.tombstones {
         let entity = EntityId::from_bytes(tombstone.id)?;
@@ -211,4 +154,196 @@ fn preflight_in_txn(
     // lease/quota debits and all quarantine rows remain speculative and are
     // never committed here.
     Ok(())
+}
+
+/// Lands one base edge that is not a conversation Parent: the identity-shell
+/// mandate judges only the reserved kinds it owns (FIX 8857), and the DAG's
+/// SpawnedBy and RepliesTo go through their shared received-edge door.
+fn land_edge(
+    vault: &Vault,
+    snapshot: &CanonicalSnapshot,
+    txn: &mut RwTxn<'_>,
+    edge: &CanonicalBaseEdge,
+) -> Result<()> {
+    let source = EntityId::from_bytes(edge.source)?;
+    let target = EntityId::from_bytes(edge.target)?;
+    let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(crate::Error::InvalidKey)?;
+    let fields = crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
+    if kind == crate::edge::EdgeKind::AddressedTo {
+        let trusted_soft =
+            crate::recovery::trusted_soft_addressing_edge(snapshot, &source, &target, &edge.value)?;
+        if trusted_soft
+            && !matches!(
+                crate::batch::stored_entity_type(&vault.store, txn, &target)?,
+                Some(crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF)
+            )
+        {
+            return Err(ArtifactError::InvalidRecoveryArtifact(
+                "retained addressing recipient missing or not a PERSON or AGENT_DEF",
+            )
+            .into());
+        }
+        if !trusted_soft
+            && !crate::conversation_dag::addressed_to_echo_in_txn(
+                &vault.store,
+                txn,
+                &source,
+                &target,
+                fields,
+            )?
+        {
+            return Err(crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into());
+        }
+    } else if !matches!(kind, EdgeKind::SpawnedBy | EdgeKind::RepliesTo)
+        && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+    {
+        let mandated_at =
+            vault.identity_topology_mandated_shell_edge_in_txn(txn, &source, kind, &target)?;
+        if !mandated_at.is_some_and(|at| {
+            fields.created_at == at && kind.default_weight() == Some(fields.weight)
+        }) {
+            return Err(reserved);
+        }
+    }
+    if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &source)?
+        || !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &target)?
+    {
+        return Err(
+            ArtifactError::InvalidRecoveryArtifact("edge endpoint missing at recovery").into(),
+        );
+    }
+    if matches!(kind, EdgeKind::SpawnedBy | EdgeKind::RepliesTo) {
+        crate::conversation_dag::validate_received_edge(
+            &vault.store,
+            txn,
+            source,
+            kind,
+            target,
+            fields,
+        )?;
+    }
+    crate::batch::validate_replayed_facet_of_edge(&vault.store, txn, source, kind, target)?;
+    // A stored pair, or the canonical artifact's own link onto an erased
+    // shell, is restored as it is held; a new pair its MESSAGEs refute
+    // is left out, as the forward pass quarantines it, and one still
+    // missing an axis waits for the forward pass.
+    if kind == crate::edge::EdgeKind::Regenerates
+        && !crate::edge::regeneration_stored(&vault.store, txn, &source, &target)?
+        && crate::edge::regeneration_pair(&vault.store, txn, &source, &target)?
+            == crate::edge::Regeneration::Refuses
+    {
+        return Ok(());
+    }
+    vault
+        .batch_in()
+        .edge_with_value_fields(
+            &source,
+            kind,
+            &target,
+            EdgeValueFields::from_decoded(fields),
+        )
+        .apply(txn)?;
+    Ok(())
+}
+
+/// Lands the snapshot's conversation Parent links through the one Parent
+/// door forward rematerialization uses (FIX 8857), each after the link that
+/// places its target. A link the door refuses refuses the recovery; one
+/// still waiting once no other link lands is left to the forward pass,
+/// which holds it the same way.
+fn land_parents(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    window: &str,
+    tombstones: &TombstoneIndex,
+    parents: &[&CanonicalBaseEdge],
+) -> Result<()> {
+    let mut pending = parents_in_dependency_order(parents)?;
+    loop {
+        let before = pending.len();
+        let mut waiting = Vec::new();
+        for (source, target, value) in pending {
+            if !endpoints_present(vault, txn, &source, &target)? {
+                return Err(ArtifactError::InvalidRecoveryArtifact(
+                    "edge endpoint missing at recovery",
+                )
+                .into());
+            }
+            let tombstoned = tombstones.contains(&source) || tombstones.contains(&target);
+            let outcome =
+                super::submit_parent_in_txn(vault, txn, window, source, target, value, tombstoned)?;
+            match outcome {
+                super::ParentOutcome::Waiting => waiting.push((source, target, value)),
+                super::ParentOutcome::Rejected => {
+                    return Err(ArtifactError::InvalidRecoveryArtifact(
+                        "conversation Parent refused recovery preflight",
+                    )
+                    .into());
+                }
+                super::ParentOutcome::Written
+                | super::ParentOutcome::Unchanged
+                | super::ParentOutcome::Ignored => {}
+            }
+        }
+        if waiting.is_empty() || waiting.len() == before {
+            return Ok(());
+        }
+        pending = waiting;
+    }
+}
+
+/// The Parent links, ordered by the depth of their source in the snapshot's
+/// own Parent chains, so a link lands after the one whose source is its
+/// target.
+fn parents_in_dependency_order<'a>(
+    parents: &[&'a CanonicalBaseEdge],
+) -> Result<Vec<(EntityId, EntityId, &'a [u8])>> {
+    let mut links = Vec::with_capacity(parents.len());
+    let mut parent_of = HashMap::new();
+    for edge in parents {
+        let source = EntityId::from_bytes(edge.source)?;
+        let target = EntityId::from_bytes(edge.target)?;
+        parent_of.entry(source).or_insert(target);
+        links.push((source, target, edge.value.as_slice()));
+    }
+    let mut depth = HashMap::<EntityId, usize>::new();
+    for &(source, _, _) in &links {
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        let mut cursor = source;
+        // A cycle stops the walk; the Parent door refuses it.
+        let reached = loop {
+            if let Some(&known) = depth.get(&cursor) {
+                break Some(known);
+            }
+            if !seen.insert(cursor) {
+                break Some(0);
+            }
+            chain.push(cursor);
+            match parent_of.get(&cursor) {
+                Some(&next) => cursor = next,
+                None => break None,
+            }
+        };
+        let mut at = reached.map_or(0, |known| known + 1);
+        for id in chain.into_iter().rev() {
+            depth.insert(id, at);
+            at += 1;
+        }
+    }
+    links.sort_by_key(|(source, _, _)| depth.get(source).copied().unwrap_or(0));
+    Ok(links)
+}
+
+/// Whether both endpoints of a link have a row here.
+fn endpoints_present(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &EntityId,
+    target: &EntityId,
+) -> Result<bool> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, source)?
+            && crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, target)?,
+    )
 }

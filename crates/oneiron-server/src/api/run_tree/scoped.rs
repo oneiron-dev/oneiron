@@ -6,8 +6,9 @@
 //! credential no record list narrows, still live now, whose read lane its
 //! credential still builds where its connection sits. A caller that acts
 //! without it keeps its act: the reply then carries no tree. The observe
-//! stream judges it again before each snapshot it sends, and ends, with no
-//! final snapshot, once it no longer holds.
+//! stream judges it again before each snapshot it sends, and at each
+//! credential revoke this vault commits (FIX 10381), and ends, with no final
+//! snapshot, once it no longer holds.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use axum::response::sse::Event;
 use futures_util::{Stream, stream};
 use tokio::sync::broadcast::{Receiver, error::RecvError};
+use tokio::sync::watch;
 
 use super::encode;
 use crate::auth::{CoreAuth, CoreScope};
@@ -58,6 +60,9 @@ struct Observe {
     server: Arc<SyncServer>,
     auth: CoreAuth,
     receiver: Receiver<()>,
+    /// The vault's credential revocation notice: an idle stream judges its
+    /// credential again at each revoke, not only at its next change.
+    revocations: watch::Receiver<u64>,
     run_id: String,
     previous: String,
     first: bool,
@@ -67,11 +72,13 @@ struct Observe {
 /// The observe stream for `run_id`: `initial`, then each changed snapshot,
 /// each sent only while `auth` still reads run trees (FIX 8221). The check
 /// runs before the first emission and again after every wait, before the
-/// tree is read for it; once it fails the stream ends.
+/// tree is read for it, and at each revoke notice `revocations` hears (FIX
+/// 10381); once it fails the stream ends.
 pub(super) fn observe(
     server: Arc<SyncServer>,
     auth: CoreAuth,
     receiver: Receiver<()>,
+    revocations: watch::Receiver<u64>,
     run_id: String,
     initial: String,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
@@ -79,6 +86,7 @@ pub(super) fn observe(
         server,
         auth,
         receiver,
+        revocations,
         run_id,
         previous: initial,
         first: true,
@@ -99,9 +107,19 @@ pub(super) fn observe(
             return Some((Ok(event), state));
         }
         loop {
-            match state.receiver.recv().await {
-                Ok(()) | Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => return None,
+            tokio::select! {
+                changed = state.receiver.recv() => match changed {
+                    Ok(()) | Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return None,
+                },
+                revoked = state.revocations.changed() => {
+                    // A revoke changes no tree: judge the credential and
+                    // keep waiting while it still holds.
+                    if revoked.is_err() || !reads_run_tree(&state.server, &state.auth) {
+                        return None;
+                    }
+                    continue;
+                }
             }
             if !reads_run_tree(&state.server, &state.auth) {
                 return None;

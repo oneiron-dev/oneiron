@@ -726,6 +726,16 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
+"vault.export.transfer.read" => fn vault_export_transfer_read(&self, input: ExportTransferReadRequest) -> ExportTransferPiece = |client| {
+    let input: oneiron::memory::ExportTransferReadRequest = crate::codec::lower_record("vault.export.transfer.read", input)?;
+    let output = client.vault_export_transfer_read(&input)?;
+    crate::codec::lift_record("vault.export.transfer.read", &output)
+};
+"vault.export.transfer.release" => fn vault_export_transfer_release(&self, input: ExportTransferReleaseRequest) -> ExportTransferReleased = |client| {
+    let input: oneiron::memory::ExportTransferReleaseRequest = crate::codec::lower_record("vault.export.transfer.release", input)?;
+    let output = client.vault_export_transfer_release(&input)?;
+    crate::codec::lift_record("vault.export.transfer.release", &output)
+};
 "self.credential.attenuate" => fn self_credential_attenuate(&self, input: CredentialAttenuationRequest) -> CredentialAttenuated = |client| {
     let input: oneiron::task_verb::sdk::CredentialAttenuationRequest = crate::codec::lower_record("self.credential.attenuate", input)?;
     let output = client.self_credential_attenuate(&input)?;
@@ -3320,6 +3330,11 @@ export_facade! {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.get", input)?;
     let output = client.vault_code_origin_mirror_get(&input)?;
     crate::codec::lift_record("vault.code.origin.mirror.get", &output)
+};
+"vault.code.origin.mirror.plan" => fn vault_code_origin_mirror_plan(&self, input: OriginMirrorPlanRequest) -> OriginMirrorPlanView = |client| {
+    let input: oneiron::origin::publish::OriginMirrorPlanRequest = crate::codec::lower_record("vault.code.origin.mirror.plan", input)?;
+    let output = client.vault_code_origin_mirror_plan(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.plan", &output)
 };
 "vault.code.origin.mirror.set" => fn vault_code_origin_mirror_set(&self, input: OriginMirrorSetRequest) -> OriginMirrorTarget = |client| {
     let input: oneiron::memory::origin_doors::OriginMirrorSetRequest = crate::codec::lower_record("vault.code.origin.mirror.set", input)?;
