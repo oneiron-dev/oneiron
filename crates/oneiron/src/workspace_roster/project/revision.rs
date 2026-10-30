@@ -90,7 +90,8 @@ impl FixedSideKey for ProjectRevisionHash {
     const WIDTH: usize = 32;
 }
 
-/// The signed fields of a v2/v3 proof, without its nested anchor.
+/// The signed fields of a v2/v3 proof, without its anchor: what a held
+/// signed revision and an anchor link carry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRevisionProof {
@@ -108,7 +109,7 @@ pub enum ProjectRevision {
         project: EntityId,
         authority: ProjectAuthority,
     },
-    /// One v2/v3 signed state; `parent` is its proof's nested anchor, by hash.
+    /// One v2/v3 signed state; `parent` is its proof's last anchor link, by hash.
     Signed {
         project: EntityId,
         authority: ProjectAuthority,
@@ -211,38 +212,25 @@ pub(crate) fn decode_revision(
     Ok((hash, revision))
 }
 
-/// The revisions a v2/v3 anchor chain holds, bottom first, however long it
-/// is (rule 5, FIX 9436).
+/// The revisions a v2/v3 anchor chain holds, bottom first as the chain is,
+/// however long it is (rule 5, FIX 9436): `chain` as
+/// [`ProjectRecord::anchor`] builds it.
 pub(crate) fn revisions_of(
     project: EntityId,
-    anchor: &ProjectAnchor,
+    chain: &[ProjectAnchorLink],
 ) -> Result<Vec<(ProjectRevisionHash, ProjectRevision)>> {
-    let mut chain = Vec::new();
-    let mut next = Some(anchor);
-    while let Some(state) = next {
-        chain.push(state);
-        next = state
-            .proof
-            .as_ref()
-            .and_then(|proof| proof.anchor.as_deref());
-    }
     let mut out: Vec<(ProjectRevisionHash, ProjectRevision)> = Vec::with_capacity(chain.len());
     let mut parent = None;
-    for state in chain.into_iter().rev() {
-        let revision = match &state.proof {
+    for link in chain {
+        let revision = match &link.proof {
             None => ProjectRevision::Boundary {
                 project,
-                authority: state.authority.clone(),
+                authority: link.authority.clone(),
             },
             Some(proof) => ProjectRevision::Signed {
                 project,
-                authority: state.authority.clone(),
-                proof: ProjectRevisionProof {
-                    slip_wire: proof.slip_wire.clone(),
-                    holder_signature: proof.holder_signature.clone(),
-                    signed_at: proof.signed_at,
-                    version: proof.version,
-                },
+                authority: link.authority.clone(),
+                proof: proof.clone(),
                 parent,
             },
         };
@@ -262,7 +250,7 @@ pub(crate) fn revisions_of_row(
     if record.write_proof.is_none() {
         return Ok(Vec::new());
     }
-    revisions_of(project, &record.anchor())
+    revisions_of(project, &record.anchor()?)
 }
 
 /// How far a held revision's origin is established. Authentication checks
@@ -455,11 +443,14 @@ pub(crate) fn held_in_txn(
     Ok(held)
 }
 
-/// Rebuilds the exact nested `ProjectAnchor` of a held revision, the value
-/// its children's unchanged `write_challenge` signs over, however long its
-/// lineage is (rule 5, FIX 9436). `None` when a link is missing, or met
-/// twice, which only a malformed set can hold.
-pub(crate) fn anchor_of(held: &HeldRevisions, hash: ProjectRevisionHash) -> Option<ProjectAnchor> {
+/// Rebuilds the exact anchor chain of a held revision, root first and the
+/// revision last, the value its children's `write_challenge` signs over,
+/// however long its lineage is (rule 5, FIX 9436). `None` when a link is
+/// missing, or met twice, which only a malformed set can hold.
+pub(crate) fn anchor_of(
+    held: &HeldRevisions,
+    hash: ProjectRevisionHash,
+) -> Option<Vec<ProjectAnchorLink>> {
     let mut chain = Vec::new();
     let mut seen = BTreeSet::new();
     let mut next = Some(hash);
@@ -468,32 +459,23 @@ pub(crate) fn anchor_of(held: &HeldRevisions, hash: ProjectRevisionHash) -> Opti
             return None;
         }
         let row = &held.get(&at)?.revision;
-        chain.push(row);
-        next = row.parent();
-    }
-    let mut anchor: Option<ProjectAnchor> = None;
-    for row in chain.into_iter().rev() {
-        anchor = Some(match row {
-            ProjectRevision::Boundary { authority, .. } => ProjectAnchor {
+        chain.push(match row {
+            ProjectRevision::Boundary { authority, .. } => ProjectAnchorLink {
                 authority: authority.clone(),
                 proof: None,
             },
             ProjectRevision::Signed {
                 authority, proof, ..
-            } => ProjectAnchor {
+            } => ProjectAnchorLink {
                 authority: authority.clone(),
-                proof: Some(ProjectWriteProof {
-                    slip_wire: proof.slip_wire.clone(),
-                    holder_signature: proof.holder_signature.clone(),
-                    signed_at: proof.signed_at,
-                    anchor: anchor.map(Box::new),
-                    version: proof.version,
-                }),
+                proof: Some(proof.clone()),
             },
             _ => return None,
         });
+        next = row.parent();
     }
-    anchor
+    chain.reverse();
+    Some(chain)
 }
 
 /// What one held revision's origin check reads: the slip wire, the challenge
@@ -515,11 +497,11 @@ fn challenge_of(
             parent,
         } => {
             let anchor = match parent {
-                Some(parent) => Some(anchor_of(held, *parent)?),
-                None => None,
+                Some(parent) => anchor_of(held, *parent)?,
+                None => Vec::new(),
             };
             authority
-                .write_challenge(*project, proof.version, proof.signed_at, anchor.as_ref())
+                .write_challenge(*project, proof.version, proof.signed_at, &anchor)
                 .map(|challenge| {
                     (
                         proof.slip_wire.clone(),

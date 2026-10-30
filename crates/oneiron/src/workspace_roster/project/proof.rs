@@ -65,7 +65,7 @@ pub(crate) fn validate_transition(
     if fresh {
         verify_live(store, txn, id, &next, proof, posture)?;
     }
-    if prior.is_none() && proof.anchor.is_some() {
+    if prior.is_none() && !proof.anchor.is_empty() {
         return Err(refused("a new project has no earlier authority"));
     }
     let chain = revisions_of_row(id, &next)?;
@@ -254,9 +254,12 @@ fn verify_live(
     if proof.signed_at > now {
         return Err(refused("project write proof is dated ahead"));
     }
-    let challenge = next
-        .authority()
-        .write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+    let challenge = proof
+        .anchor_links()
+        .and_then(|anchor| {
+            next.authority()
+                .write_challenge(id, proof.version, proof.signed_at, anchor)
+        })
         .map_err(|_| refused("invalid project write proof"))?;
     slip.verify_with_host_key(
         &mint.signer,
