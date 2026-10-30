@@ -6,7 +6,9 @@
 // Section 3 — explicit rename/copy anchor transfer
 // ---------------------------------------------------------------------------
 
-/// Rename re-points; Copy clones. Nothing else transfers an attachment.
+/// Between two distinct symbols, Rename re-points and Copy clones. A file
+/// rename needs neither: its symbols keep their document-based ids and
+/// their notes (FIX 7810).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnchorTransferKind {
     Rename,
