@@ -153,7 +153,7 @@ impl Memory<'_> {
             guest_revoke,
             owner_act.as_ref(),
         );
-        if let Some(act) = &owner_act {
+        if let Some(act) = owner_act.as_ref().filter(|_| deleted.is_ok()) {
             act.mirror_after_commit(self.vault);
         }
         deleted
