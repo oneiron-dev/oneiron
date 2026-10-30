@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use crate::entity_id::derived_domains::IMPORT_AUDIENCE_TOPIC;
 use crate::error::{Error, Result};
 use crate::llm::decision::{AnswerContract, DecisionQuestion};
 use crate::side_table::{self, Named, SideTable};
@@ -25,8 +26,6 @@ use crate::{EntityId, Vault};
 
 const CLUSTERS: SideTable<EntityId, ImportAudienceCluster, Named> =
     SideTable::new(&side_table::IMPORT_AUDIENCE_CLUSTER);
-
-const TOPIC_DOMAIN: &[u8] = b"oneiron.ingest.import_audience.topic.v1";
 
 /// The longest topic or project label a question shows, in bytes.
 const MAX_LABEL_BYTES: usize = 200;
@@ -121,12 +120,8 @@ pub fn import_audience_topic(scope: Option<&Value>) -> Result<Option<(EntityId, 
         return Ok(None);
     }
     let bytes = crate::dreamer_consolidation::topic_key_canonical_bytes(topic)?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(TOPIC_DOMAIN);
-    hasher.update(&bytes);
-    let mut id = [0_u8; 16];
-    id.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    let id = EntityId::from_bytes(id).map_err(|_| invalid("import audience topic id"))?;
+    let id = EntityId::derive(IMPORT_AUDIENCE_TOPIC, &[bytes.as_slice()])
+        .map_err(|_| invalid("import audience topic id"))?;
     let label = match topic.as_str() {
         Some(text) => text.trim().to_owned(),
         None => topic.to_string(),

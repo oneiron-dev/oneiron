@@ -27,15 +27,12 @@ pub struct BlobFingerprintSnapshot {
     pub sections: BTreeMap<String, [u8; 32]>,
     pub blocks: BTreeMap<String, [u8; 32]>,
 }
-#[derive(Clone, Serialize, Deserialize)]
-struct Block {
-    hash: [u8; 32],
-    text: String,
-}
+/// One section's hash and each of its blocks' hashes, by block id. The tree
+/// holds hashes and structural ids only, never source text.
 #[derive(Clone, Serialize, Deserialize)]
 struct Section {
     hash: [u8; 32],
-    blocks: BTreeMap<String, Block>,
+    blocks: BTreeMap<String, [u8; 32]>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Tree {
@@ -175,22 +172,12 @@ fn calculate(previous: Option<Tree>, bytes: &[u8], text: &str) -> FingerprintUpd
         changed_sections.push(number.clone());
         let mut blocks = BTreeMap::new();
         for segment in segments {
-            // Keep exact old segment bytes beside its hash. An unchanged block is
-            // compared, not re-hashed, even within a changed section.
-            let block = match old
-                .and_then(|s| s.blocks.get(&segment.block))
-                .filter(|b| b.text == segment.text)
-            {
-                Some(block) => block.clone(),
-                None => {
-                    changed_blocks.push(segment.block.clone());
-                    Block {
-                        hash: *blake3::hash(segment.text.as_bytes()).as_bytes(),
-                        text: segment.text,
-                    }
-                }
-            };
-            blocks.insert(segment.block, block);
+            // A block is unchanged when its hash is, even within a changed section.
+            let block_hash = *blake3::hash(segment.text.as_bytes()).as_bytes();
+            if old.and_then(|s| s.blocks.get(&segment.block)) != Some(&block_hash) {
+                changed_blocks.push(segment.block.clone());
+            }
+            blocks.insert(segment.block, block_hash);
         }
         sections.insert(number, Section { hash, blocks });
     }
@@ -222,7 +209,7 @@ impl Vault {
                 blocks: tree
                     .sections
                     .values()
-                    .flat_map(|s| s.blocks.iter().map(|(id, b)| (id.clone(), b.hash)))
+                    .flat_map(|s| s.blocks.iter().map(|(id, hash)| (id.clone(), *hash)))
                     .collect(),
             }),
         )

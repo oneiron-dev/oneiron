@@ -193,6 +193,10 @@ pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
 /// folder, the file's path under it.
 pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
 
+/// An import-audience topic cluster (`ingest::audience`). Parts: the
+/// canonical bytes of the extractor's `topic_key`.
+pub const IMPORT_AUDIENCE_TOPIC: &[u8] = b"oneiron.ingest.import_audience.topic.v1";
+
 /// A project revision companion (`workspace_roster::project::revision`).
 /// Parts: the revision's 32-byte logical hash.
 pub const PROJECT_REVISION: &[u8] = b"oneiron/project-revision-id/v1/";

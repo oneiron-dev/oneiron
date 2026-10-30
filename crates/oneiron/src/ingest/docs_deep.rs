@@ -280,6 +280,24 @@ pub(super) fn set_deep_ceiling(
     Ok(())
 }
 
+/// Whether the import approved as `digest` wrote this revision of `asset`:
+/// its ceiling row names that approval and the revision's source hash.
+pub(super) fn deep_ceiling_names(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    asset: EntityId,
+    digest: &str,
+    text: &str,
+) -> Result<bool> {
+    let ceiling: Option<DeepCeiling> = DEEP_CEILINGS
+        .get_bytes(&vault.store, txn, &HexId(asset))?
+        .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep ceiling")))
+        .transpose()?;
+    Ok(ceiling.is_some_and(|ceiling| {
+        ceiling.approval_digest == digest && ceiling.source_hash == source_hash(text)
+    }))
+}
+
 impl Vault {
     /// Extract imported, proposed claims from one approved docs asset.
     /// This is the explicit and lazy-Dreamer entry point; the scoped read
