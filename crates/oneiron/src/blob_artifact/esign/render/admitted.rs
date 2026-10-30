@@ -68,6 +68,12 @@ impl Stage {
         }
     }
 
+    /// Whether this stage admits to a host's memory: work that only sizes
+    /// what it admits is skipped where it does not.
+    pub(super) fn admits(&self) -> bool {
+        self.0.is_some()
+    }
+
     /// Admits `bytes` about to be allocated. A refusal ends the parse as
     /// lopdf's own refused admission does: the host reads its own refusal.
     pub(super) fn admit(&self, bytes: usize) -> Result<()> {
