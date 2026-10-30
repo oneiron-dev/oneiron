@@ -11,8 +11,10 @@
 //! the value an export would give differs, and an ask reads the value an
 //! export of the same body lands.
 //!
-//! Every read of one call recalculates at one time, in the default zone (UTC,
-//! FIX 790), so NOW() and TODAY() alone never set two reads apart. When a read
+//! Every read of one call recalculates at the read's time in UTC (FIX 790),
+//! so NOW() and TODAY() alone never set two live reads apart; the
+//! export-frontier side of a compare against the newest export recalculates
+//! at that export's own recorded clock instead (FIX 12183). When a read
 //! does not recalculate (the engine refuses the workbook, or it does not
 //! project), every read of the call keeps the values the body holds, as
 //! before, and the artifact is logged once.
@@ -75,6 +77,38 @@ impl Vault {
         sheet: Option<&str>,
         bodies: &mut [XlsxBody],
     ) {
+        let at = self.now_recorded_at();
+        let zone = OfficeRecalcZone::default();
+        let clocks = vec![(at, &zone); bodies.len()];
+        self.live_recalc_at(artifact, sheet, bodies, &clocks);
+    }
+
+    /// [`Self::live_recalc`] for the compare against the newest export
+    /// (FIX 12183): the pin side recalculates at the call's clock, `at` in
+    /// `zone`, and the export-frontier side at the export's own clock,
+    /// `export_at` in `export_zone`. Never refuses, as above.
+    pub(super) fn live_recalc_until(
+        &self,
+        artifact: &EntityId,
+        sheet: Option<&str>,
+        bodies: &mut [XlsxBody; 2],
+        at: u64,
+        zone: &OfficeRecalcZone,
+        export_at: u64,
+        export_zone: &OfficeRecalcZone,
+    ) {
+        self.live_recalc_at(artifact, sheet, bodies, &[(at, zone), (export_at, export_zone)]);
+    }
+
+    /// [`Self::live_recalc`] with each read's own clock: `clocks` runs
+    /// beside `bodies`.
+    fn live_recalc_at(
+        &self,
+        artifact: &EntityId,
+        sheet: Option<&str>,
+        bodies: &mut [XlsxBody],
+        clocks: &[(u64, &OfficeRecalcZone)],
+    ) {
         let computes = |body: &XlsxBody| {
             body.sheets
                 .iter()
@@ -84,7 +118,7 @@ impl Vault {
         if !bodies.iter().any(computes) {
             return;
         }
-        match self.recalculated_books(artifact, bodies) {
+        match self.recalculated_books(artifact, bodies, clocks) {
             Ok(books) => {
                 for (body, book) in bodies.iter_mut().zip(books) {
                     take_values(body, book);
@@ -105,14 +139,18 @@ impl Vault {
         }
     }
 
-    /// Each of `bodies` projected and recalculated as an export at one time
-    /// would land it, read back. `Err` when any of them does not
-    /// recalculate.
+    /// Each of `bodies` projected and recalculated as an export would land
+    /// it, each at its own `clocks` entry, read back. `Err` when any of
+    /// them does not recalculate, or a read has no clock.
     fn recalculated_books(
         &self,
         artifact: &EntityId,
         bodies: &[XlsxBody],
+        clocks: &[(u64, &OfficeRecalcZone)],
     ) -> Result<Vec<XlsxBook>> {
+        if bodies.len() != clocks.len() {
+            return Err(invalid("a live read has no recalculation clock"));
+        }
         let head = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
@@ -127,15 +165,13 @@ impl Vault {
             xlsx::read(&doc)?
         };
         let limits = self.docedit_package_limits()?;
-        let at = self.now_recorded_at();
-        let zone = OfficeRecalcZone::default();
         let mut books = Vec::with_capacity(bodies.len());
-        for body in bodies {
+        for (body, &(at, zone)) in bodies.iter().zip(clocks) {
             let (bytes, recalc) =
-                match self.project_xlsx_body(artifact, &head, &base, body, at, &zone)? {
+                match self.project_xlsx_body(artifact, &head, &base, body, at, zone)? {
                     Some((bytes, _, recalc, _)) => (bytes, recalc),
                     None => {
-                        recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, &zone)?
+                        recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?
                     }
                 };
             if recalc.is_none() {
