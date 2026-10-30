@@ -25,6 +25,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::recovery::checkpoint::Rejected;
 use crate::recovery::checkpoint::artifact::SealedPayload;
 use crate::recovery::checkpoint::image::CheckpointImage;
 use crate::side_table;
@@ -55,13 +56,14 @@ pub(in crate::recovery::checkpoint) struct OpenedPayload {
 ///
 /// # Errors
 ///
-/// A missing compartment leaf (lost custody refuses, KS-4), a stream or
-/// bundle that does not read back as sealed, and custody faults.
+/// A missing compartment leaf (lost custody refuses, KS-4, as
+/// `custody_key_missing`), a stream or bundle that does not read back as
+/// sealed, and custody faults.
 pub(in crate::recovery::checkpoint) fn open_image_payload(
     sealed: Option<SealedPayload<'_>>,
     plan: &mut CustodyPlan,
     image: &mut CheckpointImage,
-) -> Result<Option<OpenedPayload>> {
+) -> std::result::Result<Option<OpenedPayload>, Rejected> {
     let Some(mut sealed) = sealed else {
         return Ok(None);
     };
