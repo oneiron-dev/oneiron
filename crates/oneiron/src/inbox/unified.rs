@@ -354,12 +354,6 @@ impl Vault {
         now: u64,
     ) -> Result<InboxBundleResolution> {
         target.validate()?;
-        self.resolve_inbox_group_bound_at(
-            group_key,
-            verb,
-            verb_class,
-            now,
-            Some((actor, target)),
-        )
+        self.resolve_inbox_group_bound_at(group_key, verb, verb_class, now, Some((actor, target)))
     }
 }
