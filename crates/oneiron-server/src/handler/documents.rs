@@ -449,6 +449,10 @@ pub(super) fn document_delivery_retrying(
             }
             continue;
         }
+        // FIX 10730: a marked source's notice reaches its copy-id subscribers as the copy.
+        out.extend(super::document_copy::copy_notice_frame(
+            server, state, &doc, &principal, peer, retry,
+        ));
         if let Some(request) = state.documents.get(&doc.entity)
             && request.selector.member_ref == principal
         {
@@ -521,7 +525,7 @@ pub(super) fn document_delivery_retrying(
 
 /// Whether a document's open ended at its turn's deadline: a notice is tried
 /// again, and a peer's frame is answered [`ProtocolError::WaitedOut`].
-fn waited_out(error: &oneiron::Error) -> bool {
+pub(super) fn waited_out(error: &oneiron::Error) -> bool {
     error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
 }
 
@@ -623,7 +627,7 @@ pub(super) fn retry_later(
 }
 
 /// The notice of one document, to queue again.
-fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
+pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
     transport::encode_document(doc.entity, doc.kind, doc.payload)
         .into_result()
         .ok()
