@@ -18,10 +18,13 @@ use std::sync::{PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::{Deserialize, Serialize};
 
-use super::trusted_contact::{RELATIONS, TrustedContact, TrustedContactTier, invalid};
+use super::trusted_contact::{
+    RELATIONS, TrustedContact, TrustedContactDial, TrustedContactTier, invalid,
+    naming_answered_yes_in_txn,
+};
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    EnqueueAttempt, EnqueueOutcome, FailAttempt, RetryAttempt,
+    AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+    CompleteAttempt, EnqueueAttempt, EnqueueOutcome, FailAttempt, InterveneAttempt, RetryAttempt,
 };
 use crate::edge::EdgeActorClass;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
@@ -34,7 +37,7 @@ use crate::outbound::{
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::side_table::{self, Named, SideTable};
-use crate::store::GateSystemNoticeRecord;
+use crate::store::{GateSystemNoticeRecord, Store};
 use crate::{EntityId, Result, Vault};
 
 pub const TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND: &str = "trusted_contact.notice";
@@ -139,10 +142,7 @@ pub(super) fn stage_notice_in_txn(
         EnqueueAttempt {
             kind: TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND.into(),
             payload,
-            dedupe_key: Some(format!(
-                "trusted-contact:{}:{}:{}",
-                notice.person, notice.contact, notice.version
-            )),
+            dedupe_key: Some(notice_dedupe_key(relation)),
             run_id: None,
             now,
         },
@@ -154,6 +154,94 @@ pub(super) fn stage_notice_in_txn(
         }
         EnqueueOutcome::Existing(pending) => Ok(EntityId::from_hex(&decode(&pending)?.fire)?),
     }
+}
+
+/// The one queue key every notice for `relation`'s naming shares: while one
+/// waits, another collapses into it.
+fn notice_dedupe_key(relation: &TrustedContact) -> String {
+    format!(
+        "trusted-contact:{}:{}:{}",
+        relation.person.to_hex(),
+        relation.contact.to_hex(),
+        relation.version
+    )
+}
+
+/// Withdraws the notice waiting for `relation`'s naming when a policy row,
+/// not the person's yes, authorized it, in the transaction that turns the
+/// dial to ask-first (FIX 9774): a queued send is cancelled, so it never
+/// goes and the yes to the ask stages its own. Answers the tier that row
+/// fired at; `None` when no such notice waits. A send a worker already
+/// leased meets the dial at its next consent read.
+pub(super) fn withdraw_policy_notice_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    relation: &TrustedContact,
+    now: u64,
+) -> Result<Option<TrustedContactTier>> {
+    let queue = AttemptQueue::new(vault);
+    let Some(pending) = queue.pending_dedupe_in_txn(
+        wtxn,
+        TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND,
+        &notice_dedupe_key(relation),
+    )?
+    else {
+        return Ok(None);
+    };
+    let Ok(TrustedContactNotice {
+        authorization: TrustedContactNoticeAuthorization::Policy { tier, .. },
+        ..
+    }) = decode(&pending)
+    else {
+        return Ok(None);
+    };
+    if matches!(
+        pending.state,
+        AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled
+    ) {
+        queue.intervene_in_txn(
+            wtxn,
+            InterveneAttempt {
+                id: pending.id,
+                kind: AttemptInterventionKind::Cancel,
+                actor: TRUSTED_CONTACT_NOTIFICATION_PRODUCER.to_owned(),
+                note: Some("the person turned the dial to ask first".to_owned()),
+                now,
+            },
+        )?;
+    }
+    Ok(Some(tier))
+}
+
+/// Takes the notices staged to or about `id` out with its erase (FIX 9775):
+/// each fire row whose person or contact it is goes, so no send of it is
+/// live again, and every queued send of it, in any state, keeps no payload,
+/// so no address or party of it stays in the queue.
+pub(super) fn erase_notices_naming_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let id = id.to_hex();
+    let mut fires = std::collections::BTreeSet::new();
+    for (key, notice) in FIRES.scan(store, wtxn)? {
+        if notice.person == id || notice.contact == id {
+            FIRES.delete(store, wtxn, &key)?;
+            fires.insert(notice.fire);
+        }
+    }
+    if fires.is_empty() {
+        return Ok(());
+    }
+    crate::attempt_queue::erase_kind_payloads_in_txn(
+        store,
+        wtxn,
+        TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND,
+        |payload| {
+            serde_json::from_slice::<TrustedContactNotice>(payload)
+                .is_ok_and(|notice| fires.contains(&notice.fire))
+        },
+    )
 }
 
 /// Tells `relation`'s person and the agent that speaks for them (its
@@ -218,10 +306,13 @@ fn decode(attempt: &AttemptRecord) -> Result<TrustedContactNotice> {
 impl Vault {
     /// Whether `notice` is one the engine staged, from a relation that still
     /// stands as it was then: the same naming, reach and sender, both sides'
-    /// consent, the contact an adult, neither revoked.
+    /// consent, the contact an adult, neither revoked, and both persons still
+    /// live (FIX 9775). A notice a policy row authorized stays live only
+    /// while the person's dial is just-call, or once they said yes to an ask
+    /// about this naming (FIX 9774).
     fn trusted_contact_notice_is_live(&self, notice: &TrustedContactNotice) -> Result<bool> {
         let fire = EntityId::from_hex(&notice.fire)?;
-        let key = (
+        let (person, contact) = (
             EntityId::from_hex(&notice.person)?,
             EntityId::from_hex(&notice.contact)?,
         );
@@ -229,16 +320,34 @@ impl Vault {
         if FIRES.get(&self.store, &rtxn, &fire)?.as_ref() != Some(notice) {
             return Ok(false);
         }
-        Ok(RELATIONS
-            .get(&self.store, &rtxn, &key)?
-            .is_some_and(|relation| {
-                relation.is_live()
-                    && relation.version == notice.version
-                    && relation.reach.sender.to_hex() == notice.sender
-                    && relation.reach.channel == notice.channel
-                    && relation.reach.verb == notice.verb
-                    && relation.reach.target == notice.target
-            }))
+        let Some(relation) = RELATIONS.get(&self.store, &rtxn, &(person, contact))? else {
+            return Ok(false);
+        };
+        let stands = relation.is_live()
+            && relation.version == notice.version
+            && relation.reach.sender.to_hex() == notice.sender
+            && relation.reach.channel == notice.channel
+            && relation.reach.verb == notice.verb
+            && relation.reach.target == notice.target;
+        if !stands
+            || !crate::consent::person_is_live_in_txn(self, &rtxn, &person)?
+            || !crate::consent::person_is_live_in_txn(self, &rtxn, &contact)?
+        {
+            return Ok(false);
+        }
+        Ok(match notice.authorization {
+            TrustedContactNoticeAuthorization::Ask { .. } => true,
+            TrustedContactNoticeAuthorization::Policy { .. } => {
+                relation.dial == TrustedContactDial::JustCall
+                    || naming_answered_yes_in_txn(
+                        &self.store,
+                        &rtxn,
+                        person,
+                        contact,
+                        notice.version,
+                    )?
+            }
+        })
     }
 
     /// The stored attempt, when it is still the one `attempt` names, leased
