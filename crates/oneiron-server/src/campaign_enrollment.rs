@@ -258,6 +258,8 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
         Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => Settlement::Fail(format!(
             "a campaign send awaits the owner's approval press on {approval_digest}"
         )),
+        // FIX 12176: a paced send waits out its window, then resends.
+        Ok(EnrollmentLegDrive::Paced { retry_at }) => Settlement::RetryAt(retry_at),
         Ok(EnrollmentLegDrive::NotHomeNode(_) | EnrollmentLegDrive::NoHomeNode) => return None,
         // The reason is recorded on the attempt, not logged: it can quote
         // the vault.

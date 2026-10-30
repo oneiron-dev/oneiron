@@ -287,6 +287,14 @@ pub enum EnrollmentLegDrive {
         /// The digest the press names, 64 lower-hex.
         approval_digest: String,
     },
+    /// The chokepoint paced the call: nothing was recorded, charged, or
+    /// sent; bring the leg back at `retry_at` (FIX 12176). Engine
+    /// seconds (Unix seconds), not the drive's `now_ms` wall
+    /// milliseconds: pass through with no conversion.
+    Paced {
+        /// Engine instant the windows open again, Unix seconds.
+        retry_at: u64,
+    },
     /// Nothing is owed outward: the step declares no outward leg, the
     /// member's own state holds the send, or the send does not resolve
     /// (an unresolvable member or an unpinned body, FIX 11513 K11/K12).
@@ -326,9 +334,16 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
             &mut transport,
             now_ms,
         )? {
-            EnrollmentOutboundLeg::Dispatched(dispatch) => match dispatch.effect.approval_digest {
-                Some(approval_digest) => EnrollmentLegDrive::AwaitingApproval { approval_digest },
-                None => EnrollmentLegDrive::Dispatched,
+            EnrollmentOutboundLeg::Dispatched(dispatch) => match dispatch.effect.paced_until {
+                // FIX 12176: a paced result sent nothing; re-arm the leg at
+                // retry_at instead of completing the attempt.
+                Some(retry_at) => EnrollmentLegDrive::Paced { retry_at },
+                None => match dispatch.effect.approval_digest {
+                    Some(approval_digest) => {
+                        EnrollmentLegDrive::AwaitingApproval { approval_digest }
+                    }
+                    None => EnrollmentLegDrive::Dispatched,
+                },
             },
             EnrollmentOutboundLeg::NoOutboundStep
             | EnrollmentOutboundLeg::MembershipNotReady
