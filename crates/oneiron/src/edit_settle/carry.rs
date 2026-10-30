@@ -1045,6 +1045,21 @@ impl Vault {
             deadline: Instant::now() + WAKE_DEADLINE,
             run_ref: &reask_ref,
         };
+        // The wake holds no credential: the artifact a sheet, paragraph or
+        // slide re-ask reads is read inside the asking version's saved lane,
+        // as a folder item's files are below (FIX 11830).
+        if !matches!(wake.shape, ReaskShape::FolderItems { .. })
+            && !crate::llm::decision::questions::wake_artifact_reads(
+                self,
+                wake.principal,
+                &wake.question,
+                &[wake.artifact],
+            )?
+            .readable
+            .contains(&wake.artifact)
+        {
+            return Ok((Reasked::Nothing, reask_ref));
+        }
         let (proposal, units) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
