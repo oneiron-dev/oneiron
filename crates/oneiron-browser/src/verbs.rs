@@ -194,8 +194,8 @@ pub struct EffectReceipt {
     /// origin of the page the send acted on - the one counterparty the
     /// browser can name; a recipient inside the page it cannot. A grant
     /// covering the send names it among its `audience:` members. Absent
-    /// where the effect reported none: an unclassified act's, an engine
-    /// switch's, a desktop window's.
+    /// where the effect reported none: a `type`, `select` or `open`'s, an
+    /// engine switch's, a desktop window's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audience: Option<String>,
     /// That page's title, as an observation shows it (FIX 8011): `url` and
