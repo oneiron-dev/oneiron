@@ -113,7 +113,9 @@ pub(super) struct OwnerWorkState {
     cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     /// Each custody permit piece, by its signer, commitment and place: what
     /// a request in pieces joins its permits from (`permit_pieces`, FIX
-    /// 11866).
+    /// 11866). Kept after its request joins (FIX 12015): a later fold
+    /// re-joins from pieces, a resumed fold seeds from them, and one
+    /// commitment may serve requests on more than one secret.
     permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
     /// Each (signer, commitment) whose permit set has been joined and
     /// verified here, so a refold of it hashes no bytes again (FIX 12014).
