@@ -103,7 +103,7 @@ pub(crate) struct CoreContextPackStats {
     /// Neighbor entities hydrated.
     #[schema(example = 0)]
     neighbors_hydrated: usize,
-    /// Vector-only candidates dampened by cosine-ghost suppression.
+    /// Vector-only candidates counted for cosine-ghost lexical disagreement.
     #[schema(example = 0)]
     cosine_ghosts_dampened: usize,
     /// Claims suppressed by read-path gates.
@@ -698,6 +698,7 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
         oneiron::RetrievalSignal::Hyde => "hyde",
         oneiron::RetrievalSignal::HydeRetry => "hyde_retry",
         oneiron::RetrievalSignal::MediaVector => "media_vector",
+        oneiron::RetrievalSignal::Relevance => "relevance",
     }
 }
 

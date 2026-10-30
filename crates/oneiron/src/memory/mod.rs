@@ -55,6 +55,7 @@ mod dreamer_revert;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
+mod settled_vad;
 mod skill_authoring;
 pub mod wellness_doors;
 pub(crate) use booking::booking_error;
@@ -179,7 +180,7 @@ pub use claims::{
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
     CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
-    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
+    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason, SettleWarning, SettleWarningCode,
 };
 pub use conflict_settle::DreamerDecidedCandidateView;
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
