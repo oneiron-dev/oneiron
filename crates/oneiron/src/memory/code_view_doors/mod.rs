@@ -9,11 +9,13 @@ use crate::build_cache::{
     BuildAction, BuildCache, BuildCacheError, BuildInputRoot, BuildPlatform, CachedActionResult,
     DeclaredOutputPath, ExtraInputDigest, FrozenBuildCommand,
 };
+use crate::code_revision::{CodeRevision, read_code_revision_blobs};
 use crate::code_view::{CodeViewSet, ViewReceipt};
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
+use crate::git_wire::GitWire;
 use crate::memory::repo_secret_reads::project_repo_file;
 use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_repo};
 use crate::{EdgeActorClass, EntityId};
@@ -62,11 +64,6 @@ impl Memory<'_> {
             .get_code_revision(&tested)?
             .ok_or_else(|| MemoryError::not_found("finalized tested revision not found"))?;
         self.view_readable(revision.session_id)?;
-        if revision.file_frontiers.is_empty() {
-            return Err(MemoryError::bad_request(
-                "tested revision has no file frontiers",
-            ));
-        }
         let mut contents = BTreeMap::new();
         for frontier in revision.file_frontiers.values() {
             if frontier.repo != repo_ref.canonical() {
@@ -78,6 +75,17 @@ impl Memory<'_> {
             if contents.insert(frontier.path.clone(), bytes).is_some() {
                 return Err(MemoryError::bad_request("duplicate tested path"));
             }
+        }
+        // A tested queue revision's untouched paths are files of its tree too (FIX 9940).
+        if !revision.blob_frontiers.is_empty() {
+            for (path, bytes) in self.tested_blobs(repo, &repo_ref, &revision)? {
+                if contents.insert(path, bytes).is_some() {
+                    return Err(MemoryError::bad_request("duplicate tested path"));
+                }
+            }
+        }
+        if contents.is_empty() {
+            return Err(MemoryError::bad_request("tested revision holds no files"));
         }
         let entries = contents
             .iter()
@@ -91,6 +99,35 @@ impl Memory<'_> {
             .collect();
         let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, entries)?;
         Ok((snapshot, contents))
+    }
+
+    /// The untouched blobs of tested queue revision `revision` of `repo`,
+    /// read from the repository's own object store.
+    fn tested_blobs(
+        &self,
+        repo: EntityId,
+        repo_ref: &RepoRef,
+        revision: &CodeRevision,
+    ) -> MemoryResult<BTreeMap<String, Vec<u8>>> {
+        if revision
+            .tested_queue
+            .as_ref()
+            .is_some_and(|tested| tested.repo != repo)
+        {
+            return Err(MemoryError::bad_request(
+                "tested file belongs to another repository",
+            ));
+        }
+        let RepoRef::LocalFolder { path, .. } = repo_ref else {
+            return Err(MemoryError::bad_request(
+                "a tested tree's untouched files read from a local repository",
+            ));
+        };
+        let wire = GitWire::new(self.vault)?;
+        let store = wire.open_repo(repo_ref.clone(), std::path::Path::new(path))?;
+        Ok(read_code_revision_blobs(
+            self.vault, &wire, &store, revision,
+        )?)
     }
 
     pub fn code_view_materialize_as(
@@ -446,17 +483,33 @@ fn working_view(
         .ok_or(Error::EntityNotFound)?;
     let mut files = Vec::new();
     for (path, hash) in receipt.files {
-        let frontier = revision
+        let content_hash_blake3 = bytes_to_hex_lower(&hash);
+        // An untouched blob keeps its Git object, never a fabricated frontier (FIX 9940).
+        let Some(frontier) = revision
             .file_frontiers
             .values()
             .find(|file| file.path == path)
-            .ok_or(Error::CorruptedIndex("view file has no tested frontier"))?;
+        else {
+            let blob = revision
+                .blob_frontiers
+                .get(&path)
+                .ok_or(Error::CorruptedIndex("view file has no tested frontier"))?;
+            files.push(CodeViewFile {
+                git_oid: Some(blob.git_oid.clone()),
+                path,
+                content_hash_blake3,
+                frontier: None,
+                text_sha256: None,
+            });
+            continue;
+        };
         let text = vault.code_document_at(frontier)?;
         files.push(CodeViewFile {
             path,
-            content_hash_blake3: bytes_to_hex_lower(&hash),
-            frontier: frontier.clone(),
-            text_sha256: bytes_to_hex_lower(&Sha256::digest(text.as_bytes())),
+            content_hash_blake3,
+            frontier: Some(frontier.clone()),
+            text_sha256: Some(bytes_to_hex_lower(&Sha256::digest(text.as_bytes()))),
+            git_oid: None,
         });
     }
     Ok(CodeWorkingView {

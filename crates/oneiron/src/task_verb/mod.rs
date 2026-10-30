@@ -90,6 +90,7 @@ mod proposal_create;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
 mod refusal;
 mod report_journal;
 pub(crate) use report_journal::{
