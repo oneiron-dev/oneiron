@@ -359,8 +359,11 @@ pub(crate) async fn list_core_sub_sessions(
 
 /// Queues a declared summary for the Dreamer, which alone writes the body
 /// (ARCH-0006a). Refused up front when no Dreamer here writes summaries.
+/// The declaration keeps the caller's own lane, frozen (FIX 2194), so its
+/// landing checks a reply inside it.
 fn declare_summary(
     server: &SyncServer,
+    auth: &CoreAuth,
     request: &ScopeSummaryRequest,
     purpose: Option<&str>,
 ) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
@@ -368,11 +371,11 @@ fn declare_summary(
         .ai
         .summary_writer()
         .map_err(ApiError::summary_writer_unavailable)?;
-    let queued = match purpose {
-        Some(purpose) => server.vault.request_scope_summary_for(request, purpose),
-        None => server.vault.request_scope_summary(request),
-    }
-    .map_err(|e| core_engine_error("summary declaration failed", e))?;
+    let lane = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+    let queued = server
+        .vault
+        .request_scope_summary_in_lane(request, purpose, &lane)
+        .map_err(|e| core_engine_error("summary declaration failed", e))?;
     server.ai.attempt_queued();
     Ok((StatusCode::ACCEPTED, Json(summary::queued_response(queued))))
 }
@@ -406,7 +409,7 @@ pub(crate) async fn mint_core_scope_summary(
         },
         requester: req.actor.parse(&server, &auth)?,
     };
-    declare_summary(&server, &request, req.purpose.as_deref())
+    declare_summary(&server, &auth, &request, req.purpose.as_deref())
 }
 
 #[utoipa::path(get, path = "/v1/core/summaries/{summary_id}/covers",
@@ -556,7 +559,7 @@ pub(crate) async fn summarize_thread(
         target: ScopeSummaryTarget::Thread { trunk: record },
         requester: req.actor.parse(&server, &auth)?,
     };
-    declare_summary(&server, &request, req.purpose.as_deref())
+    declare_summary(&server, &auth, &request, req.purpose.as_deref())
 }
 
 #[utoipa::path(get, path = "/v1/core/conversations/{conversation_id}/canonical",

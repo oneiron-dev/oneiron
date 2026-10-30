@@ -31,6 +31,12 @@ pub enum AuthorityOp {
     SlipConsume {
         slip_id: [u8; 32],
     },
+    /// Revokes every capability whose signed claims name the Grant
+    /// `grant_ref`, and every descendant: those the log holds now and any a
+    /// replica minted under it that merges later (FIX 1978).
+    SlipGrantRevoke {
+        grant_ref: EntityId,
+    },
     /// Vault genesis. `vault_id` is `None` on the containing entry and is
     /// derived as BLAKE3(canonical signed genesis).
     Genesis {
@@ -360,6 +366,12 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::SlipMint(action) => action.validate(),
         AuthorityOp::SlipRevoke { slip_id } | AuthorityOp::SlipConsume { slip_id } => {
             if *slip_id == [0; 32] {
+                return Err(invalid_authority());
+            }
+            Ok(())
+        }
+        AuthorityOp::SlipGrantRevoke { grant_ref } => {
+            if *grant_ref.as_bytes() == [0; 16] {
                 return Err(invalid_authority());
             }
             Ok(())
