@@ -13,7 +13,7 @@ use crate::Vault;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSource, ScopedRead};
-use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CodebaseForkHash};
+use crate::code_document::CodeSpanAnchor;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{CodeError, Error, Result};
@@ -145,16 +145,15 @@ const KEY_SEPARATOR: u8 = 0;
 const PAYLOAD_TAG_NOTE_ENTITY: u8 = 0;
 const PAYLOAD_TAG_CLAIM: u8 = 1;
 
-const REVISION_TAG_COMMIT: u8 = 0;
-const REVISION_TAG_FORK_HASH: u8 = 1;
-
 const TRANSFER_TAG_RENAME: u8 = 0;
 const TRANSFER_TAG_COPY: u8 = 1;
 
 const CONTRACT_TAG_INTERFACE: u8 = 0;
 const CONTRACT_TAG_POLICY: u8 = 1;
 
-const COMMIT_HASH_MAX_HEX_LEN: usize = 64;
+/// The most bytes one encoded document cursor of a locator holds: one
+/// encoded field's bound.
+pub const CODE_MEMORY_CURSOR_MAX_BYTES: usize = 1024;
 
 /// Domain separator for the deterministic transfer-receipt key digest.
 const TRANSFER_DIGEST_DOMAIN: &[u8] = b"oneiron.code_memory.transfer.v1\0";
@@ -195,44 +194,17 @@ impl CodeMemoryPayloadRef {
     }
 }
 
-/// The revision half of a locator: exactly one commit OR one fork hash,
-/// never neither and never both.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CodeMemoryRevision {
-    /// Lowercase-hex commit hash, mirroring the `commit_hash: Option<String>`
-    /// representation the code-symbol/codebase modules already carry.
-    Commit(String),
-    /// A filtered-snapshot fork hash (`codebase::CodebaseForkHash`).
-    ForkHash(CodebaseForkHash),
-}
-
-impl CodeMemoryRevision {
-    fn validate(&self) -> Result<()> {
-        match self {
-            Self::Commit(commit) => {
-                if commit.is_empty()
-                    || commit.len() > COMMIT_HASH_MAX_HEX_LEN
-                    || !commit
-                        .bytes()
-                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-                {
-                    return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
-                        reason: "locator commit must be non-empty lowercase hexadecimal",
-                    }));
-                }
-                Ok(())
-            }
-            Self::ForkHash(_) => Ok(()),
-        }
-    }
-}
-
-/// Revision locator for an attachment. LOCATOR ONLY — no API in this module
-/// resolves attachment identity from any of these fields.
+/// Revision locator for an attachment: a cursor-anchored span on the
+/// symbol's file document, at the document version it was taken at
+/// (ARCH-0050, amended under RD-23; FIX 7810). LOCATOR ONLY — no API in this
+/// module resolves attachment identity from any of these fields. A rename is
+/// an op on the document, so the span follows it with no transfer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeMemoryLocator {
-    pub path_at_revision: String,
-    pub revision: CodeMemoryRevision,
+    /// The document and the encoded cursors that find the span on it.
+    pub span: CodeSpanAnchor,
+    /// The document's canonical Loro version vector the span was taken at.
+    pub version: Vec<(u64, i32)>,
     pub validity: TimeRange,
 }
 
@@ -241,8 +213,13 @@ impl CodeMemoryLocator {
     /// check that the locator "belongs to" a symbol: locators are
     /// caller-asserted values, never identity.
     pub fn validate(&self) -> Result<()> {
-        validate_locator_path(&self.path_at_revision)?;
-        self.revision.validate()?;
+        for cursor in [&self.span.start, &self.span.end] {
+            if cursor.is_empty() || cursor.len() > CODE_MEMORY_CURSOR_MAX_BYTES {
+                return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
+                    reason: "locator cursors must be non-empty and within the encoded cursor bound",
+                }));
+            }
+        }
         validate_time_range(self.validity, "locator validity")
     }
 }
