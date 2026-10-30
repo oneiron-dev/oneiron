@@ -148,6 +148,7 @@ mod withdrawn_grant;
 mod work_rebind;
 mod world_key_fold;
 mod world_key_support;
+mod world_models;
 mod world_privacy;
 mod world_privacy_door;
 mod world_refold;
@@ -437,6 +438,7 @@ pub(crate) use world_key_support::{
     KeyFrontier, next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
     owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows,
 };
+pub use world_models::WorldModelRoutes;
 #[cfg(feature = "sync")]
 pub(crate) use world_privacy::side_world;
 pub use world_privacy::{

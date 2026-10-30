@@ -86,6 +86,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::VAULT_KEY_ESCROW_RECIPIENT,
     &side_table::VAULT_KEY_ESCROW_RETIRED,
     &side_table::RECOVERY_KIT,
+    // The removal archives this device received, and which it imported
+    // (FIX 11197): a leave is when the person reads them.
+    &side_table::SHARED_ACT_REMOVAL_EXPORT,
+    &side_table::SHARED_ACT_REMOVAL_IMPORT,
     // Monotonic counters and floors, so no sequence or id is ever reused.
     &side_table::SYNC_M_U_SEQ_W,
     &side_table::SYNC_M_U_SEQ_E,

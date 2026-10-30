@@ -330,6 +330,10 @@ side_tables! {
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
+    /// One delivery of a removal archive a removed person's device took in: its digest, what
+    /// it holds and when, never the archive (FIX 11197). Key: hex32 (person) ":" hex32 (receipt
+    /// id) ":" decimal (delivery version).
+    SHARED_ACT_REMOVAL_IMPORT: VaultMeta b"shared-act:removal-import:v1:" Named;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;

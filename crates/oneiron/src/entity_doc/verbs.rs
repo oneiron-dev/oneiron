@@ -167,6 +167,7 @@ impl Vault {
         let (out, landed) = self.with_write_txn_grouped(|txn| {
             let permitted =
                 super::forks::covered(self, txn, authorization, &request.entity, request.actor)?;
+            let lineage = super::proposal_lineage::opening_lineage(self, txn, authorization)?;
             // A shared vault's role and record scope, whether the update lands
             // or is retained for review (FIX 9846).
             self.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
@@ -240,6 +241,7 @@ impl Vault {
                     &fork,
                     ForkStatus::Pending,
                     request.at,
+                    &lineage,
                 )?;
                 let outcome = TextUpdateOutcome::RewriteFork {
                     fork: id,
@@ -267,6 +269,7 @@ impl Vault {
                     &fork,
                     ForkStatus::Pending,
                     request.at,
+                    &lineage,
                 )?;
                 let outcome = TextUpdateOutcome::ProposedFork {
                     fork: id,

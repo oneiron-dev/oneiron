@@ -22503,7 +22503,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 1,
       "re-export": 4
      }
@@ -22608,7 +22608,7 @@
      "path": "src/conversation_dag/redacted.rs",
      "purpose": "Content-free, store-local DAG custody across soft and hard erasure",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -23264,6 +23264,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/checkpoint_payload.rs",
+     "purpose": "The deletion side of the checkpoint payload compartments (KS7-4, FIX 5688): which compartments a deleted…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -23674,7 +23684,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "re-export": 12
      }
     },
@@ -23766,7 +23776,7 @@
      "path": "src/deletion/sweep_queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 31,
       "fn": 1
      }
     },
@@ -23814,7 +23824,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 27,
+      "crate-vis": 28,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -23838,6 +23848,16 @@
      "purpose": "Durable, request-bound interlock between tombstone publication and purge",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/withdrawn.rs",
+     "purpose": "A withdrawn record's Shell generation (FIX 931)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -29970,7 +29990,7 @@
      "path": "src/edit_distance/attribution/triage.rs",
      "purpose": "The triage packet a persistent failure mints, and the one owner-inbox escalation that carries it (ARCH-0056…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 1,
       "struct": 6
@@ -32706,7 +32726,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 2,
       "re-export": 10
      }
@@ -32882,7 +32902,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage, editable fields and immutable row pointers",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 1
      }
@@ -32926,6 +32946,16 @@
      "purpose": "The sweep's entity documents (FIX 10159): the slot each retained head names, and the owner's own compaction…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/sync.rs",
+     "purpose": "The sync text plane's canonical adapter (FIX 8871, 8872, 8873)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -34180,6 +34210,16 @@
      "purpose": "An export-first removal's archive as it is kept (FIX-LIST 8224): the delivered copy, and beside it the…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/removal_import.rs",
+     "purpose": "A removed person's device takes in the archive an export-first removal delivered to it (FIX 11197)",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -38249,7 +38289,7 @@
      "path": "src/inbox/mod.rs",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -38295,7 +38335,7 @@
      "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
      "surface": {
       "const": 4,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -52466,7 +52506,7 @@
      "path": "src/outbound_intent_ledger/payload.rs",
      "purpose": "A ledger row's payload at rest (FIX 9283, 9372, 2328, 2331)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -52517,7 +52557,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -52531,11 +52571,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_intent_ledger/store/checkpoint.rs",
      "purpose": "The checkpoint getter of the outbound intent ledger (KS7-2): each call's whole frozen record (its payload…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/store/payload_erase.rs",
+     "purpose": "What the owner's erase of an outbound call's request leaves (KS7-4b, FIX 5688): evidence only",
      "surface": {
       "crate-vis": 4
      }
@@ -54387,7 +54437,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -65879,7 +65929,7 @@
      "path": "src/store/checkpoint_payload/instance.rs",
      "purpose": "The instance table of checkpoint payload compartments (KS-7, `checkpoint_payload:instance:v1:`): one row per…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -65919,7 +65969,17 @@
      "path": "src/store/checkpoint_payload/mod.rs",
      "purpose": "Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/retirement.rs",
+     "purpose": "What an owner's deletion does to its checkpoint payload leaves (KS7-4, FIX 5688)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -67851,7 +67911,7 @@
      "path": "src/sweep/corrupt.rs",
      "purpose": "The full-carrier pass a corrupt CLAIM's erase asks of the sweep (FIX 7800, ARCH-0038)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -67935,11 +67995,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ScopedContinuation",
+      "ScopedPage"
+     ],
      "path": "src/sync/bridge/app_reads.rs",
      "purpose": "Bounded-page adapters for authority-scoped app subscription channels",
      "surface": {
-      "fn": 2
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -68056,7 +68120,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/recovery.rs",
@@ -68945,6 +69009,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/documents/entity.rs",
+     "purpose": "A non-NOTE record's text on the sync plane (FIX 8871): the frames and the local journal around its canonical…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -68954,7 +69028,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 15,
       "re-export": 1,
       "struct": 2
@@ -68988,6 +69062,16 @@
      "path": "src/sync/documents/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/documents.rs",
+     "purpose": "A federation peer's text doors (FIX 8861)",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -69357,6 +69441,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/ingest/entity/withdrawn.rs",
+     "purpose": "A withdrawn generation at ingest (OF-013, FIX 931)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
@@ -69476,7 +69570,7 @@
      "path": "src/sync/machine_history.rs",
      "purpose": "Machine-claim history this machine is owed (FIX 3820, FIX 4293)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -69522,6 +69616,16 @@
      "purpose": "Opened-window promotion notices on the manager-owned connection lane",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/manager/recovery_commits.rs",
+     "purpose": "The updates a window's cold-open recovery commits, each persisted and routed as the commit it is (FIX 5133)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -69822,7 +69926,7 @@
      "path": "src/sync/queue/scrub.rs",
      "purpose": "Carrier scrubs plus test injection hook",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -69911,7 +70015,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 14,
       "re-export": 20,
       "struct": 2
@@ -70355,7 +70459,7 @@
      "path": "src/sync/room_facts/erased.rs",
      "purpose": "The room side rows a carrier holds that name an actor this vault erased (FIX 4227, 4228): each is rewritten…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -70913,7 +71017,7 @@
      "path": "src/sync/window/admission.rs",
      "purpose": "Full-window UPDATE locality admission without live document side effects",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -70950,7 +71054,7 @@
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -71191,7 +71295,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/withdrawn.rs",
-     "purpose": "Withdrawn generations in a window's live map (OF-013)",
+     "purpose": "Withdrawn generations in a window's live map (OF-013, FIX 931)",
      "surface": {
       "crate-vis": 4
      }
@@ -71213,7 +71317,7 @@
      "path": "src/sync/withdrawn_cutoffs.rs",
      "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -82290,7 +82394,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 48,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82416,7 +82520,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82465,7 +82569,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82773,7 +82877,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83151,7 +83255,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 176,
+     "files": 177,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83179,7 +83283,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 286,
+     "files": 290,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83391,7 +83495,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5581,
+   "source_files": 5591,
    "test_files": 902
   },
   "oneiron-android": {

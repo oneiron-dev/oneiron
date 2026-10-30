@@ -47,6 +47,21 @@ struct RematLedger {
     /// each such tombstone once, not twice.
     protected_admissions: HashSet<EntityId>,
     count: u32,
+    scope: MarkerScope,
+}
+
+/// Whose replay markers a forward pass settles (FIX 538). The markers of a
+/// window are keyed by its key alone, so a sealed window's mirror and its
+/// live doc share them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkerScope {
+    /// The window's own doc: the pass settles the window's markers.
+    Window,
+    /// A sealed window's mirror (OF-570 (d)): the live doc is not touched,
+    /// so the pass settles only the markers of rows it rematerialized here
+    /// (a healing write, or its tombstone's purge), never one by a
+    /// quarantine of the mirror's own copy.
+    Mirror,
 }
 
 /// The forward pass's version, which a sealed window's landed mark names
@@ -60,7 +75,34 @@ pub fn forward_rematerialize(
     materializer: &Materializer,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    forward_with_recovery(vault, doc, materializer, window_key, None)
+    forward_with_recovery(
+        vault,
+        doc,
+        materializer,
+        window_key,
+        None,
+        MarkerScope::Window,
+    )
+}
+
+/// [`forward_rematerialize`] of a sealed window's mirror: it lands the
+/// mirror's rows and settles the window's replay markers only for the rows
+/// it rematerialized; every other marker stays as the untouched live doc
+/// owes it (FIX 538).
+pub(crate) fn forward_rematerialize_mirror(
+    vault: &Vault,
+    mirror: &LoroDoc,
+    materializer: &Materializer,
+    window_key: &WindowKey,
+) -> Result<u32> {
+    forward_with_recovery(
+        vault,
+        mirror,
+        materializer,
+        window_key,
+        None,
+        MarkerScope::Mirror,
+    )
 }
 
 #[cfg(test)]
@@ -89,6 +131,7 @@ fn forward_with_recovery(
     materializer: &Materializer,
     window_key: &WindowKey,
     trusted: Option<&crate::recovery::CanonicalSnapshot>,
+    scope: MarkerScope,
 ) -> Result<u32> {
     // The rows this pass writes came from the doc: the live mirror must not
     // rewrite a carrier with them.
@@ -101,8 +144,8 @@ fn forward_with_recovery(
         materializer,
         window_key,
         trusted,
-        tombstones,
-        native_documents,
+        (tombstones, native_documents),
+        scope,
     )?;
     loop {
         if let Some(count) = run.page(vault, doc, window_key, trusted, usize::MAX)? {
@@ -258,8 +301,8 @@ impl ForwardRun {
             materializer,
             window_key,
             Some(snapshot),
-            tombstones,
-            native_documents,
+            (tombstones, native_documents),
+            MarkerScope::Window,
         )
     }
 
@@ -301,8 +344,8 @@ impl ForwardRun {
         materializer: &Materializer,
         window_key: &WindowKey,
         trusted: Option<&crate::recovery::CanonicalSnapshot>,
-        tombstones: TombstoneIndex,
-        native_documents: Option<crate::sync::note::State>,
+        (tombstones, native_documents): (TombstoneIndex, Option<crate::sync::note::State>),
+        scope: MarkerScope,
     ) -> Result<Self> {
         if let Some(documents) = trusted {
             let txn = vault.store.env.read_txn()?;
@@ -327,6 +370,7 @@ impl ForwardRun {
             pending_dag_parent_sources: HashSet::new(),
             protected_admissions: HashSet::new(),
             count: 0u32,
+            scope,
         };
 
         // OF-013: the withdrawn cutoffs the window carries are staged first, so
@@ -630,7 +674,11 @@ fn settle(
                 quarantine::clear_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
             let mut terminal_seen = HashSet::new();
-            for id in &ledger.terminal_quarantines {
+            let terminal: &[EntityId] = match ledger.scope {
+                MarkerScope::Window => ledger.terminal_quarantines.as_slice(),
+                MarkerScope::Mirror => &[],
+            };
+            for id in terminal {
                 if !terminal_seen.insert(*id)
                     || super::bridge::has_pending_source_in_txn(
                         vault,
@@ -707,9 +755,10 @@ fn settle(
     if let Some(err) = outcome.deferred_error {
         return Err(err);
     }
-    if quarantine::pending_remat_windows(vault)?
-        .iter()
-        .any(|window| window == window_key.as_str())
+    if ledger.scope == MarkerScope::Window
+        && quarantine::pending_remat_windows(vault)?
+            .iter()
+            .any(|window| window == window_key.as_str())
     {
         // Markers survive the pass when a purge failed above, when a
         // flagged entity has neither a healing write nor a proven non-delete

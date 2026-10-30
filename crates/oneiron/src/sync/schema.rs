@@ -6,13 +6,18 @@ use std::collections::BTreeSet;
 
 use loro::{Container, LoroDoc, LoroMap, ValueOrContainer};
 
-use super::loro_support::{map_get_bytes, map_insert_bytes};
+use super::loro_support::map_get_bytes;
 use super::types::{WindowKey, parse_window_key_str};
 
 pub(crate) const SCHEMA_VERSION: i64 = 1;
 
-pub fn schema_version_bytes() -> [u8; 8] {
-    SCHEMA_VERSION.to_le_bytes()
+/// The root `meta` key holding [`SCHEMA_VERSION`] as a native Loro `I64`.
+const ROOT_SCHEMA_VERSION_KEY: &str = "schema_version";
+
+/// Writes [`SCHEMA_VERSION`] into a root doc's `meta` map as a native Loro
+/// `I64` (FIX 7956), the one encoding every root writer shares.
+pub fn insert_root_schema_version(meta: &LoroMap) -> loro::LoroResult<()> {
+    meta.insert(ROOT_SCHEMA_VERSION_KEY, SCHEMA_VERSION)
 }
 
 pub(super) const ROOT_WINDOWS_KEY: &str = "windows";
@@ -36,10 +41,10 @@ pub fn create_root_doc(_user_id: &str, vault_id: &str, windows: &[WindowKey]) ->
     let doc = LoroDoc::new();
     let meta = doc.get_map("meta");
 
-    map_insert_bytes(&meta, "vault_id", vault_id.as_bytes())
+    // Native Loro String and I64 values (FIX 7956), not binary payloads.
+    meta.insert("vault_id", vault_id)
         .expect("fresh root doc meta map accepts inserts");
-    map_insert_bytes(&meta, "schema_version", &schema_version_bytes())
-        .expect("fresh root doc meta map accepts inserts");
+    insert_root_schema_version(&meta).expect("fresh root doc meta map accepts inserts");
     init_window_list(&doc, windows);
 
     let _leases = doc.get_map(super::lease::ROOT_LEASES_MAP);
