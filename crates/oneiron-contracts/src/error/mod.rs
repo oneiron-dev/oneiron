@@ -233,8 +233,6 @@ pub enum ErrorKind {
     #[cfg(feature = "sync")]
     SyncEngineError,
     #[cfg(feature = "sync")]
-    MaintenanceIngestQuotaExceeded,
-    #[cfg(feature = "sync")]
     HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
     KillSwitchDisabled,

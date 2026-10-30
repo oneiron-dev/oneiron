@@ -408,21 +408,6 @@ pub enum SyncError {
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
-    /// A signed maintenance-band op arriving through a sync replay door would
-    /// exceed this device's local per-peer ingest quota for the current quota
-    /// window. The op is quarantined and can be lazily re-admitted by a later
-    /// rematerialization pass once a new quota window is under budget.
-    #[cfg(feature = "sync")]
-    #[error(
-        "maintenance ingest quota exceeded for peer {peer_key_hex}: accepted {accepted_count}/{max_ops_per_peer_window} in quota window starting {window_start_secs} ({quota_window_secs}s)"
-    )]
-    MaintenanceIngestQuotaExceeded {
-        peer_key_hex: String,
-        accepted_count: u32,
-        max_ops_per_peer_window: u32,
-        window_start_secs: u64,
-        quota_window_secs: u64,
-    },
     /// A federated `FacetOf` stamp sent ahead of its row was not held: its
     /// sender already holds the most stamps, or stamp bytes, one sender may.
     /// The rest of the update is admitted as it would be without it.
@@ -564,10 +549,6 @@ impl SyncError {
             Self::SyncProtocolError { .. } => ErrorKind::SyncProtocolError,
             #[cfg(feature = "sync")]
             Self::SyncEngineError { .. } => ErrorKind::SyncEngineError,
-            #[cfg(feature = "sync")]
-            Self::MaintenanceIngestQuotaExceeded { .. } => {
-                ErrorKind::MaintenanceIngestQuotaExceeded
-            }
             #[cfg(feature = "sync")]
             Self::HeldFacetStampsFull { .. } => ErrorKind::HeldFacetStampsFull,
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
