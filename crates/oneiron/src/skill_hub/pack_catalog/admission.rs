@@ -147,34 +147,38 @@ impl Vault {
     /// and every saved query reading a predicate the update dropped or
     /// remapped runs the pack-drift repair ladder (ARCH-0059 §4).
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
-        self.with_write_txn_grouped(|txn| {
-            let source = self.check_pack_install_ask(txn, ask)?;
-            refuse_engine_namespace(&source)?;
-            refuse_local_name(&source)?;
-            if let Some(reason) = self.screen_pack_in_txn(
-                txn,
-                &source,
-                &ask.observed_tools,
-                ask.publisher.identity(),
-            )? {
-                return Ok(PackInstallDisposition::Blocked { reason });
-            }
-            self.commit_pack_install_in_txn(
-                txn,
-                &source,
-                &PackCommit {
-                    source_id: ask.source_id,
-                    hub: &ask.hub,
-                    publisher: ask.publisher.identity(),
-                    foreign: Some(&ask.publisher),
-                    verdict: ask.verdict,
-                    permissions: &ask.permissions,
-                    qualification: ask.qualification.as_ref(),
-                    world: None,
-                    owner_activated: &[],
-                },
-            )
-        })
+        self.with_write_txn_grouped(|txn| self.install_pack_in_txn(txn, ask))
+    }
+    /// [`Self::install_pack`] in the caller's writer, so what the caller
+    /// writes after it commits with the install or not at all.
+    pub(super) fn install_pack_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ask: &PackInstallAsk,
+    ) -> Result<PackInstallDisposition> {
+        let source = self.check_pack_install_ask(txn, ask)?;
+        refuse_engine_namespace(&source)?;
+        refuse_local_name(&source)?;
+        if let Some(reason) =
+            self.screen_pack_in_txn(txn, &source, &ask.observed_tools, ask.publisher.identity())?
+        {
+            return Ok(PackInstallDisposition::Blocked { reason });
+        }
+        self.commit_pack_install_in_txn(
+            txn,
+            &source,
+            &PackCommit {
+                source_id: ask.source_id,
+                hub: &ask.hub,
+                publisher: ask.publisher.identity(),
+                foreign: Some(&ask.publisher),
+                verdict: ask.verdict,
+                permissions: &ask.permissions,
+                qualification: ask.qualification.as_ref(),
+                world: None,
+                owner_activated: &[],
+            },
+        )
     }
     /// Imports each bundled skill and admits it through the one install
     /// transition, writing its import receipt. A hold keeps every skill

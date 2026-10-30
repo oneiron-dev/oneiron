@@ -212,15 +212,22 @@ impl PackFitPolicy for QualifiedPackFitPolicy<'_> {
 pub struct PackHookReplay {
     pub hook: String,
     pub entries: Vec<crate::runtime_hooks::HookReplayEntry>,
-    /// The test did not replay this hook in full: it took no entry (a verb
-    /// hook with no saved run, a fact hook with no past fact), or an entry's
-    /// inputs are gone (`missing_history`). The verdict still stands.
+    /// A verb hook's golden inputs (its `golden.json`), each run.
+    pub golden: Vec<PackHookGoldenRun>,
+    /// The test did not replay this hook in full: it took no entry and ran
+    /// no golden input (a verb hook with neither a saved run nor a golden
+    /// input, a fact hook with no past fact), or an entry's inputs are gone
+    /// (`missing_history`). The verdict still stands.
     pub unreplayed: bool,
 }
 
 impl PackHookReplay {
-    fn new(hook: &super::PackHook, entries: Vec<crate::runtime_hooks::HookReplayEntry>) -> Self {
-        let unreplayed = entries.is_empty()
+    fn new(
+        hook: &super::PackHook,
+        entries: Vec<crate::runtime_hooks::HookReplayEntry>,
+        golden: Vec<PackHookGoldenRun>,
+    ) -> Self {
+        let unreplayed = (entries.is_empty() && golden.is_empty())
             || entries.iter().any(|entry| {
                 matches!(
                     entry.result,
@@ -230,9 +237,24 @@ impl PackHookReplay {
         Self {
             hook: hook.name.clone(),
             entries,
+            golden,
             unreplayed,
         }
     }
+}
+
+/// One golden input of a verb hook, run in its pack's test.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct PackHookGoldenRun {
+    /// Its place in the hook's `golden.json`, from 0.
+    pub index: usize,
+    pub verb: String,
+    pub expect: super::HookGoldenExpect,
+    /// What the body returned, as a replay entry tells it; `None` when the
+    /// hook's selector does not take the call, so no body ran.
+    pub result: Option<crate::runtime_hooks::HookReplayResult>,
+    /// The body returned the expected outcome.
+    pub passed: bool,
 }
 
 /// What a Candidate hook pack's test found, and where the pack stands after.
@@ -246,12 +268,13 @@ impl Vault {
     /// The test a Candidate hub pack's hooks wait for (ARCH-0080 §9): each
     /// hook body replays over past entries and lands nothing. The replay
     /// reads with the owner's reach, since only the owner sees what it
-    /// returns; live, the hook reads at its publisher's Grant. With no entry
-    /// failed, refused or out of time, the pack installs in one writer, and
-    /// an install over a bound pack follows the hook update rule. Otherwise it
-    /// stays Candidate, and the replays say why. A fact hook replays over
-    /// past facts, a verb hook over its saved runs; a hook with nothing to
-    /// replay is labelled unreplayed and does not hold the pack.
+    /// returns; live, the hook reads at its publisher's Grant. A fact hook
+    /// replays over past facts, a verb hook over its saved runs and the
+    /// golden inputs its pack declares. With no entry failed, refused or out
+    /// of time and every golden input met, the pack installs in one writer,
+    /// and an install over a bound pack follows the hook update rule.
+    /// Otherwise it stays Candidate, and the replays say why. A hook with
+    /// nothing to replay is labelled unreplayed and does not hold the pack.
     pub fn qualify_pack_hooks(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -302,7 +325,9 @@ impl Vault {
                         if outcome == "failed" || outcome == "refused"
                 )
             });
-            replays.push(PackHookReplay::new(hook, entries));
+            let (golden, _) = self.pack_hook_golden_runs(runtime, id, &row, hook)?;
+            passed &= golden.iter().all(|run| run.passed);
+            replays.push(PackHookReplay::new(hook, entries, golden));
         }
         if !passed {
             return Ok(PackHookQualification {
@@ -368,6 +393,10 @@ impl Vault {
             }
             Ok(disposition)
         })?;
+        // The bindings changed once the install committed.
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
         Ok(PackHookQualification {
             disposition,
             replays,
@@ -379,9 +408,9 @@ impl Vault {
     /// holds each hook body, and for each hook what its listing replay
     /// ([`Self::hooks_replay_binding_listing`]) lists, the binding it would
     /// get, its body's source, each entry's fact row and every row a
-    /// replayed read served. `None` once a replay's list is: an entry whose
-    /// body heard a verdict whose evidence rows are not known. The
-    /// Candidate, its author and its install are side rows.
+    /// replayed read or a golden input's read served. `None` once a replay's
+    /// list is: an entry whose body heard a verdict whose evidence rows are
+    /// not known. The Candidate, its author and its install are side rows.
     ///
     /// # Errors
     /// As [`Self::qualify_pack_hooks`].
@@ -441,7 +470,12 @@ impl Vault {
                         if outcome == "failed" || outcome == "refused"
                 )
             });
-            replays.push(PackHookReplay::new(hook, entries));
+            let (golden, listed) = self.pack_hook_golden_runs(runtime, id, &row, hook)?;
+            if let Some(rows) = rows.as_mut() {
+                rows.extend(listed);
+            }
+            passed &= golden.iter().all(|run| run.passed);
+            replays.push(PackHookReplay::new(hook, entries, golden));
         }
         let rows = rows.map(|mut rows| {
             rows.sort_unstable();
@@ -515,6 +549,10 @@ impl Vault {
             }
             Ok(disposition)
         })?;
+        // The bindings changed once the install committed.
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
         Ok((
             PackHookQualification {
                 disposition,
@@ -522,6 +560,42 @@ impl Vault {
             },
             rows,
         ))
+    }
+
+    /// `hook`'s golden inputs, each run on `row` (bound as `id`) and put
+    /// to the outcome it expects ([`Self::verb_hook_golden_runs`]), beside
+    /// the rows their runs read. Empty for a hook that declares none.
+    fn pack_hook_golden_runs(
+        &self,
+        runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+        id: crate::EntityId,
+        row: &super::PackHookBinding,
+        hook: &super::PackHook,
+    ) -> Result<(Vec<PackHookGoldenRun>, Vec<crate::EntityId>)> {
+        if hook.golden.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let (runs, rows) = self.verb_hook_golden_runs(runtime, id, row, &hook.golden)?;
+        let runs = hook
+            .golden
+            .iter()
+            .zip(runs)
+            .enumerate()
+            .map(|(index, (input, run))| {
+                let (result, outcome) = match run {
+                    Some(run) => (Some(run.result), run.outcome),
+                    None => (None, None),
+                };
+                PackHookGoldenRun {
+                    index,
+                    verb: input.verb.clone(),
+                    expect: input.expect.clone(),
+                    result,
+                    passed: input.expect.met_by(outcome.as_ref()),
+                }
+            })
+            .collect();
+        Ok((runs, rows))
     }
 }
 
