@@ -26,9 +26,12 @@ const STAMP: &str = "oneiron.entity_doc.v1";
 pub struct Birth {
     /// Entity owning the text.
     pub entity: String,
-    /// Actor who wrote the original text, not the actor migrating it; no one
-    /// once that actor was erased (FIX 6072, Engine R2), which a reader shows
-    /// as unknown and never fills from a peer binding.
+    /// Who wrote the original text, not the actor migrating it. The stored
+    /// birth names that actor's stamp token, never its id (FIX 11964), and a
+    /// read resolves the token to the actor (`Birth::resolved_in`). No one
+    /// once the token is forgotten or the actor erased (FIX 6072, Engine
+    /// R2), which a reader shows as unknown and never fills from a peer
+    /// binding.
     pub actor: DocActor,
     /// Original timestamp in seconds.
     pub at: u64,
@@ -46,13 +49,31 @@ impl Birth {
         EntityId::from_hex(&birth.entity)?;
         Ok(birth)
     }
+
+    /// This birth as a reader sees it (FIX 11964): its stored stamp token
+    /// resolved to the actor through the token's live claim, or no one once
+    /// the token is forgotten or its actor erased here.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or a stored token claim that does not decode.
+    pub(crate) fn resolved_in(
+        &self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Self> {
+        Ok(Self {
+            actor: self.actor.token_actor_in(store, txn)?,
+            ..self.clone()
+        })
+    }
 }
 
 /// One document, with stable cursor identity and an actor on every local commit.
 ///
 /// A commit names its writer by the actor's opaque stamp token
-/// ([`ActorStamp`], FIX 10930), never the actor's id; the birth map names the
-/// birth actor.
+/// ([`ActorStamp`], FIX 10930), never the actor's id, and so does the birth
+/// map its birth actor (FIX 11964).
 pub struct EntityDoc {
     pub(crate) doc: LoroDoc,
     birth: Birth,
@@ -80,16 +101,8 @@ impl EntityDoc {
         at: u64,
         born: Option<&MadeBy>,
     ) -> Result<Self> {
-        let birth = BirthCommit::Stamp(writer.1, born);
-        Self::open_with(
-            LoroDoc::new(),
-            entity,
-            initial,
-            writer.0,
-            at,
-            |_| Ok(()),
-            birth,
-        )
+        let birth = BirthCommit::Stamp(born);
+        Self::open_with(LoroDoc::new(), entity, initial, writer, at, |_| Ok(()), birth)
     }
 
     pub(super) fn open_with_metadata(
@@ -104,30 +117,31 @@ impl EntityDoc {
             LoroDoc::new(),
             entity,
             initial,
-            writer.0,
+            writer,
             at,
             |doc| {
                 Self::replace_metadata(doc, metadata)?;
                 Self::set_record_fields(doc, &metadata.keys().cloned().collect::<Vec<_>>())
             },
-            BirthCommit::Stamp(writer.1, born),
+            BirthCommit::Stamp(born),
         )
     }
 
     /// A birth whose commit is the caller's own `message`, a proposal
-    /// artifact's receipted stamp. The caller may bind the fresh peer before
-    /// choosing the birth timestamp.
+    /// artifact's receipted stamp; the birth map names `writer`'s stamp
+    /// token (FIX 11964). The caller may bind the fresh peer before choosing
+    /// the birth timestamp.
     pub(crate) fn open_initialized(
         doc: LoroDoc,
         entity: EntityId,
         initial: &str,
-        actor: WriteActor,
+        writer: (WriteActor, ActorStamp),
         at: u64,
         initialize: impl FnOnce(&LoroDoc) -> Result<()>,
         message: &str,
     ) -> Result<Self> {
         let birth = BirthCommit::Message(message);
-        Self::open_with(doc, entity, initial, actor, at, initialize, birth)
+        Self::open_with(doc, entity, initial, writer, at, initialize, birth)
     }
 
     /// [`Self::open_born`] on `doc`, after `initialize`: the engine stamp,
@@ -141,15 +155,17 @@ impl EntityDoc {
         initialize: impl FnOnce(&LoroDoc) -> Result<()>,
         born: Option<&MadeBy>,
     ) -> Result<Self> {
-        let birth = BirthCommit::Stamp(writer.1, born);
-        Self::open_with(doc, entity, initial, writer.0, at, initialize, birth)
+        let birth = BirthCommit::Stamp(born);
+        Self::open_with(doc, entity, initial, writer, at, initialize, birth)
     }
 
+    /// The birth map names `writer`'s stamp token in its actor's place, as
+    /// the birth commit does (FIX 10930, 11964).
     fn open_with(
         doc: LoroDoc,
         entity: EntityId,
         initial: &str,
-        actor: WriteActor,
+        writer: (WriteActor, ActorStamp),
         at: u64,
         initialize: impl FnOnce(&LoroDoc) -> Result<()>,
         commit: BirthCommit<'_>,
@@ -157,7 +173,7 @@ impl EntityDoc {
         doc.set_record_timestamp(true);
         let birth = Birth {
             entity: entity.to_hex(),
-            actor: DocActor::Actor(actor.entity_ref()),
+            actor: DocActor::Actor(writer.1.token),
             at,
         };
         map_insert_bytes(&doc.get_map(META), BIRTH, &birth.encode()?)?;
@@ -175,14 +191,14 @@ impl EntityDoc {
                         .timestamp(timestamp),
                 );
             }
-            BirthCommit::Stamp(stamp, born) => stamp_birth(&doc, (actor, stamp), at, born)?,
+            BirthCommit::Stamp(born) => stamp_birth(&doc, writer, at, born)?,
         }
         Ok(Self { doc, birth })
     }
 
     /// Fresh value document for canonical recovery. Old frontiers are not
-    /// imported; an erased birth actor stays no one. Its commit restates the
-    /// row's birth (FIX 10929).
+    /// imported; the birth names the carried token, or no one once erased.
+    /// Its commit restates the row's birth (FIX 10929).
     pub(crate) fn rebuild_value(
         entity: EntityId,
         text: &str,
@@ -353,7 +369,7 @@ enum BirthCommit<'a> {
     /// The engine stamp naming the birth actor's token, with the row's own
     /// birth envelope as its receipt when it names this birth (FIX 10929),
     /// else the generic receipt.
-    Stamp(ActorStamp, Option<&'a MadeBy>),
+    Stamp(Option<&'a MadeBy>),
 }
 
 /// Commits `doc`'s pending operations under the engine stamp naming the
