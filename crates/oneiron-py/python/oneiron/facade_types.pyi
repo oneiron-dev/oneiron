@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4384 declarations.
+Census: 1209 facade rows, 4385 declarations.
 Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -329,6 +329,7 @@ class DiaryEntryReceipt(TypedDict):
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
     include_used: NotRequired[bool]
+SealedPadReader = Literal["owner", "admin", "coach"]
 class DiaryReadRecord(TypedDict):
     read: EntityId
     reader: EntityId
@@ -339,6 +340,7 @@ class DiaryReadRecord(TypedDict):
     grants: list[str]
     request: NotRequired[EntityId | None]
     source: str
+    ruled_reader: NotRequired[SealedPadReader | None]
 DiaryReviewState = Literal["pending", "approved", "declined", "used"]
 class DiaryReadRequest(TypedDict):
     request: EntityId
@@ -349,6 +351,7 @@ class DiaryReadRequest(TypedDict):
     state: DiaryReviewState
     answered_at: NotRequired[int | None]
     read: NotRequired[EntityId | None]
+    ruled_reader: NotRequired[SealedPadReader | None]
 class DiaryReadsView(TypedDict):
     review: bool
     reads: list[DiaryReadRecord]

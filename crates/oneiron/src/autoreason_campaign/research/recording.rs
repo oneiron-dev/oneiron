@@ -3,6 +3,7 @@
 //! The research parent owns experiment records and typed tables.
 
 use super::*;
+use crate::gate::weave_grant::WeaveScope;
 
 /// The child must be an existing attempt of the campaign's run, enqueued
 /// under one of `parents` on the run tree.
@@ -61,14 +62,16 @@ fn put_new_node_in_txn(
 /// landing. The claim must be live and have landed through the gated claim
 /// door: its locally attested writer, and that writer's latest decision on
 /// it that let a row land. A controller weaves only a claim it wrote. A claim
-/// past Proposed stands for anyone but the owner only on an Allow for its
-/// writer: the owner's Grant (actor ceilings, source trust) let this writer
-/// land it there, which is the auto-weave grant ([`auto_weave_granted`]).
+/// past Proposed stands for anyone but the owner only under the owner's
+/// auto-weave grant for its writer, scoped to this campaign (`campaign`),
+/// its skill or the claim's project, for which the gate's Allow stands in
+/// until an owner can mint that grant ([`auto_weave_granted`]).
 fn weave_claim_landing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     writer: WeaveWriter,
     claim: &EntityId,
+    campaign: &[WeaveScope],
 ) -> Result<(ClaimApprovalStatus, String)> {
     let body = vault
         .get_claim_in_txn(txn, claim)?
@@ -78,9 +81,10 @@ fn weave_claim_landing_in_txn(
     {
         return Err(invalid("the weave's claim was rejected or closed"));
     }
-    let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, claim, &body)?
-        .ok_or(invalid("the weave's claim has no attested writer"))?
-        .entity_ref();
+    let attested =
+        crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, claim, &body)?
+            .ok_or(invalid("the weave's claim has no attested writer"))?;
+    let author = attested.entity_ref();
     if let WeaveWriter::Controller { actor } = writer
         && actor != author
     {
@@ -101,9 +105,11 @@ fn weave_claim_landing_in_txn(
         })
         .last()
         .ok_or(invalid("the weave's claim did not land through the gate"))?;
+    let mut scopes = campaign.to_vec();
+    scopes.push(WeaveScope::Project(body.scope_project));
     if body.approval != ClaimApprovalStatus::Proposed
         && writer != WeaveWriter::Owner
-        && !auto_weave_granted(&decision)
+        && !auto_weave_granted(vault, txn, &decision, attested, &scopes)?
     {
         return Err(invalid(
             "a weave lands past Proposed only under an owner auto-weave grant",
@@ -112,12 +118,36 @@ fn weave_claim_landing_in_txn(
     Ok((body.approval, decision.decision_id.to_hex()))
 }
 
+/// Whether the gate's Allow alone still stands in for the owner's
+/// auto-weave grant. Until an owner can mint a weave-scoped grant through a
+/// door, it does, so a weave past Proposed keeps today's path; a ruling that
+/// asks for the scoped grant alone sets this to false (CALLS `FIX 3433
+/// auto-weave grant`).
+const GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT: bool = true;
+
 /// Whether the gate's decision on a weave claim carries an owner auto-weave
-/// grant: an Allow for its writer, which the owner's Grant alone gives a
-/// non-owner landing past Proposed. A narrower, weave-scoped grant changes
-/// this one test.
-fn auto_weave_granted(decision: &crate::store::GateDecisionRecord) -> bool {
-    decision.outcome == OUTCOME_ALLOW
+/// grant (FIX 3433): an Allow whose record names the owner's weave-scoped
+/// Grant for `writer` (`gate.allow.weave_grant` and its `grant_ref`), still
+/// active and scoped to one of `scopes`; or, while
+/// [`GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT`] holds, the gate's Allow alone.
+fn auto_weave_granted(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    decision: &crate::store::GateDecisionRecord,
+    writer: crate::WriteActor,
+    scopes: &[WeaveScope],
+) -> Result<bool> {
+    if decision.outcome != OUTCOME_ALLOW {
+        return Ok(false);
+    }
+    Ok(GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT
+        || crate::gate::weave_grant::decision_names_weave_grant_in_txn(
+            &vault.store,
+            txn,
+            decision,
+            writer,
+            scopes,
+        )?)
 }
 
 /// Record a fork: a variation of a live parent, or a debug child of a buggy
@@ -233,9 +263,15 @@ pub fn record_weave(
         }
     }
     check_child(vault, &binding, input.child, &input.parents)?;
+    // The weave scopes an auto-weave grant may name beside the claim's
+    // project: this campaign, and the skill it improves.
+    let mut campaign = vec![WeaveScope::Campaign(*root.as_bytes())];
+    if let ResearchTarget::Skill { skill } = binding.target {
+        campaign.push(WeaveScope::Skill(skill));
+    }
     vault.with_write_txn_grouped(|txn| {
         let (claim_approval, gate_decision) =
-            weave_claim_landing_in_txn(vault, txn, writer, &input.claim)?;
+            weave_claim_landing_in_txn(vault, txn, writer, &input.claim, &campaign)?;
         let node = ExperimentNode {
             attempt: input.child,
             kind: ExperimentKind::Weave,
