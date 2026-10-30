@@ -64,6 +64,24 @@ pub struct SealedVaultUpload {
     /// snapshot that sealed it: a commit names it for the kit door (FIX 3714).
     /// `None`: no root is pinned here, and no kit opens this upload.
     pub kit_root: Option<RecoveryRootId>,
+    /// Each world whose capsule this upload does not seal fresh because the
+    /// history held here, merged with the capsule it replaces, is incomplete
+    /// (FIX 4497): the latest generation's capsule rides unchanged, or none.
+    pub incomplete_authority: Vec<EntityId>,
+}
+
+/// What an ordinary take imported from the world capsules this machine opens
+/// (FIX 4495).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorldCapsuleImport {
+    /// Capsules that opened with this machine's key.
+    pub opened: usize,
+    /// Signed entries they carried that were not held here, imported.
+    pub imported: usize,
+    /// Capsules that did not open for a reason other than having no capsule
+    /// for this machine, or whose entries the admission refused: the next
+    /// generation files the world's capsule again, and its take tries again.
+    pub refused: usize,
 }
 
 impl Vault {
@@ -111,7 +129,9 @@ impl Vault {
     /// one's under the key it names, where known
     /// ([`OpenedVaultBundle::sections_known`]). The body files a fresh capsule
     /// of each world in `carry.fresh_authority`, which the bundle must carry for
-    /// `holder`, and each of `carry.carried_authority` unchanged.
+    /// `holder`, merged with its capsule in `carry.replaced_authority` and
+    /// sealed only once whole (FIX 4497), and each of `carry.carried_authority`
+    /// unchanged.
     pub(crate) fn seal_vault_bundle_carrying(
         &self,
         slot: u64,
@@ -149,7 +169,8 @@ impl Vault {
                 sections.push((*section).clone());
             }
         }
-        let authorities = authority::seal_authorities(&plan, generation, carry)?;
+        let (authorities, incomplete_authority) =
+            self.seal_world_authorities(&secret.secret, &plan, generation, carry)?;
         let body = encode_bundle_body(&plan, generation, base, &sections, &authorities)?;
         drop(sections);
         let bundle = seal_object(BUNDLE, &plan, generation, body)?;
@@ -159,6 +180,7 @@ impl Vault {
             bundle: SealedVaultBundle(bundle),
             pads: SealedKeyPads(pads),
             kit_root: plan.kit_root,
+            incomplete_authority,
         })
     }
 

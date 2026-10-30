@@ -86,7 +86,7 @@ use crate::store::Store;
 #[cfg(feature = "sync")]
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
-pub use self::carrier::SealedVaultUpload;
+pub use self::carrier::{SealedVaultUpload, WorldCapsuleImport};
 pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
 use self::plan::{SealPlan, seal_object};
 pub(crate) use self::publication::bundle_publish_executor;

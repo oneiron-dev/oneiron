@@ -17,7 +17,9 @@
 //! - A bundle publication reports whether its home keeps sealed copies by
 //!   its known profile, what this install's relay last saw when it tried to
 //!   reach that home and of the home's newest generation's outer capsules,
-//!   and the exact attempt it persisted and has not resolved.
+//!   the worlds whose authority capsule there awaits a reader to seal it to
+//!   the root pinned now (FIX 4496), and the exact attempt it persisted and
+//!   has not resolved.
 //!
 //! Only the executor observes its own work: any other install answers that
 //! the executor's observation is unavailable here. Pending and progress stay
@@ -41,11 +43,10 @@ mod key_plan;
 const REASSERT_DIAGNOSTICS_PAGE: usize = 256;
 
 /// Why a bundle publication's home may keep no sealed copy, as its profile
-/// stands here (FIX 4786). The request stays pending as it was; this only
-/// says why.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
+/// stands here (FIX 4786), or which worlds its newest generation leaves to a
+/// reader (FIX 4496). The request stays pending as it was; this only says
+/// why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BundleHomeWarning {
     /// The home's profile is a phone's: its own doors keep no sealed copy
@@ -55,12 +56,17 @@ pub enum BundleHomeWarning {
     /// No live profile of the home is known here: whether it keeps sealed
     /// copies is unknown.
     HomeProfileUnknown,
+    /// The home's newest generation, as this install's relay last read it,
+    /// files each of these worlds' authority capsule sealed to no recovery
+    /// root pinned here now: the current kit restores that world's keys only
+    /// once a machine that reads it publishes again (FIX 4496).
+    AwaitingReader { worlds: Vec<EntityId> },
 }
 
 impl BundleHomeWarning {
     /// The words a surface shows.
     #[must_use]
-    pub fn text(self) -> &'static str {
+    pub fn text(&self) -> &'static str {
         match self {
             Self::HomeDoesNotKeepSealedBundles => {
                 "the home is a phone, which keeps no sealed copy; the request stays pending until \
@@ -69,17 +75,24 @@ impl BundleHomeWarning {
             Self::HomeProfileUnknown => {
                 "no profile of the home is known here, so whether it keeps sealed copies is unknown"
             }
+            Self::AwaitingReader { .. } => {
+                "the home's newest copy keeps these worlds' keys sealed for an earlier recovery \
+                 kit or none; the current kit restores each once a machine that reads it \
+                 publishes again"
+            }
         }
     }
 }
 
 /// The warning a publication to `home` carries, from the home's trusted
-/// profile, else its live roster profile (FIX 4786): `None` when that
-/// profile's class keeps sealed copies.
+/// profile, else its live roster profile (FIX 4786); for a home whose
+/// profile's class keeps sealed copies, the worlds of `awaiting_reader`, read
+/// from the home's newest generation (FIX 4496), else `None`.
 #[cfg(feature = "sync")]
 pub(super) fn bundle_home_warning(
     fold: &AuthorityFold,
     home: EntityId,
+    awaiting_reader: &[EntityId],
 ) -> Option<BundleHomeWarning> {
     let class = match fold.trusted_machine(home) {
         Some(trusted) => Some(trusted.profile.device_class),
@@ -94,6 +107,9 @@ pub(super) fn bundle_home_warning(
         Some(class) if !crate::sync::residence::holds_sealed_bundle(class) => {
             Some(BundleHomeWarning::HomeDoesNotKeepSealedBundles)
         }
+        Some(_) if !awaiting_reader.is_empty() => Some(BundleHomeWarning::AwaitingReader {
+            worlds: awaiting_reader.to_vec(),
+        }),
         Some(_) => None,
     }
 }
@@ -103,6 +119,7 @@ pub(super) fn bundle_home_warning(
 pub(super) fn bundle_home_warning(
     _fold: &AuthorityFold,
     _home: EntityId,
+    _awaiting_reader: &[EntityId],
 ) -> Option<BundleHomeWarning> {
     None
 }
@@ -288,7 +305,7 @@ impl CapsuleRead {
 }
 
 /// The home's newest generation as a relay pass read it (FIX 4785).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum LatestRead {
     /// The pass did not read it: it did not reach the home, or stopped first.
@@ -300,12 +317,17 @@ pub enum LatestRead {
     Read {
         bundle: CapsuleRead,
         pads: CapsuleRead,
+        /// The worlds whose authority capsule the generation files sealed to
+        /// no recovery root pinned here then (FIX 4496); empty when the
+        /// bundle did not open here or no root is pinned.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        awaiting_reader: Vec<EntityId>,
     },
 }
 
 /// What one relay pass on this install observed for a publication (FIX
 /// 4784, 4785), kept in memory until the handle closes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PublishObserved {
     /// The vault second of the pass.
     pub at: u64,
@@ -341,7 +363,9 @@ pub enum RelayObservation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PublicationDiagnostics {
     pub home: EntityId,
-    /// As the receipt's: why the home may keep no sealed copy (FIX 4786).
+    /// As the receipt's: why the home may keep no sealed copy (FIX 4786);
+    /// else the worlds its newest generation, as the relay last read it,
+    /// leaves to a reader (FIX 4496).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub home_warning: Option<BundleHomeWarning>,
     /// What this install's relay observed of the home and the newest
@@ -476,11 +500,6 @@ impl Vault {
         request: AuthorityEntryHash,
         home: EntityId,
     ) -> Result<PublicationDiagnostics> {
-        let home_warning = {
-            let txn = self.store.env.read_txn()?;
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            bundle_home_warning(&fold, home)
-        };
         let passes: Vec<PublishObserved> = self
             .world_keys
             .publications
@@ -488,8 +507,23 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .filter(|((asked, _), _)| *asked == request)
-            .map(|(_, observed)| *observed)
+            .map(|(_, observed)| observed.clone())
             .collect();
+        let awaiting_reader = passes
+            .iter()
+            .filter(|observed| observed.home == Some(home))
+            .find_map(|observed| match &observed.latest {
+                LatestRead::Read {
+                    awaiting_reader, ..
+                } => Some(&awaiting_reader[..]),
+                LatestRead::NotRead | LatestRead::NoneKept => None,
+            })
+            .unwrap_or_default();
+        let home_warning = {
+            let txn = self.store.env.read_txn()?;
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            bundle_home_warning(&fold, home, awaiting_reader)
+        };
         let relay = if passes.is_empty() {
             RelayObservation::Unknown
         } else {

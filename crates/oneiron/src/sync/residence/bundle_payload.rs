@@ -51,8 +51,8 @@ use crate::sync::window::{
 };
 use crate::world_keys::{
     BundleCarry, KitConfirmation, OpenedBundleSection, OpenedVaultBundle, RecoveryRootSeed,
-    RootRestore, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldKey, pad_body_world,
-    refused, world_keys_destroyed_in_txn,
+    RootRestore, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport, WorldKey,
+    pad_body_world, refused, world_keys_destroyed_in_txn,
 };
 
 mod checkpoint;
@@ -101,6 +101,8 @@ pub struct SealedBundleTake {
     pub unchanged: usize,
     /// Sections or windows that did not open or merge here.
     pub skipped: usize,
+    /// What the world capsules this machine opens imported (FIX 4495).
+    pub authority: WorldCapsuleImport,
 }
 
 /// Each private world's signed key wrap entries held here, parents first: what
@@ -117,6 +119,9 @@ pub struct SealedKitRestore {
     /// Signed authority entries the base section and the world capsules the
     /// kit opens carried, each once.
     pub authority: usize,
+    /// Worlds whose capsule the kit does not open, sealed before its root was
+    /// pinned: each restores once a reader of it publishes again (FIX 4496).
+    pub awaiting_reader: Vec<EntityId>,
     /// Windows of the base section installed here.
     pub windows: usize,
     /// Windows of the base section that did not install: none, since one
@@ -203,17 +208,17 @@ impl WindowManager {
             ..BundleCarry::default()
         };
         // A machine that may not read a world never overwrites the capsule it
-        // carries from what it holds of that world; a reader holds it whole.
+        // carries; a reader merges it into its fresh one (FIX 4497).
         let capsules = latest
             .as_ref()
             .map_or(&[][..], |(opened, _)| opened.world_authorities());
         for (world, entries) in &sides {
-            if capsules.iter().any(|capsule| capsule.world() == *world)
-                && vault.world_key(*world).is_err()
-            {
+            let replaced = capsules.iter().find(|capsule| capsule.world() == *world);
+            if replaced.is_some() && vault.world_key(*world).is_err() {
                 continue;
             }
             carry.fresh_authority.push((*world, entries.as_slice()));
+            carry.replaced_authority.extend(replaced);
         }
         for capsule in capsules {
             let world = capsule.world();
@@ -256,6 +261,7 @@ impl WindowManager {
             }
             self.take_section(&section, !opened, &mut take);
         }
+        take.authority = vault.import_opened_world_capsules(&outer)?;
         Ok(take)
     }
 
@@ -312,10 +318,11 @@ impl WindowManager {
         let base = decode_base(opened.base())?;
         let carried = base.checkpoint.as_ref();
         checkpoint::adopt(vault, vault_id, carried, trust, seed, confirm)?;
-        let authority =
-            with_world_authority(base.authority, opened.authority_history_with_kit(seed)?);
+        let (capsules, awaiting_reader) = opened.authority_history_with_kit(seed)?;
+        let authority = with_world_authority(base.authority, capsules);
         let mut restore = SealedKitRestore {
             authority: authority.len(),
+            awaiting_reader,
             ..SealedKitRestore::default()
         };
         vault.import_signed_authority_history(&authority)?;
