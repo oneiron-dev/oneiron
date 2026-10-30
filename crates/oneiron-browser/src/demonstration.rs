@@ -27,7 +27,7 @@ use crate::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// A demonstration's id within its session: `dm1`, `dm2`, ...
 pub type DemonstrationId = String;
@@ -345,8 +345,8 @@ pub(crate) struct Recording {
     acted: bool,
     /// The tabs whose run's own act loaded a page whose document had sent
     /// nothing by that act's drain: the tab's next document is the act's
-    /// own (FIX 10429).
-    awaited: BTreeSet<String>,
+    /// own (FIX 10429), bound to that act's seq and result page (FIX 11583).
+    awaited: BTreeMap<String, (u64, Option<String>)>,
 }
 
 impl Recording {
@@ -371,7 +371,7 @@ impl Recording {
             pages: BTreeMap::new(),
             shown_pages: BTreeMap::new(),
             acted: true,
-            awaited: BTreeSet::new(),
+            awaited: BTreeMap::new(),
         }
     }
 
@@ -423,7 +423,7 @@ impl Recording {
         let url = shown;
         if !matches!(saw, Saw::Document | Saw::Gap(_)) {
             self.acted = true;
-            self.awaited.remove(&tab);
+            self.expire_awaited(&tab);
         }
         // A form field's change, and the submit, follow its Enter.
         if !matches!(saw, Saw::Submit(_) | Saw::Commit { .. }) {
@@ -462,9 +462,10 @@ impl Recording {
             }
             Saw::Document => {
                 self.flush();
-                // A page no recorded act led to (FIX 9413); the late
-                // document of the run's own act is that act's (FIX 10429).
-                if !self.awaited.remove(&tab) && !std::mem::take(&mut self.acted) {
+                // A page no recorded act led to (FIX 9413); the late document
+                // of the run's own act is that act's own page only (FIX 10429,
+                // FIX 11583).
+                if !self.take_awaited(&tab, url.as_deref()) && !std::mem::take(&mut self.acted) {
                     let gap = RecordingGapKind::UnrecordedNavigation;
                     self.gap(None, Some(tab.clone()), gap);
                 }
@@ -531,6 +532,11 @@ impl Recording {
     /// A step the run's own verb made (its receipt's), with the final text
     /// the page showed for a type's field, if it showed one.
     pub(crate) fn own(&mut self, mut step: RecordedStep, edited: Option<Edited>) {
+        // A wait an earlier act in these tabs left (FIX 11583) expires as
+        // its gap: this act, not its late document, came next.
+        for tab in step.tab.iter().chain(step.result_tab.iter()) {
+            self.expire_awaited(tab);
+        }
         self.unsubmitted();
         self.flush();
         self.acted = true;
@@ -547,10 +553,36 @@ impl Recording {
 
     /// The run's own act in tab `tab` loaded a page whose document had sent
     /// nothing by that act's drain (FIX 10429): the tab's next document is
-    /// that act's own, and a script's redirect after it still follows an
+    /// that act's own, bound to the act just recorded, its seq and the page
+    /// it left (FIX 11583); a script's redirect after it still follows an
     /// act.
     pub(crate) fn awaits_document(&mut self, tab: String) {
-        self.awaited.insert(tab);
+        if let Some(step) = self.steps.last() {
+            self.awaited
+                .insert(tab, (step.seq, step.result_url.clone()));
+        }
+    }
+
+    /// A wait still pending when an act in `tab` was recorded (FIX 11583):
+    /// its act's navigation went unrecorded: its gap, never silent.
+    fn expire_awaited(&mut self, tab: &str) {
+        if let Some((seq, _)) = self.awaited.remove(tab) {
+            let gap = RecordingGapKind::UnrecordedNavigation;
+            self.gap(Some(seq), Some(tab.to_owned()), gap);
+        }
+    }
+
+    /// Whether the document at `url` in `tab` is the late document the
+    /// run's own act awaited (FIX 11583): only its own page consumes it.
+    fn take_awaited(&mut self, tab: &str, url: Option<&str>) -> bool {
+        let own = self
+            .awaited
+            .get(tab)
+            .is_some_and(|(_, page)| page.as_deref().is_none_or(|held| Some(held) == url));
+        if own {
+            self.awaited.remove(tab);
+        }
+        own
     }
 
     /// Ends the span: the open edit becomes its step, an Enter that
