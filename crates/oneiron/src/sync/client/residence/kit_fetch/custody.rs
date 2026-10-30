@@ -3,12 +3,13 @@
 //! kit's rebuilt seed. Each page request is signed with the seed's owner
 //! anchor ([`KitCustodyFetch`]), and the home's kit custody door serves the
 //! lineage only to the root it pins for the vault. The sealed head comes in
-//! slices, then every log frame the home holds in order: through the head's
-//! sequence number and on past it, to the first frame the home lacks (FIX
-//! 12020), each page continuing the one before it; a head the home switched
-//! under the scan starts it over. The bytes are checked here only for their
-//! order and lengths and the head's digest: the restore opens and chains
-//! them.
+//! slices, then every log frame the home holds in order from the first the
+//! restore needs, or the one after the head where that is earlier (FIX
+//! 12045): through the head's sequence number and on past it, to the first
+//! frame the home lacks (FIX 12020), each page continuing the one before
+//! it; a head the home switched under the scan starts it over. The bytes
+//! are checked here only for their order and lengths and the head's digest:
+//! the restore opens and chains them.
 
 use std::collections::BTreeMap;
 
@@ -53,12 +54,14 @@ struct KitCustodyCursor {
 
 impl KitHome {
     /// One page of the home's custody of `lineage`, from the head offset and
-    /// the last log sequence number a page before reached (FIX 5846). A
+    /// the last log sequence number a page before reached (FIX 5846), its
+    /// frames from `from_seq`, the first the restore needs (FIX 12045). A
     /// refused or missing page is `InvalidPayload`; a body past
     /// [`KIT_CUSTODY_REPLY_MAX`] is `FrameTooLarge`.
     async fn custody_page(
         &self,
         lineage: Lineage,
+        from_seq: u64,
         (head_offset, after_seq): (u64, u64),
     ) -> Result<Value, TransportError> {
         let mut nonce = [0u8; KIT_BUNDLE_FETCH_NONCE_BYTES];
@@ -71,6 +74,7 @@ impl KitHome {
             lineage,
             head_offset,
             after_seq,
+            from_seq,
             timestamp: crate::unix_seconds_now(),
             nonce,
         };
@@ -92,6 +96,7 @@ impl KitHome {
                 "custodyNamespace": custody_namespace,
                 "headOffset": head_offset,
                 "afterSeq": after_seq,
+                "fromSeq": from_seq,
                 "timestamp": fetch.timestamp,
                 "nonce": sealed_digest_hex(&fetch.nonce),
                 "signature": signature,
@@ -111,16 +116,19 @@ impl KitHome {
 /// The custody lineage `lineage` as the residence home at `home` holds it,
 /// read with the kit alone, for a restore on an install that is no machine
 /// of the vault's (FIX 5846): `seed` is the kit's, rebuilt for the vault
-/// `vault_id`. The whole sealed head and every log frame from the first, as
-/// far as the home holds them in order: through the head's sequence number,
-/// and past it, where a head older than its anchor chains to the anchor (FIX
-/// 12020). `None` when the home holds no head of the lineage, or refused the
-/// kit. `home` is the home's address, as `https`, `http`, `wss` or `ws`.
+/// `vault_id`. The whole sealed head and every log frame from `from_seq`,
+/// the first the restore needs, or the one after the head where that is
+/// earlier (FIX 12045), as far as the home holds them in order: through the
+/// head's sequence number, and past it, where a head older than its anchor
+/// chains to the anchor (FIX 12020). A `from_seq` of 1 reads the whole log.
+/// `None` when the home holds no head of the lineage, or refused the kit.
+/// `home` is the home's address, as `https`, `http`, `wss` or `ws`.
 pub async fn fetch_custody_with_kit(
     home: &str,
     vault_id: &[u8; 32],
     seed: &RecoveryRootSeed,
     lineage: Lineage,
+    from_seq: u64,
 ) -> Result<Option<FetchedCustodySource>, TransportError> {
     let home = kit_home(home, vault_id, seed)?;
     let refused = || TransportError::InvalidPayload("the kit custody answer does not decode");
@@ -135,7 +143,7 @@ pub async fn fetch_custody_with_kit(
     let mut frames = BTreeMap::new();
     let mut cursor = (0_u64, 0_u64);
     loop {
-        let reply = match home.custody_page(lineage, cursor).await {
+        let reply = match home.custody_page(lineage, from_seq, cursor).await {
             Ok(reply) => reply,
             Err(TransportError::InvalidPayload(_)) => return Ok(None),
             Err(error) => return Err(error),
@@ -155,7 +163,7 @@ pub async fn fetch_custody_with_kit(
             continue;
         }
         held = Some(read);
-        let (_, head_len, _) = read;
+        let (_, head_len, head_seq) = read;
         // Each page continues where the one before it ended, the frames
         // only once the head is whole and without a gap: those past the
         // head's sequence number are the home's log after its head (FIX
@@ -168,6 +176,11 @@ pub async fn fetch_custody_with_kit(
         }
         head.extend_from_slice(&part);
         let mut reached = cursor.1;
+        // Once the head is whole, the frames start at the first the restore
+        // needs, or right after the head where that is earlier (FIX 12045).
+        if head.len() as u64 == head_len {
+            reached = reached.max(from_seq.saturating_sub(1).min(head_seq));
+        }
         for frame in &page.frames {
             if reached.checked_add(1) != Some(frame.seq) || (head.len() as u64) < head_len {
                 return Err(refused());

@@ -3,13 +3,14 @@
 //! restore on a new host reads in place of the folder beside the backup.
 //!
 //! The home serves the sealed head in slices and then the log frames after
-//! a sequence number, through the head's and on past it as far as its log
-//! runs without a gap (FIX 12020), a page at a time, each page read under
-//! the lineage's lock so its head and frames are one pair. A page that is
-//! not the last names its cursor: the head offset and the last sequence
-//! number it reached. The fetched bytes are never trusted here: the restore
-//! opens the head and chains the frames through the validator it runs on
-//! the folder's.
+//! a sequence number, from the first the restore needs or the one after the
+//! head where that is earlier (FIX 12045), through the head's and on past it
+//! as far as its log runs without a gap (FIX 12020), a page at a time, each
+//! page read under the lineage's lock so its head and frames are one pair.
+//! A page that is not the last names its cursor: the head offset and the
+//! last sequence number it reached. The fetched bytes are never trusted
+//! here: the restore opens the head and chains the frames through the
+//! validator it runs on the folder's.
 
 use std::collections::BTreeMap;
 
@@ -41,12 +42,14 @@ pub struct CustodyHomePage {
     pub head_offset: u64,
     /// The head's bytes from `head_offset`; empty once the head is whole.
     pub head_part: Vec<u8>,
-    /// Log frames after the cursor's sequence number, in order and without
-    /// a gap, through the head's and on past it: each with its sequence
-    /// number.
+    /// Log frames after the cursor's sequence number, from the first the
+    /// restore needs or the one after the head where that is earlier (FIX
+    /// 12045), in order and without a gap, through the head's and on past
+    /// it: each with its sequence number.
     pub frames: Vec<(u64, Vec<u8>)>,
     /// Where the next page starts; `None` on the last: the home lacks the
-    /// next frame, at a gap or the end of its log.
+    /// next frame from where the scan started, at a gap or the end of its
+    /// log.
     pub next: Option<CustodyHomeCursor>,
 }
 
