@@ -557,6 +557,8 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "team_start_tournament_unknown",
     "team_start_tournament_foreign",
     "team_start_tournament_unbound",
+    "team_start_tournament_deferred",
+    "team_start_tournament_cycle",
     "team_record_not_led",
     "team_record_invalid_input",
     "team_record_unknown_member",

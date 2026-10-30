@@ -200,6 +200,9 @@ side_tables! {
     AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
     /// One autoresearch selection round's receipt. Key: id16 (root attempt) + u64be (round).
     AUTORESEARCH_ROUND: VaultMeta b"autoresearch:round:v1:" Named;
+    /// One deferred tournament-lineage walk's persisted position (FIX 9581).
+    /// Key: id16 (team leader attempt) + id16 (tournament run attempt).
+    AUTORESEARCH_TOURNAMENT_CURSOR: VaultMeta b"autoresearch:tournament_cursor:v1:" Named;
     /// The last commit a write that changes no content stamped (FIX 6730): its transaction id,
     /// the last content commit's and its class, so a host's telemetry and a backup's own writes
     /// move no backup watermark. Runtime-tier: no image carries it. Key: ().

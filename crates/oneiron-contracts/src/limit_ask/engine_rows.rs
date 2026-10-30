@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 131] = [
+    pub const ALL: [Self; 132] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -137,6 +137,7 @@ impl EngineLimit {
         Self::IdentityExcerptBytes,
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
+        Self::TournamentLineageRows,
     ];
 
     /// The config key that sets the row.
@@ -273,6 +274,7 @@ impl EngineLimit {
             Self::IdentityExcerptBytes => "limits.identity_excerpt_bytes",
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
+            Self::TournamentLineageRows => "limits.tournament_lineage_rows",
         }
     }
 
@@ -473,6 +475,8 @@ impl EngineLimit {
             Self::CommunityCacheBytes => 64 << 20,
             // The manifest's old fixed refusal.
             Self::ConnectorManifestEntries => 4_096,
+            // The per-call hop budget the tournament walk defers past (FIX 9581).
+            Self::TournamentLineageRows => 4_096,
         }
     }
 }

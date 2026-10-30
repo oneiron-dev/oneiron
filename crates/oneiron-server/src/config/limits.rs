@@ -394,6 +394,7 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            tournament_lineage_rows,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -635,6 +636,7 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::TournamentLineageRows, tournament_lineage_rows),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
