@@ -874,7 +874,7 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
         full.valid_entries
             .difference(&edit_hashes)
             .copied()
-            .collect::<ValidEntries>(),
+            .collect::<BTreeSet<_>>(),
         without.valid_entries
     );
     assert!(without.machine(later).is_some_and(RosterHead::mine));

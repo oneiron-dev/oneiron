@@ -301,7 +301,7 @@ pub(crate) fn bind_actor(
     let Some(op) = binding_op(&fold, &host_key, actor, actor_class) else {
         return;
     };
-    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.iter().copied().collect();
+    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.clone();
     let mut seq = 0u64;
     let rows = vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
