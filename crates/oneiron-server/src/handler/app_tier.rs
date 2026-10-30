@@ -38,6 +38,10 @@ pub(super) async fn handle_sync_message(
             super::asset_bodies::handle(server, conn_state, tag, &payload, direct_tx)
                 .map(ControlFlow::Continue)
         }
+        SyncMessage::LeafKey { tag, payload } => {
+            super::leaf_keys::handle(server, conn_id, conn_state, tag, &payload, direct_tx)
+                .map(ControlFlow::Continue)
+        }
         SyncMessage::Doc {
             entity,
             kind,

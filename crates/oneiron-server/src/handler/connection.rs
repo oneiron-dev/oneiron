@@ -251,6 +251,9 @@ enum ConnEvent {
     AppDelivery,
     /// The socket's by-reference body transfers are due a poll (FIX 5489).
     AssetBodies,
+    /// The home's own leaf-key requests are due an offer to this socket
+    /// (FIX 11785).
+    LeafKeys,
     /// A verb RPC run off the loop ended; its answer is already queued.
     Answered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
 }
@@ -289,6 +292,7 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         SyncMessage::Ephemeral(_)
         | SyncMessage::LfsChunks(_)
         | SyncMessage::AssetBody { .. }
+        | SyncMessage::LeafKey { .. }
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }
