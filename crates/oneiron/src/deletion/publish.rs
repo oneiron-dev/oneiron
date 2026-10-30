@@ -644,7 +644,10 @@ impl Vault {
         );
         let mut keys = Vec::new();
         let address = WindowAddress::new(window_key.as_str());
-        for key in self.store.port_window_update_keys(&rtxn, Some(address), str::to_owned)? {
+        for key in self
+            .store
+            .port_window_update_keys(&rtxn, Some(address), str::to_owned)?
+        {
             count.row();
             keys.push(key?);
         }
