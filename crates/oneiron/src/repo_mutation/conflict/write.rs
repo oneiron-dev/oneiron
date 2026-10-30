@@ -322,6 +322,7 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
     attach(&mut wtxn, &link)?;
     wtxn.commit()?;
     vault.store.notify_attempt_observers();
+    vault.wake_merge_queue();
     Ok(link)
 }
 
@@ -378,6 +379,7 @@ impl Vault {
         attach(&mut wtxn, &retried)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        self.wake_merge_queue();
         Ok(retried)
     }
 }

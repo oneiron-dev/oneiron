@@ -555,7 +555,7 @@ impl MergeQueue<'_> {
                         .as_ref()
                         .and_then(|metadata| metadata.file_modes.get(&frontier.document_id))
                         .copied()
-                        .unwrap_or(0o100_644);
+                        .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE);
                     (frontier.path.as_str(), (frontier, mode))
                 })
                 .collect();

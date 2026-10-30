@@ -119,6 +119,22 @@ impl Vault {
         authority: Option<&OriginAuthorityLease>,
         judge: impl FnOnce(&GitOid) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
+        self.export_engine_commit_checked(git, repo, request, authority, judge, |_| Ok(Ok(())))
+    }
+
+    /// [`Self::export_engine_commit_judged`], with `check` judged again as
+    /// the first act of each writer the export makes before its publication,
+    /// the projection's and the publication intent's (FIX 7179): a refusal
+    /// there records and publishes nothing.
+    pub(crate) fn export_engine_commit_checked<R>(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        request: &EngineCommitExport,
+        authority: Option<&OriginAuthorityLease>,
+        judge: impl FnOnce(&GitOid) -> Result<std::result::Result<(), R>>,
+        check: impl Fn(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
         let _guard = lock_repository(repo.common_dir())?;
         // The shared eligibility (G4 PR3): the stored promotion is judged
         // again before any Git object is created, at its original point.
@@ -185,7 +201,10 @@ impl Vault {
         if let Err(refused) = judge(&oid)? {
             return Ok(Err(refused));
         }
-        self.with_write_txn_grouped(|txn| {
+        let projected = self.with_write_txn_grouped(|txn| {
+            if let Err(refused) = check(txn)? {
+                return Ok(Err(refused));
+            }
             let key = export_key(repo, revision.revision_id);
             if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
                 if old != oid.as_str() {
@@ -196,8 +215,11 @@ impl Vault {
             } else {
                 ENGINE_EXPORTS.put(&self.store, txn, &key, &oid.as_str().to_owned())?;
             }
-            Ok(())
+            Ok(Ok(()))
         })?;
+        if let Err(refused) = projected {
+            return Ok(Err(refused));
+        }
         let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
         let intent = entity_id_from_hash_material(
             b"oneiron:engine-export-intent:v1",
@@ -229,7 +251,9 @@ impl Vault {
             },
             learned_at: revision.finalized_at,
         };
-        self.put_origin_publication_intent(&publication)?;
+        if let Err(refused) = self.put_origin_publication_intent_checked(&publication, &check)? {
+            return Ok(Err(refused));
+        }
         let receipt = match authority {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),

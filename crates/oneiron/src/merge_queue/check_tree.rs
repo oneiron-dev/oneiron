@@ -2,6 +2,7 @@
 //! object store through the shipped GitWire reads, never the live checkout.
 use super::MergeQueue;
 use super::check_inputs::{QueueCheckFile, QueueCheckTreeSource};
+use crate::code_revision::CodeTreeInventory;
 use crate::contract_oracle::invalid;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
@@ -71,29 +72,21 @@ impl MergeQueue<'_> {
 }
 
 impl QueueCheckTreeSource for PinnedTree<'_> {
+    /// The tree's files through the one walker the tested seal reads
+    /// ([`CodeTreeInventory::entries`], FIX 7395): every level counted, in
+    /// path order, submodule links left out.
     fn files(&self) -> Result<Vec<QueueCheckFile>> {
-        let mut files = Vec::new();
-        let mut pending = vec![(Vec::new(), self.tree.clone())];
-        while let Some((prefix, tree)) = pending.pop() {
-            for entry in self.wire.read_tree(self.repo, &tree)? {
-                let mut path = prefix.clone();
-                if !path.is_empty() {
-                    path.push(b'/');
-                }
-                path.extend_from_slice(&entry.name);
-                match entry.mode {
-                    MODE_TREE => pending.push((path, entry.oid)),
-                    MODE_GITLINK => {}
-                    mode => files.push(QueueCheckFile {
-                        path,
-                        mode,
-                        oid: entry.oid.as_str().to_owned(),
-                    }),
-                }
-            }
-        }
-        files.sort_by(|left, right| left.path.cmp(&right.path));
-        Ok(files)
+        Ok(
+            CodeTreeInventory::entries(&self.wire, self.repo, &self.tree)?
+                .into_iter()
+                .filter(|(_, (_, mode))| *mode != MODE_GITLINK)
+                .map(|(path, (oid, mode))| QueueCheckFile {
+                    path: path.into_bytes(),
+                    mode,
+                    oid,
+                })
+                .collect(),
+        )
     }
 
     fn blob(&self, oid: &str) -> Result<Vec<u8>> {

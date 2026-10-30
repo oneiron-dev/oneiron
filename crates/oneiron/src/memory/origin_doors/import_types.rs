@@ -25,7 +25,8 @@ pub struct CodeRepoImportRequest {
     /// The Published receive-pack publication that admitted the push.
     pub admission_receipt: EntityId,
     /// The owner's promotion of the exact manifest over its checked
-    /// Baseline; `None` imports and answers `manifest_ready` only.
+    /// Baseline; `None` imports and answers `manifest_ready`, or `promoted`
+    /// when a promotion of this manifest already holds.
     pub accept: Option<CodeImportAcceptance>,
 }
 
@@ -76,4 +77,8 @@ pub struct CodeRepoImportView {
     pub baseline_revision: Option<EntityId>,
     /// The `repo.import_approval` claim, once promoted.
     pub promotion_receipt: Option<EntityId>,
+    /// Why the promotion holds: the Baseline, review or approval it lacks
+    /// (FIX 7393). `None` when it does not hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<String>,
 }

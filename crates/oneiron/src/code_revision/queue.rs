@@ -141,6 +141,7 @@ impl Vault {
                 "a tested queue revision must advance its aggregation session",
             ));
         }
+        super::queue_root::put_queue_root_in_txn(&self.store, &mut wtxn, revision)?;
         seal.attach_in_txn(self, &mut wtxn)?;
         wtxn.commit()?;
         Ok(revision.revision_id)
