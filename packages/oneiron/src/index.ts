@@ -218,7 +218,9 @@ export class Oneiron {
    * `open` stays the rootless door. A secret that is not the vault's settled
    * root, over a profile that already stands, opens and says so in
    * `hostRoot.wrongRoot`. The handle binds the local owner actor, as `open`
-   * does, and carries no owner proof.
+   * does, and carries no owner proof. With `opts.holdCheckpointRootSigner`
+   * (FIX 5343) the handle holds this install's host root as its checkpoint
+   * signer, unless the secret went unused; omitted is `false`.
    */
   static openWithHostRoot(
     path: string | undefined,
@@ -232,6 +234,7 @@ export class Oneiron {
         opts.dimensions,
         hostRootSecret,
         opts.deviceClass,
+        opts.holdCheckpointRootSigner,
       )
     } catch (error) {
       throw translateNativeError(error)

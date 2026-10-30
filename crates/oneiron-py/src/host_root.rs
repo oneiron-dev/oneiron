@@ -37,12 +37,15 @@ struct HostRootProfile {
 /// fails with the engine's reason. A wrong root over a standing profile
 /// opens and is reported ([`profile`]). `device_class` is the host's
 /// declaration, `None` a computer (FIX 5591).
+/// `hold_checkpoint_root_signer` holds this install's host root as the
+/// vault's checkpoint signer for the handle's life (FIX 5343).
 pub(crate) fn open(
     py: Python<'_>,
     path: Option<PathBuf>,
     host_root_secret: &[u8],
     dimensions: Option<usize>,
     device_class: Option<MachineDeviceClass>,
+    hold_checkpoint_root_signer: bool,
 ) -> PyResult<OneironClient> {
     // Crash output never carries world text: the engine's hook goes in before
     // any vault opens (owner ruling 2026-10-14, fix 6).
@@ -50,7 +53,7 @@ pub(crate) fn open(
     let options = OpenOptions {
         dimensions,
         device_class,
-        hold_checkpoint_root_signer: false,
+        hold_checkpoint_root_signer,
     };
     py.detach(|| OneironClient::open_with_host_root(path.as_deref(), &options, host_root_secret))
         .map_err(raise)

@@ -212,6 +212,7 @@ class Oneiron:
         *,
         dimensions: int | None = None,
         device_class: str | None = None,
+        hold_checkpoint_root_signer: bool | None = None,
     ) -> dict[str, Any]:
         """:meth:`open`, then this install's own machine profile from the vault's host root secret.
 
@@ -232,11 +233,14 @@ class Oneiron:
         says so in ``host_root["wrong_root"]``: reported, never refused. The
         handle binds the local owner actor, as :meth:`open` does, and carries
         no owner proof. ``device_class`` is :meth:`open`'s.
+        With ``hold_checkpoint_root_signer`` (FIX 5343) the handle holds this
+        install's host root as its checkpoint signer, unless the secret went
+        unused; omitted or ``None`` is ``False``.
         """
         resolved = os.fspath(path) if path is not None else None
         native = _translate(
             lambda: _NativeClient.open_with_host_root(
-                resolved, host_root_secret, dimensions, device_class
+                resolved, host_root_secret, dimensions, device_class, hold_checkpoint_root_signer
             )
         )
         raw = native.host_root_profile()

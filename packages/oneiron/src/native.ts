@@ -1275,6 +1275,7 @@ interface NativeClientConstructor {
     dimensions: number | undefined,
     hostRootSecret: Uint8Array,
     deviceClass: string | undefined,
+    holdCheckpointRootSigner: boolean | undefined,
   ): NativeClient
   connect(url: string, key: string): NativeClient
   /** `pin` is absent when the vault has no attested checkpoint. */

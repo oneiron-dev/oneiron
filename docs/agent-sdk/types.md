@@ -27,6 +27,13 @@ export type OpenOptions = {
    * `"phone"`. Never read off the operating system.
    */
   deviceClass?: "computer" | "phone"
+  /**
+   * Holds this install's host root as the vault's checkpoint signer for the
+   * handle's life (FIX 5343): the device sync's steady pass attests with it
+   * the images its home writes. Only {@link Oneiron.openWithHostRoot} reads
+   * it; omitted is `false`. A secret that went unused is never held.
+   */
+  holdCheckpointRootSigner?: boolean
 }
 
 /**
@@ -984,6 +991,7 @@ class Oneiron:
         *,
         dimensions: int | None = None,
         device_class: Literal["computer", "phone"] | None = None,
+        hold_checkpoint_root_signer: bool | None = None,
     ) -> HostRootOpened:
         """open, then this install's machine profile from the vault's host root secret's exact bytes (FIX 5342)."""
     @classmethod

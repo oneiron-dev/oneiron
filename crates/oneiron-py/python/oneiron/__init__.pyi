@@ -426,6 +426,7 @@ class Oneiron:
         *,
         dimensions: int | None = None,
         device_class: Literal["computer", "phone"] | None = None,
+        hold_checkpoint_root_signer: bool | None = None,
     ) -> HostRootOpened:
         """open, then this install's machine profile from the vault's host root secret's exact bytes (FIX 5342)."""
     @classmethod
