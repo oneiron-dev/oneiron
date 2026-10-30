@@ -11,6 +11,7 @@ mod campaign_archive;
 mod campaign_split;
 mod catalog_fragment;
 mod comm_widen;
+mod connect_proposal;
 mod connector;
 mod connector_call;
 mod connector_pack;
@@ -573,6 +574,7 @@ pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use self::comm_widen::*;
+pub use self::connect_proposal::*;
 pub use self::connector::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
