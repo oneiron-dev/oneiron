@@ -33,6 +33,18 @@ impl<'a> IngestCtx<'a> {
         self
     }
 
+    /// Reads the body references of `doc`, the window the values come from,
+    /// for a caller that judges no residence: endpoint hydration and the
+    /// recovery preflight.
+    #[allow(
+        dead_code,
+        reason = "the endpoint hydration and recovery preflight hooks call this (NOTES)"
+    )]
+    pub(in crate::sync) fn with_body_refs(mut self, doc: &'a loro::LoroDoc) -> Self {
+        self.body_refs = Some(doc);
+        self
+    }
+
     /// The staged body for `id`, when it is the one `body` names.
     fn staged_for(&self, id: &EntityId, body: &AssetBodyRef) -> Option<&'a StagedAssetBody> {
         self.asset_body
@@ -45,7 +57,7 @@ impl<'a> IngestCtx<'a> {
 /// outside a window, while the file plane is off, and for an ordinary inline
 /// body.
 pub(super) fn bound(ctx: &IngestCtx<'_>, id: &EntityId, blob: &[u8]) -> Option<AssetBodyRef> {
-    bound_in(ctx.carrier_doc()?, id, blob)
+    bound_in(ctx.carrier_doc().or(ctx.body_refs)?, id, blob)
 }
 
 /// H125 for a body that moves by reference: the fence a release left on `id`
