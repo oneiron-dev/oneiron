@@ -27,6 +27,9 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
     pub(super) owner_proof: Option<crate::consent::AuthenticatedOwner>,
     pub(super) parked: Option<OutboundDispatchOutcome>,
+    /// The instant the seat's window reopens, when the seat's own policy
+    /// parked this send (FIX 8813).
+    pub(super) seat_held_until: Option<u64>,
     /// The seat's count bound, rechecked under the admission writer lock.
     pub(super) admission_ceiling: Option<crate::outbound_chokepoint::AdmissionCeiling>,
     pub(super) suppression_receipt: Option<ReceiptRecord>,
@@ -51,6 +54,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         verified_actor,
         owner_proof,
         parked,
+        seat_held_until,
         admission_ceiling,
         suppression_receipt,
         authorization,
@@ -159,6 +163,24 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             parked,
         )
     };
+    // FIX 8813: a send its seat's own policy parked waits for the seat's
+    // window to reopen as a full window paces a send: Held, coming back at
+    // that instant. FIX 8791: so does a send the connector's own seat policy
+    // held before its provider call.
+    let paced_until = effect_result.paced_until.or_else(|| {
+        if outcome != OutboundDispatchOutcome::Held {
+            return None;
+        }
+        seat_held_until
+            .filter(|_| gate_outcome_kind == GateOutcome::Allow)
+            .or_else(|| {
+                transport
+                    .execution
+                    .as_ref()
+                    .and_then(|execution| execution.hold.as_ref())
+                    .and_then(|hold| hold.until)
+            })
+    });
     // A replay has no new decision id; never invent a non-queryable gate ref.
     Ok(DispatchVerdict {
         gate_decision_ref: effect_result.gate_decision_id,
@@ -176,7 +198,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         held_approval_actor: effect_result.approval_actor,
         provider_wait: settlement.provider_wait,
         provider_wait_held_until,
-        paced_until: effect_result.paced_until,
+        paced_until,
         budget_reservation: settlement.reservation.map(|reservation| reservation.status),
     })
 }
@@ -202,6 +224,10 @@ fn outbound_effect_outcome(
             Some(execution) if execution.kind == OutboundExecutionOutcomeKind::Failed => {
                 if execution.delivery_may_have_occurred {
                     OutboundDispatchOutcome::Ambiguous
+                } else if execution.hold.is_some() {
+                    // FIX 8791: the connector's own seat policy held it
+                    // before any provider call; it stays queued.
+                    OutboundDispatchOutcome::Held
                 } else {
                     OutboundDispatchOutcome::Failed
                 }

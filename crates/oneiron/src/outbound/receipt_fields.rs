@@ -422,15 +422,31 @@ pub(super) fn dispatch_result_receipt(
         budget_reservation,
     );
     // FIX 7948: a send a full window paces names the instant it comes back,
-    // which its executor re-arms at, and the window it waits for.
+    // which its executor re-arms at, and the window it waits for. FIX 8813,
+    // FIX 8791: a send its seat's own policy holds names the seat's reason.
+    let seat_hold_reason = if outcome == OutboundDispatchOutcome::Held {
+        execution
+            .as_ref()
+            .and_then(|execution| execution.hold.as_ref())
+            .map(|hold| hold.reason.as_str())
+            .or_else(|| {
+                admission
+                    .and_then(|stage| stage.seat.as_ref())
+                    .and_then(|seat| seat.hold_reason())
+            })
+    } else {
+        None
+    };
     if let Some(edge) = paced_until {
         receipt
             .fields
             .insert("retry_at".to_owned(), edge.to_string());
+    }
+    if paced_until.is_some() || seat_hold_reason.is_some() {
         append_optional_receipt_field(
             &mut receipt,
             "hold_reason",
-            gate_reason_codes.first().map(String::as_str),
+            seat_hold_reason.or(gate_reason_codes.first().map(String::as_str)),
         );
     }
     append_contract_receipt(&mut receipt, verb_contract, policy_risk);
