@@ -8,13 +8,15 @@
 //! flight under it is cancelled with the protocol's shutdown reason, each
 //! wait for budget, room or a seat ends, and a call sent to another node is
 //! dropped. A call cut short says [`HostError::Interrupted`], never a clean
-//! end; one that finished first keeps its outputs and receipt. Nothing here
+//! end; one that finished first keeps its outputs and receipt, and one its
+//! organ answered with its own error before the cancel keeps that error
+//! (FIX 11167). Nothing here
 //! withdraws a grant: a revocation is another act.
 //!
 //! Blocking work runs under the cancel on its own thread
 //! ([`MeshCancel::scope`]), so the waits deep inside a call read it there.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 #[cfg(unix)]
 use std::collections::BTreeMap;
 use std::fmt;
@@ -142,6 +144,9 @@ thread_local! {
     /// The organ call this thread is sending under that cancel, if any.
     #[cfg(unix)]
     static CALL: RefCell<Option<Arc<InFlight>>> = const { RefCell::new(None) };
+    /// This thread's last organ call had its organ's answer before the
+    /// cancel: the answer stands, an error it carried included (FIX 11167).
+    static ANSWERED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// This thread's cancel until dropped; the one before it comes back.
@@ -206,14 +211,23 @@ pub(crate) fn check() -> Result<(), HostError> {
 
 /// A call's result as the cancel leaves it: once this thread's work was
 /// cancelled, a failure is the stop's, [`HostError::Interrupted`]. An
-/// outcome that came stands, and so does a withdrawn grant.
+/// outcome that came stands, and so does a withdrawn grant, and so does a
+/// failure after the organ answered before the cancel ([`answered`]).
 pub(crate) fn settle<T>(result: Result<T, HostError>) -> Result<T, HostError> {
+    let answered = ANSWERED.take();
     match result {
-        Err(error) if !matches!(error, HostError::Revoked) && interrupted() => {
+        Err(error) if !matches!(error, HostError::Revoked) && !answered && interrupted() => {
             Err(HostError::Interrupted)
         }
         result => result,
     }
+}
+
+/// This thread's organ call has its organ's answer: it is the organ's own
+/// unless this thread's work was cancelled first (FIX 11167).
+#[cfg(unix)]
+pub(crate) fn answered() {
+    ANSWERED.set(!interrupted());
 }
 
 /// Returns once `cancel` cancels its work; never without one.
@@ -283,6 +297,7 @@ pub(crate) fn interruptible(process: &Arc<OrganProcess>, grace: Duration) -> Opt
         interrupted: AtomicBool::new(false),
     });
     let key = cancel.0.next.fetch_add(1, Ordering::Relaxed);
+    ANSWERED.set(false);
     lock(&cancel.0.calls).insert(key, Arc::clone(&call));
     CALL.with(|slot| *slot.borrow_mut() = Some(call));
     Some(Interruptible { cancel, key })
