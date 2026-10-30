@@ -166,6 +166,14 @@ pub(super) fn body_in_txn(
     })
 }
 
+/// The deck `doc` holds and the landed export it is bound to, `None` while
+/// it is bound to the imported source: what an anchored comment reads of a
+/// deck (FIX 12264).
+pub(super) fn deck_with_binding(doc: &LoroDoc) -> Result<(LiveDeck, Option<u64>)> {
+    let body = doc::read(doc)?;
+    Ok((body.deck, body.retained.map(|retained| retained.version)))
+}
+
 impl Vault {
     /// The deck body at its head, or at an earlier frontier `at` of its
     /// history, with who made each visible thing.

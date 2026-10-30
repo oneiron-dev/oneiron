@@ -51,7 +51,7 @@ pub(crate) use actor_erase::{
     erase_export_actor_in_txn, erase_fork_actor_in_txn, erase_oracle_actor_in_txn,
     erase_proposal_actor_in_txn,
 };
-pub(crate) use annotation_units::OfficeBodyUnits;
+pub(crate) use annotation_units::{DeckUnits, OfficeBodyUnits};
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
     OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader, ProposalMember,
