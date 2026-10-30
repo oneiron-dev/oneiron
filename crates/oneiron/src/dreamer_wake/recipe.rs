@@ -242,7 +242,7 @@ fn read_evidence(
         return Err(invalid());
     }
     let bytes = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-    let source = evidence_source_from_row_in_txn(vault, txn, &id, header.entity_type, &bytes)?;
+    let source = evidence_source_from_row_in_txn(vault, txn, header.entity_type, &bytes)?;
     let project = crate::dreamer_consolidation::resources::stored_project(
         &vault.store,
         txn,

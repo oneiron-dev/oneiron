@@ -78,13 +78,7 @@ fn source_row(read: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, id: EntityId) -> Res
     Ok((row.0, row.2))
 }
 
-fn row_trust(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    kind: u8,
-    body: &[u8],
-) -> Result<ClaimSource> {
+fn row_trust(vault: &Vault, txn: &heed::RoTxn<'_>, kind: u8, body: &[u8]) -> Result<ClaimSource> {
     if kind == ENTITY_TYPE_CLAIM {
         return Ok(evidence_source_from_claim(
             &crate::claim::decode_claim_body(body, true)?,
@@ -94,7 +88,7 @@ fn row_trust(
         return super::resources::native_turn_source(vault, body);
     }
     if kind == ENTITY_TYPE_NOTE {
-        return evidence_source_from_row_in_txn(vault, txn, &id, kind, body);
+        return evidence_source_from_row_in_txn(vault, txn, kind, body);
     }
     Err(invalid_consolidation(
         "root evidence must name a TURN, CLAIM or NOTE",
@@ -118,7 +112,7 @@ fn ancestors(
             continue;
         }
         let (kind, body) = source_row(read, txn, id)?;
-        let trust = row_trust(vault, txn, id, kind, &body)?;
+        let trust = row_trust(vault, txn, kind, &body)?;
         if id != source {
             found.push(ConsolidationAncestor {
                 source_ref: id.to_hex(),
@@ -231,7 +225,7 @@ fn pin_reference(
     {
         return Err(invalid_consolidation("root source crossed its bucket axes"));
     }
-    let trust = row_trust(vault, txn, locator.source_id, kind, &body)?;
+    let trust = row_trust(vault, txn, kind, &body)?;
     let ancestry = ancestors(vault, read, txn, locator.source_id)?;
     let meet = ancestry.iter().fold(trust, |meet, ancestor| {
         source_meet(meet, ancestor.trust_class)
