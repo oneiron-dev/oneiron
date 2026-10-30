@@ -269,9 +269,11 @@ impl AttributionNotes for MeasuredNotes<'_> {
         request: &JudgeRequest<'_>,
         answers: &[HunkVerdict],
     ) -> oneiron::Result<Vec<Option<String>>> {
-        // Evidence and floor row ids are not in pack_source_rows yet
-        // (Engine 05:54): the note tier's complete set stays unknown.
-        record_attribution_rows(self.vault, self.attempt, None);
+        // The note tier's complete set is the noted request's rows: the judge
+        // already unioned request + decision evidence, and unknown stays
+        // unknown, so a `None` here still poisons honestly when any
+        // constituent is unknown (FIX 7020).
+        record_attribution_rows(self.vault, self.attempt, request.sources.map(<[_]>::to_vec));
         let notes = self.coach.notes(request, answers)?;
         let longest = notes.iter().flatten().map(String::len).max().unwrap_or(0);
         let _ = self
