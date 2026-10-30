@@ -60,20 +60,25 @@ pub(super) fn read(doc: &LoroDoc) -> Result<State> {
         state.forks.insert(row.fork, row);
     }
     for (key, bytes) in rows(doc, "note_proposals")? {
-        let row: NoteReviewBundle = unpack(&bytes)?;
-        if id(&key)? != row.id {
+        let row: BundleCarrier = unpack(&bytes)?;
+        if id(&key)? != row.bundle.id {
             return Err(invalid("NOTE proposal key"));
         }
-        state.bundles.insert(row.id, row);
+        state.bundles.insert(row.bundle.id, row);
     }
     Ok(state)
 }
 
 impl State {
+    /// Binds every carried row (FIX 8877, 8878, 8879). A NOTE whose core
+    /// rides here binds its rows as before; any other NOTE's rows are a
+    /// bundle's attachments, each bound to a member or to the document
+    /// family a member's parent leads through. Forks name their real parent
+    /// document and carry no merge basis; values belong to undecided forks.
     pub(super) fn validate(&self) -> Result<()> {
         let mut documents = BTreeMap::new();
         for ((note, head), text) in &self.docs {
-            if !self.cores.contains_key(note) || !self.heads.contains_key(note) {
+            if self.cores.contains_key(note) && !self.heads.contains_key(note) {
                 return Err(invalid("NOTE document owner absent"));
             }
             if note == head {
@@ -113,10 +118,13 @@ impl State {
             }
         }
         let mut membership = BTreeMap::new();
-        for bundle in self.bundles.values() {
-            // No count bounds a bundle (Rule 5, FIX 8828).
+        for carrier in self.bundles.values() {
+            let bundle = &carrier.bundle;
+            // No count bounds a bundle (Rule 5, FIX 8828). A projection
+            // never carries the explainer its members share.
             if (bundle.waiting.is_empty() && bundle.landed.is_empty())
                 || bundle.explainer.trim().is_empty()
+                || (!carrier.complete && bundle.explainer != REDACTED)
             {
                 return Err(invalid("NOTE proposal shape"));
             }
@@ -136,28 +144,37 @@ impl State {
                 }
             }
         }
+        let switched: BTreeSet<EntityId> = self
+            .receipts
+            .values()
+            .filter(|row| row.verdict == crate::note::NoteVerdict::Switch)
+            .map(|row| row.fork)
+            .collect();
+        let attached = self.attached_family();
         for fork in self.forks.values() {
-            // Only a pending merge fork carries a value basis. The frontier the
-            // fork opened at rides beside it as recorded; it is never a basis.
-            if (!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some() {
+            // An ordinary carrier holds proposal values only: no historical
+            // merge basis rides it (FIX 8879). The frontier the fork opened
+            // at rides beside it as recorded; it is never a basis.
+            if fork.recovery_merge.is_some() {
                 return Err(invalid("NOTE fork merge basis"));
             }
             if !fork.frontier.is_empty() && loro::Frontiers::decode(&fork.frontier).is_err() {
                 return Err(invalid("NOTE fork frontier"));
             }
-            if fork.parent != fork.note || !self.heads.contains_key(&fork.note) {
+            let anchored = self.heads.contains_key(&fork.note);
+            if (self.cores.contains_key(&fork.note) && !anchored)
+                || !self.binds_family(fork, &switched)
+            {
                 return Err(invalid("NOTE proposal parent identity"));
             }
-            if fork.parent == fork.fork
-                || fork.proposal != membership.get(&fork.fork).copied()
-                || fork.decided != landed.contains(&fork.fork)
-            {
+            let member = membership.get(&fork.fork).copied();
+            let bound = if anchored || member.is_some() {
+                fork.proposal == member
+            } else {
+                fork.decided && switched.contains(&fork.fork) && attached.contains(&fork.fork)
+            };
+            if !bound || fork.decided != landed.contains(&fork.fork) {
                 return Err(invalid("NOTE fork workflow binding"));
-            }
-            if let Some((_, target)) = &fork.recovery_merge
-                && documents.get(&(fork.note, fork.fork)).copied() != Some(target)
-            {
-                return Err(invalid("NOTE merge target differs from proposal value"));
             }
             if !fork.decided && !documents.contains_key(&(fork.note, fork.fork)) {
                 return Err(invalid("NOTE proposal value absent"));
@@ -212,10 +229,10 @@ impl State {
                 .or_default()
                 .insert(fork.fork.to_hex(), pack(fork)?);
         }
-        for bundle in self.bundles.values() {
+        for carrier in self.bundles.values() {
             maps.entry("note_proposals")
                 .or_default()
-                .insert(bundle.id.to_hex(), pack(bundle)?);
+                .insert(carrier.bundle.id.to_hex(), pack(carrier)?);
         }
         let mut changed = false;
         for (name, values) in maps {
