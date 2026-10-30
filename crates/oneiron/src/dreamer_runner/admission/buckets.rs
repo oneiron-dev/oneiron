@@ -2,11 +2,15 @@
 //! A child's buckets are its parts' partitions (FIX 7524): it is admitted
 //! all or none, only when no running MACRO work holds any of them. The ready
 //! scan skips held buckets, so one busy bucket cannot block disjoint work.
+//! A run its preparation narrowed holds only the buckets it runs (FIX 7729).
 
 use std::collections::{BTreeSet, HashSet};
 
+use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
-use crate::dreamer_consolidation::{ConsolidationPartitionKey, decode_partition_payload};
+use crate::dreamer_consolidation::{
+    ConsolidationPartitionKey, decode_partition_payload, running_bucket_set_in_txn,
+};
 use crate::error::Result;
 
 use super::super::{DreamerConsolidationScope, DreamerRunnerStore, decode_dreamer_attempt_payload};
@@ -31,20 +35,31 @@ struct Held {
 }
 
 impl Held {
-    /// What the running rows of `kind` among `records` hold.
-    fn running(records: &[AttemptRecord], kind: &str) -> Self {
+    /// What the running rows of `kind` among `records` hold: a run its
+    /// preparation narrowed holds the buckets it runs, any other its queued
+    /// set.
+    fn running(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        records: &[AttemptRecord],
+        kind: &str,
+    ) -> Result<Self> {
         let mut held = Self::default();
         for row in records
             .iter()
             .filter(|row| row.kind == kind && row.state.is_running())
         {
             held.any = true;
-            match bucket(row) {
+            let set = match running_bucket_set_in_txn(vault, txn, row)? {
+                Some(narrowed) => Some(narrowed),
+                None => bucket(row),
+            };
+            match set {
                 Some(set) => held.buckets.extend(set),
                 None => held.whole_vault = true,
             }
         }
-        held
+        Ok(held)
     }
 
     /// Whether `row` may be admitted now, all or none: no whole-vault slot is
@@ -67,7 +82,7 @@ impl DreamerRunnerStore<'_> {
         let txn = self.vault.store.env.read_txn()?;
         let kind = DreamerConsolidationScope::Macro.attempt_kind();
         let records = self.attempts.kind_working_rows_in_txn(&txn, kind)?;
-        let held = Held::running(&records, kind);
+        let held = Held::running(self.vault, &txn, &records, kind)?;
         Ok(records
             .iter()
             .filter(|row| {
@@ -104,7 +119,7 @@ impl DreamerRunnerStore<'_> {
     ) -> Result<Option<AttemptId>> {
         let kind = DreamerConsolidationScope::Macro.attempt_kind();
         let records = self.attempts.kind_working_rows_in_txn(txn, kind)?;
-        let held = Held::running(&records, kind);
+        let held = Held::running(self.vault, txn, &records, kind)?;
         self.attempts
             .ready_kind_matching_in_txn(txn, kind, input.now, |row| {
                 Ok(row.accepts_worker(&input.lease_owner) && held.admits(row))
