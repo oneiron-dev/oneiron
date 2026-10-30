@@ -357,6 +357,16 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
+/// The text a surfaced claim indexes under `val`: its value's string, or the
+/// value's MessagePack display for any other kind. The claim commit and the
+/// indexed-revision idle pass both index this, so a republish keeps the
+/// claim's postings (FIX 12368).
+pub(crate) fn claim_value_index_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_owned)
+}
+
 /// Read-admission predicate for authority-consuming consolidation paths.
 ///
 /// This is intentionally stricter than [`claim_surfaceable`]: first-party or
