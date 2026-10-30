@@ -65,8 +65,8 @@ use super::carrier_custody::CUSTODY_CARRIER_LEAF_WIRE;
 use super::codec::{encode_bind_input, encode_register_input};
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, CustodyChange, CustodyRecipientPermit,
-    CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
-    invalid_authority,
+    CustodyRecipientPermits, CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome,
+    OwnerWorkRefusal, OwnerWorkRequest, invalid_authority,
 };
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
@@ -673,22 +673,24 @@ impl Vault {
 /// The permits a change records: the exact ones a sealing surface bound,
 /// each still standing; the machines the plan names; or, when it names
 /// none, the holder alone for a register and the permits of the secret's
-/// one live active change for a rotate or a bind. Any other rewrap names
-/// its own.
+/// one live active change for a rotate or a bind, shared with it, never
+/// copied (FIX 12281). Any other rewrap names its own.
 fn change_permits(
     fold: &AuthorityFold,
     change: &ActiveChange<'_>,
     holder: EntityId,
-) -> Result<Vec<CustodyRecipientPermit>> {
+) -> Result<CustodyRecipientPermits> {
     let permits = if let Some(bound) = change.permits {
         if permits::permitted_keys(fold, bound).is_none() {
             return Err(refused(
                 "a recipient's permit no longer stands: its install was removed or its key changed",
             ));
         }
-        bound.to_vec()
+        CustodyRecipientPermits::from(bound)
     } else if !change.plan.recipients.is_empty() {
-        permits::permits_for(fold, &change.plan.recipients).map_err(recipient_refused)?
+        permits::permits_for(fold, &change.plan.recipients)
+            .map_err(recipient_refused)?
+            .into()
     } else {
         match (change.change, &change.material) {
             (CustodyChange::Rotate, _) | (CustodyChange::Rewrap, Material::Bindings(_)) => {
@@ -716,10 +718,12 @@ fn change_permits(
                         permits::permit_for(fold, holder)
                             .ok_or_else(|| recipient_refused(holder))?,
                     ]
+                    .into()
                 }
             }
             (CustodyChange::Register, _) => {
                 vec![permits::permit_for(fold, holder).ok_or_else(|| recipient_refused(holder))?]
+                    .into()
             }
             (CustodyChange::Rewrap | CustodyChange::Revoke, _) => {
                 return Err(refused("a rewrap names the installs it permits"));
