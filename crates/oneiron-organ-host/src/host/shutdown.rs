@@ -10,8 +10,7 @@
 //! dropped. A call cut short says [`HostError::Interrupted`], never a clean
 //! end; one that finished first keeps its outputs and receipt, and one its
 //! organ answered with its own error before the cancel keeps that error
-//! (FIX 11167). Nothing here
-//! withdraws a grant: a revocation is another act.
+//! (FIX 11167). Nothing here withdraws a grant: a revocation is another act.
 //!
 //! Blocking work runs under the cancel on its own thread
 //! ([`MeshCancel::scope`]), so the waits deep inside a call read it there.
