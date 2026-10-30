@@ -39,7 +39,6 @@ use oneiron::memory::{
     MessageWriteMode, StreamCadence, StreamCancelReason, StreamSyncVisibility, WitnessAuthor,
     WitnessMessage, WitnessTurn, resolve_entity_ref,
 };
-use oneiron::runtime_hooks::verb::InvocationClaim;
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::skill_hub::pack_catalog::HookActorClass;
@@ -64,7 +63,7 @@ fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refuse
 use crate::ai_host::payer_funding::room_launch_funding;
 use crate::ai_host::{AiHandle, TurnGuard};
 use crate::api::credential_memory;
-use crate::api::facade::{self, DoorClaim};
+use crate::api::facade::{self, DoorClaim, DoorInvocationClaim};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -446,7 +445,8 @@ pub(super) async fn chat_turn(
     let claim = match (invocation(&headers), &payload) {
         (Ok(Some(named)), Ok(Json(request))) => {
             let body = turn_invocation_body(&auth, locality, request);
-            match facade::claim_door_invocation(&server, named, body).await {
+            match facade::claim_door_invocation(&server, named, body, auth.principal_entity()).await
+            {
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
                     // The waiter's credential is judged again once the wait
@@ -476,6 +476,29 @@ pub(super) async fn chat_turn(
                         StatusCode::CONFLICT,
                         facade::INVOCATION_CONFLICT,
                         "this invocation id names a different call",
+                    );
+                }
+                DoorClaim::ReplyNotKept { committed_writes } => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        crate::idempotency::REPLY_NOT_KEPT_STATE,
+                        format!(
+                            "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+                        ),
+                    );
+                }
+                DoorClaim::Erased => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        facade::INVOCATION_RESPONSE_ERASED,
+                        "the first response with this invocation was erased",
+                    );
+                }
+                DoorClaim::StoreFailed => {
+                    return refusal(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        facade::INVOCATION_STORE_FAILED,
+                        "the invocation claim could not be stored",
                     );
                 }
             }
