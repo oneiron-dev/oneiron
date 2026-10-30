@@ -15,14 +15,18 @@
 //! admits and refuses nothing: a landing with no such Grant records as
 //! before.
 
+use serde::{Deserialize, Serialize};
+
+use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, GrantBound,
-    load_active_standing_grants, standing_grant_row_in_txn,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, BoundClass, BoundEnvelope,
+    GrantBound, load_active_standing_grants, standing_grant_row_in_txn,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
+use crate::memory::MemoryResult;
 use crate::store::{GateDecisionRecord, Store};
 use crate::write_envelope::WriteActor;
 
@@ -179,4 +183,93 @@ pub(crate) fn decision_names_weave_grant_in_txn(
         return Ok(false);
     };
     Ok(row.is_active() && covers_any(row.grant.bound(), writer, scopes)?)
+}
+
+/// A writer class an auto-weave Grant names: an agent or the system. The
+/// gate admits only those two past Proposed
+/// ([`landing_weave_grant_in_txn`]), so the door takes no human.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoWeaveWriterClass {
+    Agent,
+    System,
+}
+
+impl From<AutoWeaveWriterClass> for EdgeActorClass {
+    fn from(class: AutoWeaveWriterClass) -> Self {
+        match class {
+            AutoWeaveWriterClass::Agent => Self::Agent,
+            AutoWeaveWriterClass::System => Self::System,
+        }
+    }
+}
+
+/// `vault.consent.create_auto_weave_grant`'s input: the writer the Grant
+/// names and the one scope it covers. Ids are 32 hex: an entity id, or for
+/// `campaign` the campaign's 16-byte root attempt.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AutoWeaveGrantRequest {
+    /// The writer's entity id, as 32 hex.
+    pub writer: String,
+    /// The writer's actor class.
+    pub writer_class: AutoWeaveWriterClass,
+    /// One of `project`, `campaign` or `skill`.
+    pub scope: String,
+    /// The scope's id, as 32 hex.
+    pub scope_id: String,
+}
+
+/// Mints the owner's auto-weave Grant for `request`'s writer in its one
+/// scope (FIX 3433's door): the standing `research.auto_weave` Grant the
+/// claim door records past Proposed. Bad hex or an unknown scope is
+/// [`Error::InvalidConfig`](crate::error::Error::InvalidConfig); the mint
+/// itself is the consent door's standing-grant path, so the receipt is the
+/// same [`ConsentActReceipt`](crate::consent::lifecycle::ConsentActReceipt).
+pub fn mint_auto_weave_grant(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    request: AutoWeaveGrantRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    let writer_id = EntityId::from_hex(&request.writer).map_err(|_| {
+        crate::error::Error::InvalidConfig("auto-weave writer is not an entity id".to_owned())
+    })?;
+    let writer = WriteActor::new(writer_id, EdgeActorClass::from(request.writer_class));
+    let scope = match request.scope.as_str() {
+        PROJECT_SCOPE => {
+            let id = EntityId::from_hex(&request.scope_id).map_err(|_| {
+                crate::error::Error::InvalidConfig(
+                    "auto-weave scope id is not an entity id".to_owned(),
+                )
+            })?;
+            WeaveScope::Project(id)
+        }
+        CAMPAIGN_SCOPE => {
+            let id = EntityId::from_hex(&request.scope_id).map_err(|_| {
+                crate::error::Error::InvalidConfig(
+                    "auto-weave scope id is not a campaign root".to_owned(),
+                )
+            })?;
+            WeaveScope::Campaign(*id.as_bytes())
+        }
+        SKILL_SCOPE => {
+            let id = EntityId::from_hex(&request.scope_id).map_err(|_| {
+                crate::error::Error::InvalidConfig(
+                    "auto-weave scope id is not an entity id".to_owned(),
+                )
+            })?;
+            WeaveScope::Skill(id)
+        }
+        _ => {
+            return Err(crate::error::Error::InvalidConfig(
+                "unknown auto-weave scope".to_owned(),
+            )
+            .into());
+        }
+    };
+    Ok(vault
+        .create_standing_grant(owner, scope.bound(writer)?)?
+        .into())
 }

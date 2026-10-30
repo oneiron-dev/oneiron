@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4385 declarations.
-Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1210 facade rows, 4387 declarations.
+Inputs: 1138 of 1210 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1044 of 1210 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -10223,6 +10223,12 @@ DisclosureBoundRequest = TypedDict("DisclosureBoundRequest", {"audience": list[s
 StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest
 class CreateStandingGrantRequest(TypedDict):
     bound: StandingGrantBound
+AutoWeaveWriterClass = Literal["agent", "system"]
+class AutoWeaveGrantRequest(TypedDict):
+    writer: str
+    writer_class: AutoWeaveWriterClass
+    scope: str
+    scope_id: str
 class ConsentRegistryQuery(TypedDict):
     limit: int
     include_revoked: NotRequired[bool]
