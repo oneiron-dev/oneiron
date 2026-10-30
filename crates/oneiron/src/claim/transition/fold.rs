@@ -165,6 +165,13 @@ impl ClaimTransitionProjection {
             {
                 self.approval = Rejected;
             }
+            (ClaimTransitionKind::ConfirmLapse, TransitionDelta::None)
+                if matches!(self.approval, Auto | Approved) =>
+            {
+                // The critical confirm's owner did not answer in time: the
+                // claim waits as a proposal, which a later Approve grants.
+                self.approval = Proposed;
+            }
             (ClaimTransitionKind::Retract, TransitionDelta::ValidTo(end))
             | (ClaimTransitionKind::SupersedeClose, TransitionDelta::ValidTo(end)) => {
                 // A Proposed claim closes like any other: ARCH-0040 defers a
