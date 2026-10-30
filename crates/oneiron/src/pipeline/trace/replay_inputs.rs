@@ -10,6 +10,7 @@ use crate::store::{RetrievalBlendWeights, RetrievalReplayInputs};
 
 use super::super::builder::PipelineBuilder;
 use super::super::types::ResolvedWorldAuthority;
+use super::replay_identity::RetrievalReplayIdentity;
 
 #[expect(
     clippy::too_many_arguments,
@@ -21,6 +22,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     blend_weights: RetrievalBlendWeights,
     authority: &ResolvedRetrievalFilter,
     world_authority: Option<&ResolvedWorldAuthority>,
+    replay_identity: &RetrievalReplayIdentity,
     hyde_expansion: Option<&HydeExpansion>,
     extra_text_queries: &[String],
     widen_channel_limits: bool,
@@ -177,14 +179,37 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         builder
             .media_search
             .iter()
-            .map(|query| json!({
-                "space": query.space_id,
-                "query_kind": query.query_kind,
-                "kinds": query.kinds,
-                "limit": query.limit,
-            }))
+            .zip(&replay_identity.media_spaces)
+            .map(|(query, identity)| {
+                let kind_overrides = identity
+                    .kind_overrides
+                    .iter()
+                    .map(|(kind, floors)| {
+                        json!({"entity_type": kind, "floor": floors.floor, "strong": floors.strong})
+                    })
+                    .collect::<Vec<_>>();
+                json!({
+                    "space": query.space_id,
+                    "query_kind": query.query_kind,
+                    "kinds": query.kinds,
+                    "limit": query.limit,
+                    "floor": identity.floors.floor,
+                    "strong": identity.floors.strong,
+                    "kind_overrides": kind_overrides,
+                    "dimensions": identity.space.dimensions,
+                    "query_towers": &identity.space.query_towers,
+                    "accepted_kinds": &identity.space.accepts,
+                    "declared_evidence": identity.space.evidence,
+                })
+            })
             .collect::<Vec<_>>()
     );
+    inputs.config["model_revisions"] = json!({
+        "text_embedding_space": builder.vault.config.embedding_model.as_deref(),
+        "text_embedding_transform": builder.vault.config.embedding_transform.as_deref(),
+        "analyzer_manifest_hash": replay_identity.analyzer_manifest_hash.as_deref().map(crate::entity_id::bytes_to_hex_lower),
+        "bm25_field_schema_hash": replay_identity.bm25_field_schema_hash.as_deref().map(crate::entity_id::bytes_to_hex_lower),
+    });
     inputs.config["context_pack_world_share"] = json!(builder.context_pack_world_share);
     inputs.config["fusion"] = json!({
         "list_length": crate::fusion::FUSION_LIST_LENGTH,

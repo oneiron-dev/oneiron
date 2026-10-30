@@ -49,12 +49,12 @@ use self::pointer_rows::{
     validate_artifact_path,
 };
 pub(crate) use self::pointer_rows::{remove_blob_pointers_in_txn, validate_artifact_id};
-pub(crate) use self::serving_blob::retire_released_version_in_txn;
 pub use self::publication_sync::ArtifactPublicationOutcome;
 use self::publication_sync::mark_publication_in_txn;
 pub(crate) use self::publication_sync::{
     ArtifactPublicationCursor, ArtifactPublicationPart, ArtifactPublicationStep,
 };
+pub(crate) use self::serving_blob::retire_released_version_in_txn;
 pub use self::vocabulary::{
     ARTIFACT_POINTER_CHANNELS, ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel,
     ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus,

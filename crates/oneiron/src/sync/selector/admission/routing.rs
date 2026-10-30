@@ -474,7 +474,10 @@ fn carried_as_non_world(carried: &BTreeMap<EntityId, u8>, target: EntityId) -> b
 /// A guest CLAIM about an InWorld or SetIn edge names the edge by the ids
 /// its copy lands under (FIX 3657).
 #[cfg(feature = "sync")]
-pub(super) fn rename_world_edge_subject(subject: &mut ClaimSubject, worlds: &BTreeMap<EntityId, EntityId>) {
+pub(super) fn rename_world_edge_subject(
+    subject: &mut ClaimSubject,
+    worlds: &BTreeMap<EntityId, EntityId>,
+) {
     if let ClaimSubject::Edge {
         source,
         kind,

@@ -335,3 +335,25 @@ pub(crate) async fn vault_skills_optimize_tradeoff_asks_pick(
     )
     .await
 }
+
+/// `vault.skills.optimize.tradeoff_asks.resolve` (FIX 9125): the owner's own
+/// tradeoff decision, under its proof only. Agents keep `tradeoff_asks` and
+/// its pick.
+pub(crate) async fn vault_skills_optimize_tradeoff_asks_resolve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillOptimizeTradeoffResolveRequest,
+) -> Listed<oneiron::task_verb::sdk::SkillOptimizeResultView> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.optimize.tradeoff_asks.resolve",
+        move |server, owner| {
+            let answer =
+                sdk::skill_optimize_tradeoff_resolve_as_owner(server.vault(), owner, &input)?;
+            let rows = answer.rows();
+            Ok((answer, rows))
+        },
+    )
+    .await
+}

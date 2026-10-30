@@ -8,7 +8,9 @@
 //! leaves on the ASSET proves the erase; an item that cannot be read for any
 //! other reason keeps today's re-queue.
 use super::{FeedbackTriageHandoff, HANDOFFS};
-use crate::{Error, Result, Vault};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::store::Store;
+use crate::{EntityId, Error, Result, Vault};
 
 /// Whether the owner erased `handoff`'s evidence ASSET: settled erased
 /// already, or carrying the `dt:` marker an erase leaves.
@@ -39,6 +41,41 @@ pub(super) fn settle_erased_in_txn(
     handoff.work = None;
     HANDOFFS.put(&vault.store, txn, key, handoff)?;
     Ok(true)
+}
+
+/// Settles each acknowledged handoff whose evidence is `id`, in the erase
+/// transaction that purges it (FIX 10921): `erased_at` set to vault seconds
+/// now, the part graph dropped, the row with its result kept. Only the
+/// permanent hard-delete marker proves the erase, so the soft door is a
+/// no-op; unacknowledged rows keep the sweep's settlement, and a row
+/// settled already keeps its stamp.
+pub(crate) fn erase_handoff_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if !store.port_deletion_marked(txn, DeletionMarker::HardDelete, id)? {
+        return Ok(());
+    }
+    let mut settled = Vec::new();
+    for row in HANDOFFS.iter_from(store, &*txn, &[])? {
+        let Ok((key, handoff)) = row else {
+            continue;
+        };
+        if handoff.evidence == *id && handoff.result.is_some() && handoff.erased_at.is_none() {
+            settled.push((key, handoff));
+        }
+    }
+    if settled.is_empty() {
+        return Ok(());
+    }
+    let now = store.clock.now_recorded_at();
+    for (key, mut handoff) in settled {
+        handoff.erased_at = Some(now);
+        handoff.work = None;
+        HANDOFFS.put(store, txn, &key, &handoff)?;
+    }
+    Ok(())
 }
 
 /// Refuses a result for `handoff` once its evidence was erased, so the write

@@ -150,6 +150,7 @@ mod live;
 mod measurement;
 mod preflight;
 mod project_goal;
+mod rule_policy;
 mod tradeoff;
 mod tradeoff_capacity;
 mod verdict;
@@ -164,7 +165,7 @@ pub use admission::{
 };
 pub use basis::{
     HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle, dev_receipts,
-    held_out_receipt_set_digest, held_out_receipts, receipt_is_held_out,
+    held_out_receipt_set_digest, held_out_receipts, held_out_receipts_sourced, receipt_is_held_out,
     register_held_out_replay_scorer, set_skill_edit_cycle_cap, skill_body_binding_digest,
     skill_edit_cycle_cap, skill_edit_score_call_purpose,
 };
@@ -199,6 +200,7 @@ pub use tradeoff::{
     settle_skill_tradeoff_ask_as_agent, skill_tradeoff_ask, skill_tradeoff_asks_for,
     skill_tradeoff_preferences,
 };
+pub use tradeoff_capacity::{TradeoffCapacityCrossing, crossings_in_txn};
 pub use verdict::{
     HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,
 };
@@ -243,7 +245,7 @@ use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
     is_tradeoff, score_goal_axes, validate_goal_vector,
 };
-use judge_binding::JudgeBinding;
+use judge_binding::{JudgeBinding, judge_rubric_digest_in_txn};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{anchor_score, measure, validate_measurements, world_labels_digest};
 
