@@ -30,9 +30,10 @@ pub enum MadeByReader<'v> {
     /// still judges each of them.
     Lane(ScopedRead<'v>),
     /// No credential reaches this rail: an organ host's landed or redriven
-    /// output, whose envelope the host built from its own call receipt. It
-    /// is kept unadmitted, as before; carrying the submitter's authority to
-    /// resumed organ work is the open remainder of FIX 1229.
+    /// output that no principal submitted, whose envelope the host built
+    /// from its own call receipt. It is kept unadmitted, as before; a
+    /// submitted call's output is admitted through its submitter's lane
+    /// (`Vault::organ_landing_reader`, FIX 9310).
     OrganReceipt,
 }
 

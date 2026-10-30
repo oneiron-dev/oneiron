@@ -5,7 +5,8 @@
 //! host runs it as its own. Descriptors and shared regions cannot cross
 //! machines, so every input, output and answer crosses as bytes: inline when
 //! small, else staged in pieces under the transport's 1 MiB message cap and
-//! named by blake3. The serving host hashes what it got again, so its receipt
+//! named by blake3. The serving node spills what it stages to disk, however
+//! much (FIX 6193). The serving host hashes what it got again, so its receipt
 //! holds what it saw; the asking node checks each output against that
 //! receipt. The organ's asks come back to the asking node, whose handlers
 //! (and keys) answer them; a granted `net.fetch` runs where the organ runs.
@@ -17,9 +18,8 @@
 mod client;
 #[cfg(unix)]
 mod serve;
-
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+#[cfg(unix)]
+mod staging;
 
 use oneiron_mesh_transport::{MeshConnection, MeshError};
 use oneiron_organ_protocol::{AskRefusal, ByteBuf, Hash32, OrganError, TypedBody};
@@ -41,8 +41,6 @@ pub const ORGAN_ALPN: &[u8] = b"oneiron/organ/1";
 const PIECE: usize = (1 << 20) - 4096;
 /// Bytes at or under this ride inside the message that names them.
 const INLINE: usize = 64 * 1024;
-/// The most bytes one connection may stage, either way.
-const STAGED_MAX: u64 = 1 << 30;
 
 /// One organ a node offers, with the verbs its install grant names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,93 +197,4 @@ pub(crate) async fn exchange(
     let mut stream = conn.open_stream().await?;
     stream.send(&encode(request)?).await?;
     decode(&stream.recv().await?)
-}
-
-/// Bytes a connection staged, each way.
-#[derive(Debug, Default)]
-pub(crate) struct Staging {
-    /// Pieces the peer put, by hash, in order.
-    incoming: Mutex<HashMap<Hash32, Vec<u8>>>,
-    /// Bytes this side named in a reply, for the peer to get.
-    outgoing: Mutex<HashMap<Hash32, Arc<Vec<u8>>>>,
-}
-
-impl Staging {
-    fn staged(&self) -> u64 {
-        let incoming: u64 = lock(&self.incoming).values().map(|b| b.len() as u64).sum();
-        let outgoing: u64 = lock(&self.outgoing).values().map(|b| b.len() as u64).sum();
-        incoming + outgoing
-    }
-
-    /// Takes one piece the peer put. Pieces of one hash come in order.
-    pub(crate) fn put(
-        &self,
-        hash: Hash32,
-        total: u64,
-        offset: u64,
-        bytes: &[u8],
-    ) -> Result<(), String> {
-        if total > STAGED_MAX || self.staged().saturating_add(bytes.len() as u64) > STAGED_MAX {
-            return Err("over what one connection may stage".into());
-        }
-        let mut incoming = lock(&self.incoming);
-        let held = incoming.entry(hash).or_default();
-        if held.len() as u64 == total && offset == 0 {
-            // Already whole: the same bytes, put again.
-            return Ok(());
-        }
-        if held.len() as u64 != offset || offset.saturating_add(bytes.len() as u64) > total {
-            return Err("a staged piece out of order".into());
-        }
-        held.extend_from_slice(bytes);
-        Ok(())
-    }
-
-    /// The bytes `carried` names: inline, or put whole and matching its hash.
-    pub(crate) fn take(&self, carried: &Carried) -> Result<Vec<u8>, String> {
-        match carried {
-            Carried::Inline(bytes) => Ok(bytes.to_vec()),
-            Carried::Staged { hash, len } => {
-                let incoming = lock(&self.incoming);
-                let bytes = incoming
-                    .get(hash)
-                    .filter(|bytes| bytes.len() as u64 == *len)
-                    .ok_or("staged bytes missing or incomplete")?;
-                if Hash32::of(bytes) != *hash {
-                    return Err("staged bytes do not match their hash".into());
-                }
-                Ok(bytes.clone())
-            }
-        }
-    }
-
-    /// Names bytes for a reply: inline when small, else kept for the peer
-    /// to get in pieces.
-    pub(crate) fn offer(&self, bytes: Vec<u8>) -> Carried {
-        if bytes.len() <= INLINE {
-            return Carried::Inline(ByteBuf::from(bytes));
-        }
-        let hash = Hash32::of(&bytes);
-        let len = bytes.len() as u64;
-        lock(&self.outgoing).insert(hash, Arc::new(bytes));
-        Carried::Staged { hash, len }
-    }
-
-    /// One piece of bytes this side offered.
-    pub(crate) fn piece(&self, hash: Hash32, offset: u64) -> Result<ByteBuf, String> {
-        let bytes = lock(&self.outgoing)
-            .get(&hash)
-            .cloned()
-            .ok_or("no such staged bytes")?;
-        let start = usize::try_from(offset)
-            .ok()
-            .filter(|start| *start < bytes.len())
-            .ok_or("a piece past the end")?;
-        let end = start.saturating_add(PIECE).min(bytes.len());
-        Ok(ByteBuf::from(bytes[start..end].to_vec()))
-    }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
