@@ -68,7 +68,7 @@ impl WakePreparationChunks {
                 let key = pin.key(&chunk, lineage);
                 (chunk, key)
             })
-            .filter(|(_, key)| !pin.completed(key))
+            .filter(|(_, key)| !pin.completed(key, lineage.origin))
             .collect();
         if chunks.len() < offered {
             tracing::debug!(
