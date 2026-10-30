@@ -5,7 +5,7 @@
 //! and label names the rows it was read from.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::cohort::EXPOSURE_PREFIX;
+use super::super::cohort::{EXPOSURE_PREFIX, is_space_probe_seat};
 use super::super::{
     CASE_PREFIX, DerivationKind, EvalCase, EvalExposure, EvalSeat, FAMILY_PREFIX, SourceFamily,
     rows_in_txn,
@@ -25,7 +25,8 @@ use crate::skill_optimize::union_source_rows;
 /// attempt-input set and its labels' rows, the TURNs, proposal artifacts and
 /// derived-from entities its lineage reached, every case and family, and
 /// each seat's cohorts with their exposures. The rows are `None`, unknown,
-/// when any candidate or label has no complete set.
+/// when any candidate or label has no complete set. The space probes'
+/// reserved `space_probe.<kind>` metadata seats are skipped (FIX 7041).
 /// # Errors
 /// Unreadable rows, or storage errors.
 pub fn eval_authoring_inventory_sourced(
@@ -99,6 +100,7 @@ pub fn eval_authoring_inventory_sourced(
         .iter()
         .map(|item| &item.seat)
         .chain(families.iter().map(|family| &family.seat))
+        .filter(|seat| !is_space_probe_seat(seat))
         .collect();
     let mut seat_rows = Vec::with_capacity(seats.len());
     for seat in seats {

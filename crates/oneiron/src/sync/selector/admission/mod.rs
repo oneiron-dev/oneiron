@@ -17,25 +17,25 @@ use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
 use super::edge::{copy_admitted_edges, pending_births, refuse_non_binary_edges};
-use crate::error::SyncError;
 #[cfg(test)]
 use crate::error::RecordError;
+use crate::error::SyncError;
 
 mod blobs;
 mod revalidate;
 mod routing;
 mod state;
 
-pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
-pub(in crate::sync) use self::state::staged_births;
-use self::routing::Routes;
-pub(in crate::sync) use self::revalidate::{
-    revalidate_admitted_federated_claims, revalidate_admitted_facet_stamps,
-};
+use self::blobs::copy_admitted_entities;
+pub(crate) use self::blobs::{FEDERATION_IMPORT_SOURCE, admit_federated_entity_blob};
 #[cfg(feature = "test-hooks")]
 pub use self::revalidate::put_selector_test_federation_grant;
-use self::blobs::copy_admitted_entities;
-pub(crate) use self::blobs::{admit_federated_entity_blob, FEDERATION_IMPORT_SOURCE};
+pub(in crate::sync) use self::revalidate::{
+    revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
+};
+use self::routing::Routes;
+pub(in crate::sync) use self::state::staged_births;
+pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
 
 /// Role carried by a member/guest federation import path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

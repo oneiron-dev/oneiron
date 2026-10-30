@@ -287,8 +287,7 @@ impl Owed {
         stays: impl Fn(&str) -> bool,
     ) -> Result<()> {
         for (key, stamp) in &self.read {
-            if !stays(&key.carrier)
-                && PENDING_MIRROR.get(&vault.store, wtxn, key)? == Some(*stamp)
+            if !stays(&key.carrier) && PENDING_MIRROR.get(&vault.store, wtxn, key)? == Some(*stamp)
             {
                 PENDING_MIRROR.delete(&vault.store, wtxn, key)?;
             }
