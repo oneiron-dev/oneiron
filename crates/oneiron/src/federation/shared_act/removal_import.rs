@@ -19,15 +19,17 @@
 //! imports into a vault of their own when they choose
 //! ([`Vault::import_whole_vault_archive`]). Each delivery taken in is
 //! recorded, so none is taken in twice; the person hears of each archive
-//! once. Its person lists the archives held here, imported or kept, by id,
-//! source vault and term, never a byte of one (FIX 11797).
+//! once. The vault's owner lists the archives taken in here by id, source
+//! vault and term, imported or lapsed, never a byte of one (FIX 11797).
 
 use super::removal_archive::{FrozenPosition, StoredRemovalExport};
 use super::{REMOVAL_EXPORT, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy, removal_export_key};
-use crate::authority::CapabilitySlip;
+use std::collections::BTreeMap;
+
 use crate::batch::export::{
     ArchiveRecordKind, ExportAuthorityManifest, VAULT_ARCHIVE_FORMAT, read_vault_archive_indexed,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::side_table::{self, Named, SideTable};
@@ -54,10 +56,12 @@ struct ImportedRemovalArchive {
     files: u64,
     /// When this vault took it in, on its store clock.
     imported_at: u64,
+    /// The shared vault it came from.
+    vault_id: u64,
 }
 
-/// One removal archive this vault holds for its person, as their listing
-/// answers it (FIX 11797): never a byte of the archive.
+/// One removal archive this vault took in for its owner, as the owner's
+/// listing answers it (FIX 11797): never a byte of the archive.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ReceivedRemovalArchive {
     /// The removal receipt that keys it.
@@ -65,25 +69,26 @@ pub struct ReceivedRemovalArchive {
     /// The shared vault it came from.
     #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
-    /// Its latest delivery's version: when its home last delivered it.
+    /// The latest delivery taken in: when its home delivered it.
     pub delivered_at: u64,
-    /// The end of its term: it stays readable here until then.
+    /// The end of that delivery's term: it stays readable here until then.
     pub expires_at: u64,
-    /// Whether this vault took it in from a delivery or keeps it.
+    /// Whether it is still kept here within that term.
     pub state: ReceivedRemovalArchiveState,
-    /// When this vault took in its latest delivery; `None` while kept.
-    pub imported_at: Option<u64>,
+    /// When this vault took in its latest delivery, on its store clock.
+    pub imported_at: u64,
 }
 
 /// Where a listed removal archive stands in this vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReceivedRemovalArchiveState {
-    /// Kept as the removal keeps it at the home, taken in from no delivery.
-    Kept,
-    /// Taken in from a delivery its home sent
-    /// ([`Vault::import_removal_archive`]).
+    /// Kept here and readable within its term
+    /// ([`Vault::removed_owner_exports`]).
     Imported,
+    /// Its term has ended: the copy is gone, or goes at the next pass, and
+    /// only this record of it stays.
+    Lapsed,
 }
 
 /// What an archive holds, as its manifest lists it.
@@ -166,6 +171,7 @@ impl Vault {
                 records: held.records,
                 files: held.files,
                 imported_at: now,
+                vault_id: copy.vault_id,
             };
             REMOVAL_IMPORT.put(&self.store, txn, &row, &imported)?;
             self.notify_removal_archive_in_txn(txn, person, receipt, copy, held, now)?;
@@ -190,69 +196,57 @@ impl Vault {
         REMOVAL_IMPORT.contains(&self.store, &txn, &import_key(person, receipt_id, version))
     }
 
-    /// The removal archives this vault holds for the holder of `slip`, each
-    /// within its term, with where it stands here: taken in from a delivery,
-    /// or kept as the removal keeps it (FIX 11797). Never a byte of an
-    /// archive. Under the same proof as [`Vault::removed_owner_exports`],
-    /// the nonce spent once. A holder the slip was transferred to is listed
-    /// none: it takes its copies, cut to its caveats, from that door.
+    /// The removal archives this vault took in for `owner`, its owner
+    /// (FIX 11797): each archive's latest delivery taken in, by receipt id,
+    /// with the shared vault it came from, its term, and whether it is still
+    /// kept here within that term (Imported) or past it (Lapsed). Never a
+    /// byte of an archive.
     ///
     /// # Errors
     ///
-    /// A proof that does not verify; storage errors.
+    /// An owner proof that no longer holds; storage errors.
     pub fn received_removal_archives(
         &self,
-        slip: &CapabilitySlip,
-        request_timestamp: u64,
-        signature: &[u8],
-        request_nonce: &[u8],
+        owner: &AuthenticatedOwner,
     ) -> Result<Vec<ReceivedRemovalArchive>> {
-        let mut txn = self.store.env.write_txn()?;
-        let person =
-            self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
-        let listed = if slip.transferred_bounds().is_some() {
-            Vec::new()
-        } else {
-            let now = self.store.clock.now_recorded_at();
-            self.received_removal_archives_in_txn(&txn, person, now)?
-        };
-        txn.commit()?;
-        Ok(listed)
-    }
-
-    /// `person`'s removal archives within their term at `now`, each Imported
-    /// when this vault took in a delivery of it, with the latest such
-    /// import's time, and Kept otherwise.
-    fn received_removal_archives_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        person: EntityId,
-        now: u64,
-    ) -> Result<Vec<ReceivedRemovalArchive>> {
-        let prefix = removal_export_key(&person.to_hex(), "");
-        let mut listed = Vec::new();
-        for (row_key, stored) in REMOVAL_EXPORT.scan_from(&self.store, txn, prefix.as_bytes())? {
-            let copy = stored.copy;
-            if now >= copy.expires_at {
+        let txn = self.store.env.read_txn()?;
+        let person = owner.revalidate_in_txn(self, &txn)?;
+        let now = self.store.clock.now_recorded_at();
+        let prefix = format!("{}:", person.to_hex());
+        let mut latest: BTreeMap<String, (u64, ImportedRemovalArchive)> = BTreeMap::new();
+        for (row_key, imported) in REMOVAL_IMPORT.scan_from(&self.store, &txn, prefix.as_bytes())? {
+            // A key not of `import_key`'s shape names no delivery.
+            let Some((receipt, version)) = row_key
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.split_once(':'))
+                .and_then(|(receipt, version)| Some((receipt, version.parse::<u64>().ok()?)))
+            else {
                 continue;
+            };
+            if latest.get(receipt).is_none_or(|(held, _)| *held < version) {
+                latest.insert(receipt.to_owned(), (version, imported));
             }
-            let imports = format!("{row_key}:");
-            let imported_at = REMOVAL_IMPORT
-                .scan_from(&self.store, txn, imports.as_bytes())?
-                .into_iter()
-                .map(|(_, imported)| imported.imported_at)
-                .max();
+        }
+        let mut listed = Vec::with_capacity(latest.len());
+        for (receipt_id, (version, imported)) in latest {
+            let expires_at = version.saturating_add(REMOVAL_EXPORT_RETAIN_SECS);
+            let kept = REMOVAL_EXPORT.contains(
+                &self.store,
+                &txn,
+                &removal_export_key(&person.to_hex(), &receipt_id),
+            )?;
+            let state = if kept && now < expires_at {
+                ReceivedRemovalArchiveState::Imported
+            } else {
+                ReceivedRemovalArchiveState::Lapsed
+            };
             listed.push(ReceivedRemovalArchive {
-                receipt_id: copy.receipt_id,
-                vault_id: copy.vault_id,
-                delivered_at: copy.delivered_at,
-                expires_at: copy.expires_at,
-                state: if imported_at.is_some() {
-                    ReceivedRemovalArchiveState::Imported
-                } else {
-                    ReceivedRemovalArchiveState::Kept
-                },
-                imported_at,
+                receipt_id,
+                vault_id: imported.vault_id,
+                delivered_at: version,
+                expires_at,
+                state,
+                imported_at: imported.imported_at,
             });
         }
         Ok(listed)
