@@ -65,12 +65,23 @@ fn key(vault: &Vault, connector: &str) -> MemoryResult<(EntityId, ConnectorKeyRe
 fn view(server: &SyncServer, connector: &str) -> MemoryResult<ConnectorPackView> {
     let vault = server.vault();
     let (key_id, record) = key(vault, connector)?;
-    let slate_id = record
-        .slate_ref
-        .ok_or_else(|| invalid("connector slate missing"))?;
-    let slate = vault
-        .connector_slate(slate_id)?
-        .ok_or_else(|| invalid("connector slate missing"))?;
+    let (slate_id, slate, staged) = match record.staged_slate_ref {
+        Some(staged_id) => {
+            let staged = vault
+                .connector_slate(staged_id)?
+                .ok_or_else(|| invalid("connector staged slate missing"))?;
+            (staged_id, staged, true)
+        }
+        None => {
+            let slate_id = record
+                .slate_ref
+                .ok_or_else(|| invalid("connector slate missing"))?;
+            let slate = vault
+                .connector_slate(slate_id)?
+                .ok_or_else(|| invalid("connector slate missing"))?;
+            (slate_id, slate, false)
+        }
+    };
     let binding = slate
         .slate_manifest()
         .pack_source
@@ -123,6 +134,7 @@ fn view(server: &SyncServer, connector: &str) -> MemoryResult<ConnectorPackView>
         status: record.status.as_str().to_owned(),
         consent_required: record.consent_required,
         stamped: slate.owner_actor().is_some() && slate.stamp_holds(),
+        staged,
         manifest: slate.slate_manifest().clone(),
         rows: slate.rows().to_vec(),
         qualification: record.qualification_receipt,
@@ -381,19 +393,26 @@ pub(crate) async fn vault_packs_connector_accept(
         "vault.packs.connector.accept",
         move |server, owner| {
             reviewed(server, &input.basis)?;
-            catalog::accept_slate(
-                server.vault(),
-                owner,
-                catalog::AcceptRequest {
-                    connector: input.basis.connector.clone(),
-                    revision: input.basis.slate_revision,
-                    rows: input.rows,
-                    facets: input.facets,
-                    all_manual: input.all_manual,
-                },
-                Some(id(&input.basis.slate_ref)?),
-            )
-            .map_err(owner_error)?;
+            let request = catalog::AcceptRequest {
+                connector: input.basis.connector.clone(),
+                revision: input.basis.slate_revision,
+                rows: input.rows,
+                facets: input.facets,
+                all_manual: input.all_manual,
+            };
+            let (_, record) = key(server.vault(), &input.basis.connector)?;
+            if record.staged_slate_ref.is_some() {
+                catalog::accept_staged_slate(server.vault(), owner, request)
+                    .map_err(owner_error)?;
+            } else {
+                catalog::accept_slate(
+                    server.vault(),
+                    owner,
+                    request,
+                    Some(id(&input.basis.slate_ref)?),
+                )
+                .map_err(owner_error)?;
+            }
             view(server, &input.basis.connector)
         },
         rows,

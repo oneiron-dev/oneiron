@@ -143,7 +143,7 @@ pub(super) async fn accept_staged(
     Ok(Json(reply))
 }
 
-fn accept_staged_slate(
+pub(crate) fn accept_staged_slate(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     request: AcceptRequest,

@@ -51,8 +51,8 @@ impl Vault {
     /// beside an admitted key's slate, which keeps routing until the owner
     /// stamps the new one and a fresh suite passes
     /// ([`Self::qualify_staged_connector_slate`], FIX 11677). On a key not
-    /// yet admitted, or one bound to a pack install, an expansion halts the
-    /// route, like a revision change, until both.
+    /// yet admitted, an expansion halts the route, like a revision change,
+    /// until both.
     pub fn revise_connector_slate(
         &self,
         id: &EntityId,

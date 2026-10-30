@@ -24,11 +24,9 @@ use super::qualification::{
     ConnectorQualificationError, require_pack_qualification, slate_catalog,
 };
 
-/// Whether an expansion of `record`'s slate `routing` stages beside it: the
-/// key is admitted (qualified, its manifest approved, no consent owed) and
-/// its slate names no pack install. A pack-bound key follows its install,
-/// and the pack connector doors stamp and qualify the slate it routes on.
-pub(super) fn stages_beside(record: &ConnectorKeyRecord, routing: &ConnectorGrantSlate) -> bool {
+/// Whether an expansion of `record`'s slate stages beside it: the key is
+/// admitted (qualified, its manifest approved, no consent owed).
+pub(super) fn stages_beside(record: &ConnectorKeyRecord, _routing: &ConnectorGrantSlate) -> bool {
     matches!(
         record.status,
         ConnectorKeyStatus::Active | ConnectorKeyStatus::Suspended
@@ -36,7 +34,6 @@ pub(super) fn stages_beside(record: &ConnectorKeyRecord, routing: &ConnectorGran
         && !record.consent_required
         && record.qualification_receipt.is_some()
         && record.retained_manifest.is_some()
-        && routing.slate_manifest().pack_source.is_none()
 }
 
 impl Vault {

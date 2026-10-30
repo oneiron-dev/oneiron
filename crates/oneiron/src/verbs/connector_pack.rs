@@ -79,6 +79,9 @@ pub struct ConnectorPackView {
     pub status: String,
     pub consent_required: bool,
     pub stamped: bool,
+    /// The shown slate waits beside the one the key routes on; the key keeps
+    /// routing until the owner stamps this one and a fresh suite passes.
+    pub staged: bool,
     pub manifest: SlateManifest,
     pub rows: Vec<SlateRow>,
     pub qualification: Option<ConnectorQualificationReceipt>,
