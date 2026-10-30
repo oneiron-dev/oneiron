@@ -510,6 +510,10 @@ pub enum EngineLimit {
     /// The vault policy's admission quota asks first when it is lower. Past
     /// it the row asks and the whole manifest is admitted.
     ConnectorManifestEntries,
+    /// Ancestor rows one tournament-start check walks, resumed across calls
+    /// (FIX 9581). Past it the row asks whether everything is okay and the
+    /// check still completes, one hop budget at a time; depth never refuses.
+    TournamentLineageRows,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
