@@ -14,6 +14,17 @@ impl CommunityCacheMeta {
     /// Full decoding checks it against every node; indexed queries trust that
     /// atomic publication and never substitute the size of their selected view.
     pub(crate) fn decode_row(value: &[u8], max_nodes: usize) -> Result<(Self, usize)> {
+        Self::decode_row_inner(value, Some(max_nodes))
+    }
+
+    /// The refresh path's uncapped metadata decode: every shape, version
+    /// and gamma check stays; only the node ceiling is lifted. The decoded
+    /// count is then used relationally, never as a refusal.
+    pub(crate) fn decode_row_unbounded(value: &[u8]) -> Result<(Self, usize)> {
+        Self::decode_row_inner(value, None)
+    }
+
+    fn decode_row_inner(value: &[u8], max_nodes: Option<usize>) -> Result<(Self, usize)> {
         if value.len() != 29 {
             return Err(CommunityError::Cache);
         }
@@ -27,7 +38,7 @@ impl CommunityCacheMeta {
             .map_err(|_| CommunityError::Cache)?;
         if meta.schema != PPR_COMMUNITY_SCHEMA_VERSION
             || meta.gamma != PPR_COMMUNITY_CPM_GAMMA
-            || count > max_nodes
+            || max_nodes.is_some_and(|max| count > max)
         {
             return Err(CommunityError::Cache);
         }
@@ -189,7 +200,23 @@ impl CommunitySnapshot {
         version: u64,
         max_nodes: usize,
     ) -> Result<Self> {
-        if rows.len() > max_nodes.saturating_mul(3).saturating_add(1) {
+        Self::decode_rows_inner(rows, version, Some(max_nodes))
+    }
+
+    /// The refresh path's uncapped family decode: every shape, duplicate,
+    /// count-match, backlink and version check stays; only the fixed row
+    /// and member ceilings are lifted. The decoded counts are then checked
+    /// relationally by [`Self::validate`].
+    pub fn decode_rows_unbounded(rows: &[(Vec<u8>, Vec<u8>)], version: u64) -> Result<Self> {
+        Self::decode_rows_inner(rows, version, None)
+    }
+
+    fn decode_rows_inner(
+        rows: &[(Vec<u8>, Vec<u8>)],
+        version: u64,
+        max_nodes: Option<usize>,
+    ) -> Result<Self> {
+        if max_nodes.is_some_and(|max| rows.len() > max.saturating_mul(3).saturating_add(1)) {
             return Err(CommunityError::Cache);
         }
         let mut seen = BTreeSet::new();
@@ -203,10 +230,10 @@ impl CommunitySnapshot {
             }
             let key = std::str::from_utf8(key).map_err(|_| CommunityError::Cache)?;
             if key == META_KEY {
-                meta = Some(CommunityCacheMeta::decode_row(value, max_nodes)?);
+                meta = Some(CommunityCacheMeta::decode_row_inner(value, max_nodes)?);
             } else if let Some(hex) = key.strip_prefix("ppr_community_cache:v0:node:") {
                 let id = EntityId::from_bytes(hex_id(hex)?).map_err(|_| CommunityError::Cache)?;
-                if value.len() != 32 || nodes.len() >= max_nodes {
+                if value.len() != 32 || max_nodes.is_some_and(|max| nodes.len() >= max) {
                     return Err(CommunityError::Cache);
                 }
                 nodes.insert(
@@ -223,7 +250,7 @@ impl CommunitySnapshot {
                 member_count = member_count
                     .checked_add(value.len() / 16)
                     .ok_or(CommunityError::Cache)?;
-                if member_count > max_nodes.saturating_mul(2) {
+                if max_nodes.is_some_and(|max| member_count > max.saturating_mul(2)) {
                     return Err(CommunityError::Cache);
                 }
                 let ids = value
