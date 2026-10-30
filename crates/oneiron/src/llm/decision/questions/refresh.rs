@@ -391,6 +391,8 @@ fn source(
     let Some(raw) = question_lane(vault, principal_key).entity_raw_live_in(txn, &unit)? else {
         return Ok(None);
     };
+    // The funnel supplies the live revision's logical bytes (FIX 5396):
+    // judge, hash and serve the supplied row (FIX 5398).
     if question_lane(vault, actor_key)
         .entity_raw_live_in(txn, &unit)?
         .is_none()

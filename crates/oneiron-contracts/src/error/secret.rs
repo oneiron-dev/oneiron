@@ -203,6 +203,16 @@ pub enum SecretError {
         "world key refused: this credential is no longer a wrap of this vault; unlock with a current one"
     )]
     StalePageSealCredential,
+    /// A sealed vault's creation never finished (FIX 1942): a creation record
+    /// beside it still names it, so its environment was made but its first
+    /// wrap or its page-seal mirror never was. It opens nothing and nothing
+    /// was served from it; `oneiron init` removes it and creates it again. A
+    /// world key refusal by kind.
+    #[error(
+        "world key refused: this sealed vault's creation did not finish, so it opens nothing; \
+         `oneiron init` removes it and creates it again"
+    )]
+    UnfinishedSealedCreation,
     /// This install has no this-device-only keystore, so it can hold no machine
     /// secret and open no world key.
     #[error("no this-device-only keystore: {0}")]
@@ -284,7 +294,8 @@ impl SecretError {
             Self::SecretGrantCleanupKept { .. } => ErrorKind::SecretGrantCleanupKept,
             Self::WorldKeyRefused(_)
             | Self::SealedBundleNoCapsule
-            | Self::StalePageSealCredential => ErrorKind::WorldKeyRefused,
+            | Self::StalePageSealCredential
+            | Self::UnfinishedSealedCreation => ErrorKind::WorldKeyRefused,
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
             Self::KitConfirmationStale { .. } => ErrorKind::KitConfirmationStale,

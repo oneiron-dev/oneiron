@@ -1,6 +1,6 @@
 //! Windowed recurrence expansion over the tz border.
 
-use chrono::{DateTime, Datelike, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, TimeDelta, TimeZone, Timelike};
 use rrule::{RRule, RRuleSet, Tz, Unvalidated};
 
 use super::SeriesDtStart;
@@ -9,13 +9,13 @@ use crate::calendar::claims::CalendarSeriesMasterValue;
 use crate::calendar::tz::{WallTime, utc_to_wall, wall_to_utc};
 use crate::temporal::TimeRange;
 
-/// Recurrence steps one window may cost before the rule counts as unsupported.
+/// Recurrence steps one expansion takes before it says, once, that it is still
+/// walking (rule 5: an advisory scan check, never a refusal).
 ///
-/// The walk is bounded by the window, but reaching the window is not free: a
-/// rule whose `dtstart_utc` predates the window still has to be stepped up to
-/// it. This budget covers both halves, so neither a dense rule inside the
-/// window nor a long fast-forward to it can run away.
-const MAX_EXPANSION_STEPS: usize = 100_000;
+/// The walk is bounded by the window, and a rule without `COUNT` starts at the
+/// last whole period before it (see [`super::reseed`]), so only a dense
+/// window or a counted rule seeded long before its window walks this far.
+const EXPANSION_SCAN_CHECK_STEPS: usize = 100_000;
 
 /// Wall-clock slack on the `UNTIL` bound the recurrence engine is given.
 ///
@@ -47,14 +47,14 @@ const RRULE_PROPERTY: &str = "RRULE";
 ///   (`start == end`) is valid.
 /// - [`CalendarError::InvalidRecurrenceRule`] — the text is not a rule this
 ///   engine supports, it is some other content line, it names both `COUNT` and
-///   `UNTIL`, it can never fire (a zero `INTERVAL` or `COUNT`, or an `UNTIL`
-///   before its own start), or expanding it over `window` would cost more than
-///   the supported number of steps. A rule that is merely dense is reported,
-///   never silently truncated.
+///   `UNTIL`, or it can never fire (a zero `INTERVAL` or `COUNT`, or an `UNTIL`
+///   before its own start). A rule that is merely dense is walked to the end
+///   of the window, never truncated and never refused for its size.
 /// - [`CalendarError::UnknownTimeZone`] — `dtstart.tz` is not an IANA zone.
 /// - [`CalendarError::NonexistentWallTime`] — an occurrence the window asked
 ///   for falls in a spring-forward gap and has no instant. The caller decides
-///   skip-vs-shift; this layer will not choose for it.
+///   skip-vs-shift; this door will not choose for it
+///   ([`expand_window_shifting_gaps`] is the RFC 5545 shift).
 /// - [`CalendarError::TimestampOutOfRange`] — `dtstart_utc` or a window bound
 ///   is past the border's supported range.
 ///
@@ -65,6 +65,45 @@ pub fn expand_window(
     dtstart: SeriesDtStart<'_>,
     window: TimeRange,
 ) -> Result<Vec<u64>, CalendarError> {
+    expand(rrule, dtstart, window, GapPolicy::Refuse)
+}
+
+/// [`expand_window`] with RFC 5545 §3.3.5's reading of a spring-forward gap:
+/// an occurrence whose wall time the zone skips is read with the UTC offset in
+/// force before the gap, so it lands as far past the transition as it stood
+/// past the gap's start on the clock.
+///
+/// For a caller that must owe every occurrence (a commitment schedule), where
+/// dropping one or refusing the whole window would both lose an obligation.
+///
+/// # Errors
+///
+/// As [`expand_window`], except [`CalendarError::NonexistentWallTime`], which
+/// remains only when the day before the gap has no instant at that wall time
+/// either.
+pub(crate) fn expand_window_shifting_gaps(
+    rrule: &str,
+    dtstart: SeriesDtStart<'_>,
+    window: TimeRange,
+) -> Result<Vec<u64>, CalendarError> {
+    expand(rrule, dtstart, window, GapPolicy::ShiftForward)
+}
+
+/// What the walk does with an occurrence a spring-forward gap removed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GapPolicy {
+    /// Answer [`CalendarError::NonexistentWallTime`].
+    Refuse,
+    /// Read it with the offset in force before the gap (RFC 5545 §3.3.5).
+    ShiftForward,
+}
+
+fn expand(
+    rrule: &str,
+    dtstart: SeriesDtStart<'_>,
+    window: TimeRange,
+    gaps: GapPolicy,
+) -> Result<Vec<u64>, CalendarError> {
     if window.start > window.end {
         return Err(CalendarError::InvalidRecurrenceWindow);
     }
@@ -73,7 +112,10 @@ pub fn expand_window(
     let first = wall_clock_at(window.start, tz)?;
 
     let (parsed, until_utc) = parse_rule(rrule, tz)?;
-    let rule = parsed.validate(seed).map_err(|_| invalid_rule(rrule))?;
+    let rule = parsed
+        .clone()
+        .validate(seed)
+        .map_err(|_| invalid_rule(rrule))?;
     // RFC 5545 makes `INTERVAL` and `COUNT` positive integers and puts `UNTIL`
     // no earlier than the start, and the engine answers each of these three by
     // finishing before it produces anything. An empty vector is a statement
@@ -92,12 +134,21 @@ pub fn expand_window(
     // bound on the clock and before it on the timeline.
     let end = until_utc.map_or(window.end, |until| until.min(window.end));
     let last = wall_clock_at(end, tz)?;
+    // The engine's own `limit` keeps a rule that never fires from cycling; the
+    // walk itself is bounded by the window and never by a step count.
+    let (seed, rule) = super::reseed::reseeded(&parsed, rule, seed, first);
     let series = RRuleSet::new(seed).rrule(rule).limit();
 
     let mut starts = Vec::new();
     for (step, occurrence) in (&series).into_iter().enumerate() {
-        if step == MAX_EXPANSION_STEPS {
-            return Err(invalid_rule(rrule));
+        if step == EXPANSION_SCAN_CHECK_STEPS {
+            tracing::warn!(
+                rule = rrule,
+                steps = step,
+                window_start = window.start,
+                window_end = window.end,
+                "recurrence expansion passed its scan check and walks on"
+            );
         }
         // Below the window's wall clock is below the window: the border is
         // increasing, so no earlier wall time can recover into it. Skipping
@@ -113,6 +164,11 @@ pub fn expand_window(
         // of becoming an error about occurrences nobody asked for.
         let start = match wall_to_utc(&wall_clock_of(&occurrence), tz) {
             Ok(start) => start,
+            Err(CalendarError::NonexistentWallTime { .. })
+                if gaps == GapPolicy::ShiftForward && occurrence <= last =>
+            {
+                shifted_past_gap(&occurrence, tz)?
+            }
             Err(error) if occurrence <= last => return Err(error),
             Err(_) => break,
         };
@@ -189,6 +245,24 @@ fn wall_clock_of(dt: &DateTime<Tz>) -> WallTime {
 fn wall_clock_at(utc: u64, tz: &str) -> Result<DateTime<Tz>, CalendarError> {
     let wall = utc_to_wall(utc, tz)?;
     wall_clock(wall).ok_or(CalendarError::TimestampOutOfRange { utc })
+}
+
+/// The instant RFC 5545 §3.3.5 gives a wall time a spring-forward gap removed:
+/// the same clock reading under the offset in force before the gap, taken from
+/// the same wall time one day earlier.
+fn shifted_past_gap(occurrence: &DateTime<Tz>, tz: &str) -> Result<u64, CalendarError> {
+    let out_of_range = || CalendarError::TimestampOutOfRange {
+        utc: u64::try_from(occurrence.timestamp()).unwrap_or(0),
+    };
+    let day_before = occurrence
+        .checked_sub_signed(TimeDelta::try_days(1).ok_or_else(out_of_range)?)
+        .ok_or_else(out_of_range)?;
+    let before =
+        i64::try_from(wall_to_utc(&wall_clock_of(&day_before), tz)?).map_err(|_| out_of_range())?;
+    // On the carrier clock a timestamp is the wall time read as UTC, so this
+    // difference is the zone's offset before the gap.
+    let offset = day_before.timestamp() - before;
+    u64::try_from(occurrence.timestamp() - offset).map_err(|_| out_of_range())
 }
 
 /// Reads recurrence text into a rule the engine steps, plus the instant its

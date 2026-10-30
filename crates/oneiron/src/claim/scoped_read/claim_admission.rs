@@ -183,7 +183,8 @@ impl<'v> ScopedRead<'v> {
             && crate::pipeline::claim_ceiling_allowed(filter, body);
         if !admitted
             || !self.audience_readable_raw_in(rtxn, id, raw, authority)?
-            || (grant.is_none() && !self.relationship_claim_allowed_in(rtxn, id, body)?)
+            || (grant.is_none()
+                && !self.relationship_claim_allowed_in(rtxn, id, body, authority)?)
         {
             return Ok(false);
         }

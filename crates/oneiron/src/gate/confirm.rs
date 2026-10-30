@@ -320,7 +320,17 @@ impl Vault {
                             header.learned_at,
                         )?;
                     }
-                    self.complete_deferred_claim_in_txn(wtxn, &binding.claim_id, true, now)?;
+                    // A local ceremony's revalidated owner closes it (FIX 11039).
+                    let closer = answered_by.map(|owner| {
+                        crate::WriteActor::new(owner, crate::edge::EdgeActorClass::Human)
+                    });
+                    self.complete_deferred_claim_in_txn(
+                        wtxn,
+                        &binding.claim_id,
+                        true,
+                        now,
+                        closer,
+                    )?;
                 }
                 self.store
                     .remove_pending_gate_consent_in_txn(wtxn, &binding.claim_id, removal)?;

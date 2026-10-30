@@ -22,8 +22,10 @@
 //!   identity IS the recipient. No caller-supplied page or booker string is
 //!   ever consulted, so a forged context cannot widen a grant.
 //!
-//! Batch CANCEL and SEQUENCE increments are ONE-1820's; the only move this
-//! layer makes is the first confirm's single `REQUEST`.
+//! Batch CANCEL is ONE-1820's. This layer sends the first confirm's single
+//! `REQUEST`, each ordinary move's `REQUEST` under its bumped SEQUENCE, and
+//! an ordinary cancel's `CANCEL` to the booker, which the page grant still
+//! authorizes for a booking it covered while refusing any new `REQUEST`.
 
 mod authorization;
 mod codec;
@@ -37,6 +39,7 @@ pub use self::authorization::{
 pub use self::dispatch::{
     ConfirmInviteOutcome, enqueue_confirm_invite, enqueue_confirm_invite_outcome,
 };
+pub(crate) use self::mint::mint_page_invite_grant_in_txn;
 pub use self::mint::mint_publish_page_invite_grant;
 pub use self::types::{
     BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,
@@ -49,7 +52,9 @@ pub(crate) use self::authorization::{
 #[cfg(test)]
 pub(super) use self::dispatch::dispatch_confirm_booking_invite;
 pub(super) use self::dispatch::{
-    NoConfirmInviteSink, dispatch_confirm_booking_invite_outcome, sending_address,
+    NoConfirmInviteSink, dispatch_booking_cancel_invite_outcome,
+    dispatch_booking_revision_invite_outcome, dispatch_confirm_booking_invite_outcome,
+    sending_address,
 };
 
 #[cfg(test)]

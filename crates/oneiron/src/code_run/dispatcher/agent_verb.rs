@@ -123,10 +123,13 @@ impl HostSelfDispatcher<'_> {
         // stop goes back to the dispatcher as `Error::VerbHook`. That call
         // names the ask it parked on beside its invocation, as an HTTP retry
         // names its pause (FIX 5526): the door's memory resumes that pause,
-        // or refuses one that is gone rather than running a new call.
+        // or refuses one that is gone rather than running a new call. A
+        // durable call's origin names that step (FIX 11683).
         let parked = SelfCall::AgentVerb(call.clone());
         let invocation = self.verb_invocation(&parked, site)?;
-        let origin = origin.with_hook_ask(self.parked_ask(&parked, site)?);
+        let origin = origin
+            .with_hook_ask(self.parked_ask(&parked, site)?)
+            .with_step(site.map(|_| invocation));
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             let answer = self.program_door_call(&**door, &call, &origin, invocation)?;
             return Ok(connector_call_answer(

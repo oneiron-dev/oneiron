@@ -1,19 +1,21 @@
 //! ONE-1817 [BK-06] booking anti-abuse rule rows.
 //!
 //! The booking-local SHIP/SKIP/RESERVE policy lives here as typed, versioned
-//! rows in `vault_meta` under [`BOOKING_ANTI_ABUSE_META_PREFIX`] — a prefix
-//! this lane alone writes. The row subject is an existing booking-page
+//! POLICY_MANIFEST rows under [`BOOKING_ANTI_ABUSE_RULES_KEY`], written and
+//! synced on the policy manifest's own path (FIX 9628); proposals, counters
+//! and caches stay node-local under [`BOOKING_ANTI_ABUSE_META_PREFIX`]. The
+//! row subject is an existing booking-page
 //! [`EntityId`], optionally narrowed to the shared [`EventTypeKey`]; the
 //! module allocates no entity kind and no static type byte.
 //!
 //! # Activation law
 //!
-//! Storage is private. The sole public activation path is
-//! [`apply_rule_amendment`], a versioned compare-and-set transaction taken
-//! under the booking writer. A provable tightening (or the first activation
-//! of a row) stores immediately and emits an owner-visible notice. A
-//! loosening — including any variant drift the comparator cannot order —
-//! stores only behind an owner stamp whose binding equals
+//! The sole public activation path is [`apply_rule_amendment`], a versioned
+//! compare-and-set transaction taken under the booking writer that writes
+//! through the owner's policy manifest writer. A provable tightening (or the
+//! first activation of a row) by the holder stores immediately. A loosening
+//! — including any variant drift the comparator cannot order — stores only
+//! behind the holder's approve-once press on
 //! [`booking_rule_row_version_hash`] of the exact proposed row.
 //!
 //! # Evaluation
@@ -25,8 +27,8 @@
 //! counters, the slot-list response cache, owner notices, and the
 //! pending-review quarantine record — are the pub functions below; they are
 //! the only writer surface, and every one routes through the lifecycle's
-//! `booking_writer` / `put_meta` / `read_meta_bytes` / `digest_with` helpers
-//! so storage discipline stays in exactly one place.
+//! `booking_writer` and `digest_with` helpers so storage discipline stays in
+//! exactly one place.
 //!
 //! Regret asymmetry is deliberate: under-block and triage. Negative email
 //! evidence prompts a correction; only multi-signal inconsistency routes to a
@@ -37,25 +39,34 @@
 
 mod amendment;
 mod evaluation;
+mod manifest;
 mod quarantine;
+mod quarantine_restore;
 mod rate;
 mod rules;
 mod storage;
 
 pub use self::amendment::{
     amendment_direction, applicable_booking_anti_abuse_rules, apply_rule_amendment,
-    booking_anti_abuse_notices, booking_anti_abuse_rules, booking_rule_row_version_hash,
+    booking_anti_abuse_notices, booking_anti_abuse_rule_proposals, booking_anti_abuse_rules,
+    booking_rule_row_version_hash,
 };
 pub use self::evaluation::{
     BookingAbuseVerdict, BookingRequestFacts, EmailValidationEvidence, book_rate_knobs,
-    booking_email_hash, booking_ip_hash, booking_session_hash, evaluate_booking_amend_request,
-    evaluate_booking_book_request, evaluate_booking_hold_request, evaluate_booking_request,
-    evaluate_booking_slot_list_request, hold_rate_knobs, quarantine_claim_id,
-    server_submission_fingerprint, slot_list_rate_knobs,
+    booking_email_hash, booking_ip_hash, booking_session_hash, effective_minimum_notice_secs,
+    evaluate_booking_amend_request, evaluate_booking_book_request, evaluate_booking_hold_request,
+    evaluate_booking_request, evaluate_booking_slot_list_request, hold_rate_knobs,
+    quarantine_claim_id, server_submission_fingerprint, slot_list_rate_knobs,
 };
+pub use self::manifest::BOOKING_ANTI_ABUSE_RULES_KEY;
+pub(crate) use self::manifest::decode_manifest_rule_field;
 pub use self::quarantine::{
     BookingQuarantineAdmission, BookingQuarantineReceipt, admit_quarantine_submission,
-    quarantine_borderline_submission,
+    admit_restorable_quarantine_submission, quarantine_borderline_submission,
+};
+pub use self::quarantine_restore::{
+    BookingQuarantineRestoreInput, BookingQuarantinedSubmission, booking_quarantined_submission,
+    record_quarantined_submission_restored,
 };
 pub use self::rate::{
     BookingRateDecision, observe_book_request, observe_hold_request, observe_quarantine_request,
@@ -85,7 +96,7 @@ mod booking_anti_abuse_tests;
 #[cfg(test)]
 use self::storage::{
     QUARANTINE_CLAIM_PREDICATE, QUARANTINE_RUN_ID_PREFIX, ROW_ID_MAX_LEN, RULE_KEY_DOMAIN,
-    hex_lower, rule_row_key,
+    hex_lower,
 };
 #[cfg(test)]
 use crate::Vault;

@@ -145,7 +145,10 @@ pub(crate) fn canonicalize_relationship_type(uri: &str) -> Cow<'_, str> {
 // default ~2 MiB worker stack can recurse through. Real WordprocessingML nests
 // only tens of levels deep (tables-in-cells-in-tables, content controls), so
 // 512 is generously above any legitimate document while remaining stack-safe.
-// Kept in sync with `normalize::MAX_XML_ELEMENT_DEPTH`.
+// The count goes once nothing recurses over element depth (FIX 10655): this
+// module's and `normalize`'s own passes are explicit-stack iterations, but
+// xmltree's parser, writer, `Clone` and `Drop` recurse, and so do the tree
+// passes of the importer, serializer, validators and tracked model.
 const MAX_XML_ELEMENT_DEPTH: usize = 512;
 
 // =============================================================================
@@ -1492,13 +1495,37 @@ pub fn parse_raw_fragment(raw: &[u8]) -> Result<Element, xmltree::ParseError> {
     }
 }
 
+/// Clear every element's namespace declarations in the tree, without
+/// recursion: an explicit stack, so depth costs heap (FIX 10655).
 fn strip_ns_decls(element: &mut Element) {
-    element.namespaces = None;
-    for child in &mut element.children {
-        if let XMLNode::Element(child_el) = child {
-            strip_ns_decls(child_el);
-        }
+    let mut stack = vec![element];
+    while let Some(element) = stack.pop() {
+        element.namespaces = None;
+        stack.extend(
+            element
+                .children
+                .iter_mut()
+                .filter_map(XMLNode::as_mut_element),
+        );
     }
+}
+
+/// `root` and every element under it, in document order (pre-order: each
+/// element before its children, children first to last), without
+/// recursion: an explicit stack, so depth costs heap (FIX 10655).
+pub(crate) fn preorder_elements(root: &Element) -> impl Iterator<Item = &Element> {
+    let mut stack = vec![root];
+    std::iter::from_fn(move || {
+        let element = stack.pop()?;
+        stack.extend(
+            element
+                .children
+                .iter()
+                .rev()
+                .filter_map(XMLNode::as_element),
+        );
+        Some(element)
+    })
 }
 
 /// Re-serialize an [`Element`] that was produced by [`parse_raw_fragment`] back
