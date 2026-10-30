@@ -120,7 +120,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/load/client.rs` | src | s | 9 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
 | `src/load/dream.rs` | src | m | 1 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
-| `src/load/dream/cycle.rs` | src | m | 15 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
+| `src/load/dream/cycle.rs` | src | m | 16 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
 | `src/load/dream/proof.rs` | src | s | 4 crate-vis | — | Whether a recall finds what the cycle landed: the landed claim ids (the stage lines' `landed_ids`, else the… |
 | `src/load/dream/report.rs` | src | m | 3 crate-vis | — | The `load dream` result: the JSON report and the 15-line summary on stdout |
 | `src/load/dream/server_log.rs` | src | s | 12 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |

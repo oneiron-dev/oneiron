@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4392 declarations.
-Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1213 facade rows, 4401 declarations.
+Inputs: 1141 of 1213 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1047 of 1213 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5701,6 +5701,11 @@ class SkillOptimizeTradeoffPickRequest(TypedDict):
     proposal: EntityId
     question_digest: str
     choice: TradeoffChoice
+class SkillOptimizeTradeoffResolveRequest(TypedDict):
+    proposal: EntityId
+    pending: EntityId
+    evidence: str
+    choice: TradeoffChoice
 class SkillGovernanceSetRequest(TypedDict):
     entity: EntityId
     tier: NotRequired[str | None]
@@ -8903,6 +8908,7 @@ class OfferAnswerRecord(TypedDict):
     offer_digest: str
     intent: NotRequired[OfferIntent | None]
     at: int
+OfferCheckOutcome = Literal["held", "broken", "currency_mismatch", "promised_score_unknown", "promised_cost_unknown", "unverifiable_no_calls", "unverifiable_no_meter", "unverifiable_not_bound", "unverifiable_no_model_role", "unverifiable_mixed_model", "unverifiable_no_usage", "unverifiable_unpriced_model", "unverifiable_unknown_currency", "unverifiable_unpriced_cache", "unverifiable_mixed_currency", "unverifiable_sum_overflow", "unverifiable_unclassified"]
 class OfferCheck(TypedDict):
     id: EntityId
     offer: EntityId
@@ -8910,6 +8916,7 @@ class OfferCheck(TypedDict):
     observed_monthly_cost: NotRequired[float | None]
     observed_score: NotRequired[float | None]
     held: NotRequired[bool | None]
+    outcome: OfferCheckOutcome
     note: NotRequired[str | None]
     at: int
     source_rows: NotRequired[list[EntityId] | None]
@@ -9726,6 +9733,7 @@ class CourtesyDeleteSendRequest(TypedDict):
     signed: NotRequired[str | None]
 class CourtesyDeleteSent(TypedDict):
     request: str
+    pages: list[str]
     pact: str
     recipient: str
     status: str
@@ -16070,6 +16078,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
+    executor: NotRequired[str | None]
     artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
@@ -16101,6 +16110,12 @@ class AmendmentJudgmentView(TypedDict):
     d_norm: float
     engine_ver: str
     at: int
+    rejected: bool
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    judge: NotRequired[str | None]
+    judge_model: NotRequired[str | None]
+    on_judge_model: bool
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
     artifact_ref: NotRequired[EntityId | None]
@@ -17055,6 +17070,7 @@ class VoiceTargetReceipt(TypedDict):
     vendor_voice_id: str
     cloned_at: int
     revision: str
+    awaiting_verification: bool
 class VoiceTargetEvictRequest(TypedDict):
     voice_id: str
     target: str
@@ -20284,6 +20300,36 @@ class ConsolidationLineageView(TypedDict):
     latest_job_ref: NotRequired[str | None]
     steps: list[ConsolidationStepRef]
     next_step: NotRequired[str | None]
+class DreamerCandidateDecisionsRequest(TypedDict):
+    job_ref: str
+class KeptRole(TypedDict):
+    rank: RoleRank
+    project: NotRequired[str | None]
+class KeptRoute(TypedDict):
+    role: KeptRole
+    ceiling: RoleRank
+    act: AskAct
+class KeptAnswer(TypedDict):
+    answer: DecisionAnswer
+    answered_at: int
+    role: KeptRole
+    kind: HolderKind
+    changed: bool
+    reason: NotRequired[str | None]
+    rule: NotRequired[HostRuleRef | None]
+class KeptAsk(TypedDict):
+    seq: int
+    to: KeptRoute
+    answer: NotRequired[KeptAnswer | None]
+class KeptDecision(TypedDict):
+    decision: TypedDecision
+    ask: NotRequired[KeptAsk | None]
+class DreamerDecidedCandidateView(TypedDict):
+    job_ref: str
+    position: int
+    subject: str
+    corrects: str | None
+    decisions: list[KeptDecision]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]
