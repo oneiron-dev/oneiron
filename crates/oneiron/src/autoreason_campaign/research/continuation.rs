@@ -459,6 +459,7 @@ fn expected_gain_for(
     node: AttemptId,
     evidence: &SearchEvidence,
 ) -> Result<f64> {
+    let incumbent = research_incumbent(vault, binding.root)?;
     let txn = vault.store.env.read_txn()?;
     let mut nodes = nodes_in_txn(vault, &txn, binding.root)?;
     drop(txn);
@@ -469,7 +470,7 @@ fn expected_gain_for(
         });
     }
     Ok(
-        estimator::branch_beliefs(&nodes, binding.root, &binding.prior_ladder)
+        estimator::branch_beliefs(&nodes, binding.root, incumbent, &binding.prior_ladder)
             .and_then(|beliefs| {
                 beliefs
                     .get(node.as_bytes())
