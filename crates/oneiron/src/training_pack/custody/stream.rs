@@ -1,10 +1,12 @@
 //! FIX 12086: the owner's starting checkpoint read from one stream, its files
 //! one after another, so no door holds the whole checkpoint or a base64 copy
-//! of it. Each file is kept as [`super::keep_bytes`] keeps one, all in one
+//! of it. Each file is kept as [`super::keep_reader`] keeps one, all in one
 //! transaction, and its pin is the version that append returns: nothing reads
-//! a kept file back whole. The blob custody's append takes a file's bytes, so
-//! each file is held once at its write while the ASSET file plane is off
-//! (`store::asset_body::ASSET_FILE_PLANE`).
+//! a kept file back whole. The blob custody's append stages each file from
+//! the stream (FIX 12091): once the ASSET file plane files it
+//! (`store::asset_body::ASSET_FILE_PLANE`), a long shard goes to its body file
+//! and never sits whole in memory; while the plane is off, each file is held
+//! once at its write, in its row.
 use std::collections::BTreeSet;
 use std::io::Read;
 
@@ -16,7 +18,7 @@ use crate::training_pack::{
     CheckpointFileKind, CheckpointFilePin, PinnedCheckpoint, SourcePin, invalid,
 };
 
-use super::{file_name, keep_bytes};
+use super::{file_name, keep_reader};
 
 /// One file of a streamed checkpoint: what a checkpoint upload says of it,
 /// with its length in place of its bytes.
@@ -51,13 +53,25 @@ impl Vault {
         body: &mut dyn Read,
     ) -> Result<PinnedCheckpoint> {
         validate(checkpoint)?;
-        self.with_write_txn_grouped(|txn| {
+        // KS-2A (FIX 12091): an instance for each file the asset plane may
+        // file, minted before the writer opens.
+        let mint = self.asset_body_mint(checkpoint.files.iter().map(|file| file.bytes))?;
+        // What each staged file leaves to hold outlives the commit: its pin
+        // keeps a published file from the collector until the row naming it
+        // is durable. No file's bytes are held past its own append.
+        let (pinned, _staged) = self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let run = self.store.clock.entity_id()?;
             let mut files = Vec::with_capacity(checkpoint.files.len());
+            let mut staged = Vec::with_capacity(checkpoint.files.len());
             for file in &checkpoint.files {
-                let bytes = next_file(body, file.bytes)?;
-                let content = keep_bytes(self, txn, actor, run, &file.name, &bytes)?;
+                let mut next = (&mut *body).take(file.bytes);
+                let (content, held) =
+                    keep_reader(self, txn, actor, run, &file.name, &mut next, mint.as_ref())?;
+                staged.push(held);
+                if next.limit() != 0 {
+                    return Err(invalid("checkpoint body ends before its files do"));
+                }
                 if content.blake3 != file.blake3 {
                     return Err(invalid("starting checkpoint hash mismatch"));
                 }
@@ -73,11 +87,13 @@ impl Vault {
                 return Err(invalid("checkpoint body runs past its files"));
             }
             files.sort_by(|a, b| a.name.cmp(&b.name));
-            Ok(PinnedCheckpoint {
+            let pinned = PinnedCheckpoint {
                 model: checkpoint.model.clone(),
                 files,
-            })
-        })
+            };
+            Ok((pinned, staged))
+        })?;
+        Ok(pinned)
     }
 }
 
@@ -104,15 +120,4 @@ fn validate(checkpoint: &CheckpointStream) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-/// The next `len` bytes of `body`, grown as they are read, never sized from
-/// `len` ahead of them.
-fn next_file(body: &mut dyn Read, len: u64) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    (&mut *body).take(len).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 != len {
-        return Err(invalid("checkpoint body ends before its files do"));
-    }
-    Ok(bytes)
 }

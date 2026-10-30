@@ -1,12 +1,13 @@
 //! ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18).
 //!
 //! An ASSET body longer than [`ASSET_INLINE_BODY_BYTES`] whose bytes no
-//! reader interprets ([`opaque_body`]: no UTF-8 text, no owning adapter's
-//! envelope, no container the secret mask reads into, no structured record,
-//! no file the mask marked) lives in the vault's `bodies/` directory as one
-//! file named by its BLAKE3, beside the result bodies and under their
-//! lifetime. It is written to a `.tmp-` file, synced, renamed into place and
-//! the directory synced before any row names it. Its ASSET row keeps a small
+//! reader interprets ([`asset_file_kind`]: no UTF-8 text, no owning
+//! adapter's envelope, no container the secret mask reads into, no file the
+//! mask marked), or a MessagePack record whose readers read it whole (FIX
+//! 12150), lives in the vault's `bodies/` directory as one file named by its
+//! BLAKE3, beside the result bodies and under their lifetime. It is written
+//! to a `.tmp-` file, synced, renamed into place and the directory synced
+//! before any row names it. Its ASSET row keeps a small
 //! manifest instead of the bytes ([`AssetFileManifest`]), and the ASSET owns
 //! the file through one provenance body descriptor, published in the
 //! transaction that writes the row.
@@ -39,7 +40,7 @@ mod spool;
 mod stage;
 
 pub(crate) use spool::AssetBodySpool;
-pub(crate) use stage::StagedAssetBody;
+pub(crate) use stage::{StagedAssetBody, StagedHold};
 
 use std::io::{self, Read, Write};
 
@@ -74,18 +75,25 @@ const MANIFEST_TAG: &[u8] = b"oneiron.asset-file.v1\0";
 pub(crate) enum AssetFileKind {
     /// Bytes no reader interprets, kept exactly as written.
     Opaque,
+    /// One MessagePack map with a string key, kept exactly as written (FIX
+    /// 12150): the readers that decode it read it whole through the file
+    /// plane, which hands back the same bytes, and the readers of a stored
+    /// row read nothing from it, as from its manifest.
+    Record,
 }
 
 impl AssetFileKind {
     const fn code(self) -> u8 {
         match self {
             Self::Opaque => 1,
+            Self::Record => 2,
         }
     }
 
     const fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Opaque),
+            2 => Some(Self::Record),
             _ => None,
         }
     }
@@ -216,25 +224,56 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
 /// A sealed vault's files are envelopes (FIX 5348).
 pub(crate) const ASSET_FILE_PLANE: bool = false;
 
-/// Whether `body` is bytes no reader of ASSET bodies interprets: no UTF-8
-/// text and no body an owning adapter reads (the serializer would attach it
-/// as a file), no container the secret mask reads into, no refinement
-/// carrier, and no MessagePack map with a string key (a record a named
-/// index, a media reader or the stale mark reads). Only such a body lives in
-/// a file; the others keep the readers that read them whole.
-fn opaque_body(body: &[u8]) -> bool {
-    crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
-        && !crate::batch::secret_scan::is_container(body)
-        && crate::skill_hub::refinement_carrier_payload(body).is_none()
-        && !leads_with_keyed_map(body)
+/// What the file plane may hold `body` as, judged whole; `None` keeps it in
+/// its row. Neither kind is UTF-8 text, a body an owning adapter reads (the
+/// serializer would attach it as a file), a container the secret mask reads
+/// into, or a refinement carrier.
+///
+/// - [`AssetFileKind::Opaque`]: no MessagePack map with a string key leads
+///   it, so no reader of ASSET bodies interprets it.
+/// - [`AssetFileKind::Record`] (FIX 12150): it is one such map, ending where
+///   the body ends, which the readers that decode it (a docs page's, an
+///   export's) read whole through the file plane, and from which the
+///   readers of a stored row ([`row_readers_read_nothing`]) read nothing.
+///
+/// A body led by a keyed map that runs on past it, or one a stored-row
+/// reader reads, keeps the readers that read it whole in its row.
+fn asset_file_kind(body: &[u8]) -> Option<AssetFileKind> {
+    if !crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
+        || crate::batch::secret_scan::is_container(body)
+        || crate::skill_hub::refinement_carrier_payload(body).is_some()
+    {
+        return None;
+    }
+    match keyed_map_len(body) {
+        None => Some(AssetFileKind::Opaque),
+        Some(len) if len == body.len() as u64 && row_readers_read_nothing(body) => {
+            Some(AssetFileKind::Record)
+        }
+        Some(_) => None,
+    }
 }
 
-/// Whether `body`'s first MessagePack value is a map with a string key.
-fn leads_with_keyed_map(body: &[u8]) -> bool {
-    match rmpv::decode::read_value(&mut io::Cursor::new(body)) {
-        Ok(rmpv::Value::Map(entries)) => entries.iter().any(|(key, _)| key.is_str()),
-        _ => false,
+/// The length of `body`'s first MessagePack value when it is a map with a
+/// string key, `None` for any other body.
+fn keyed_map_len(body: &[u8]) -> Option<u64> {
+    let mut cursor = io::Cursor::new(body);
+    match rmpv::decode::read_value(&mut cursor) {
+        Ok(rmpv::Value::Map(entries)) if entries.iter().any(|(key, _)| key.is_str()) => {
+            Some(cursor.position())
+        }
+        _ => None,
     }
+}
+
+/// Whether the readers that decode a stored ASSET row read nothing from the
+/// record `body`: no `stale` mark, no named-entity query prefix and no
+/// phonetic code. They read nothing from a manifest either, so a record that
+/// keeps one in its row reads to them as it would whole (FIX 12150).
+fn row_readers_read_nothing(body: &[u8]) -> bool {
+    !crate::ports::body_is_stale(body)
+        && !crate::ports::indexes_named_entity(ENTITY_TYPE_ASSET, body)
+        && crate::batch::phonetic_codes::codes_for_body(ENTITY_TYPE_ASSET, body).is_empty()
 }
 
 /// The manifest of ASSET `id`'s body file when the row `body` it stores is
@@ -329,12 +368,13 @@ pub(crate) fn short_content_hash_in_txn(
 }
 
 /// FIX 3677: the body file a local ASSET put's `data` would go to when it
-/// is one ([`ASSET_INLINE_BODY_BYTES`], [`opaque_body`], a file the secret
-/// mask did not mark). This runs inside the batch writer, and a body file is
-/// one vault instance whose key is minted before any writer opens (KS-2A):
-/// so the body stays in its row, which a checkpoint seals under an instance
-/// of its own. A put that files a long body stages it before its writer
-/// ([`crate::Vault::stage_asset_body`]). `None` keeps the body in its row.
+/// is one ([`ASSET_INLINE_BODY_BYTES`], [`asset_file_kind`], a file the
+/// secret mask did not mark). This runs inside the batch writer, and a body
+/// file is one vault instance whose key is minted before any writer opens
+/// (KS-2A): so the body stays in its row, which a checkpoint seals under an
+/// instance of its own. A put that files a long body stages it before its
+/// writer ([`crate::Vault::stage_asset_body`]). `None` keeps the body in its
+/// row.
 ///
 /// # Errors
 ///
@@ -348,7 +388,7 @@ pub(crate) fn file_put_body_in_txn(
     if entity_type != ENTITY_TYPE_ASSET
         || data.len() as u64 <= ASSET_INLINE_BODY_BYTES
         || !ASSET_FILE_PLANE
-        || !opaque_body(data)
+        || asset_file_kind(data).is_none()
     {
         return Ok(None);
     }
