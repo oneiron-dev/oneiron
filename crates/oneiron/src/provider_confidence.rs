@@ -3,9 +3,8 @@
 //! # Index model: two DISPOSABLE shortcuts over one truth
 //!
 //! The provider actor row and the provider prior-head row in `vault_meta` are
-//! CACHES, never authority. Truth is the stored graph: an active provider
-//! actor (a channel's MACHINE actor, or the PERSON a provider with no channel
-//! actor gets) whose MessagePack body carries an exact `provider_key`, plus the
+//! CACHES, never authority. Truth is the stored graph: an active MACHINE
+//! provider actor whose MessagePack body carries an exact `provider_key`, plus the
 //! `actor.confidence_prior` CLAIMs subject-ed to it or to matching merged shells
 //! that resolve to it. A prior stranded outside active matching actors is a
 //! typed error, never neutral. Every read validates a

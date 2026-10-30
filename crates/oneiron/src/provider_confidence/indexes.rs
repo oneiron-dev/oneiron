@@ -15,7 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::identity_topology::EntityLifecycleState;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 
@@ -24,10 +24,10 @@ use super::{
     validate_actor_confidence_prior_claim_structure, validate_provider_key,
 };
 
-/// The entity types a provider actor is stored as: a channel actor is a
-/// MACHINE (`channel_identity::actors`), and a provider with no channel actor
-/// gets a PERSON when its first prior is written.
-pub(crate) const PROVIDER_ACTOR_ENTITY_TYPES: [u8; 2] = [ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON];
+/// The entity types a provider actor is stored as: a MACHINE, whether a
+/// channel registered it (`channel_identity::actors`) or its first prior
+/// minted it.
+pub(crate) const PROVIDER_ACTOR_ENTITY_TYPES: [u8; 1] = [ENTITY_TYPE_MACHINE];
 
 /// Disposable per-provider shortcut to the entity id of the provider actor
 /// carrying a given `provider_key`. Key: `sha256(provider)`.
@@ -388,9 +388,9 @@ struct ProviderActors {
 /// a split shell's, prior by prior, through the head each was assigned to,
 /// and the ones it left unresolved are carried apart (FIX 10053).
 /// The full-scan truth source, run on a stale shortcut, a miss, or before a write.
-/// Malformed and unrelated bodies are IGNORED rather than fatal: the PERSON
-/// and MACHINE type indexes are shared with every other person and machine in
-/// the vault, and one undecodable neighbour must not deny a provider its prior.
+/// Malformed and unrelated bodies are IGNORED rather than fatal: the MACHINE
+/// type index is shared with every other machine in the vault, and one
+/// undecodable neighbour must not deny a provider its prior.
 fn provider_actors_for_key_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -531,8 +531,7 @@ pub(super) fn prior_claims_for_actor_in_txn(
 /// never indexed already HAS its actor in the graph (a registered channel's
 /// MACHINE actor among them), and minting a second one there would fork the
 /// provider's belief history across two entities that only a merge could ever
-/// rejoin. The minted actor is a PERSON: it belongs to a provider with no
-/// channel actor.
+/// rejoin. The minted actor is a MACHINE, as a channel's actor is.
 pub(super) fn resolve_or_create_provider_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -566,7 +565,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
         wtxn,
         vec![BatchOp::Put {
             id,
-            entity_type: ENTITY_TYPE_PERSON,
+            entity_type: ENTITY_TYPE_MACHINE,
             occurred: TimeRange { start: 0, end: 0 },
             learned_at: mutation_recorded_at,
             data: body,
