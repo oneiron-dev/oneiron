@@ -132,6 +132,66 @@ pub fn bind_agent_run_attribution(
     Ok(true)
 }
 
+/// Binds the execution context of the leased Dreamer weave-lens `attempt`,
+/// once, so the receipt of the weave-report pack it loaded closes attributed
+/// (FIX 1875). The run is solo and the Dreamer decides; it has no project and
+/// no agent definition, and places at the vault type tree's root. Returns
+/// whether it bound one now: another attempt kind, a run no longer leased to
+/// `lease_owner`, one already bound, or one with no executor binds nothing.
+///
+/// # Errors
+///
+/// Storage errors and the attribution door's own refusals.
+pub fn bind_dreamer_weave_lens_attribution(
+    vault: &Vault,
+    attempt: AttemptId,
+    lease_owner: &str,
+) -> Result<bool> {
+    let Some(status) = DreamerRunnerStore::new(vault).status(attempt)? else {
+        return Ok(false);
+    };
+    let record = &status.attempt;
+    if status.payload.attempt_type != crate::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
+        || !matches!(record.state, AttemptState::Leased | AttemptState::Landing)
+        || record.lease_owner.as_deref() != Some(lease_owner)
+    {
+        return Ok(false);
+    }
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        if crate::receipt::has_attempt_pack_attribution_in_txn(&vault.store, &rtxn, attempt)? {
+            return Ok(false);
+        }
+    }
+    let Some(executor) = run_executor_model(vault, record)? else {
+        return Ok(false);
+    };
+    let type_ref = crate::task_type::type_tree(vault, None)?.root();
+    let credit = credit_options(vault, None, &type_ref)?;
+    let mut fields = PackAttributionFields {
+        type_ref,
+        executor,
+        agent_definition: None,
+        judge: None,
+        pattern: pattern_context(SOLO_ROLE)?,
+        team_shape: vec![SOLO_ROLE.to_owned()],
+        decider: vault.dreamer_actor_for_attempt(attempt)?.entity_ref(),
+        project: None,
+        output: None,
+        contributions: Vec::new(),
+        used_edges: Vec::new(),
+        credit,
+    };
+    super::derivation_witness::drain(&vault.store, attempt, record.attempt_count, &mut fields);
+    AttemptQueue::new(vault).set_pack_attribution(
+        attempt,
+        lease_owner,
+        record.attempt_count,
+        &fields,
+    )?;
+    Ok(true)
+}
+
 /// The agent definition `target` names, pinned `id@revision` as the stored
 /// definition stands now; `None` for a workflow target or a definition no
 /// longer stored (FIX 11637).
