@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE;
 use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_skill_edits};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -89,6 +90,11 @@ pub struct SkillOptimizeBrief {
     /// input the Coach hands its author, never an outcome aggregate, so the
     /// held-out partition is untouched. `None` for an ordinary optimization.
     pub failure: Option<SkillFailureContext>,
+    /// A policy-bearing skill's dials: each top-level key of its
+    /// `policy.json` with its current value (FIX 12071). An edit moves one
+    /// by naming its key with the new number (`key: 4`), which the improved
+    /// revision's `policy.json` then takes. `None` when it carries none.
+    pub policy_dials: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// The failure a heal's skill repair is aimed at: its class as its source
@@ -354,6 +360,7 @@ pub(crate) fn optimize_brief_bound_at(
     .max()
     .unwrap_or(0);
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+    let policy_dials = policy_dials(vault, &candidate.skill, &record);
 
     Ok(SkillOptimizeBrief {
         skill: candidate.skill,
@@ -370,7 +377,35 @@ pub(crate) fn optimize_brief_bound_at(
         substitution_proposals,
         rejected_edits,
         failure: None,
+        policy_dials,
     })
+}
+
+/// The top-level entries of `skill`'s `policy.json`, when its package
+/// carries one that reads as one JSON object (FIX 12071): the dials the
+/// improved revision's re-derive moves. A package that does not read shows
+/// none, and the brief goes on.
+fn policy_dials(
+    vault: &Vault,
+    skill: &EntityId,
+    record: &crate::skill::SkillRecord,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let rtxn = vault.store.env.read_txn().ok()?;
+    let package = match vault.runtime_skill_package_in_txn(&rtxn, skill, record) {
+        Ok(package) => package?,
+        Err(error) => {
+            tracing::debug!(kind = ?error.kind(), "a skill's package is unreadable for its brief");
+            return None;
+        }
+    };
+    let policy = package
+        .files
+        .into_iter()
+        .find(|file| file.path == REVIEWER_POLICY_FILE)?;
+    match serde_json::from_slice(&policy.content).ok()? {
+        serde_json::Value::Object(entries) => Some(entries),
+        _ => None,
+    }
 }
 
 /// Whether every receipt a proposal rests on falls on the DEV side of this
