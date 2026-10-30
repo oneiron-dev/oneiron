@@ -6317,6 +6317,7 @@ ConnectorRevisionSnoozeView = ConnectorRevisionSnoozeViewSurfacing | ConnectorRe
 class ConnectorSlateRevisionAcceptRequest(TypedDict):
     slate_ref: str
     expected_revision: int
+    overrides: NotRequired[dict[str, SlateDisposition]]
 class ConnectorRevisionGrantView(TypedDict):
     tool: str
     grant_id: str

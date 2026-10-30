@@ -2466,7 +2466,7 @@ export type ConnectorSlateRevisionDeferRequest = { signal_ref: string; deferral:
 /** `oneiron::verbs::connector_slate_revision::ConnectorRevisionSnoozeView` */
 export type ConnectorRevisionSnoozeView = { state: "surfacing" } | { state: "snoozed"; count: number; next_eligible_at: number } | { state: "manual_pinned" }
 /** `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionAcceptRequest` */
-export type ConnectorSlateRevisionAcceptRequest = { slate_ref: string; expected_revision: number }
+export type ConnectorSlateRevisionAcceptRequest = { slate_ref: string; expected_revision: number; overrides?: Record<string, SlateDisposition> }
 /** `oneiron::verbs::connector_slate_revision::ConnectorRevisionGrantView` */
 export type ConnectorRevisionGrantView = { tool: string; grant_id: string; key_id: string; key_connector: string }
 /** `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionAcceptedView` */

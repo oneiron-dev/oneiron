@@ -1248,7 +1248,7 @@ declare namespace Sdk {
   type ConnectorRevisionDeferral = "not_now" | "manual_pinned" | "unpin";
   type ConnectorSlateRevisionDeferRequest = { signal_ref: string; deferral: ConnectorRevisionDeferral };
   type ConnectorRevisionSnoozeView = { state: "surfacing" } | { state: "snoozed"; count: number; next_eligible_at: number } | { state: "manual_pinned" };
-  type ConnectorSlateRevisionAcceptRequest = { slate_ref: string; expected_revision: number };
+  type ConnectorSlateRevisionAcceptRequest = { slate_ref: string; expected_revision: number; overrides?: Record<string, SlateDisposition> };
   type ConnectorRevisionGrantView = { tool: string; grant_id: string; key_id: string; key_connector: string };
   type ConnectorSlateRevisionAcceptedView = { slate_ref: string; revision: number; cause: ConnectorSlateRevisionCauseView; grants: ConnectorRevisionGrantView[] };
   type ConnectorBindingDependentView = { key_ref: string; tool?: string | null };
