@@ -70,6 +70,27 @@ pub(crate) fn with_manager_peer<T>(
     })
 }
 
+/// Lands `bytes`, every byte of the body `body` names, carried whole outside
+/// any socket (an offline bundle, FIX 5532), as the row of its carrier in
+/// `window` as `peer` reads it: the received body's own landing, from a
+/// spool of those bytes. `false` when it did not land.
+///
+/// # Errors
+///
+/// The spool's errors, and the landing's.
+pub(crate) fn land_carried_body(
+    peer: &AssetBodyPeer<'_>,
+    window: &WindowKey,
+    body: &AssetBodyRef,
+    bytes: &[u8],
+) -> crate::error::Result<bool> {
+    let mut spool = peer.vault.asset_body_spool(body.facts())?;
+    if !bytes.is_empty() {
+        spool.write_at(0, bytes)?;
+    }
+    landing::land(peer, window, body, spool)
+}
+
 /// A body this side is owed, and when it asks for it next.
 struct Owed {
     body: AssetBodyRef,
