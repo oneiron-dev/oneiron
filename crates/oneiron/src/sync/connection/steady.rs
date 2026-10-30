@@ -453,6 +453,9 @@ impl SyncConnection {
                     if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
                         return LoopExit::Disconnected(e);
                     }
+                    if let Err(e) = crate::sync::client::send_leaf_key_requests(client, &mut write).await {
+                        return LoopExit::Disconnected(e);
+                    }
                     if let Err(error) = client.replay_deferred_federation_update() {
                         return LoopExit::Disconnected(format!("federation replay: {error}"));
                     }

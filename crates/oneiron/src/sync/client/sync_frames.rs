@@ -25,6 +25,7 @@ impl SyncClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         self.root_bootstrapped = false;
+        self.leaf_key_sends = Default::default();
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b

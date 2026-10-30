@@ -54,6 +54,9 @@ impl SyncClient {
             transport::TAG_ASSET_BODY_WANT..=transport::TAG_ASSET_BODY_RECEIPT => {
                 responses.extend(self.handle_asset_body_frame(tag, payload)?);
             }
+            transport::TAG_LEAF_KEY_REQUEST..=transport::TAG_LEAF_KEY_FAILURE => {
+                responses.extend(self.handle_leaf_key_frame(tag, payload)?);
+            }
             transport::TAG_DOCUMENT => {
                 responses.extend(self.handle_document_frame(transport::decode_document(payload)?)?);
             }
