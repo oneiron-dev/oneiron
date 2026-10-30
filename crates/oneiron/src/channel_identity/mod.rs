@@ -66,8 +66,10 @@ pub use self::codec::{
     decode_channel_identity_body, encode_channel_identity_body, is_channel_identity_claim_predicate,
 };
 pub use self::facts::ChannelIdentityFacts;
-pub(crate) use self::facts::channel_identity_fact_head_ids_in_txn;
 pub(crate) use self::facts::channel_identity_facts_in_txn;
+pub(crate) use self::facts::{
+    channel_identity_correctable_head_ids_in_txn, channel_identity_fact_head_ids_in_txn,
+};
 pub use self::keys::{
     ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, CHANNEL_IDENTITY_BODY_KEYS,
     CHANNEL_IDENTITY_CLAIM_PREDICATES, CHANNEL_IDENTITY_DELEGATED_BODY_KEYS,
