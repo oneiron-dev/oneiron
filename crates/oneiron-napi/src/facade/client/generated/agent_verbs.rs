@@ -430,6 +430,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_memory_pads_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.pads.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_memory_pads_admin_reads(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.pads.admin_reads", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("cancel", js_json(input))

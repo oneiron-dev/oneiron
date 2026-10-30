@@ -5739,6 +5739,9 @@ class Oneiron:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs":
             return Oneiron._SelfMemoryDiaryVerbs(self._client)
+        @property
+        def pads(self) -> "Oneiron._SelfMemoryPadsVerbs":
+            return Oneiron._SelfMemoryPadsVerbs(self._client)
     class _SelfMemoryDiaryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5754,6 +5757,15 @@ class Oneiron:
         def query(self, spec):
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
             return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
+    class _SelfMemoryPadsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log."""
+            return json.loads(_translate(lambda: self._client.self_memory_pads_read(json.dumps(spec))))
+        def admin_reads(self, spec):
+            """The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication."""
+            return json.loads(_translate(lambda: self._client.self_memory_pads_admin_reads(json.dumps(spec))))
     class _SelfStandingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

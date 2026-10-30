@@ -124,6 +124,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.personas.export" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.edit" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.query" => a.spec.clone().ok_or_else(invalid),
+        "self.memory.pads.read" => a.spec.clone().ok_or_else(invalid),
+        "self.memory.pads.admin_reads" => a.spec.clone().ok_or_else(invalid),
         "cancel" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -1670,6 +1672,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary.query" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.memory.pads.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.memory.pads.admin_reads" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "cancel" => {
@@ -6328,6 +6336,42 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::self_memory_diary_query(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.memory.pads.read" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.memory.pads.read", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::DiaryQueryRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_memory_pads_read(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.memory.pads.admin_reads" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.memory.pads.admin_reads", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AdminPadReadsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_memory_pads_admin_reads(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

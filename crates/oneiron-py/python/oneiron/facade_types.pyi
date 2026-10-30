@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1214 facade rows, 4406 declarations.
-Inputs: 1142 of 1214 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1048 of 1214 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1216 facade rows, 4408 declarations.
+Inputs: 1144 of 1216 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1050 of 1216 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -1442,6 +1442,10 @@ class DiaryQueryOutcomeDeclined(TypedDict):
 class DiaryQueryOutcomeNotCovered(TypedDict):
     state: Literal["not_covered"]
 DiaryQueryOutcome = DiaryQueryOutcomeGranted | DiaryQueryOutcomePendingReview | DiaryQueryOutcomeDeclined | DiaryQueryOutcomeNotCovered
+class AdminPadReadsRequest(TypedDict):
+    agent: str
+class AdminPadReadsView(TypedDict):
+    reads: list[DiaryReadRecord]
 class TaskRequest(TypedDict):
     task_ref: str
 ClaimApprovalStatus = Literal["auto", "proposed", "approved", "rejected"]

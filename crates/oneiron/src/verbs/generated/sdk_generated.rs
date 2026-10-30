@@ -319,6 +319,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.memory.pads.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::DiaryQueryRequest,
+                >(),
+            ),
+            (
+                "self.memory.pads.admin_reads",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AdminPadReadsRequest,
+                >(),
+            ),
+            (
                 "cancel",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
             ),
@@ -10873,6 +10885,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.memory.pads.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.memory.pads.admin_reads" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "cancel" => {
             properties.insert(
                 "task_ref".to_owned(),
@@ -19183,6 +19209,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
         }
+        "self.memory.pads.read" => {
+            let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "self.memory.pads.admin_reads" => {
+            let _input: crate::task_verb::sdk::AdminPadReadsRequest = decode(value.clone())?;
+        }
         "cancel" => {
             let _input: TaskRequest = decode(value.clone())?;
         }
@@ -23341,6 +23374,10 @@ pub fn invoke(
         "vault.personas.export" => encode(vault_personas_export(memory, decode(value)?)?),
         "vault.personas.edit" => encode(vault_personas_edit(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
+        "self.memory.pads.read" => encode(self_memory_pads_read(memory, decode(value)?)?),
+        "self.memory.pads.admin_reads" => {
+            encode(self_memory_pads_admin_reads(memory, decode(value)?)?)
+        }
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
         "describe" => encode(describe(memory, decode(value)?)?),
@@ -26232,6 +26269,19 @@ pub fn self_memory_diary_query(
 ) -> MemoryResult<crate::task_verb::sdk::DiaryQueryOutcome> {
     input.validate()?;
     crate::task_verb::sdk::self_memory_diary_query_embedded(memory, input)
+}
+pub fn self_memory_pads_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::DiaryQueryRequest,
+) -> MemoryResult<crate::task_verb::sdk::DiaryQueryOutcome> {
+    input.validate()?;
+    crate::task_verb::sdk::self_memory_pads_read_embedded(memory, input)
+}
+pub fn self_memory_pads_admin_reads(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AdminPadReadsRequest,
+) -> MemoryResult<crate::task_verb::sdk::AdminPadReadsView> {
+    crate::task_verb::sdk::self_memory_pads_admin_reads_embedded(memory, input)
 }
 pub fn cancel(
     memory: &Memory<'_>,
