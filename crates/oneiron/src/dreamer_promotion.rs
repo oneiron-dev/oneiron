@@ -118,6 +118,10 @@ pub struct PromotionOutcome {
     /// `rejected`'s order (FIX 9429): a sink refuses the write under its
     /// typed kind, so the driver parks or retries it as that kind says.
     pub rejected_kinds: Vec<(EntityId, crate::error::ErrorKind)>,
+    /// The gate's outcome and reason codes behind each rejection the gate
+    /// refused, in `rejected`'s order (FIX 10355): the sink's one error
+    /// carries them, so a refused write names why the gate refused it.
+    pub rejected_gates: Vec<(EntityId, &'static str, Vec<&'static str>)>,
 }
 
 /// Promotes consolidated candidates as vault claims through the gate
@@ -184,12 +188,7 @@ pub fn promote_consolidated_claims_with_checker(
                     other.as_str()
                 ),
             )),
-            Err(rejection) => {
-                if let Some(kind) = rejection.kind {
-                    outcome.rejected_kinds.push((claim_id, kind));
-                }
-                outcome.rejected.push((claim_id, rejection.reason));
-            }
+            Err(rejection) => rejection.record(claim_id, &mut outcome),
         }
     }
 
@@ -362,9 +361,13 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
         self.outcome.pended.extend(outcome.pended);
         self.outcome.held.extend(outcome.held);
         self.outcome.rejected.extend(outcome.rejected);
-        // The write's one error carries its door's typed kind (FIX 9429).
-        let refusal = refused.then(|| attempt_sink::write_refusal(&outcome.rejected_kinds));
+        // The write's one error carries its door's typed kind (FIX 9429)
+        // and, when the gate refused it, the gate's codes (FIX 10355).
+        let refusal = refused.then(|| {
+            attempt_sink::write_refusal(&outcome.rejected_kinds, &outcome.rejected_gates)
+        });
         self.outcome.rejected_kinds.extend(outcome.rejected_kinds);
+        self.outcome.rejected_gates.extend(outcome.rejected_gates);
         if let Some(refusal) = refusal {
             return Err(refusal);
         }
@@ -383,6 +386,7 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
         self.outcome.held.extend(outcome.held);
         self.outcome.rejected.extend(outcome.rejected);
         self.outcome.rejected_kinds.extend(outcome.rejected_kinds);
+        self.outcome.rejected_gates.extend(outcome.rejected_gates);
         Ok(())
     }
 }
