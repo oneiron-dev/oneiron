@@ -58,8 +58,12 @@
   written in it. Never run the workspace formatter over this directory.
 - Local patch list (the first vendor commit is the unmodified sources plus
   the manifest strip, so `git log -p` on this directory shows each change).
-  All of it is additive: without a `DecodeAdmission` every load and decode
-  runs upstream's code.
+  Without a `DecodeAdmission` every load and decode runs upstream's code,
+  but for three fixes that apply to both paths: Flate inflates through one
+  shared loop that keeps every byte written before a corruption (FIX
+  8449), an xref entry whose object number does not fit `u32` is skipped
+  instead of wrapped (FIX 8451), and the xref table's entries go straight
+  into the table instead of through a list per section (FIX 8450).
   - `src/decode_admission.rs` (new): the `DecodeAdmission` trait (`admit`
     before each allocation, `decoded` to observe an output length),
     `DecodeAdmissionError` (`MemoryFloor { needed, available }`, `Deadline`,
@@ -88,3 +92,12 @@
     it, and a refusal ends the load. The encrypted loader's object-stream
     members and `get_compressed_object`'s container move instead of being
     cloned; the result is the same, with or without an admission.
+  - Release and parse charges (FIX 8446, 8448, 8450): `DecodeAdmission::release`
+    gives back a buffer's old allocation once it grows, a filter chain's
+    dropped layer and the PNG predictor's row buffers. A `ParseScope`, opened
+    by an admitted load (`Reader::read`, `indirect_object`,
+    `xref_and_trailer`, `ObjectStream::new_admitted`), charges each name,
+    string, array and dictionary the parser builds on its thread as it is
+    built, 64 KiB admitted at a time; a refused charge fails the parse as
+    `Error::DecodeAdmission`. The xref table admits a map node share per
+    entry, and `Xref::merge_admitted` per entry a `/Prev` merge adds.

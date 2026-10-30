@@ -72,6 +72,48 @@ impl EsignSealInput {
     }
 }
 
+impl EsignSealInput {
+    /// Replaces the revisions with one fresh revision whose hole holds at
+    /// least `needed` DER bytes (FIX 6270): twice the largest written so far,
+    /// or `needed` to the next power of two when that is more, so a fresh
+    /// CMS a few bytes longer still fits. `false`, with nothing changed, when
+    /// `needed` already fits the largest: no larger revision would help.
+    ///
+    /// # Errors
+    /// As [`Self::measured`].
+    pub(crate) fn rewrite_larger(
+        &mut self,
+        operation_id: &str,
+        now_ms: u64,
+        codec_bytes: u64,
+        needed: u64,
+    ) -> Result<bool> {
+        let largest = self
+            .revisions
+            .iter()
+            .filter_map(|revision| {
+                let [_, open, close, _] = revision.byte_range;
+                close
+                    .checked_sub(open)?
+                    .checked_sub(2)
+                    .map(|digits| digits / 2)
+            })
+            .max()
+            .unwrap_or(0);
+        if needed <= largest {
+            return Ok(false);
+        }
+        let capacity = largest
+            .saturating_mul(2)
+            .max(needed.checked_next_power_of_two().unwrap_or(u64::MAX));
+        let capacity = usize::try_from(capacity).map_err(|_| PdfPreparationError::Limit)?;
+        let codec = usize::try_from(codec_bytes).unwrap_or(usize::MAX);
+        let (base, _) = Base::read(&self.pdf, codec)?;
+        self.revisions = vec![base.revision(self.pdf.len(), operation_id, now_ms, capacity)?];
+        Ok(true)
+    }
+}
+
 /// The bytes the largest stream lopdf decoded while it read `doc` came to:
 /// an object stream's, which it leaves decoded in place, or a
 /// cross-reference stream's, decoded again here to be measured. Each

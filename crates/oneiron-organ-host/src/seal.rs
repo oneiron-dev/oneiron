@@ -365,6 +365,10 @@ enum FailureReply {
     InputInvalid {
         code: String,
     },
+    /// The engine's largest revision held too little for the CMS.
+    ContentsShort {
+        needed: u64,
+    },
 }
 
 impl VerdictReply {
@@ -410,6 +414,7 @@ impl FailureReply {
                 EsignSealerError::Unavailable { retry_after_ms }
             }
             Self::InputInvalid { code } => EsignSealerError::InputInvalid { code },
+            Self::ContentsShort { needed } => EsignSealerError::ContentsShort { needed },
         }
     }
 }

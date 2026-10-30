@@ -7,10 +7,13 @@
 //! ([`SealMemoryProvider`]). Each seal and each verification is one
 //! operation with a ledger of its own, opened before it parses anything. The
 //! ledger reserves at least [`RESERVE_STEP`] at a time and serves smaller
-//! admissions from what it has left. It never gives anything back while its
-//! operation runs: it holds the sum of every allocation the operation's
-//! decodes asked for, not only what is live, which is sound and
-//! conservative. Everything it reserved goes back when the operation ends.
+//! admissions from what it has left. What a decode gives back (a buffer's
+//! old allocation once it grew, a dropped layer of a filter chain) and what
+//! a finished parse pass held ([`LedgerPass`]) return to what it has left,
+//! for the operation's later admissions (FIX 8448): it holds about what its
+//! decodes keep alive at once, not the sum of every allocation they asked
+//! for. Its reservations stay with it, and everything it reserved goes back
+//! to the service when the operation ends.
 //!
 //! A refusal is typed: the machine's memory floor or a deadline, or a
 //! cancelled call or a service that cannot answer. It is never a count or a
@@ -162,6 +165,15 @@ impl SealMemoryProvider {
         self.ledger()?.admit_len::<T>(len)
     }
 
+    /// A parse pass over the operation's ledger (FIX 8448); none outside an
+    /// operation. Open it before a load whose document, and every buffer its
+    /// decodes made, drops before the pass does.
+    pub(crate) fn pass(&self) -> Option<LedgerPass> {
+        let ledger = self.ledger.clone()?;
+        let opened_at = lock(&ledger.state).live;
+        Some(LedgerPass { ledger, opened_at })
+    }
+
     /// Reserves `bytes` from the configured service for an owner that may
     /// outlive any one operation (a fetched body, a cache entry): the
     /// reservation is the owner's, not an operation ledger's, and goes back
@@ -241,10 +253,11 @@ impl SealResourceLimits {
     }
 }
 
-/// One operation's reservations: grown by every admission, never shrunk
-/// while the operation runs, and given back whole when the last of the
-/// operation's handles drops. It is lopdf's `DecodeAdmission` for every
-/// decode the operation runs.
+/// One operation's reservations: grown by every admission its spare cannot
+/// serve, never shrunk while the operation runs, and given back whole when
+/// the last of the operation's handles drops. What its decodes give back
+/// refills its spare. It is lopdf's `DecodeAdmission` for every decode the
+/// operation runs.
 pub(crate) struct MemoryLedger {
     service: Arc<dyn SealMemory>,
     /// Where each finished decode's length goes.
@@ -256,6 +269,9 @@ pub(crate) struct MemoryLedger {
 struct LedgerState {
     /// Reserved, and not yet admitted to an allocation.
     spare: u64,
+    /// Admitted to the decodes' allocations and not given back. The seal's
+    /// own copies are not counted: they outlive the passes they are made in.
+    live: u64,
     /// What the service holds for each reservation.
     held: Vec<Box<dyn Send>>,
     /// The refusal that ended an admission. Every later admission refuses
@@ -265,34 +281,46 @@ struct LedgerState {
 
 impl MemoryLedger {
     /// Admits `bytes` about to be allocated: from what the ledger has left,
-    /// or reserved first, at least [`RESERVE_STEP`] at a time.
-    pub(crate) fn take(&self, bytes: u64) -> Result<(), SealMemoryRefusal> {
+    /// or reserved first, at least [`RESERVE_STEP`] at a time. A decode's
+    /// allocation counts as `live`, which its decode or its pass gives back.
+    fn take(&self, bytes: u64, decode: bool) -> Result<(), SealMemoryRefusal> {
         let mut state = lock(&self.state);
         if let Some(refused) = state.refused {
             return Err(refused);
         }
-        if bytes <= state.spare {
-            state.spare -= bytes;
-            return Ok(());
-        }
-        let step = (bytes - state.spare).max(RESERVE_STEP);
-        match self.service.reserve(step) {
-            Ok(held) => {
-                state.held.push(held);
-                state.spare = state.spare.saturating_add(step) - bytes;
-                Ok(())
-            }
-            Err(refusal) => {
-                state.refused = Some(refusal);
-                Err(refusal)
+        if bytes > state.spare {
+            let step = (bytes - state.spare).max(RESERVE_STEP);
+            match self.service.reserve(step) {
+                Ok(held) => {
+                    state.held.push(held);
+                    state.spare = state.spare.saturating_add(step);
+                }
+                Err(refusal) => {
+                    state.refused = Some(refusal);
+                    return Err(refusal);
+                }
             }
         }
+        state.spare -= bytes;
+        if decode {
+            state.live = state.live.saturating_add(bytes);
+        }
+        Ok(())
     }
 
-    /// Admits `len` values of `T`, about to be allocated.
+    /// Takes back `bytes` admitted earlier and no longer allocated: they
+    /// serve the operation's later admissions. Never more than is live.
+    fn give_back(state: &mut LedgerState, bytes: u64) {
+        let bytes = bytes.min(state.live);
+        state.live -= bytes;
+        state.spare = state.spare.saturating_add(bytes);
+    }
+
+    /// Admits `len` values of `T`, about to be allocated by the seal's own
+    /// code: held until the operation ends, never given back by a pass.
     pub(crate) fn admit_len<T>(&self, len: usize) -> Result<(), SealMemoryRefusal> {
         let bytes = len.saturating_mul(std::mem::size_of::<T>());
-        self.take(u64::try_from(bytes).unwrap_or(u64::MAX))
+        self.take(u64::try_from(bytes).unwrap_or(u64::MAX), false)
     }
 
     /// Whether memory refused the decode that failed with `err`, and how:
@@ -312,12 +340,35 @@ impl MemoryLedger {
 
 impl DecodeAdmission for MemoryLedger {
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError> {
-        self.take(u64::try_from(bytes).unwrap_or(u64::MAX))
+        self.take(wide(bytes), true)
             .map_err(SealMemoryRefusal::to_decode)
     }
 
     fn decoded(&self, bytes: usize) {
         self.observed.note(Counter::StreamDecodeBytes, bytes);
+    }
+
+    fn release(&self, bytes: usize) {
+        Self::give_back(&mut lock(&self.state), wide(bytes));
+    }
+}
+
+/// One parse pass over an operation's ledger (FIX 8448): when it drops,
+/// every byte admitted since it opened and not given back returns to the
+/// ledger's spare, so the operation's next parse reuses it rather than
+/// reserving it again. Sound only when everything allocated under it is
+/// gone by then: the passes wrap one load and the checks over its document.
+pub(crate) struct LedgerPass {
+    ledger: Arc<MemoryLedger>,
+    /// What was live when the pass opened.
+    opened_at: u64,
+}
+
+impl Drop for LedgerPass {
+    fn drop(&mut self) {
+        let mut state = lock(&self.ledger.state);
+        let spent = state.live.saturating_sub(self.opened_at);
+        MemoryLedger::give_back(&mut state, spent);
     }
 }
 
@@ -339,6 +390,12 @@ pub struct AdmittedBytes {
     /// Holds the buffer's whole capacity; none while it has none. Never
     /// read: it is dropped with the buffer.
     _lease: Option<Lease>,
+    /// Another owner's bytes this one shares rather than copies (a cache
+    /// hit's body); its own buffer is then empty.
+    of: Option<SharedBytes>,
+    /// Holds what the bytes' owner keeps beside them: a response's content
+    /// type and the shared header around its body (FIX 8455).
+    _beside: Option<Lease>,
 }
 
 /// Admitted bytes, shared by every owner that keeps them: a fetch response,
@@ -352,7 +409,37 @@ impl AdmittedBytes {
         Self {
             bytes: Vec::new(),
             _lease: None,
+            of: None,
+            _beside: None,
         }
+    }
+
+    /// `of`'s bytes, shared with no copy, and `beside` held for what this
+    /// owner keeps next to them (FIX 8455): a cache hit is a new response
+    /// over the cached body.
+    #[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
+    pub(crate) fn share(of: &SharedBytes, beside: Lease) -> Self {
+        Self {
+            of: Some(Arc::clone(of)),
+            _beside: Some(beside),
+            ..Self::empty()
+        }
+    }
+
+    /// What a response keeps beside its body (FIX 8455): its content type's
+    /// bytes, and the header of the `Arc` its body is shared in.
+    #[cfg_attr(not(any(unix, feature = "network-fetch")), allow(dead_code))]
+    pub(crate) fn beside_bytes(content_type: Option<&str>) -> usize {
+        content_type
+            .map_or(0, str::len)
+            .saturating_add(2 * std::mem::size_of::<usize>() + std::mem::size_of::<Self>())
+    }
+
+    /// Holds `lease` beside the bytes until they drop: it covers what their
+    /// owner keeps next to them (see [`Self::beside_bytes`]).
+    #[cfg_attr(not(any(unix, feature = "network-fetch")), allow(dead_code))]
+    pub(crate) fn hold_beside(&mut self, lease: Lease) {
+        self._beside = Some(lease);
     }
 
     /// A copy of `bytes`, its memory reserved from `memory`'s service before
@@ -398,6 +485,7 @@ impl AdmittedBytes {
         Ok(Self {
             bytes,
             _lease: Some(lease),
+            ..Self::empty()
         })
     }
 
@@ -433,6 +521,25 @@ impl AdmittedBytes {
         Ok(())
     }
 
+    /// The spare capacity the buffer holds past its bytes.
+    #[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
+    pub(crate) fn slack(&self) -> usize {
+        self.bytes.capacity() - self.bytes.len()
+    }
+
+    /// Drops the buffer's spare capacity, `lease` (taken for its length)
+    /// holding what is left (FIX 8457). The old lease goes back only once
+    /// the bytes sit in their exact allocation, so a move's moment with both
+    /// alive is reserved too. Should the allocator keep spare room, the old
+    /// lease stays.
+    #[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
+    pub(crate) fn shrink(&mut self, lease: Lease) {
+        self.bytes.shrink_to_fit();
+        if self.bytes.capacity() == self.bytes.len() {
+            self._lease = Some(lease);
+        }
+    }
+
     /// Appends `chunk` inside the capacity already reserved: it never grows
     /// the buffer unreserved.
     ///
@@ -455,13 +562,16 @@ impl Deref for AdmittedBytes {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        &self.bytes
+        match &self.of {
+            Some(of) => &of[..],
+            None => &self.bytes[..],
+        }
     }
 }
 
 impl AsRef<[u8]> for AdmittedBytes {
     fn as_ref(&self) -> &[u8] {
-        &self.bytes
+        &self[..]
     }
 }
 
@@ -469,14 +579,14 @@ impl fmt::Debug for AdmittedBytes {
     /// The length only: fetched bytes stay out of every debug string.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AdmittedBytes")
-            .field("len", &self.bytes.len())
+            .field("len", &self.len())
             .finish()
     }
 }
 
 impl PartialEq for AdmittedBytes {
     fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes
+        **self == **other
     }
 }
 

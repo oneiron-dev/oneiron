@@ -4,6 +4,7 @@ use crate::{Document, Error, Object, ObjectId, Result, Stream};
 use std::collections::BTreeMap;
 use std::num::TryFromIntError;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use log::warn;
 #[cfg(feature = "rayon")]
@@ -126,18 +127,18 @@ impl ObjectStream {
 
     /// Parse an existing object stream like [`ObjectStream::new_with_limit`],
     /// asking `admission`, when given, before the decode, the list of object
-    /// numbers and the object map allocate. A refusal is returned, never
-    /// skipped; any other decode failure behaves as in `new_with_limit`.
-    /// Without an admission this is `new_with_limit`.
-    ///
-    /// The objects parsed out of the decoded content allocate their own names,
-    /// strings, arrays and dictionaries without asking.
+    /// numbers and the object map allocate, and charging it every name,
+    /// string, array and dictionary parsed out of the decoded content (FIX
+    /// 8446). A refusal is returned, never skipped; any other decode failure
+    /// behaves as in `new_with_limit`. Without an admission this is
+    /// `new_with_limit`.
     pub(crate) fn new_admitted(
-        stream: &mut Stream, max_decompressed_size: Option<usize>, admission: Option<&dyn DecodeAdmission>,
+        stream: &mut Stream, max_decompressed_size: Option<usize>, admission: Option<&Arc<dyn DecodeAdmission>>,
     ) -> Result<ObjectStream> {
-        let Some(admission) = admission else {
+        let Some(shared) = admission else {
             return Self::new_with_limit(stream, max_decompressed_size);
         };
+        let admission: &dyn DecodeAdmission = shared.as_ref();
         match stream.decompress_admitted(max_decompressed_size, admission) {
             Ok(()) => {}
             Err(err @ Error::DecodeAdmission(_)) => return Err(err),
@@ -181,9 +182,15 @@ impl ObjectStream {
 
         // The map's nodes for every pair in the index, before any is inserted.
         decode_admission::admit_btree::<ObjectId, Object>(admission, len / 2)?;
+        let _scope = decode_admission::ParseScope::enter(Some(shared));
         let mut objects = BTreeMap::new();
         for chunk in numbers[..len].chunks(2) {
-            if let Some((id, object)) = Self::member(stream, first_offset, chunk) {
+            let member = Self::member(stream, first_offset, chunk);
+            // A refused charge ends the parse; it is not a skipped member.
+            if let Some(err) = decode_admission::parse_refusal() {
+                return Err(err.into());
+            }
+            if let Some((id, object)) = member {
                 objects.insert(id, object);
             }
         }

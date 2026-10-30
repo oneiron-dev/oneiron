@@ -594,13 +594,17 @@ pub fn decode_xref_stream_with_limit(mut stream: Stream, max_decompressed_size: 
                         } else {
                             0
                         } as u16;
-                        xref.insert((start + j) as u32, XrefEntry::Normal { offset, generation });
+                        if let Some(id) = section_id(start, j) {
+                            xref.insert(id, XrefEntry::Normal { offset, generation });
+                        }
                     }
                     2 => {
                         // compressed object
                         let container = read_big_endian_integer(&mut reader, bytes2.as_mut_slice())?;
                         let index = read_big_endian_integer(&mut reader, bytes3.as_mut_slice())? as u16;
-                        xref.insert((start + j) as u32, XrefEntry::Compressed { container, index });
+                        if let Some(id) = section_id(start, j) {
+                            xref.insert(id, XrefEntry::Compressed { container, index });
+                        }
                     }
                     _ => {}
                 }
@@ -701,15 +705,19 @@ pub(crate) fn decode_xref_stream_admitted(
                         } else {
                             0
                         } as u16;
-                        admission.admit(entry_bytes)?;
-                        xref.insert((start + j) as u32, XrefEntry::Normal { offset, generation });
+                        if let Some(id) = section_id(start, j) {
+                            admission.admit(entry_bytes)?;
+                            xref.insert(id, XrefEntry::Normal { offset, generation });
+                        }
                     }
                     2 => {
                         // compressed object
                         let container = read_field(&mut reader, widths[1])?;
                         let index = read_field(&mut reader, widths[2])? as u16;
-                        admission.admit(entry_bytes)?;
-                        xref.insert((start + j) as u32, XrefEntry::Compressed { container, index });
+                        if let Some(id) = section_id(start, j) {
+                            admission.admit(entry_bytes)?;
+                            xref.insert(id, XrefEntry::Compressed { container, index });
+                        }
                     }
                     _ => {}
                 }
@@ -720,6 +728,13 @@ pub(crate) fn decode_xref_stream_admitted(
     dict.remove(b"W");
     dict.remove(b"Index");
     Ok((xref, dict))
+}
+
+/// The object number entry `j` of an xref stream section starting at `start`
+/// names. One past `u32`, or below 0, names no object, and its entry is
+/// skipped (FIX 8451): the sum is never wrapped or truncated.
+fn section_id(start: i64, j: i64) -> Option<u32> {
+    start.checked_add(j).and_then(|id| u32::try_from(id).ok())
 }
 
 /// [`read_big_endian_integer`] over a field `width` bytes wide, read a byte at
