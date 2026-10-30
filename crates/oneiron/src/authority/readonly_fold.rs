@@ -124,6 +124,20 @@ impl AuthorityContinuation {
             .collect::<Option<_>>()?;
         Some(Self { base, ids })
     }
+
+    /// [`Self::of`] for `base`, resumed from `baseline` past `tail`: only
+    /// the tail's rows map anew (FIX 12282).
+    fn past<'a>(
+        baseline: &Self,
+        base: super::fold_resume::FoldBase,
+        tail: impl IntoIterator<Item = &'a AuthorityEntryHash>,
+    ) -> Option<Self> {
+        let mut ids = baseline.ids.clone();
+        for hash in tail {
+            ids.insert(authority_log_entity_id_from_hash(hash).ok()?, *hash);
+        }
+        Some(Self { base, ids })
+    }
 }
 
 /// The stored log's fold past a continuation.
@@ -563,7 +577,8 @@ fn fold_stored_tail_in_txn(
     if let Some(baseline) = baseline {
         tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, rows = tail.len(), "authority fold past the cached base");
         let tail: Vec<_> = tail.iter().map(|(hash, entry)| (*hash, entry)).collect();
-        // Only the tail's receipts and an unpinned base row's are read (FIX 1854).
+        // Only the tail's receipts and an unpinned base row's are read, and
+        // only those rows are visited (FIX 1854, FIX 12282).
         let receipts = RowReceipts::past_base_in_txn(
             store,
             txn,
@@ -573,11 +588,10 @@ fn fold_stored_tail_in_txn(
             backfilled,
             now_secs,
         )?;
-        let first_seen_at_secs = &receipts.first_seen_at_secs;
         if let Some((fold, base)) = super::fold_resume::fold_stored_tail(
             super::fold_resume::StoredTail {
                 tail: &tail,
-                first_seen_at_secs,
+                first_seen_at_secs: &receipts.first_seen_at_secs,
                 now_secs,
                 peer_consent_roots: &peer_consent_roots,
                 observations: &receipts.observations,
@@ -587,15 +601,20 @@ fn fold_stored_tail_in_txn(
             },
             &baseline.base,
         ) {
+            // The base's first-seen seconds are every row's, the carried too.
             let next_deadline_secs =
-                next_deadline(key, &fold, &base.projected_rows(), first_seen_at_secs);
+                next_deadline(key, &fold, &base.projected_rows(), base.first_seen());
             return Ok(AuthorityTailFold::Complete {
                 view: AuthorityView {
                     fold: Arc::new(fold),
                     generation: key.generation,
                 },
                 next_deadline_secs,
-                continuation: AuthorityContinuation::of(base),
+                continuation: AuthorityContinuation::past(
+                    baseline,
+                    base,
+                    tail.iter().map(|(hash, _)| hash),
+                ),
             });
         }
     }
