@@ -10,8 +10,9 @@
 //!
 //! The same pass runs each due `calendar.ics.property_continuation` row
 //! (FIX 11997): the next pass of an event's property admissions, read again
-//! from the archived feed version, under the owner's CAL-09 dial as a poll
-//! runs. One that fails runs again [`CONTINUATION_RETRY`] later.
+//! from the archived feed or connector resource version, under the owner's
+//! CAL-09 dial as a poll runs. One that fails runs again
+//! [`CONTINUATION_RETRY`] later.
 
 use std::sync::Arc;
 use std::time::Duration;
