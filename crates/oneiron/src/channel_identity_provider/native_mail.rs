@@ -243,11 +243,32 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         if body.len() > 16 * 1024 * 1024 {
             return Err(Error::InvalidConfig("mail webhook too large".into()));
         }
-        let verified = self.host.verify_webhook(body, headers)?;
+        let mut verified = self.host.verify_webhook(body, headers)?;
+        archive_native_mail_inbound(vault, &mut verified, now)?;
         let thread = verified.thread_headers.clone();
         let input = self.parse_inbound(ChannelIdentityProviderInbound::Email(verified))?;
         vault.enqueue_inbound_email(input, thread.as_ref(), now)
     }
+}
+/// Keeps one native mail inbound in the vault as its provider event
+/// ([`Vault::archive_provider_event`]): the inbound as it arrived, its
+/// threading headers and its quarantine reference included. Its
+/// `payload_ref` becomes the archive's, so a reply to the message reads the
+/// headers it threads on back through the answered event.
+pub(crate) fn archive_native_mail_inbound(
+    vault: &Vault,
+    inbound: &mut EmailProviderInbound,
+    now: u64,
+) -> Result<()> {
+    let body = serde_json::to_vec(&*inbound)
+        .map_err(|_| Error::InvalidConfig("native mail inbound did not encode".into()))?;
+    inbound.payload_ref = Some(vault.archive_provider_event(
+        super::EMAIL_CHANNEL,
+        &inbound.provider_event_id,
+        &body,
+        now,
+    )?);
+    Ok(())
 }
 impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> {
     fn provider_key(&self) -> &'static str {

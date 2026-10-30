@@ -26,9 +26,10 @@ pub struct NativeMailInboxPass {
 impl NativeMailPack {
     /// Reads every active native mail identity's inbox under `policy`. A
     /// page's next cursor goes into `cursors`, the host's progress, only once
-    /// the page's mail is admitted; a mailbox read to its end keeps the
-    /// cursor its last page was read from. An identity no longer active
-    /// leaves `cursors`.
+    /// the page's mail is admitted; a mailbox read to its end keeps its end
+    /// cursor, so the next pass reads only what changed. A message that
+    /// stops its page ends that identity's read for this pass, and is in
+    /// the pass's failures. An identity no longer active leaves `cursors`.
     ///
     /// # Errors
     ///
@@ -50,10 +51,21 @@ impl NativeMailPack {
                 match self.poll_inbox(vault, identity, policy, cursor.as_ref(), quarantine, now) {
                     Ok(outcome) => {
                         pass.admitted = pass.admitted.saturating_add(outcome.admissions.len());
-                        let Some(next) = outcome.next_cursor else {
+                        if let Some(next) = outcome.next_cursor {
+                            cursors.insert(identity, next);
+                        }
+                        // A stopped message is read again next pass, and the
+                        // mail after it waits with it.
+                        if let Some(stop) = outcome.stopped {
+                            pass.failed.push((
+                                identity,
+                                format!("message {} stopped: {}", stop.message_id, stop.reason),
+                            ));
                             break;
-                        };
-                        cursors.insert(identity, next);
+                        }
+                        if !outcome.more {
+                            break;
+                        }
                     }
                     Err(error) => {
                         pass.failed.push((identity, error.to_string()));

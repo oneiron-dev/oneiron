@@ -5,9 +5,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{StalwartClient, StalwartMailbox, array, invalid, string};
+use super::{StalwartClient, StalwartMailbox, array, invalid, method_result, string};
 use crate::channel_identity_provider::mail_placement::{MailPlacement, PlacementPolicy};
-use crate::channel_identity_provider::native_mail::{NativeMailAdapter, mailbox_local_part};
+use crate::channel_identity_provider::native_mail::{
+    NativeMailAdapter, archive_native_mail_inbound, mailbox_local_part,
+};
 use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EmailProviderInbound,
     EmailThreadHeaders,
@@ -19,8 +21,10 @@ use crate::{EntityId, Result, Vault};
 const INBOX_PAGE_SIZE: usize = 100;
 
 /// Host-owned progress. Persist only a successfully returned cursor. A mailbox,
-/// instance or placement change invalidates it; a changed query restarts safely
-/// through the durable SurfaceEvent dedupe door.
+/// instance or placement change invalidates it. A changed query resumes from
+/// the server's changes since the cursor's state; a server that cannot
+/// calculate them restarts safely through the durable SurfaceEvent dedupe
+/// door.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StalwartInboxCursor {
     instance_ref: String,
@@ -33,12 +37,25 @@ pub struct StalwartInboxCursor {
 #[derive(Debug, Clone)]
 pub struct StalwartInboxOutcome {
     pub admissions: Vec<SurfaceEventAdmission>,
-    /// Where the next poll resumes. After a stop it names the stopped
-    /// message, so every message before it keeps its progress.
+    /// Where the next poll resumes; the end of the mailbox when this poll
+    /// read to it, so the next poll reads only what changed. After a stop it
+    /// names the stopped message, so every message before it keeps its
+    /// progress.
     pub next_cursor: Option<StalwartInboxCursor>,
+    /// Whether more mail waits after this page now: poll again from
+    /// `next_cursor`.
+    pub more: bool,
     /// The message this poll stopped at, or `None` when it read its page
     /// whole. Poll again later to retry it; the messages after it wait.
     pub stopped: Option<StalwartInboxStop>,
+}
+
+/// A cursor mapped onto the server's current query state.
+struct InboxChanges {
+    query_state: String,
+    /// Every message before it was read.
+    position: u64,
+    total: Option<u64>,
 }
 
 /// One polled message that could not be quarantined or admitted, and why.
@@ -189,20 +206,45 @@ impl StalwartClient {
                 && c.identity_ref == identity_ref
                 && c.placement_policy == policy
         });
-        let mut position = binding.map_or(0, |c| c.position);
+        let sort = json!([{"property": "receivedAt", "isAscending": true}]);
+        // A cursor resumes from its query state's changes; the full read
+        // from position 0 is only for a first poll, a cursor for another
+        // binding, or a server that cannot calculate the changes.
+        let changes = match binding {
+            Some(c) => self.query_changes(&mailbox.account_id, &filter, &sort, c)?,
+            None => None,
+        };
+        if let Some(changes) = &changes
+            && changes.total.is_some_and(|total| changes.position >= total)
+        {
+            return Ok(StalwartInboxOutcome {
+                admissions: Vec::new(),
+                next_cursor: Some(StalwartInboxCursor {
+                    instance_ref: self.config.instance_ref.clone(),
+                    identity_ref: mailbox.identity_ref,
+                    placement_policy: policy,
+                    query_state: changes.query_state.clone(),
+                    position: changes.position,
+                }),
+                more: false,
+                stopped: None,
+            });
+        }
         let query_page = |position| {
             self.call(
                 "Email/query",
                 json!({
-                    "accountId": &mailbox.account_id, "filter": &filter,
-                    "sort": [{"property": "receivedAt", "isAscending": true}],
+                    "accountId": &mailbox.account_id, "filter": &filter, "sort": &sort,
                     "position": position, "limit": INBOX_PAGE_SIZE, "calculateTotal": true
                 }),
             )
         };
+        let mut position = changes.as_ref().map_or(0, |changes| changes.position);
         let mut query = query_page(position)?;
-        if binding.is_some_and(|c| {
-            query.get("queryState").and_then(Value::as_str) != Some(c.query_state.as_str())
+        // Mail that moved between the two calls leaves the mapped position
+        // unproved, so the read starts over.
+        if changes.as_ref().is_some_and(|changes| {
+            query.get("queryState").and_then(Value::as_str) != Some(changes.query_state.as_str())
         }) {
             position = 0;
             query = query_page(0)?;
@@ -279,25 +321,76 @@ impl StalwartClient {
             .get("total")
             .and_then(Value::as_u64)
             .ok_or_else(|| invalid("native inbox query omitted its total"))?;
-        let next_cursor = (stopped.is_some() || (next_position < total && read > 0)).then_some(
-            StalwartInboxCursor {
+        Ok(StalwartInboxOutcome {
+            admissions,
+            next_cursor: Some(StalwartInboxCursor {
                 instance_ref: self.config.instance_ref.clone(),
                 identity_ref: mailbox.identity_ref,
                 placement_policy: policy,
                 query_state,
                 position: next_position,
-            },
-        );
-        Ok(StalwartInboxOutcome {
-            admissions,
-            next_cursor,
+            }),
+            more: stopped.is_none() && next_position < total && read > 0,
             stopped,
         })
     }
 
+    /// Where `cursor` resumes under the server's current query state, from
+    /// `Email/queryChanges` since the cursor's state, or `None` when the
+    /// server answers `cannotCalculateChanges`.
+    ///
+    /// Every message before the cursor's position was read. A message in
+    /// the current results is unread only if it was added since, or sat at
+    /// or after that position; a message that stayed keeps its order, so it
+    /// moves down by at most the removed count. The resume position is the
+    /// lower of the first added index and the position less the removed
+    /// count: every message before it was read, and one after it that was
+    /// read already is admitted again through the dedupe door.
+    fn query_changes(
+        &self,
+        account_id: &str,
+        filter: &Value,
+        sort: &Value,
+        cursor: &StalwartInboxCursor,
+    ) -> Result<Option<InboxChanges>> {
+        let reply = self.raw_call(
+            "Email/queryChanges",
+            json!({
+                "accountId": account_id, "filter": filter, "sort": sort,
+                "sinceQueryState": &cursor.query_state, "calculateTotal": true
+            }),
+        )?;
+        let refusal = array(&reply, "methodResponses")?
+            .iter()
+            .find(|row| row.get(2).and_then(Value::as_str) == Some("mail"))
+            .filter(|row| row.get(0).and_then(Value::as_str) == Some("error"))
+            .and_then(|row| row.pointer("/1/type"))
+            .and_then(Value::as_str);
+        if refusal == Some("cannotCalculateChanges") {
+            return Ok(None);
+        }
+        let changes = method_result(&reply, "Email/queryChanges")?;
+        let removed = array(changes, "removed")?.len() as u64;
+        let mut first_added: Option<u64> = None;
+        for row in array(changes, "added")? {
+            let index = row
+                .get("index")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| invalid("native inbox change omitted its index"))?;
+            first_added = Some(first_added.map_or(index, |first| first.min(index)));
+        }
+        let kept = cursor.position.saturating_sub(removed);
+        Ok(Some(InboxChanges {
+            query_state: string(changes, "newQueryState")?.to_owned(),
+            position: first_added.map_or(kept, |first| kept.min(first)),
+            total: changes.get("total").and_then(Value::as_u64),
+        }))
+    }
+
     /// Quarantines one listed message and hands it to the mail ingress door.
     /// Its bytes stream from the server into the quarantine file, so memory
-    /// never holds the message whole. A capture that leaves the quarantine's
+    /// never holds the message whole; the vault keeps its metadata and
+    /// quarantine reference as its provider event. A capture that leaves the quarantine's
     /// disk below `[limits] code_result_disk_floor_bytes` asks that row's
     /// question and keeps the message. Threading headers take it to its
     /// thread (`Vault::enqueue_inbound_email`); without them it takes the
@@ -353,6 +446,7 @@ impl StalwartClient {
         )
         .with_payload_ref(payload_ref);
         inbound.thread_headers = thread_headers(message);
+        archive_native_mail_inbound(vault, &mut inbound, now)?;
         let thread = inbound.thread_headers.clone();
         let input = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
         vault.enqueue_inbound_email(input, thread.as_ref(), now)

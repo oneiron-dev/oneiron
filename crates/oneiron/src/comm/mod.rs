@@ -3,7 +3,8 @@
 //! Directory module. `claims` holds the `comm.*` claim family; `records` the
 //! COMM_RECORD storage and codec; `parties` the party identity doors;
 //! `stop_hold` the send hold of a STOP, standing or not projected here yet;
-//! `projector` the ordered projector pass; `projection_writes` the
+//! `projector` the ordered projector pass; `receipt_import` its import of
+//! delivered connector send receipts; `projection_writes` the
 //! deterministic claim writes; `consent` the human gates, send overrides and
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
 //! reads the human clear takes across a party's redirect shells;
@@ -22,6 +23,7 @@ mod opt_out_slots;
 mod parties;
 mod projection_writes;
 mod projector;
+mod receipt_import;
 mod records;
 mod stop_hold;
 mod thread_membership;
@@ -64,6 +66,7 @@ pub(crate) use self::parties::{
 };
 pub(crate) use self::projector::{
     record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
+    run_comm_projector_housekeeping_step,
 };
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
