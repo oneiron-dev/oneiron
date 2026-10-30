@@ -17,6 +17,7 @@ use crate::sync::types::parse_window_key_str;
 use crate::sync::window::UpdateVerdict;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
+use super::server_close::ServerClose;
 use super::session::{FullResyncMarker, WsSink, WsSource};
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
@@ -223,6 +224,15 @@ impl SyncConnection {
                             let _ =
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                         }
+                        // FIX 5927: a server fault reconnects as after any outage,
+                        // this device's queue intact; a refusal is reported as the
+                        // server's judgment of a frame this device sent.
+                        LoopExit::Closed(close) => {
+                            let _ = event_tx
+                                .send(SyncEvent::Error(format!("WebSocket closed: {close}")));
+                            let _ =
+                                event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                        }
                         // FIX 8869: a mode change is no outage.
                         LoopExit::Renegotiate => {
                             let _ =
@@ -395,10 +405,12 @@ impl SyncConnection {
                                 init_messages_received += 1;
                             }
                             Ok(Some(Ok(Message::Close(frame)))) => {
-                                // Surface the close code/reason — a 4xxx code here
-                                // is how a protocol-version mismatch shows up.
+                                // Read the close code — a 4xxx code here is how a
+                                // protocol-version mismatch shows up, a 1011 is the
+                                // server's own fault (FIX 5927).
                                 return Err(format!(
-                                    "Server closed during initial sync: {frame:?}"
+                                    "Initial sync ended: {}",
+                                    ServerClose::read(frame.as_ref())
                                 ));
                             }
                             Ok(Some(Ok(
@@ -421,9 +433,13 @@ impl SyncConnection {
                     }
                 }
                 Some(Ok(Message::Close(frame))) => {
-                    // Surface the close code/reason — a 4xxx code here is how a
-                    // protocol-version mismatch shows up (ONE-1127).
-                    return Err(format!("Server closed during initial sync: {frame:?}"));
+                    // Read the close code — a 4xxx code here is how a protocol-version
+                    // mismatch shows up (ONE-1127), a 1011 is the server's own fault
+                    // (FIX 5927).
+                    return Err(format!(
+                        "Initial sync ended: {}",
+                        ServerClose::read(frame.as_ref())
+                    ));
                 }
                 None => {
                     return Err("Server closed during initial sync".to_string());
