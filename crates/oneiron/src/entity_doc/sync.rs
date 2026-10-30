@@ -14,9 +14,11 @@
 //! is carried here instead; one of another birth than the document held here
 //! stands apart, as a carried MESSAGE document of another incarnation does.
 //!
-//! A record of any other kind with no document has no birth here: its text
-//! stays in the sequence rows of its own slot (a snapshot and updates keyed
-//! by sequence), where the sync plane has always kept it, and is read there.
+//! A TURN whose body its field rule takes is born the same way (FIX 11794,
+//! `birth_fields`). A record of any other kind, or a body no rule takes, with
+//! no document has no birth here: its text stays in the sequence rows of its
+//! own slot (a snapshot and updates keyed by sequence), where the sync plane
+//! has always kept it, and is read there.
 //!
 //! A sync write is admitted whatever its text holds (FIX 8872, KEEP TODAY):
 //! the owner's scan runs as configured, a key the lift places goes to custody
@@ -41,6 +43,8 @@ use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::sync::documents::storage as sequence_rows;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+
+mod birth_fields;
 
 /// The domain a lazy birth's peer is derived in.
 const BIRTH_PEER_CONTEXT: &str = "oneiron.sync-text.birth-peer.v1";
@@ -288,19 +292,30 @@ enum Plane {
 }
 
 /// The one routing rule of every sync reader and writer: a head means the
-/// document; no head means the MESSAGE birth for a MESSAGE, and the
-/// sequence rows for every other kind.
+/// document; no head means the MESSAGE birth for a MESSAGE, the kind's birth
+/// for another kind whose body its field rule takes or whose row already
+/// names a document (FIX 11794), and the sequence rows for every other.
 fn plane_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Plane> {
     if let Some(head) = head_in(vault, txn, entity)? {
         return Ok(Plane::Document(head));
     }
-    Ok(
-        if vault.get_entity_type_in_txn(txn, entity)? == Some(ENTITY_TYPE_MESSAGE) {
-            Plane::Unborn
-        } else {
-            Plane::SequenceRows
-        },
-    )
+    let unborn = match vault.get_entity_type_in_txn(txn, entity)? {
+        Some(ENTITY_TYPE_MESSAGE) => true,
+        Some(kind) if birth_fields::field(kind).is_some() => vault
+            .store
+            .port_entity_raw(txn, entity)?
+            .is_some_and(|raw| {
+                raw.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
+                    pointer_of(body).is_some() || split_fields(kind, body, entity).is_some()
+                })
+            }),
+        _ => false,
+    };
+    Ok(if unborn {
+        Plane::Unborn
+    } else {
+        Plane::SequenceRows
+    })
 }
 
 /// [`edit_sync_text_in_txn`] on `entity`'s sequence rows: the prose is
@@ -403,11 +418,14 @@ struct Born {
     doc: EntityDoc,
     /// The row's body with its text replaced by the document pointer.
     pointer: Vec<u8>,
+    /// The field its text stood in.
+    field: TextField,
 }
 
 /// The birth `entity`'s text takes when no document stands for it: an atomic
-/// MESSAGE's canonical content at its own time, born as a stream or quote
-/// births it but naming no one. `None` for any other record.
+/// MESSAGE's canonical content, or another kind's text its field rule takes
+/// (FIX 11794), at its own time, born as a stream or quote births it but
+/// naming no one. `None` for any other record.
 fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<Born>> {
     let Some(raw) = vault.store.port_entity_raw(txn, entity)? else {
         return Ok(None);
@@ -415,14 +433,42 @@ fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<B
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
-        return Ok(None);
-    }
-    let Some((text, pointer)) = split_content(&raw[ENTITY_METADATA_HEADER_LEN..], entity) else {
+    let Some((text, pointer, field)) = split_fields(
+        header.entity_type,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        entity,
+    ) else {
         return Ok(None);
     };
     let doc = unattributed(seeded(entity)?, entity, &text, header.occurred_start)?;
-    Ok(Some(Born { doc, pointer }))
+    Ok(Some(Born {
+        doc,
+        pointer,
+        field,
+    }))
+}
+
+/// The one dispatch of the lazy birth's field rules (FIX 11794): `kind`'s
+/// text in `body`, the body with it replaced by the document pointer, and
+/// the field it stood in. MESSAGE's rule is [`split_content`]; every other
+/// kind's is in `birth_fields`.
+fn split_fields(kind: u8, body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>, TextField)> {
+    let (text, pointer) = if kind == ENTITY_TYPE_MESSAGE {
+        split_content(body, entity)?
+    } else {
+        birth_fields::split(kind, body, entity)?
+    };
+    Some((text, pointer, birth_field(kind)?))
+}
+
+/// The field `kind`'s lazy birth keeps its text in: a MESSAGE's content, or
+/// its rule's in `birth_fields`.
+fn birth_field(kind: u8) -> Option<TextField> {
+    if kind == ENTITY_TYPE_MESSAGE {
+        Some(content())
+    } else {
+        birth_fields::field(kind)
+    }
 }
 
 /// A canonical MESSAGE body's content, and the body with it replaced by the
@@ -497,7 +543,7 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document: entity.to_hex(),
-        field: content(),
+        field: born.field,
         generation: 0,
         pending: 0,
         birth_frontier: Some(born.doc.frontier()),
@@ -506,23 +552,22 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     Ok(head)
 }
 
-/// The head a peer's document takes here for a MESSAGE that holds none:
-/// the document its row names, or, for a row still holding its text, its
-/// own id, its row then naming it.
+/// The head a peer's document takes here for a MESSAGE, or another kind with
+/// a field rule (FIX 11794), that holds none: the document its row names, or,
+/// for a row still holding its text, its own id, its row then naming it.
 fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
     let raw = vault
         .store
         .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
-        return Err(invalid(NO_TEXT));
-    }
+    let field = birth_field(header.entity_type).ok_or(invalid(NO_TEXT))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let document = match pointer_of(body) {
         Some(document) => document,
         None => {
-            let (_, pointer) = split_content(body, entity).ok_or(invalid(NO_TEXT))?;
+            let (_, pointer, _) =
+                split_fields(header.entity_type, body, entity).ok_or(invalid(NO_TEXT))?;
             vault
                 .store
                 .port_entity_document_pointer_put(txn, entity, &pointer)?;
@@ -533,7 +578,7 @@ fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) ->
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document,
-        field: content(),
+        field,
         generation: 0,
         pending: 0,
         birth_frontier: None,
