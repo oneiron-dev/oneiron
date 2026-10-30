@@ -17,7 +17,9 @@ mod open_version_keys;
 mod read_only_door;
 mod vault_root_bind;
 
-pub(in crate::store) use self::custody_pad_rows::read_existing_custody_pad_rows;
+pub(in crate::store) use self::custody_pad_rows::{
+    PairedIdentityRows, PairedSourceAsk, PairedSyncRows, read_existing_custody_pad_rows,
+};
 pub(crate) use self::embedding_transform_gates::{
     EMBEDDING_TRANSFORM_KEY, admit_embedding_transform_in_txn,
 };

@@ -80,6 +80,11 @@ pub struct MemoryExportReceipt {
     pub bytes: u64,
     /// BLAKE3 of the archive, lowercase hex.
     pub digest: String,
+    /// The owner's act the render carried out, on a door that records one
+    /// (FIX 11596): a server keeping the archive checks its exact owner at
+    /// every read. `None` from a door that records no act.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<OwnerAct>,
 }
 
 /// One export kept on the server for its caller to read (FIX 3676): the
@@ -525,11 +530,13 @@ impl Vault {
     }
 
     /// Whether [`Self::export_with_authenticated_owner_listing`] admits
-    /// `owner` now, in a read snapshot of its own; the export asks again in
-    /// its own.
-    pub fn admit_authenticated_owner_export(&self, owner: &AuthenticatedOwner) -> MemoryResult<()> {
-        self.admit_authenticated_owner(owner)?;
-        Ok(())
+    /// `owner` now, in a read snapshot of its own, and the owner it exports
+    /// as there; the export asks again in its own.
+    pub fn admit_authenticated_owner_export(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> MemoryResult<EntityId> {
+        self.admit_authenticated_owner(owner)
     }
 
     /// The owner `owner` exports as, in a read snapshot of its own.
@@ -539,10 +546,10 @@ impl Vault {
     }
 
     /// Whether [`Self::export_with_verified_host_owner`] admits `proof` now,
-    /// in a read snapshot of its own; the export asks again in its own.
-    pub fn admit_host_owner_export(&self, proof: &VerifiedSlip) -> MemoryResult<()> {
-        self.admit_host_owner(proof)?;
-        Ok(())
+    /// in a read snapshot of its own, and the owner the root exports as
+    /// there; the export asks again in its own.
+    pub fn admit_host_owner_export(&self, proof: &VerifiedSlip) -> MemoryResult<EntityId> {
+        self.admit_host_owner(proof)
     }
 
     /// The owner `proof` exports as, in a read snapshot of its own.
@@ -711,6 +718,7 @@ fn render_export_to<W: Read + Write + Seek>(
     };
     let format = export.manifest().format.clone();
     let (bytes, digest) = written_digest(&mut sink).map_err(crate::Error::from)?;
+    let act = by.act;
     // Export is never gated: a vault that cannot take one more write (a full
     // map, a failing disk) still hands the owner their data, and says so.
     record_export(
@@ -732,6 +740,7 @@ fn render_export_to<W: Read + Write + Seek>(
             format,
             bytes,
             digest,
+            act,
         },
         export.sources,
     ))

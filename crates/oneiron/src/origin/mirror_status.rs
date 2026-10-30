@@ -122,11 +122,19 @@ impl Vault {
             .map(|(name, _)| name.as_str().to_owned())
             .collect();
         // A held full-auto ref the mirror took before keeps its name, so no
-        // run deletes it while it waits for checks.
+        // run deletes it while it waits for checks. The names are read here,
+        // under the hold: a run that ended while this one waited for it
+        // recorded its own since `scope.target` was read (FIX 7216).
+        let pushed = {
+            let txn = self.store.env.read_txn()?;
+            TARGETS
+                .get(&self.store, &txn, &scope.repo_id)?
+                .map_or_else(|| scope.target.pushed.clone(), |row| row.pushed)
+        };
         let kept: Vec<String> = summary
             .held
             .iter()
-            .filter(|held| scope.target.pushed.contains(held) && !names.contains(held))
+            .filter(|held| pushed.contains(held) && !names.contains(held))
             .cloned()
             .collect();
         names.extend(kept);

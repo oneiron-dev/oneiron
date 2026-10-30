@@ -24,6 +24,14 @@
 //! a host with no topology captures its moves' routes too ([`feed_move_routes`]
 //! feeds a topology's). FIX 6574: a target whose status says it fenced the
 //! handoff makes this node take its state back and replan the move.
+//!
+//! FIX 8875 stage 2: before it stages a handoff's parts, a delivery sends the
+//! erasable keys its actors' content is sealed under, to the key session the
+//! target offers on the same socket; a target that offers none or refuses
+//! them lands those actors' rows as their facts alone, and the delivery goes
+//! on. After each round the worker asks every holder this node owes a
+//! retired key's copy to retire it, and clears each debt the holder's answer
+//! proves; a holder out of reach keeps its debt for a later round.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -34,9 +42,9 @@ use tokio::sync::mpsc;
 use super::SyncConnection;
 use crate::Vault;
 use crate::sync::TransportError;
-use crate::sync::client::{HandoffLane, SyncEvent, TargetCancel, TargetStanding};
+use crate::sync::client::{HandoffLane, SyncClientConfig, SyncEvent, TargetCancel, TargetStanding};
 use crate::sync::home_handoff::{
-    self, DeliveryPlan, FrozenHandoff, HomeAck, HomeMove, IncompleteReason,
+    self, DeliveryPlan, FrozenHandoff, HomeAck, HomeMove, IncompleteReason, OwedRetirement,
 };
 
 /// Whether this build delivers home handoffs (on since FIX 5661 C2b). Off,
@@ -81,6 +89,72 @@ async fn keep_ack(
     blocking(move || home_handoff::record_ack(&vault, &id, ack)).await
 }
 
+/// FIX 8875: sends `frozen`'s keys to its target on `lane`, sealed to the key
+/// session the target offers there. A target that offers no session or
+/// refuses the keys, or keys that do not seal, are logged: the delivery goes
+/// on, and those actors' rows land there as their facts alone. A call that
+/// fails ends the round, as a part's does.
+async fn send_keys(
+    vault: &Arc<Vault>,
+    lane: &mut HandoffLane,
+    frozen: &FrozenHandoff,
+) -> Result<(), TransportError> {
+    if frozen.keys.is_empty() {
+        return Ok(());
+    }
+    let Some(offer) = lane.session(&frozen.id, &frozen.digest).await? else {
+        tracing::debug!("a home handoff's target offered no key session");
+        return Ok(());
+    };
+    let exporting = Arc::clone(vault);
+    let handoff = frozen.clone();
+    let keys =
+        match blocking(move || home_handoff::transit_keys(&exporting, &handoff, &offer)).await {
+            Ok(keys) => keys,
+            Err(error) => {
+                tracing::debug!(%error, "a home handoff's keys were not sealed");
+                return Ok(());
+            }
+        };
+    if lane
+        .keys(&frozen.id, &frozen.digest, &keys)
+        .await?
+        .is_none()
+    {
+        tracing::debug!("a home handoff's target refused its keys");
+    }
+    Ok(())
+}
+
+/// FIX 8875: asks `debt`'s holder, on a socket that proves it, to retire its
+/// copies of the keys this node retired, then clears each debt its answer
+/// proves. A holder with no endpoint, out of reach or refusing keeps its
+/// debts.
+async fn retire_at_holder(
+    vault: &Arc<Vault>,
+    config: &SyncClientConfig,
+    debt: OwedRetirement,
+) -> Result<(), TransportError> {
+    let Some(endpoint) = debt.endpoint.as_deref() else {
+        return Ok(());
+    };
+    let Some(mut lane) = HandoffLane::open(vault, config, endpoint, debt.holder).await? else {
+        return Ok(());
+    };
+    if lane.retire(&debt.keys).await?.is_none() {
+        return Ok(());
+    }
+    let Some(retired) = lane.retired(&debt.keys).await? else {
+        return Ok(());
+    };
+    if retired.is_empty() {
+        return Ok(());
+    }
+    let noting = Arc::clone(vault);
+    let holder = debt.holder;
+    blocking(move || home_handoff::note_retired(&noting, holder, &retired)).await
+}
+
 /// FIX 6459: feeds the host topology's candidate `endpoints` and the
 /// `fallback` route residence reads take where it names none, before the
 /// election they inform; the election captures each move's route from
@@ -119,6 +193,11 @@ impl SyncConnection {
                     "Home handoff delivery failed: {error}"
                 )));
             }
+            if let Err(error) = self.retirement_round(&vault).await {
+                let _ = events.send(SyncEvent::Error(format!(
+                    "Home handoff key retirement failed: {error}"
+                )));
+            }
             loop {
                 tokio::select! {
                     () = self.home_handoff_wake.notified() => break,
@@ -150,6 +229,24 @@ impl SyncConnection {
             DeliveryPlan::Reclaim(frozen) => self.reclaim(vault, &frozen).await,
             DeliveryPlan::Supersede(frozen, onward) => self.supersede(vault, &frozen, onward).await,
         }
+    }
+
+    /// FIX 8875: one pass over every holder this node owes a retired key's
+    /// copy to. A holder whose calls fail is logged and keeps its debts; the
+    /// next holder is still asked.
+    async fn retirement_round(&self, vault: &Arc<Vault>) -> Result<(), TransportError> {
+        let reading = Arc::clone(vault);
+        let owed = blocking(move || home_handoff::owed_retirements(&reading)).await?;
+        if owed.is_empty() {
+            return Ok(());
+        }
+        let config = self.client_config();
+        for debt in owed {
+            if let Err(error) = retire_at_holder(vault, &config, debt).await {
+                tracing::debug!(%error, "a holder's retired home handoff keys stay owed");
+            }
+        }
+        Ok(())
     }
 
     /// Freezes for `movement` once every registered table is quiescent; a
@@ -221,6 +318,9 @@ impl SyncConnection {
             Some(TargetStanding::Staged(staged)) => staged,
             None => return Ok(()),
         };
+        // FIX 8875: the keys go before the parts, so a target that holds
+        // every part holds them too and its own arrival opens the content.
+        send_keys(vault, &mut lane, frozen).await?;
         for index in staged..frozen.parts {
             let reading = Arc::clone(vault);
             let id = frozen.id;

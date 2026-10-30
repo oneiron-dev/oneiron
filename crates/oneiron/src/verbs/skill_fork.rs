@@ -71,6 +71,8 @@ pub fn skill_library_fork_by_caller(
             || !claims.channels.is_empty()
             || !granted
             || !vault.capability_slip_is_live_in_txn(txn, slip)?
+            // The source stays inside a guest's current scope (FIX 9117).
+            || !vault.guest_stored_row_admitted_in_txn(txn, claims, input.parent)
         {
             return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "the caller's own live write Grant does not carry this fork",

@@ -121,6 +121,12 @@ pub struct BackupSnapshotReceipt {
     /// sealed member's recipient and BLAKE3, or why it carries none, for its
     /// host to alert on.
     pub host_holds: super::HostHoldsAvailability,
+    /// The pad rows the image carries with their pad, which current custody
+    /// did not hold the same when it was taken (KS-5, FIX 7313): each pad
+    /// rides these bytes past its custody entry's retirement. Zero once
+    /// every pad was prepared into custody and the image names it by
+    /// reference alone.
+    pub pads_carried: usize,
 }
 
 /// The suffix of the marker beside a label's newest backup:
