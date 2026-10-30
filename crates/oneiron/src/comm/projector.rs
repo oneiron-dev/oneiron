@@ -114,15 +114,10 @@ pub(crate) fn run_comm_projector_housekeeping_step(vault: &Vault) {
 /// order; the rest wait for the next pass.
 fn run_comm_projector_capped(vault: &Vault, max_writes: usize) -> CommResult<()> {
     import_delivered_send_receipts(vault, max_writes)?;
-    let (records, pending_stops) = {
+    let mut index = {
         let rtxn = vault.store.env.read_txn()?;
-        (
-            comm_records_in_txn(vault, &rtxn)?,
-            pending_stop_ids_in_txn(&vault.store, &rtxn)?,
-        )
+        projector_index_in_txn(vault, &rtxn)?
     };
-    let mut index = CommProjectorIndex::from_records(&records, &pending_stops);
-    drop(records);
     let mut first_refusal = None;
     for event_id in index.pending_event_ids().into_iter().take(max_writes) {
         // Each event keeps its own write transaction, so a later bad event
@@ -149,6 +144,79 @@ fn run_comm_projector_capped(vault: &Vault, max_writes: usize) -> CommResult<()>
     }
     reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
     first_refusal.map_or(Ok(()), Err)
+}
+
+/// The pass index over `txn`'s snapshot of the COMM_RECORD family and the
+/// STOPs this replica has not released.
+fn projector_index_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> CommResult<CommProjectorIndex> {
+    let records = comm_records_in_txn(vault, txn)?;
+    let pending_stops = pending_stop_ids_in_txn(&vault.store, txn)?;
+    Ok(CommProjectorIndex::from_records(&records, &pending_stops))
+}
+
+/// The projector's step for source events a caller's write records, run in
+/// that write, so the head each one authors stands when the write commits.
+/// The events share one pass index over the write's own snapshot, built
+/// when the first event whose rule reads it projects.
+#[derive(Default)]
+pub(super) struct RecordedEventProjection {
+    index: Option<CommProjectorIndex>,
+}
+
+impl RecordedEventProjection {
+    /// Projects `event_id`, a `kind` source event this write recorded,
+    /// through the pass's own step in a savepoint of `wtxn`. An event the
+    /// pass leaves waiting (its party not here yet, or a refusal) rolls the
+    /// savepoint back and stays pending for the housekeeping pass; a storage
+    /// failure fails the write.
+    pub(super) fn project_in_txn(
+        &mut self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        event_id: EntityId,
+        kind: CommEventKind,
+    ) -> CommResult<()> {
+        if !rule_reads_index(kind) {
+            let mut unread = CommProjectorIndex::default();
+            return project_in_savepoint(vault, wtxn, event_id, &mut unread);
+        }
+        let mut index = match self.index.take() {
+            Some(index) => index,
+            None => projector_index_in_txn(vault, &*wtxn)?,
+        };
+        let projected = project_in_savepoint(vault, wtxn, event_id, &mut index);
+        self.index = Some(index);
+        projected
+    }
+}
+
+/// Whether the rule `kind` fires reads the pass index: a touch's never does.
+fn rule_reads_index(kind: CommEventKind) -> bool {
+    PROJECTOR_RULES
+        .iter()
+        .find(|rule| rule.event_kind == kind)
+        .is_none_or(|rule| !matches!(rule.action, ProjectorAction::UpsertLastTouch))
+}
+
+fn project_in_savepoint(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    event_id: EntityId,
+    index: &mut CommProjectorIndex,
+) -> CommResult<()> {
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    match project_event_in_txn(vault, &mut savepoint, event_id, index) {
+        Ok(delta) => {
+            savepoint.commit()?;
+            index.apply_committed(delta);
+            Ok(())
+        }
+        Err(CommError::Engine(error)) if storage_failure(&error) => Err(CommError::Engine(error)),
+        Err(_) => {
+            index.forget_accounted_txn();
+            Ok(())
+        }
+    }
 }
 
 pub(super) fn storage_failure(error: &Error) -> bool {
@@ -249,6 +317,7 @@ pub(crate) fn record_comm_inbound_reply_in_txn(
                 occurred_at,
             )
         })
+        .map(|_| ())
         .map_err(|error| match error {
             CommError::Engine(error) => error,
             _ => Error::InvalidClaimBody("inbound reply comm record refused"),
@@ -340,13 +409,15 @@ fn record_event(
             channel_class,
             thread_ref,
             occurred_at,
-        )
+        )?;
+        Ok(())
     })
 }
 
 /// Writes one unprojected source event for `party_ref` at the next event
 /// sequence, in the caller's write: the channel class normalized, the thread
-/// as its canonical ref. The projector's next pass projects it.
+/// as its canonical ref. Returns the event's id; the projector's next pass
+/// projects it.
 pub(super) fn put_source_event_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -355,7 +426,7 @@ pub(super) fn put_source_event_in_txn(
     channel_class: Option<&str>,
     thread_ref: Option<&str>,
     occurred_at: u64,
-) -> CommResult<()> {
+) -> CommResult<EntityId> {
     let thread_ref = thread_ref
         .map(|thread| crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread))
         .transpose()?;
@@ -369,7 +440,9 @@ pub(super) fn put_source_event_in_txn(
         occurred_at,
         projected: false,
     };
-    put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
+    let id = vault.store.clock.entity_id()?;
+    put_comm_record_in_txn(vault, wtxn, id, &record)?;
+    Ok(id)
 }
 
 /// Projects one source event in its own write transaction, returning the index
@@ -382,100 +455,109 @@ pub(super) fn project_event(
 ) -> CommResult<ProjectorIndexDelta> {
     // A write group of its own, so the index can tell its own commit from
     // any other writer's (`CommProjectorIndex::begin_event_txn`).
-    vault.try_with_write_txn(|wtxn| {
-        index.begin_event_txn(vault);
-        let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
-            return Ok(ProjectorIndexDelta::default());
-        };
+    vault.try_with_write_txn(|wtxn| project_event_in_txn(vault, wtxn, event_id, index))
+}
 
-        if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
-            return Err(CommError::InvalidRecord);
+/// [`project_event`]'s step in `wtxn`: the pass and the in-write projection
+/// of a recorded event ([`RecordedEventProjection`]) both run it.
+fn project_event_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    event_id: EntityId,
+    index: &CommProjectorIndex,
+) -> CommResult<ProjectorIndexDelta> {
+    index.begin_event_txn(vault);
+    let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
+        return Ok(ProjectorIndexDelta::default());
+    };
+
+    if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
+        return Err(CommError::InvalidRecord);
+    }
+    let record = decode_comm_record(&raw.body)?;
+    let CommRecord::Event {
+        sequence,
+        kind,
+        party_ref,
+        channel_class,
+        thread_ref,
+        occurred_at,
+        projected,
+    } = record
+    else {
+        return Err(CommError::InvalidRecord);
+    };
+    // A STOP another replica projected still holds sends here until this
+    // replica's pass finds that projection's restriction (F06).
+    let pending_stop = kind == CommEventKind::InboundStop
+        && holds_pending_stop_in_txn(&vault.store, &*wtxn, &event_id)?;
+    if projected && !pending_stop {
+        // A peer pass already committed this snapshotted event. A join or
+        // leave is a durable membership boundary even when its commit
+        // mutated no claim (a join while a member claim already stands, a
+        // leave with nothing active), and this pass's index saw it only as
+        // pending — never as a transition. Folding the live row in here
+        // keeps a later same-pass join/leave deciding against exactly the
+        // boundary set the pre-index in-transaction family rescan used.
+        return Ok(match (kind, thread_ref) {
+            (CommEventKind::ThreadJoined | CommEventKind::ThreadLeft, Some(thread_ref)) => {
+                ProjectorIndexDelta {
+                    consumed_gate_ids: Vec::new(),
+                    projected_thread_transition: Some((
+                        PartyThreadKey {
+                            party_ref,
+                            thread_ref,
+                        },
+                        (occurred_at, kind == CommEventKind::ThreadLeft),
+                    )),
+                }
+            }
+            _ => ProjectorIndexDelta::default(),
+        });
+    }
+    let rule = PROJECTOR_RULES
+        .iter()
+        .find(|rule| rule.event_kind == kind)
+        .ok_or(CommError::InvalidRecord)?;
+    // Decode can read provider-spelled events already accepted by this
+    // build; project their recipient class through the same rule as new
+    // events, without changing the original audit event bytes.
+    let recipient_class = channel_class.as_deref().map(normalize_channel_class);
+    let event = ProjectedCommEvent {
+        rule: *rule,
+        source_event_id: event_id,
+        party_ref,
+        channel_class: recipient_class.as_deref(),
+        thread_ref: thread_ref.as_deref(),
+        occurred_at,
+    };
+    let delta = if projected {
+        match peer_stop_projection_in_txn(vault, &*wtxn, &event)? {
+            // Still in flight: the event keeps holding and waits.
+            None => return Ok(ProjectorIndexDelta::default()),
+            Some(true) => apply_projector_rule_in_txn(vault, wtxn, index, &event)?,
+            Some(false) => ProjectorIndexDelta::default(),
         }
-        let record = decode_comm_record(&raw.body)?;
-        let CommRecord::Event {
+    } else {
+        apply_projector_rule_in_txn(vault, wtxn, index, &event)?
+    };
+    if !projected {
+        let consumed = CommRecord::Event {
             sequence,
             kind,
             party_ref,
             channel_class,
             thread_ref,
             occurred_at,
-            projected,
-        } = record
-        else {
-            return Err(CommError::InvalidRecord);
+            projected: true,
         };
-        // A STOP another replica projected still holds sends here until this
-        // replica's pass finds that projection's restriction (F06).
-        let pending_stop = kind == CommEventKind::InboundStop
-            && holds_pending_stop_in_txn(&vault.store, &*wtxn, &event_id)?;
-        if projected && !pending_stop {
-            // A peer pass already committed this snapshotted event. A join or
-            // leave is a durable membership boundary even when its commit
-            // mutated no claim (a join while a member claim already stands, a
-            // leave with nothing active), and this pass's index saw it only as
-            // pending — never as a transition. Folding the live row in here
-            // keeps a later same-pass join/leave deciding against exactly the
-            // boundary set the pre-index in-transaction family rescan used.
-            return Ok(match (kind, thread_ref) {
-                (CommEventKind::ThreadJoined | CommEventKind::ThreadLeft, Some(thread_ref)) => {
-                    ProjectorIndexDelta {
-                        consumed_gate_ids: Vec::new(),
-                        projected_thread_transition: Some((
-                            PartyThreadKey {
-                                party_ref,
-                                thread_ref,
-                            },
-                            (occurred_at, kind == CommEventKind::ThreadLeft),
-                        )),
-                    }
-                }
-                _ => ProjectorIndexDelta::default(),
-            });
-        }
-        let rule = PROJECTOR_RULES
-            .iter()
-            .find(|rule| rule.event_kind == kind)
-            .ok_or(CommError::InvalidRecord)?;
-        // Decode can read provider-spelled events already accepted by this
-        // build; project their recipient class through the same rule as new
-        // events, without changing the original audit event bytes.
-        let recipient_class = channel_class.as_deref().map(normalize_channel_class);
-        let event = ProjectedCommEvent {
-            rule: *rule,
-            source_event_id: event_id,
-            party_ref,
-            channel_class: recipient_class.as_deref(),
-            thread_ref: thread_ref.as_deref(),
-            occurred_at,
-        };
-        let delta = if projected {
-            match peer_stop_projection_in_txn(vault, &*wtxn, &event)? {
-                // Still in flight: the event keeps holding and waits.
-                None => return Ok(ProjectorIndexDelta::default()),
-                Some(true) => apply_projector_rule_in_txn(vault, wtxn, index, &event)?,
-                Some(false) => ProjectorIndexDelta::default(),
-            }
-        } else {
-            apply_projector_rule_in_txn(vault, wtxn, index, &event)?
-        };
-        if !projected {
-            let consumed = CommRecord::Event {
-                sequence,
-                kind,
-                party_ref,
-                channel_class,
-                thread_ref,
-                occurred_at,
-                projected: true,
-            };
-            put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
-        }
-        if pending_stop {
-            release_pending_stop_in_txn(&vault.store, wtxn, &event_id)?;
-        }
-        index.expect_own_commit();
-        Ok(delta)
-    })
+        put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
+    }
+    if pending_stop {
+        release_pending_stop_in_txn(&vault.store, wtxn, &event_id)?;
+    }
+    index.expect_own_commit();
+    Ok(delta)
 }
 
 /// What a peer's projection of a STOP left on this replica: `Some(true)`
