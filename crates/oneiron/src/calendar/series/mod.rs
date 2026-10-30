@@ -17,7 +17,8 @@
 //!
 //! [`expand_window`] is the expansion door and it always takes the caller's
 //! inclusive [`TimeRange`](crate::TimeRange); [`expand_window_page`] walks
-//! the same window under a deadline, a page at a time (FIX 11998). There is
+//! the same window under a deadline, a page at a time (FIX 11998), each page
+//! resuming at the [`ExpansionCursor`] the one before returned. There is
 //! no unbounded variant to reach for: a recurrence rule without `COUNT` or
 //! `UNTIL` names infinitely many occurrences, so "expand this series" is not
 //! a question with an answer.
@@ -54,7 +55,9 @@ mod keys;
 mod reseed;
 
 pub(crate) use self::expansion::expand_window_shifting_gaps_page;
-pub use self::expansion::{ExpansionPage, expand_master_window, expand_window, expand_window_page};
+pub use self::expansion::{
+    ExpansionCursor, ExpansionPage, expand_master_window, expand_window, expand_window_page,
+};
 pub use self::keys::{
     SeriesDtStart, SeriesExceptionKey, exception_identity, mask_master_exceptions,
 };

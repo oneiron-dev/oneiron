@@ -5,11 +5,11 @@
 //! event. An event that owes more, a very large attendee set most of all, is
 //! signalled and, once its feed is applied and its passport admitted, queues
 //! one `calendar.ics.property_continuation` attempt. Its run reads the
-//! archived feed version the pass admitted from again and admits the next
-//! pass's worth the same way, through the same screen and gate, until
-//! nothing is owed. A continuation whose event is gone, or whose
-//! passport names other content now, settles with nothing to do: the pass
-//! that moved it on reconciled it.
+//! archived version the pass admitted from again (an ICS feed version, or a
+//! connector's pulled resource, FIX 12163) and admits the next pass's worth
+//! the same way, through the same screen and gate, until nothing is owed. A
+//! continuation whose event is gone, or whose passport names other content
+//! now, settles with nothing to do: the pass that moved it on reconciled it.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -28,10 +28,14 @@ pub const ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND: &str = "calendar.ics.property_
 pub struct IcsPropertyContinuationPayload {
     /// The foreign system the admission ran for.
     pub system: String,
-    /// The archived feed version the admission read, `artifact#vN`; the
-    /// claims the continuation admits name it as their source, as the first
-    /// pass's do.
+    /// The source the admission's claims cite: the archived feed version
+    /// for an ICS admission, the pull record for a connector's. The claims
+    /// the continuation admits cite it too, as the first pass's do.
     pub blob_ref: String,
+    /// The archived version the continuation reads the event from again,
+    /// `artifact#vN`: the feed version itself for an ICS admission, the
+    /// pulled resource's for a connector's.
+    pub source_version: String,
     /// Hex id of the EVENT the properties are claims on.
     pub event_ref: String,
     /// The event's UID.
@@ -43,15 +47,17 @@ pub struct IcsPropertyContinuationPayload {
 /// One event's property claims a pass left owing, kept until its feed is
 /// applied.
 pub(crate) struct OwedProperties {
-    payload: IcsPropertyContinuationPayload,
+    event_ref: EntityId,
+    uid: String,
+    recurrence_id_utc: Option<u64>,
     owed: usize,
 }
 
 impl PollAdmission<'_> {
     /// Signals an event whose properties pass the per-pass count: it is
     /// logged, and an event that still owes `owed` property claims is kept
-    /// for [`Self::queue_property_continuations`]. A connector admission,
-    /// which archives no feed version a continuation could read again, owes
+    /// for [`Self::queue_property_continuations`]. An admission that keeps
+    /// no continuations admits every property in its one pass and owes
     /// none.
     pub(super) fn signal_property_continuation(
         &mut self,
@@ -73,33 +79,59 @@ impl PollAdmission<'_> {
         if owed == 0 {
             return;
         }
-        let payload = IcsPropertyContinuationPayload {
-            system: self.system.to_owned(),
-            blob_ref: self.blob_ref.to_owned(),
-            event_ref: event_ref.to_hex(),
-            uid: event.uid.clone(),
-            recurrence_id_utc: event.properties.recurrence_id_utc,
-        };
         if let Some(continuations) = self.continuations.as_mut() {
-            continuations.push(OwedProperties { payload, owed });
+            continuations.push(OwedProperties {
+                event_ref,
+                uid: event.uid.clone(),
+                recurrence_id_utc: event.properties.recurrence_id_utc,
+                owed,
+            });
         }
     }
 
     /// Queues one continuation for each event this admission left owing,
-    /// once the passports its continuation checks are admitted.
+    /// once the passports its continuation checks are admitted. Each reads
+    /// again the archived feed version the admission's claims cite.
     pub(super) fn queue_property_continuations(&mut self) -> Result<(), CalendarError> {
+        let source_version = self.blob_ref;
+        self.queue_property_continuations_reading(source_version)
+    }
+
+    /// Queues as [`Self::queue_property_continuations`] does, each
+    /// continuation reading the archived version `source_version` again:
+    /// for a connector admission, the pulled resource its claims' pull
+    /// record does not name.
+    pub(super) fn queue_property_continuations_reading(
+        &mut self,
+        source_version: &str,
+    ) -> Result<(), CalendarError> {
         let Some(continuations) = self.continuations.as_mut() else {
             return Ok(());
         };
-        for OwedProperties { payload, owed } in std::mem::take(continuations) {
+        for OwedProperties {
+            event_ref,
+            uid,
+            recurrence_id_utc,
+            owed,
+        } in std::mem::take(continuations)
+        {
+            let payload = IcsPropertyContinuationPayload {
+                system: self.system.to_owned(),
+                blob_ref: self.blob_ref.to_owned(),
+                source_version: source_version.to_owned(),
+                event_ref: event_ref.to_hex(),
+                uid,
+                recurrence_id_utc,
+            };
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|_| ingest("property continuation payload did not encode"))?;
             // One row per event, admitted version and count still owed: the
             // run that queues the next pass's row while its own is leased is
             // not folded into it.
-            let parts: [&[u8]; 3] = [
+            let parts: [&[u8]; 4] = [
                 payload.system.as_bytes(),
                 payload.blob_ref.as_bytes(),
+                payload.source_version.as_bytes(),
                 payload.event_ref.as_bytes(),
             ];
             let identity = Sha256::digest(parts.join(&0_u8));
@@ -124,7 +156,7 @@ impl PollAdmission<'_> {
 }
 
 /// Runs one queued property continuation: the event's next pass of property
-/// admissions from the archived feed version `payload` names, screened under
+/// admissions from the archived version `payload` names, screened under
 /// `screener` while `safeguard_enabled`, as a feed poll screens. An event
 /// that still owes more queues the next continuation.
 ///
@@ -143,7 +175,7 @@ pub fn run_ics_property_continuation(
     if vault.get_entity_type(&event_ref)? != Some(ENTITY_TYPE_EVENT) {
         return Ok(());
     }
-    let Some(bytes) = read_archived_version(vault, &payload.blob_ref)? else {
+    let Some(bytes) = read_archived_version(vault, &payload.source_version)? else {
         return Ok(());
     };
     let feed = parse_ics_feed(&bytes)?;
@@ -170,7 +202,7 @@ pub fn run_ics_property_continuation(
     };
     admission.preflight_event(event)?;
     admission.admit_properties(event_ref, event)?;
-    admission.queue_property_continuations()
+    admission.queue_property_continuations_reading(&payload.source_version)
 }
 
 /// The bytes of the archived version an `artifact#vN` reference names;

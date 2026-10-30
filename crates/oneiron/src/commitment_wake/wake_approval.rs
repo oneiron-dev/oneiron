@@ -85,6 +85,12 @@ impl ApprovedCommitmentWake {
         self.bound_actor
     }
 
+    /// The content the approved send carries, when it names one.
+    #[must_use]
+    pub fn content_ref(&self) -> Option<&str> {
+        self.content_ref.as_deref()
+    }
+
     /// The canonical commitment receipt reference.
     #[must_use]
     pub fn trigger_ref(&self) -> String {

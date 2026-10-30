@@ -52,9 +52,10 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) blob_ref: &'a str,
     pub(crate) verdict_fold: VerdictFold,
     /// The events whose property admissions passed one pass's count, each
-    /// queued a continuation once the feed is applied (FIX 11997): `blob_ref`
-    /// names an archived feed version the continuation reads again. `None`
-    /// for a connector admission, which admits each one.
+    /// queued a continuation once the feed is applied (FIX 11997, FIX
+    /// 12163) that reads an archived version of its source again. `None`
+    /// admits every property in one pass: a connector source no archived
+    /// version holds.
     pub(crate) continuations: Option<Vec<OwedProperties>>,
 }
 
@@ -597,14 +598,43 @@ pub(in crate::calendar) fn preflight_connector_feed(
     }
     Ok(())
 }
-pub(in crate::calendar) fn admit_connector_event(
-    vault: &Vault,
-    system: &str,
-    source: &str,
+/// What a connector admission admits from: the pull record its claims cite,
+/// and the archived resource version a property continuation reads again.
+#[derive(Clone, Copy)]
+pub(in crate::calendar) struct ConnectorAdmissionSource<'a> {
+    pub(in crate::calendar) record: &'a str,
+    pub(in crate::calendar) source_version: Option<&'a str>,
+}
+
+impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
+    /// A pull record with no archived version: every property is admitted
+    /// in one pass.
+    fn from(record: &'a str) -> Self {
+        Self {
+            record,
+            source_version: None,
+        }
+    }
+}
+
+/// Admits one connector event as an ICS admission admits it: one pass's
+/// count of new property claims, and a queued continuation reading the
+/// archived resource version again for the rest (FIX 12163).
+pub(in crate::calendar) fn admit_connector_event<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: impl Into<ConnectorAdmissionSource<'a>>,
     event: &ParsedVEvent,
     now: u64,
 ) -> Result<(), CalendarError> {
-    connector_admission(vault, system, source, now).apply_event(event)
+    let source = source.into();
+    let mut admission = connector_admission(vault, system, source.record, now);
+    let Some(source_version) = source.source_version else {
+        return admission.apply_event(event);
+    };
+    admission.continuations = Some(Vec::new());
+    admission.apply_event(event)?;
+    admission.queue_property_continuations_reading(source_version)
 }
 pub(in crate::calendar) fn sweep_connector_resource(
     vault: &Vault,
