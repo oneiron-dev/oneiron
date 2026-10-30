@@ -1111,7 +1111,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/mod.rs` | src | s | 12 re-export · 17 crate-vis | — | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
 | `src/claim/predicate_grammar.rs` | src | m | 1 enum · 2 fn · 14 const · 6 crate-vis | DreamerIsolationClass | Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate… |
 | `src/claim/predicate_validators.rs` | src | m | 3 struct · 5 enum · 2 fn · 23 const · 10 crate-vis | ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind, ExpressionPreferenceOrigin, ExpressionPreferenceSet, ExpressionPreferenceValue, ExpressionPreferenceWriteResult, ExpressionRegister | Structural validators for the predicates this module owns itself, rather than delegating to a domain module… |
-| `src/claim/projection_index.rs` | src | m | 9 crate-vis | — | Rebuildable claim projections maintained at the shared put chokepoint |
+| `src/claim/projection_index.rs` | src | m | 11 crate-vis | — | Rebuildable claim projections maintained at the shared put chokepoint |
 | `src/claim/projection_index/tests.rs` | test | s | — | — | — |
 | `src/claim/put.rs` | src | m | 1 fn · 6 crate-vis | — | `Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the… |
 | `src/claim/read.rs` | src | m | 3 fn · 12 crate-vis | — | `Vault` claim read doors: targeted `get_claim`, the subject/predicate scans, the session-bundle projection… |
@@ -1158,7 +1158,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/served_forms/session.rs` | src | s | 1 crate-vis | — | The served-form receipts a read in an off-record room keeps (WILL L11-01 S01-2b, OF-329): what it served of… |
 | `src/claim/scoped_read/slip_tests.rs` | test | m | — | — | Root provisioning and fail-closed read admission land together |
 | `src/claim/scoped_read/tests.rs` | test | m | — | — | The one point-read entry and the read-grant holes it keeps closed |
-| `src/claim/scoped_read/versions.rs` | src | m | 13 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
+| `src/claim/scoped_read/versions.rs` | src | m | 12 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
 | `src/claim/scoped_read/visibility.rs` | src | m | 4 fn · 17 crate-vis | — | — |
 | `src/claim/scoped_read/weave_correction.rs` | src | L | 2 struct · 1 enum · 5 fn · 3 crate-vis | WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection | Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project… |
 | `src/claim/scoped_read/weave_correction/admin.rs` | src | s | 2 crate-vis | — | A weave Admin's wrong labels (OF-499 A3): the one-tap wrong on a link, claim, project, budget or sieve audit… |
@@ -1860,15 +1860,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/credential_door/mod.rs` | src | s | 7 crate-vis | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `src/credential_door/tests.rs` | test | L | — | — | Checkout receive-pack, catastrophe policy, closed scope, and pre-receive scan laws |
 | `src/credential_door/verb_class.rs` | src | s | 4 crate-vis | — | Registered verb classes for the credential door |
-| `src/critic.rs` | src | m | 7 struct · 2 enum · 15 fn · 3 const · 1 mod · 3 re-export · 5 crate-vis | CriticLens, CritiqueArtifact, CritiqueArtifactStore, CritiqueProvenance, CritiqueSeverity, CritiqueTriage, CritiqueTriageScores, CritiqueVerdict +1 | Multi-critic review node primitives |
+| `src/critic.rs` | src | m | 7 struct · 2 enum · 15 fn · 3 const · 1 mod · 3 re-export · 6 crate-vis | CriticLens, CritiqueArtifact, CritiqueArtifactStore, CritiqueProvenance, CritiqueSeverity, CritiqueTriage, CritiqueTriageScores, CritiqueVerdict +1 | Multi-critic review node primitives |
 | `src/critic/findings.rs` | src | s | 1 struct · 3 crate-vis | MergedFinding | Deterministic duplicate consolidation; calibration never counts repeated critic output twice |
 | `src/critic/reliability.rs` | src | s | 1 struct · 1 enum · 4 fn · 2 crate-vis | CriticReliability, ReliabilityOutcomeSource | Read-only critic weights from the shared measured-state projector |
-| `src/critic/review.rs` | src | s | 4 struct · 1 enum · 1 fn · 4 re-export · 3 crate-vis | CriticReviewInput, ReviewArtifactKind, ReviewCritic, ReviewRequest, ReviewResult | Artifact-independent review fan-out and the persisted calibration feedback loop |
-| `src/critic/review/dissent.rs` | src | s | 2 struct · 3 fn · 1 crate-vis | CriticPrediction, ReviewDissent | Testable overruled predictions: attributed opinions and bound standing questions, never critique claims |
-| `src/critic/review/outcomes.rs` | src | m | 2 fn · 2 crate-vis | — | Anchored review outcomes feed the shared measured-state projector |
+| `src/critic/review.rs` | src | s | 4 struct · 1 enum · 1 fn · 4 re-export · 4 crate-vis | CriticReviewInput, ReviewArtifactKind, ReviewCritic, ReviewRequest, ReviewResult | Artifact-independent review fan-out and the persisted calibration feedback loop |
+| `src/critic/review/dissent.rs` | src | m | 2 struct · 3 fn · 1 crate-vis | CriticPrediction, ReviewDissent | Testable overruled predictions: attributed opinions and bound standing questions, never critique claims |
+| `src/critic/review/outcomes.rs` | src | m | 2 fn · 5 crate-vis | — | Anchored review outcomes feed the shared measured-state projector |
+| `src/critic/review/outcomes/settled_actor.rs` | src | s | 1 crate-vis | — | The actor a settlement no owner decided writes a critique's outcome under (FIX 12188): the review's own… |
 | `src/critic/review/persistence.rs` | src | m | 17 crate-vis | — | Transactional review bundles |
+| `src/critic/review/persistence/dissent_rows.rs` | src | s | 6 crate-vis | — | A review's dissent rows: the dissent each critique keeps so far, the claim one caller holds while it authors… |
+| `src/critic/review/persistence/erased_claims.rs` | src | s | 1 crate-vis | — | The review claims an erase takes (FIX 12073) |
 | `src/critic/review/questions.rs` | src | m | 4 struct · 1 trait · 1 const · 2 crate-vis | ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording | A review's typed questions: each lens asks its verdict, severity, scope and (when the lens has one) hard… |
 | `src/critic/review/submit.rs` | src | s | 3 struct · 1 fn | CriticBinding, CriticReviewOutcome, CriticReviewSubmit | One critic review through a host's door (`vault.critic.review`): what the caller binds and what the review… |
+| `src/critic/review/team_outcome.rs` | src | s | 2 crate-vis | — | The critics of a settled team's work (OF-420, FIX 2970, FIX 12106) |
 | `src/critic/review/tests.rs` | test | s | 5 crate-vis | — | — |
 | `src/critic/validation.rs` | src | s | 8 crate-vis | — | Bounds and shape checks for critic lenses, artifacts and learned reliability |
 | `src/deletion/actor_fields.rs` | src | s | 2 enum · 2 const · 7 crate-vis | CarrierActorMerge, CarrierEraseSource | An erased actor's name, out of the rows that record it outside its own record (FIX 3520) |
@@ -1986,7 +1990,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/conflict.rs` | src | m | 9 struct · 9 fn · 10 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef +1 | Conflict and bucket identities for consolidation candidates and swarm returns |
 | `src/dreamer_consolidation/evidence.rs` | src | m | 36 crate-vis | — | Parent-verified evidence is the sole scoped consolidation handoff |
 | `src/dreamer_consolidation/executor.rs` | src | m | 1 struct · 1 re-export · 6 crate-vis | ConsolidationExecutor | Partition executor: runs one prepared consolidation partition end to end |
-| `src/dreamer_consolidation/executor/conflicts.rs` | src | s | 3 crate-vis | — | The conflict loop of `resolve_conflicts`: each conflicting set decided through the host's ladder, merged… |
+| `src/dreamer_consolidation/executor/conflicts.rs` | src | m | 3 crate-vis | — | The conflict loop of `resolve_conflicts`: each conflicting set decided through the host's ladder, merged… |
 | `src/dreamer_consolidation/executor/decisions.rs` | src | m | 1 struct · 2 fn · 17 crate-vis | ConsolidationDecisions | The consolidation's typed questions through the host's ladder: how a conflict set resolves and which… |
 | `src/dreamer_consolidation/executor/decisions/identity_choice.rs` | src | s | 2 crate-vis | — | The one final identity choice (FIX 8693) |
 | `src/dreamer_consolidation/executor/decisions/read.rs` | src | s | 4 crate-vis | — | The scoped typed read every Dreamer pack shares (OF-498a): questions over a state through the host's ladder… |
@@ -2236,7 +2240,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/curator.rs` | src | m | 2 struct · 1 enum · 2 fn · 7 crate-vis | CuratorQuestions, CuratorRubric, CuratorTrigger | Curator grading data and minimum-force findings |
 | `src/dreamer_runner/maintenance/curator/approved.rs` | src | s | 1 fn · 1 crate-vis | — | A curator rung the owner approved (FIX 3223) |
 | `src/dreamer_runner/maintenance/detectors.rs` | src | s | 1 crate-vis | — | The Coach's nightly detector pass (ARCH-0066 §4, OF-298): the tier-1 sweep over Gate receipts plus the… |
-| `src/dreamer_runner/maintenance/digest.rs` | src | m | 9 struct · 11 fn · 8 const · 5 re-export · 3 crate-vis | DigestCleanup, DigestNoteTombstones, DigestOffer, DigestProposal, ProactivityCadence, ProactivityDigest, ProactivityPolicyProposal, ProactivityPolicyRequest +1 | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
+| `src/dreamer_runner/maintenance/digest.rs` | src | m | 9 struct · 11 fn · 9 const · 5 re-export · 3 crate-vis | DigestCleanup, DigestNoteTombstones, DigestOffer, DigestProposal, ProactivityCadence, ProactivityDigest, ProactivityPolicyProposal, ProactivityPolicyRequest +1 | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
 | `src/dreamer_runner/maintenance/digest/after_notice.rs` | src | s | 2 struct · 2 const · 3 crate-vis | DigestApplied, DigestAppliedItem | The applied-maintenance after-notice a regular digest carries (FIX 3226, OF-023): the Dreamer's maintenance… |
 | `src/dreamer_runner/maintenance/digest/assembly.rs` | src | m | 1 crate-vis | — | Assembles one digest in one write: select, mark seen, store, notify |
 | `src/dreamer_runner/maintenance/digest/pending.rs` | src | s | 4 crate-vis | — | What a digest may carry that no digest carried yet, by its seen state |
@@ -2409,7 +2413,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_distance/attribution/projector.rs` | src | m | 3 fn · 1 crate-vis | — | Projection of judged amendments — attributed shares into the shared `learning.edit_cost` cells, the skill's… |
 | `src/edit_distance/attribution/rejection.rs` | src | s | 1 fn · 3 crate-vis | — | A rejection goes through the judge before it charges anyone (ARCH-0056 §5, §11; FIX 7823) |
 | `src/edit_distance/attribution/scope_erase.rs` | src | s | 1 crate-vis | — | A project's erase takes the project off the amendment rows that carry it (FIX 6038) |
-| `src/edit_distance/attribution/stored.rs` | src | m | 31 crate-vis | — | Stored rows: key shapes, row shapes, and the row codec |
+| `src/edit_distance/attribution/stored.rs` | src | m | 32 crate-vis | — | Stored rows: key shapes, row shapes, and the row codec |
 | `src/edit_distance/attribution/taxonomy.rs` | src | m | 5 struct · 1 enum · 16 fn · 1 type · 3 crate-vis | AmendmentCause, AmendmentEvidence, AmendmentJudgment, AmendmentShare, HunkLabel, PreferenceProposal | Amendment taxonomy: classes, causes, evidence and judgment types |
 | `src/edit_distance/attribution/tests.rs` | test | L | — | — | — |
 | `src/edit_distance/attribution/triage.rs` | src | m | 6 struct · 3 enum · 1 fn · 4 crate-vis | AgentDefinitionRef, ArtifactPublisher, RecentChange, RecentChanges, SkillAtVersion, TriagePacket, TriageReceipt, TriageSubject +1 | The triage packet a persistent failure mints, and the one owner-inbox escalation that carries it (ARCH-0056… |
@@ -5061,15 +5065,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/key.rs` | src | s | 3 crate-vis | — | Key types: what a table's key contributes after its declared prefix |
 | `src/side_table/mod.rs` | src | L | 47 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `src/side_table/tests.rs` | test | L | — | — | — |
-| `src/skill/call.rs` | src | m | 1 fn · 1 re-export · 3 crate-vis | — | Callable skill execution through the caller's existing sandbox runtime and host |
+| `src/skill/call.rs` | src | m | 1 fn · 2 re-export · 4 crate-vis | — | Callable skill execution through the caller's existing sandbox runtime and host |
 | `src/skill/call/answer.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | CallableSkillAnswer | A callable skill's answer, spooled to disk as it streams and checked against its return contract as it is… |
+| `src/skill/call/frozen.rs` | src | m | 2 fn · 3 crate-vis | — | Frozen callable cases (FIX 12093) |
+| `src/skill/call/frozen/erase.rs` | src | s | 2 crate-vis | — | An erase among the frozen callable cases (FIX 12093) |
+| `src/skill/call/frozen/index.rs` | src | s | 5 crate-vis | — | The frozen cases' index (FIX 12180): each case under the rows it was made from, or under its caller's… |
 | `src/skill/call/json_tokens.rs` | src | m | 2 crate-vis | — | The streaming JSON check behind a callable skill's answer (FIX 10149) |
 | `src/skill/call/tests.rs` | test | m | — | — | — |
 | `src/skill/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack encode and decode for SKILL bodies and dependencies |
 | `src/skill/doors.rs` | src | m | 6 fn · 9 crate-vis | — | Typed Vault doors for SKILL records |
 | `src/skill/graph.rs` | src | s | 6 struct · 1 fn | GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult, GraphSkillStage | Run resident-authored graph workflows from the admitted skill source tree |
-| `src/skill/helper.rs` | src | m | 8 struct · 2 enum · 1 trait · 9 fn | CallableCard, CallableCardView, CallableCase, CallableGateVerdict, CallableHarness, CaseSplit, HarnessScore, HelperPairedVerdict +3 | Agent-authored executable helpers (OF-353): a callable SKILL an agent writes for itself, found, promoted and… |
-| `src/skill/helper_eval.rs` | src | s | 3 crate-vis | — | The helper gate's evidence (FIX 10154, 10155): the shared paired eval measurement of a helper against its… |
+| `src/skill/helper.rs` | src | m | 8 struct · 2 enum · 1 trait · 9 fn · 2 re-export | CallableCard, CallableCardView, CallableCase, CallableGateVerdict, CallableHarness, CaseSplit, HarnessScore, HelperPairedVerdict +3 | Agent-authored executable helpers (OF-353): a callable SKILL an agent writes for itself, found, promoted and… |
+| `src/skill/helper_eval.rs` | src | s | 1 fn · 3 crate-vis | — | The helper gate's evidence (FIX 10154, 10155): the shared paired eval measurement of a helper against its… |
 | `src/skill/identity.rs` | src | s | 1 struct · 6 fn · 3 const | SkillContentHash | Canonical skill identity: content hash, tree hash, and hub cross-check |
 | `src/skill/invocation.rs` | src | s | 6 crate-vis | — | The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an… |
 | `src/skill/lifecycle.rs` | src | s | 2 enum · 6 fn · 1 crate-vis | SkillGovernanceTier, SkillLifecycle | SKILL lifecycle machine and governance-tier axis |
@@ -5101,10 +5108,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/judge_binding.rs` | src | s | 1 crate-vis | — | The judge a run's pack attribution names (FIX 1877, OF-540): the model whose answer to the run's "Done means… |
 | `src/skill_attribution/judge_supersession.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | DisplacedJudgeReceipt | Judge-revision provenance for routed receipts, and non-destructive displacement |
 | `src/skill_attribution/late_credit.rs` | src | m | 2 struct · 2 fn · 7 crate-vis | LateCreditReceipt, LateCreditShare | Late credit over the run's recorded, actually-used derived-from edges |
-| `src/skill_attribution/mod.rs` | src | s | 21 re-export · 24 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `src/skill_attribution/mod.rs` | src | s | 21 re-export · 25 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `src/skill_attribution/pack_learning.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | AnchoredPackOutcome | The manifest-to-learning bridge |
 | `src/skill_attribution/positive.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 crate-vis | PositiveFinding, PositiveSkillProposal | The positive lane (OF-379): a win that taught the skill something |
 | `src/skill_attribution/projector.rs` | src | m | 6 fn · 5 crate-vis | — | Evidence door and ordered idempotent projection from evidence to judgments and edit proposals |
+| `src/skill_attribution/row_ids.rs` | src | s | 2 crate-vis | — | The row behind each forwarded judgment and discovery proposal (FIX 12088): the row ids a sourced brief names… |
 | `src/skill_attribution/run_writes.rs` | src | s | 1 struct · 2 fn · 16 crate-vis | RunWriteToken | OF-540/OF-397: the write envelope of a leased agent run |
 | `src/skill_attribution/site_exposure.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | SiteSkillExposure | Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown |
 | `src/skill_attribution/skill_erase.rs` | src | s | 3 crate-vis | — | An erase in the attribution ledgers (FIX 8265, OF-568 L10; FIX 8988): the rows that name an erased skill or… |
@@ -5235,7 +5243,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/eval_set/doors.rs` | src | m | 14 struct · 12 fn | EvalAuthorNowRequest, EvalAuthoringRef, EvalAuthoringResult, EvalBlockedLabelsRequest, EvalCaseLineage, EvalCasesRequest, EvalCohortOpenRequest, EvalCohortRef +6 | Owner-bound eval authoring and ledger doors |
 | `src/skill_optimize/eval_set/erase.rs` | src | s | 3 crate-vis | — | An erased row out of the eval cases' source sets (FIX 6933): each case's own set and every label's on it |
 | `src/skill_optimize/eval_set/measurement.rs` | src | s | 7 struct · 3 enum · 3 fn · 3 re-export · 1 crate-vis | EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy, MeasurementState +2 | Paired, family-grouped eval measurements (FIX 574, OF-578; ARCH-0053) |
-| `src/skill_optimize/eval_set/measurement/doors.rs` | src | m | 7 fn · 6 crate-vis | — | The measurement doors: ask, read, claim, record a case and fail |
+| `src/skill_optimize/eval_set/measurement/doors.rs` | src | m | 8 fn · 6 crate-vis | — | The measurement doors: ask, read, claim, record a case and fail |
 | `src/skill_optimize/eval_set/measurement/finish.rs` | src | s | 1 fn · 2 const | — | Finishing a measurement: the complete matched set, the estimator once, and the card read from its numbers |
 | `src/skill_optimize/eval_set/measurement/statistics.rs` | src | m | 2 struct · 1 enum · 1 fn · 14 crate-vis | EstimateGap, EvalFamilySummary, MeasurementMethodPin | The paired, family-grouped estimator behind an eval measurement (FIX 574, OF-578) |
 | `src/skill_optimize/eval_set/replay_input.rs` | src | s | 1 struct · 1 fn | EvalTaskInput | The task a released eval case was given, for the trusted measuring host only (FIX 574, OF-578) |
@@ -5244,7 +5252,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/exploration_trial/overrun_ask.rs` | src | s | 4 crate-vis | — | Overrun asks: the board's yes or no on one run past the goal's exploration slice |
 | `src/skill_optimize/exploration_trial/routing.rs` | src | m | 5 crate-vis | — | Load-door routing: the version an attempt loads, and the slice charge it reserves |
 | `src/skill_optimize/gate.rs` | src | m | 5 const · 12 re-export · 14 crate-vis | — | SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →… |
-| `src/skill_optimize/gate/admission.rs` | src | L | 3 fn · 12 crate-vis | — | Admission, its pinned keys, and the record-shape questions both doors ask |
+| `src/skill_optimize/gate/admission.rs` | src | L | 3 fn · 11 crate-vis | — | Admission, its pinned keys, and the record-shape questions both doors ask |
 | `src/skill_optimize/gate/basis.rs` | src | m | 2 struct · 1 trait · 12 fn · 1 static · 12 crate-vis | HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle | What a ruling rests on before the gate decides: the held-out split, the identity a verdict binds itself to… |
 | `src/skill_optimize/gate/decision.rs` | src | m | 3 fn · 9 crate-vis | — | The gate itself: the entry points, and the transaction that rules |
 | `src/skill_optimize/gate/decision/commit.rs` | src | s | 2 crate-vis | — | Committing skill-edit decisions and answered-proposal closure |
@@ -5256,7 +5264,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/gate/live.rs` | src | m | 4 fn · 4 crate-vis | — | Live goal-axis measurement of a proposal (ARCH-0053: "Primary axes are measured online." "Offline axes run… |
 | `src/skill_optimize/gate/measurement.rs` | src | m | 7 struct · 1 enum · 6 crate-vis | AnchorLabelScore, AuditPair, BlindPreference, HonestyReplay, HonestyReplayObservation, JudgeMeasurements, PreferredResponse, WorldAxisScore | Receipt-only DecoEvo measurements, per-axis world-outcome calibration, and the judge against the human picks… |
 | `src/skill_optimize/gate/preflight.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | SkillEditPreflight | A proposal's offline floors, judged on the held-out set before any live run is routed to it (ARCH-0053… |
-| `src/skill_optimize/gate/project_goal.rs` | src | m | 1 struct · 1 enum · 5 fn · 10 crate-vis | ProjectGoalRevisionProposal, TradeoffRole | The join between a skill's goal and a project's goal record (ARCH-0053 "The goal record") |
+| `src/skill_optimize/gate/project_goal.rs` | src | m | 1 struct · 1 enum · 5 fn · 11 crate-vis | ProjectGoalRevisionProposal, TradeoffRole | The join between a skill's goal and a project's goal record (ARCH-0053 "The goal record") |
 | `src/skill_optimize/gate/rule_policy.rs` | src | s | 1 crate-vis | — | The instructions the gate compares for a rule skill (FIX 10878): its description, then the dial seeds the… |
 | `src/skill_optimize/gate/tradeoff.rs` | src | m | 5 struct · 8 fn · 1 re-export · 6 crate-vis | JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion, TradeoffRule | The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`] |
 | `src/skill_optimize/gate/tradeoff/ladder.rs` | src | m | 3 fn · 5 crate-vis | — | Tradeoff ladder planning, application and authenticated settlement |
@@ -5281,7 +5289,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/offer_training.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | OfferTrainingHandoff, TrainingChoice | An approved training offer's run (OF-577; ARCH-0053 #training-offers: a train yes runs the OF-552 pack, then… |
 | `src/skill_optimize/policy.rs` | src | s | 5 crate-vis | — | Calibration policy row in trusted Gate manifests |
 | `src/skill_optimize/response_pair.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | ResponsePairPick | The owner's pick between two frozen responses (ARCH-0053 #judge-swap, FIX 2797): which of a blind preference… |
-| `src/skill_optimize/selection.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | SkillOptimizeCandidate | Which skill the job may work on: the tier-filtered, dev-partitioned ranking and the reading behind it |
+| `src/skill_optimize/selection.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | SkillOptimizeCandidate | Which skill the job may work on: the tier-filtered, dev-partitioned ranking and the reading behind it |
 | `src/skill_optimize/tests.rs` | test | XL | — | — | — |
 | `src/skill_optimize/tests/resident.rs` | test | s | — | — | — |
 | `src/skill_optimize/tier.rs` | src | s | 1 enum · 3 fn · 2 crate-vis | SkillTierVerdict | The fail-closed governance-tier resolver: what the tier axis says about one stored skill, including the… |
@@ -5298,7 +5306,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_reliability/posterior.rs` | src | s | 1 struct · 1 enum · 6 fn · 1 const · 6 crate-vis | ProvenanceTrustClass, SkillReliabilityPosterior | The Beta(α, β) posterior over a skill’s success rate and the provenance classes its prior is keyed by |
 | `src/skill_reliability/priors.rs` | src | s | 3 crate-vis | — | Weighted starting points for skill cells |
 | `src/skill_reliability/projector.rs` | src | m | 3 fn · 5 const · 3 crate-vis | — | Project attributed skill outcomes into the shared learning.reliability cells |
-| `src/skill_reliability/provenance.rs` | src | s | 2 fn · 2 crate-vis | — | Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the… |
+| `src/skill_reliability/provenance.rs` | src | s | 2 fn · 3 crate-vis | — | Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the… |
 | `src/skill_reliability/read.rs` | src | m | 2 struct · 9 fn · 12 crate-vis | ExecutorReliability, SkillReliabilityQuery | Skill reliability reads use learning cells, never SkillRecord confidence |
 | `src/skill_reliability/resident.rs` | src | s | 1 fn | — | Per-resident version bandit over independently attributed fork receipts |
 | `src/skill_reliability/row_ids.rs` | src | s | 1 crate-vis | — | The attempt row behind each attributed outcome (FIX 7288): the row ids a sourced held-out read names beside… |
@@ -6055,10 +6063,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/market.rs` | src | m | 6 struct · 3 enum · 8 fn · 1 const | LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee +1 | The MARKET pattern's ledger (ARCH-0079 #market, OF-540) |
 | `src/team/mod.rs` | src | s | 10 mod · 11 re-export · 3 crate-vis | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `src/team/observations.rs` | src | s | 1 struct · 1 fn | TeamRunObservations | OF-540: what the host measured of a team run, for its receipt |
-| `src/team/owner_outcome.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 crate-vis | DeliverableReview, TeamDeliverableBinding | OF-540: the owner's verdict on a team's deliverable settles the team |
+| `src/team/owner_outcome.rs` | src | s | 1 struct · 1 enum · 3 fn · 2 crate-vis | DeliverableReview, TeamDeliverableBinding | OF-540: the owner's verdict on a team's deliverable settles the team |
 | `src/team/pattern.rs` | src | m | 2 struct · 2 enum · 1 trait · 7 fn · 3 const · 2 crate-vis | PatternLaunchRunner, PatternLaunchSpec, PatternSkill, TeamAxis, TeamPattern | Coordination patterns as skills (ARCH-0079 #coordination-patterns) |
 | `src/team/payoff.rs` | src | s | 3 struct · 2 fn · 1 const · 1 crate-vis | PatternCardEntry, PayoffRow, PlannerCard | The payoff table and the planner card (ARCH-0003 #learning-views, ARCH-0079 #scoring, #works-well-for) |
-| `src/team/receipt.rs` | src | m | 5 struct · 1 enum · 11 fn · 1 type · 7 crate-vis | Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
+| `src/team/receipt.rs` | src | m | 6 struct · 1 enum · 12 fn · 1 type · 8 crate-vis | Coverage, DecidedBy, PatternSkillRef, TeamCritic, TeamOutcome, TeamReceipt, TeamShape | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
 | `src/team/run.rs` | src | m | 5 struct · 3 enum · 5 crate-vis | SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput, TeamRecordInput, TeamRunAnswer, TeamStartInput | OF-540: a pattern-skill run's own team, from code mode |
 | `src/team/run_binding.rs` | src | s | 1 struct · 9 fn · 1 type · 1 crate-vis | TeamRunBinding | OF-540: what the host saw a team start do, and the team a run works in |
 | `src/team/spawn_intent.rs` | src | m | 8 struct · 2 enum · 7 fn · 2 crate-vis | ErasedPackSpan, FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost, PlannedSpawnRequest +2 | The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask… |
@@ -6108,9 +6116,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/training_pack/actor_erase.rs` | src | s | 5 crate-vis | — | An erased owner out of the training rows that name it (FIX 3520): the runs, and the role-swap receipts in… |
 | `src/training_pack/authorize.rs` | src | s | 5 fn · 4 crate-vis | — | The owner's authorization of one prepared run, and the host's record of why a run that waits on it cannot… |
 | `src/training_pack/connector.rs` | src | m | 2 struct · 1 trait · 3 fn · 1 type · 1 crate-vis | TrainOutput, TrainRequest, TrainingConnector | One long-running connector verb |
-| `src/training_pack/custody.rs` | src | s | 5 fn · 5 crate-vis | — | Training artifacts use the existing versioned blob store, not another file store |
+| `src/training_pack/custody.rs` | src | s | 5 fn · 7 crate-vis | — | Training artifacts use the existing versioned blob store, not another file store |
+| `src/training_pack/custody/stream.rs` | src | s | 2 struct · 1 fn | CheckpointFileStream, CheckpointStream | FIX 12086: the owner's starting checkpoint read from one stream, its files one after another, so no door… |
+| `src/training_pack/detector_corpus.rs` | src | m | 1 struct · 1 fn | DetectorCorpusRef | A question head's corpus (FIX 8237) |
 | `src/training_pack/export.rs` | src | s | 1 fn | — | The existing consented reservoir becomes a reproducible, source-grouped split |
-| `src/training_pack/mod.rs` | src | s | 6 fn · 4 re-export · 3 crate-vis | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
+| `src/training_pack/mod.rs` | src | s | 6 fn · 6 re-export · 3 crate-vis | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
 | `src/training_pack/promotion.rs` | src | m | 2 struct · 2 enum · 7 fn · 5 crate-vis | RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap | Held-out scoring releases a counted cohort |
 | `src/training_pack/target.rs` | src | s | 1 struct · 1 enum · 4 fn · 2 const · 1 crate-vis | QuestionTarget, TrainingTarget | What a training run trains (FIX 7263): a model for one manifest role, or one two-logit head for one exact… |
 | `src/training_pack/types.rs` | src | m | 28 struct · 7 enum · 2 fn · 1 crate-vis | ArtifactPin, CalibrationResult, CandleParityCheck, CheckpointFileKind, CheckpointFilePin, CheckpointFileUpload, CheckpointUpload, ComputeChoice +27 | Pins and receipts shared by the training pack and its host adapters |

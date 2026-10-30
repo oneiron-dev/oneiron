@@ -90,8 +90,8 @@ pub(super) fn open_kit(
         Some(keystore) => kept_pieces(keystore, vault_id, carried),
         None => (Vec::new(), false),
     };
-    let secret = restore_joined(*vault_id, &given, &kept, unreadable, *passphrase)
-        .map_err(kit_refused)?;
+    let secret =
+        restore_joined(*vault_id, &given, &kept, unreadable, *passphrase).map_err(kit_refused)?;
     committed_key(vault_id, carried.commitment(), secret)
 }
 

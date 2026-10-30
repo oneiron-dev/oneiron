@@ -256,7 +256,6 @@ pub use self::tradeoff_route::{
     TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
     TradeoffRouteReport,
 };
-pub(crate) use gate::project_axes;
 pub use gate::{
     AnchorLabelScore, AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind,
     GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
@@ -289,6 +288,7 @@ pub(crate) use gate::{
     skill_edit_trial_basis_in_txn, skill_edit_verdict_in_txn, skill_edit_verdict_receipts,
     validate_judge_revision, with_optimized_skill_admission,
 };
+pub(crate) use gate::{project_axes, project_rules_for_record};
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
