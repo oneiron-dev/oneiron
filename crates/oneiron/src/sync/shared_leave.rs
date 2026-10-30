@@ -259,7 +259,7 @@ fn confirm_leave(
 ) -> Result<SharedLeaveReceipt> {
     let purge = |wtxn: &mut heed::RwTxn<'_>, receipt: &mut SharedLeaveReceipt| -> Result<bool> {
         let pass = crate::store::local_replica::purge_left_shared_env_in_txn(
-            &vault.store,
+            vault,
             wtxn,
             LEAVE_PURGE_ROWS_PER_PASS,
         )?;
