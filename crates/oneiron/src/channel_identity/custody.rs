@@ -31,7 +31,9 @@ use super::auth_mode::ChannelAuthMode;
 use super::binding::ChannelIdentityFulfillment;
 use super::codec::invalid_identity;
 use super::keys::SUBJECT_CLASS_SELF_HELD;
-use super::lifecycle::{ChannelIdentityState, DelegatedLifecycle, IdentityEdge, SelfHeldLifecycle};
+use super::lifecycle::{
+    ChannelIdentityState, DelegatedLifecycle, IdentityEdge, QuarantineWindow, SelfHeldLifecycle,
+};
 use super::shape::{ChannelIdentityShape, SelfHeldShape};
 use crate::error::{RecordError, SecretError};
 use crate::gate::class_policy::ActPosture;
@@ -495,7 +497,7 @@ impl Custody {
     }
 
     /// Applies one edge, on whichever machine this custody runs, with
-    /// `min_quarantine_secs` as the resolved hold floor.
+    /// `window` as the resolved hold bounds.
     ///
     /// A mismatch is refused HERE rather than by a predicate at the caller: a
     /// self-held edge handed to a delegated row (and the reverse) is one arm,
@@ -512,13 +514,13 @@ impl Custody {
         &self,
         edge: IdentityEdge<'_>,
         at: u64,
-        min_quarantine_secs: u64,
+        window: QuarantineWindow,
     ) -> Result<Self> {
         match (self, edge) {
             (Self::SelfHeld { shape, lifecycle }, IdentityEdge::SelfHeld(edge)) => {
                 Ok(Self::SelfHeld {
                     shape: *shape,
-                    lifecycle: lifecycle.step(edge, at, min_quarantine_secs)?,
+                    lifecycle: lifecycle.step(edge, at, window)?,
                 })
             }
             (Self::Delegated { grant, lifecycle }, IdentityEdge::Delegated(edge)) => {

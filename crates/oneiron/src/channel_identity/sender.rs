@@ -4,14 +4,14 @@
 
 use super::decode_channel_identity_body;
 use super::facts::ChannelIdentityFacts;
-use super::keys::ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND;
+use super::keys::{ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, SHIPPED_OUTBOUND_SEND_POSTURE};
 use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity_selection::{ChannelIdentityCandidate, ChannelIdentityFace};
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, RelayError};
 use crate::gate::class_policy::ActPosture;
 
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
@@ -137,7 +137,7 @@ pub(crate) fn channel_identity_selection_candidates_in_txn(
         };
         let identity = read_identity_row(store, txn, &id)?;
         let active = facts.state == ChannelIdentityState::Active
-            && outbound_send_permitted(store, txn, &identity, Some(*actor_ref))?;
+            && outbound_send_readable_as_permitted(store, txn, &identity, Some(*actor_ref))?;
         candidates.push(ChannelIdentityCandidate {
             identity_ref: id,
             shape: facts.shape,
@@ -167,7 +167,7 @@ pub(crate) fn channel_identity_send_holder_in_txn(
     };
     let identity = read_identity_row(store, txn, id)?;
     let may_send = facts.state == ChannelIdentityState::Active
-        && outbound_send_permitted(store, txn, &identity, Some(actor))?;
+        && outbound_send_readable_as_permitted(store, txn, &identity, Some(actor))?;
     Ok(Some((actor, may_send)))
 }
 
@@ -236,14 +236,50 @@ pub(crate) fn enrich_dispatch_channel_identity(
     }
 }
 
+/// What the vault's `act_policy` table answers for one identity's outbound
+/// send, in one transaction.
+enum OutboundSendPolicy {
+    /// A row the vault's manifests carry resolves to this posture.
+    Resolved(ActPosture),
+    /// No row names the pairing (or the vault has no manifest), so the send
+    /// runs under the posture the default manifest's rows ship,
+    /// [`SHIPPED_OUTBOUND_SEND_POSTURE`].
+    Shipped,
+    /// A loaded manifest cannot be read, so no posture can be.
+    Unreadable,
+}
+
+fn outbound_send_policy(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+    holder: Option<EntityId>,
+) -> crate::Result<OutboundSendPolicy> {
+    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+    if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+        return Ok(OutboundSendPolicy::Unreadable);
+    }
+    Ok(
+        match policy.resolved_act_posture(
+            ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND,
+            identity.outbound_subject_class(),
+            holder,
+        ) {
+            Some(posture) => OutboundSendPolicy::Resolved(posture),
+            None => OutboundSendPolicy::Shipped,
+        },
+    )
+}
+
 /// Whether `identity` may carry an outbound effect in this vault right now.
 ///
 /// Two independent questions, asked in the order that keeps them honest:
 ///
 /// 1. POLICY — does the manifest's `act_policy` row for
 ///    `channel_identity.outbound_send` permit this subject class, for this
-///    holder? A missing row is [`ActPosture::Deny`]: silence about an outbound
-///    act is not permission, and the default manifest is never silent here.
+///    holder? A pairing no row names, in a vault with or without a manifest,
+///    runs under the row the default manifest ships, and the fallback is
+///    logged as this send's receipt.
 /// 2. SUBSTRATE — does the row hold the capability the act needs? For a
 ///    self-held row that is a live state; for a delegated row it is an outbound
 ///    scope on the grant, which no read-only scope class can express.
@@ -252,33 +288,55 @@ pub(crate) fn enrich_dispatch_channel_identity(
 /// changes is which of the two refusals the vault reports, and who owns the
 /// decision: the vault's policy data rather than an engine class ban.
 ///
-/// A vault with no policy manifest at all has no row to ask. Its gate already
-/// holds every external effect on `gate.pending.external_effect_authority`, so
-/// only the substrate question is asked here: refusing on the missing row
-/// would make the sender identity, not the gate, the source of that verdict.
-/// A loaded manifest that is merely silent about this act still denies.
-///
 /// `holder` is the identity's binding head (OF-272): the policy row is asked
 /// about the actor the facts name, and only the capability is the row's.
+///
+/// # Errors
+///
+/// [`RelayError::PolicyManifestInvalid`] naming `act_policy` when a loaded
+/// manifest cannot be read: the send is refused, never run under a guessed
+/// posture, and the owner repairs the manifest through
+/// `put_policy_manifest_as_owner`.
 fn outbound_send_permitted(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity: &ChannelIdentity,
     holder: Option<EntityId>,
 ) -> crate::Result<bool> {
-    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
-    let diagnostics = policy.diagnostics();
-    if diagnostics.manifest_count == 0 && !diagnostics.loaded_manifest_forces_fail_closed() {
-        return Ok(identity.holds_outbound_capability());
+    match outbound_send_policy(store, txn, identity, holder)? {
+        OutboundSendPolicy::Resolved(posture) => Ok(identity.may_send_under(posture)),
+        OutboundSendPolicy::Shipped => {
+            tracing::warn!(
+                act_class = ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND,
+                subject_class = identity.outbound_subject_class(),
+                posture = SHIPPED_OUTBOUND_SEND_POSTURE.as_str(),
+                "the vault's manifests name no act row for this pairing; the send runs under \
+                 the posture the default manifest ships"
+            );
+            Ok(identity.may_send_under(SHIPPED_OUTBOUND_SEND_POSTURE))
+        }
+        OutboundSendPolicy::Unreadable => Err(Error::Relay(RelayError::PolicyManifestInvalid {
+            field: "act_policy",
+            reason: "cannot be read for channel_identity.outbound_send; repair the manifest \
+                     through put_policy_manifest_as_owner",
+        })),
     }
-    let posture: ActPosture = policy
-        .resolved_act_posture(
-            ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND,
-            identity.outbound_subject_class(),
-            holder,
-        )
-        .unwrap_or_default();
-    Ok(identity.may_send_under(posture))
+}
+
+/// [`outbound_send_permitted`] for a projection that lists who may send: an
+/// unreadable manifest reads as "may not send now" rather than failing the
+/// listing, and the send door refuses with the repair door's name.
+fn outbound_send_readable_as_permitted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+    holder: Option<EntityId>,
+) -> crate::Result<bool> {
+    Ok(match outbound_send_policy(store, txn, identity, holder)? {
+        OutboundSendPolicy::Resolved(posture) => identity.may_send_under(posture),
+        OutboundSendPolicy::Shipped => identity.may_send_under(SHIPPED_OUTBOUND_SEND_POSTURE),
+        OutboundSendPolicy::Unreadable => false,
+    })
 }
 
 /// The refusal for an explicit sender the vault will not send through.
