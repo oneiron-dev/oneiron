@@ -576,15 +576,13 @@ pub(super) fn main_log_heads(
         if !valid.contains(&hash) || row.world.is_some() {
             continue;
         }
-        match row.signer {
-            AuthorityKey::Ed25519(anchor)
-                if anchored.contains(&hash) && pinned_anchor != Some(*anchor) =>
-            {
-                let (heads, own_named) = foreign.entry(*anchor).or_default();
+        match unpinned_anchor_of(row.signer, &hash, anchored, pinned_anchor) {
+            Some(anchor) => {
+                let (heads, own_named) = foreign.entry(anchor).or_default();
                 heads.insert(hash);
                 own_named.extend(row.parents.iter().copied());
             }
-            _ => {
+            None => {
                 main.insert(hash);
                 named.extend(row.parents.iter().copied());
             }
@@ -599,6 +597,26 @@ pub(super) fn main_log_heads(
         })
         .collect();
     (main, foreign)
+}
+
+/// The anchor whose own heads a valid main-log row joins in
+/// [`main_log_heads`]: its signer, when the row is one of that anchor's rows
+/// and this install does not pin that anchor. None for a row whose heads are
+/// the main log's.
+pub(super) fn unpinned_anchor_of(
+    signer: &AuthorityKey,
+    hash: &AuthorityEntryHash,
+    anchored: &BTreeSet<AuthorityEntryHash>,
+    pinned_anchor: Option<[u8; 32]>,
+) -> Option<[u8; 32]> {
+    match signer {
+        AuthorityKey::Ed25519(anchor)
+            if anchored.contains(hash) && pinned_anchor != Some(*anchor) =>
+        {
+            Some(*anchor)
+        }
+        _ => None,
+    }
 }
 
 /// The live world edits, grant travel choices, owner and person choices and
