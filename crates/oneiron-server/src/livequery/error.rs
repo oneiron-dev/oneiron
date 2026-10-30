@@ -30,7 +30,11 @@ pub(crate) struct AppError {
     /// named any (FIX 7398).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     reason_codes: Vec<String>,
-    #[serde(default, rename = "legal_hold", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "legal_hold",
+        skip_serializing_if = "Option::is_none"
+    )]
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 

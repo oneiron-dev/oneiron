@@ -427,6 +427,7 @@ impl ConsolidationExecutorFactory {
             HostInferenceBinding::Advertised {
                 model,
                 locality: oneiron::ModelLocality::OnDevice,
+                keyless: false,
             },
             None,
             sink,
