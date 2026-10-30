@@ -21,6 +21,7 @@ pub(crate) use archive_delete::{
 };
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
+pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
 pub(crate) use connect_grant::{
     grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
     require_one_connect_per_peer,
