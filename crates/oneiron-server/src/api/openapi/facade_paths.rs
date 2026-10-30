@@ -135,6 +135,9 @@ fn facade_error_schema() -> Value {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "The refusal's stable reason codes, in its producer's order, when it named any."
+                    },
+                    "legal_hold": {
+                        "$ref": "#/components/schemas/LegalHoldNoticeSchema"
                     }
                 }
             },

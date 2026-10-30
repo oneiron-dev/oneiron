@@ -36,7 +36,7 @@ pub(crate) async fn vault_secrets_lift_history(
     };
     let server = Arc::clone(server);
     let destination = auth.destination();
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         secret_lift_as_owner_toward(server.vault(), &owner, &input, &destination)
             .map_err(MemoryError::from)
     })

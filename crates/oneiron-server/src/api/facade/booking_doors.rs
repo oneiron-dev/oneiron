@@ -34,7 +34,7 @@ pub(crate) async fn vault_booking_page_token(
         return refused(refusal);
     }
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         let Ok(page_ref) = EntityId::from_hex(input.page_ref.trim()) else {
             return refused(MemoryError::bad_request("invalid booking page_ref"));
         };

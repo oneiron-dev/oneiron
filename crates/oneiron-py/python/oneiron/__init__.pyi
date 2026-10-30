@@ -395,6 +395,7 @@ class OneironError(RuntimeError):
     resets_at: tuple[int, ...] | None
     # The refusal's stable reason codes, in its producer's order (FIX 7398).
     reason_codes: tuple[str, ...] | None
+    legal_hold: Facade.LegalHoldNotice | None
     def __init__(
         self,
         code: str,
@@ -405,6 +406,7 @@ class OneironError(RuntimeError):
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
+        legal_hold: Facade.LegalHoldNotice | None = None,
     ) -> None: ...
 
 class Oneiron:
@@ -593,6 +595,8 @@ class Oneiron:
         def slim(self) -> "Oneiron._VaultSlimVerbs": ...
         @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
+        @property
+        def outbox(self) -> "Oneiron._VaultOutboxVerbs": ...
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs": ...
         @property
@@ -1128,8 +1132,15 @@ class Oneiron:
             """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> Facade.ExportAnswer: ...
+        @property
+        def transfer(self) -> "Oneiron._VaultExportTransferVerbs": ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
+    class _VaultExportTransferVerbs:
+        def read(self, spec: Facade.ExportTransferReadRequest) -> Facade.ExportTransferPiece:
+            """Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."""
+        def release(self, spec: Facade.ExportTransferReleaseRequest) -> Facade.ExportTransferReleased:
+            """Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."""
     class _VaultScopeVerbs:
         def position(self, spec: Facade.RecordPositionRequest) -> Facade.ScopedReadResult[Facade.RecordPosition | None]:
             """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
@@ -1216,6 +1227,8 @@ class Oneiron:
             """Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration."""
         def disarm(self, spec: Facade.DisarmTurnProgram) -> bool:
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
+        def rebind(self, spec: Facade.TurnProgramRebindRequest) -> Facade.TurnProgramRebindReceipt:
+            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
         def admission(self, spec: Facade.TurnProgramAdmissionRequest) -> Facade.TurnProgramAdmissionView | None:
             """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
     class _VaultWeaveVerbs:
@@ -1654,6 +1667,14 @@ class Oneiron:
             """Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."""
         def dial(self, spec: Facade.MeshDialRequest) -> Facade.MeshPathReceipt:
             """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
+    class _VaultOutboxVerbs:
+        @property
+        def diverged(self) -> "Oneiron._VaultOutboxDivergedVerbs": ...
+    class _VaultOutboxDivergedVerbs:
+        def list(self, spec: Facade.EmptyRequest) -> Facade.OutboxDivergedPage:
+            """The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."""
+        def answer(self, spec: Facade.OutboxDivergedAnswerRequest) -> Facade.OutboxDivergedAnswerReceipt:
+            """The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."""
     class _VaultInspectionVerbs:
         def resolve(self, spec: Facade.InspectionResolveRequest) -> Facade.InspectionResolved:
             """Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."""
@@ -2563,6 +2584,8 @@ class Oneiron:
     class _VaultCodeOriginMirrorVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorView:
             """Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."""
+        def plan(self, spec: Facade.OriginMirrorPlanRequest) -> Facade.OriginMirrorPlanView:
+            """Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review."""
         def set(self, spec: Facade.OriginMirrorSetRequest) -> Facade.OriginMirrorTarget:
             """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."""
         def strategy(self, spec: Facade.OriginMirrorStrategyRequest) -> Facade.OriginMirrorTarget:
@@ -3592,6 +3615,8 @@ class Oneiron:
     class _SelfGrantsVerbs:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
             """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
+        def asked(self, spec: Facade.GrantAskedRequest) -> Facade.GrantAskedPage:
+            """Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."""
         def answer(self, spec: Facade.GrantAnswerRequest) -> Facade.GrantAnswered:
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
     class _SelfBudgetVerbs:

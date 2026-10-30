@@ -560,6 +560,12 @@ pub struct ArchiveSideWithheld {
     pub family: ArchiveSideFamily,
     pub owner: Option<String>,
     pub reason: ArchiveSideWithheldReason,
+    /// The records a row held out alone names beside its owner, each one
+    /// the archive carries (FIX 11128): a projection that cuts one of them
+    /// judges the owner's group not whole, as a fresh export of the kept
+    /// records does. Empty for a family held out whole.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub carriers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -576,13 +582,15 @@ pub enum ArchiveSideWithheldReason {
 }
 
 /// One stored row the archive carries: its table, its key after the table's
-/// prefix, its stored value and the entity it travels with.
+/// prefix, its stored value, the entity it travels with and the carriers it
+/// names beside that entity (known to the export; empty as read back).
 #[derive(Debug, Clone)]
 pub(crate) struct SideRowBytes {
     pub(crate) family: ArchiveSideFamily,
     pub(crate) key: Vec<u8>,
     pub(crate) value: Vec<u8>,
     pub(crate) owner: Option<EntityId>,
+    pub(crate) carriers: Vec<EntityId>,
 }
 
 impl SideRowBytes {
@@ -653,12 +661,14 @@ impl SideRowBytes {
             && crate::batch::secret_scan::scan_file_content("", &self.value).is_some()
     }
 
-    /// The manifest entry of this row held out of the archive.
+    /// The manifest entry of this row held out of the archive, with the
+    /// carriers it names.
     pub(crate) fn withheld(&self, reason: ArchiveSideWithheldReason) -> ArchiveSideWithheld {
         ArchiveSideWithheld {
             family: self.family,
             owner: self.owner.as_ref().map(EntityId::to_hex),
             reason,
+            carriers: self.carriers.iter().map(EntityId::to_hex).collect(),
         }
     }
 }
@@ -704,6 +714,7 @@ impl ArchiveSideRow {
             key,
             value,
             owner: self.owner.as_deref().map(parse_id).transpose()?,
+            carriers: Vec::new(),
         })
     }
 
@@ -767,11 +778,16 @@ pub(crate) fn archive_side_rows_in_txn(
         .zip(&travels)
         .filter_map(|((family, key, value), (_, travel))| {
             let owner = carried(family, travel, &groups, included, on_device, &mut held_out)?;
+            let carriers = match travel {
+                Travel::With(_, carriers) => carriers.clone(),
+                Travel::Broken(_) | Travel::Vault | Travel::Orphan => Vec::new(),
+            };
             Some(SideRowBytes {
                 family,
                 key,
                 value,
                 owner,
+                carriers,
             })
         })
         .collect();
@@ -785,8 +801,10 @@ pub(crate) fn archive_side_rows_in_txn(
 /// reads them, and a record's rows of one group stay together or not at all.
 /// `withheld`, the archive's list already cut to the kept records, then names
 /// what a fresh export of them names: each family of a kept record whose group
-/// does not stay whole, a row the export held out alone among them too. A
-/// vault-wide row stays nowhere: a records archive leaves this device.
+/// does not stay whole, a row the export held out alone among them too. A row
+/// held out alone is not in the archive, so its entry's carriers judge its
+/// group with the rest (FIX 11128): one not kept leaves the group not whole.
+/// A vault-wide row stays nowhere: a records archive leaves this device.
 /// `files` reads a file a row names.
 pub(crate) fn project_side_rows(
     rows: &[ArchiveSideRow],
@@ -810,7 +828,19 @@ pub(crate) fn project_side_rows(
             context.travel(row.family, &row.key, &row.value)?,
         ));
     }
-    let groups = whole_groups(&travels, kept);
+    let mut groups = whole_groups(&travels, kept);
+    for entry in withheld.iter() {
+        let Some(owner) = entry.owner.as_deref().map(parse_id).transpose()? else {
+            continue;
+        };
+        let mut whole = kept.contains(&owner);
+        for carrier in &entry.carriers {
+            whole &= kept.contains(&parse_id(carrier)?);
+        }
+        if !whole {
+            groups.insert((entry.family.spec().group, owner), false);
+        }
+    }
     let mut held_out = BTreeSet::new();
     let stays: Vec<bool> = travels
         .iter()
@@ -899,6 +929,7 @@ fn incomplete(
             family,
             owner: Some(owner.to_hex()),
             reason: ArchiveSideWithheldReason::Incomplete,
+            carriers: Vec::new(),
         })
 }
 

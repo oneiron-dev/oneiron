@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
+
+if TYPE_CHECKING:
+    from .facade_types import LegalHoldNotice
 
 from ._native import NativeClient as _NativeClient
 
@@ -56,6 +59,7 @@ class OneironError(RuntimeError):
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
+        legal_hold: LegalHoldNotice | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -70,6 +74,7 @@ class OneironError(RuntimeError):
         self.resets_at = tuple(resets_at) if resets_at is not None else None
         # The refusal's stable reason codes, as its producer named them (FIX 7398).
         self.reason_codes = tuple(reason_codes) if reason_codes is not None else None
+        self.legal_hold = legal_hold
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -109,6 +114,8 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             if isinstance(reason_codes, list) and all(isinstance(entry, str) for entry in reason_codes)
             else None
         )
+        legal_hold = payload.get("legal_hold")
+        legal_hold = legal_hold if isinstance(legal_hold, dict) else None
         return OneironError(
             payload["code"],
             payload["message"],
@@ -118,6 +125,7 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             retry_after,
             resets_at,
             reason_codes,
+            legal_hold,
         )
     return OneironError(
         "INTERNAL_SERVER_ERROR",
@@ -654,6 +662,9 @@ class Oneiron:
         @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs":
             return Oneiron._VaultMeshVerbs(self._client)
+        @property
+        def outbox(self) -> "Oneiron._VaultOutboxVerbs":
+            return Oneiron._VaultOutboxVerbs(self._client)
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs":
             return Oneiron._VaultInspectionVerbs(self._client)
@@ -1527,9 +1538,21 @@ class Oneiron:
         def __call__(self, format: str | None = None) -> dict[str, Any]:
             """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
+        @property
+        def transfer(self) -> "Oneiron._VaultExportTransferVerbs":
+            return Oneiron._VaultExportTransferVerbs(self._client)
         def scoped(self, spec):
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
             return json.loads(_translate(lambda: self._client.vault_export_scoped(json.dumps(spec))))
+    class _VaultExportTransferVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."""
+            return json.loads(_translate(lambda: self._client.vault_export_transfer_read(json.dumps(spec))))
+        def release(self, spec):
+            """Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."""
+            return json.loads(_translate(lambda: self._client.vault_export_transfer_release(json.dumps(spec))))
     class _VaultScopeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1689,6 +1712,9 @@ class Oneiron:
         def disarm(self, spec):
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_disarm(json.dumps(spec))))
+        def rebind(self, spec):
+            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_rebind(json.dumps(spec))))
         def admission(self, spec):
             """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_admission(json.dumps(spec))))
@@ -2433,6 +2459,21 @@ class Oneiron:
         def dial(self, spec):
             """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
             return json.loads(_translate(lambda: self._client.vault_mesh_dial(json.dumps(spec))))
+    class _VaultOutboxVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def diverged(self) -> "Oneiron._VaultOutboxDivergedVerbs":
+            return Oneiron._VaultOutboxDivergedVerbs(self._client)
+    class _VaultOutboxDivergedVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_list(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_answer(json.dumps(spec))))
     class _VaultInspectionVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3999,6 +4040,9 @@ class Oneiron:
         def get(self, spec):
             """Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_get(json.dumps(spec))))
+        def plan(self, spec):
+            """Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_plan(json.dumps(spec))))
         def set(self, spec):
             """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_set(json.dumps(spec))))
@@ -5742,6 +5786,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+        def asked(self, spec):
+            """Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."""
+            return json.loads(_translate(lambda: self._client.self_grants_asked(json.dumps(spec))))
         def answer(self, spec):
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
             return json.loads(_translate(lambda: self._client.self_grants_answer(json.dumps(spec))))

@@ -26,6 +26,7 @@ mod child;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::{ContextSpec, normalize_context_spec, validate_spec_narrows};
+use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::skill::LoadedSkillPack;
@@ -33,6 +34,7 @@ use crate::team::{
     PatternLaunchRunner, PatternLaunchSpec, PatternSkillRef, PlannedIntentView, PlannedSpawnHost,
     PlannedSpawnRequest, SpawnPhase, TeamRunBinding, record_team_start_in_txn,
 };
+use crate::write_envelope::WriteActor;
 
 use super::super::planner::launch_budget;
 use super::super::types::{
@@ -57,15 +59,17 @@ const NOT_FRESH: &str = "a planned launch queues fresh agents only, and its disp
      otherwise";
 
 /// One planned group's launch: the intent it launches, where its leader
-/// goes and on which run, and the leader's context before the plan stamps
-/// it. The owner's leader goes to the root on no run, under the host's root
-/// spend; a leased agent's goes under the attempt it spawns from, on its
-/// run, in the context the agent asked for. Members go under the leader.
+/// goes and on which run, the leader's context before the plan stamps it,
+/// and the payer its pattern run is metered to. The owner's leader goes to
+/// the root on no run, under the host's root spend; a leased agent's goes
+/// under the attempt it spawns from, on its run, in the context the agent
+/// asked for. Members go under the leader.
 struct GroupLaunch<'a> {
     name: &'a IntentName<'a>,
     parent: Option<AttemptId>,
     run_id: Option<String>,
     leader: AgentSpawnContext,
+    payer: WriteActor,
 }
 
 /// Where a group queues: the intent's digest its dedupe keys and team
@@ -110,7 +114,8 @@ impl AgentDispatcher<'_> {
         }
         let name = IntentName::owner(owner, request)?;
         // The owner's prompt verbatim leads the leader's briefing; the leader
-        // goes to the root under the host's root spend scope.
+        // goes to the root under the host's root spend scope, and the owner
+        // pays for the pattern run (FIX 4638).
         let launch = GroupLaunch {
             name: &name,
             parent: None,
@@ -120,6 +125,7 @@ impl AgentDispatcher<'_> {
                 spend: host.spend.cloned(),
                 ..AgentSpawnContext::default()
             },
+            payer: WriteActor::new(owner.actor_for_read(self.vault)?, EdgeActorClass::Human),
         };
         let load = |pattern: &PatternSkillRef| -> Result<LoadedSkillPack> {
             self.root_pattern_pack_in_txn(&self.vault.store.env.read_txn()?, pattern)
@@ -166,7 +172,7 @@ impl AgentDispatcher<'_> {
             // A team's start is frozen once; a frozen one never runs again.
             Some(pattern) if planned.spec().is_none() => {
                 let pack = || load(&pattern);
-                match self.start_pattern(launch.name, runner, &planned, prompt, pack, at)? {
+                match self.start_pattern(&launch, runner, &planned, prompt, pack, at)? {
                     LaunchStand::Planned(planned) => planned,
                     LaunchStand::Settled(view) => return Ok(*view),
                 }
@@ -179,16 +185,16 @@ impl AgentDispatcher<'_> {
     /// Runs a planned team's pattern skill and freezes the start it writes
     /// with the pack it ran on. The exact revision the plan froze is read by
     /// `load` first, and one that moved is kept as the intent's refusal. The
-    /// runner runs with no writer held. Its own refusal, an
-    /// [`Error::Refused`] that names what to fund or configure, answers as
-    /// it is, as does its wait on rested offers,
+    /// runner runs with no writer held, metered to the launch's payer. Its
+    /// own refusal, an [`Error::Refused`] that names what to fund or
+    /// configure, answers as it is, as does its wait on rested offers,
     /// [`Error::ProviderUnavailable`]; any other error it returns is a host
     /// fault, logged and answered with a fixed refusal. Either, or a start that does not brief
     /// the whole team, leaves the intent planned, so the next ask runs it
     /// again.
     fn start_pattern(
         &self,
-        name: &IntentName<'_>,
+        launch: &GroupLaunch<'_>,
         runner: Option<&dyn PatternLaunchRunner>,
         planned: &PlannedLaunch,
         prompt: &str,
@@ -199,13 +205,14 @@ impl AgentDispatcher<'_> {
         let pack = match load() {
             Ok(pack) => pack,
             Err(error) => {
-                let view = self.keep_refusal(name, planned, error, PATTERN_MOVED.to_owned(), at)?;
+                let moved = PATTERN_MOVED.to_owned();
+                let view = self.keep_refusal(launch.name, planned, error, moved, at)?;
                 return Ok(LaunchStand::Settled(Box::new(view)));
             }
         };
         let plan = planned.plan()?;
         let start = runner
-            .run(&pack, &plan.asked, prompt, &plan.plan)
+            .run(&pack, &plan.asked, prompt, &plan.plan, &launch.payer)
             .map_err(|error| {
                 tracing::warn!(
                     skill = %pack.entity.to_hex(),
@@ -221,7 +228,7 @@ impl AgentDispatcher<'_> {
                 }
             })?;
         check_start(&start, plan.plan.shape.width)?;
-        self.freeze_pattern_launch(name, start, &pack, at)
+        self.freeze_pattern_launch(launch.name, start, &pack, at)
     }
 
     /// Launches a planned intent as one group. The leader's context resolves
@@ -242,6 +249,7 @@ impl AgentDispatcher<'_> {
             parent,
             run_id,
             mut leader,
+            payer: _,
         } = launch;
         let plan = planned.plan()?;
         let start = planned.spec();

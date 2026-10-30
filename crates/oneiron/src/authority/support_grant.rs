@@ -342,6 +342,7 @@ impl Vault {
             },
         )?;
         txn.commit()?;
+        self.store.notify_credential_revocations();
         Ok(SupportGrantRevoked {
             slip_id,
             holder: grant.holder,

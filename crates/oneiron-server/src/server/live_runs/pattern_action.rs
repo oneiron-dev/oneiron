@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use oneiron::agent_def::AgentDefinition;
-use oneiron::agent_dispatch::{AgentDispatcher, SpawnNeed, SpendScopeId, TeamPlan};
+use oneiron::agent_dispatch::{SpawnNeed, SpendScopeId, TeamPlan};
 use oneiron::attempt_queue::AttemptRecord;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::seat::ModelSeat;
@@ -25,6 +25,7 @@ use oneiron::team::{PatternLaunchRunner, PatternLaunchSpec};
 use oneiron::{BudgetGuard, Result, Vault, WriteActor};
 
 use super::LiveRunEntry;
+use crate::ai_host::live_lease::LiveLease;
 use crate::mcp::{McpCodeModeProvider, ScopeMeter};
 use crate::server::SyncServer;
 use crate::server::core::pattern_workflow::stop;
@@ -115,10 +116,11 @@ impl PatternLaunchRunner for ActionPatternRunner {
         asked: &SpawnNeed,
         prompt: &str,
         plan: &TeamPlan,
+        caller: &WriteActor,
     ) -> Result<PatternLaunchSpec> {
         let Some(scope) = &self.spend else {
             let line = self.provider.host_meter().map(|guard| (guard, None));
-            return self.agent_runner(line)?.run(skill, asked, prompt, plan);
+            return self.agent_runner(line)?.run(skill, asked, prompt, plan, caller);
         };
         // The open's own error can name the payer the scope bills, who may
         // not be the caller: the host log keeps it, the refusal names the
@@ -132,10 +134,20 @@ impl PatternLaunchRunner for ActionPatternRunner {
                 );
                 stop(LINE_CLOSED)
             })?;
-        let started = self
-            .agent_runner(Some((guard.clone(), payer)))
-            .and_then(|agent| agent.run(skill, asked, prompt, plan));
-        AgentDispatcher::new(&self.vault).record_guard_spend(scope, guard.read().used_units)?;
+        let live = LiveLease::new(
+            &self.vault,
+            Some(scope.clone()),
+            guard.clone(),
+            guard.read().limit_units,
+            0,
+        );
+        let started = self.agent_runner(Some((guard, payer))).and_then(|agent| {
+            // The start makes one model call, the capture: its look is
+            // taken here, just before it.
+            live.book_and_revise();
+            agent.run(skill, asked, prompt, plan, caller)
+        });
+        live.book_rest()?;
         started
     }
 }

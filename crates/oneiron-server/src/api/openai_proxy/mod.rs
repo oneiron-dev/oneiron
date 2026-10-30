@@ -179,6 +179,9 @@ async fn complete_as(
         // Just before the message it was recalled for.
         request.messages.insert(newest, memory);
     }
+    // Every call the answer makes carries the rows its prompt was read
+    // from (FIX 11312); with nothing injected the run stays unsourced.
+    let run = run.sourced(injected.then(|| producers.to_vec()));
 
     // The exchange names the model id the call resolved to, never an alias.
     let model = request.model.to_string();
@@ -341,6 +344,7 @@ fn model_request(
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: served_at,
+            host_keyless: false,
             seat_effort: None,
         },
         messages: chat.messages.iter().map(ChatMessage::to_llm).collect(),

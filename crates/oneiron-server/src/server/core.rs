@@ -9,7 +9,7 @@ use oneiron::SyncEngineContext;
 use oneiron::sync::bridge::{LiveQueryTee, Materializer};
 use oneiron::sync::lease::ROOT_LEASES_MAP;
 use oneiron::sync::schema::{
-    add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
+    add_window_to_root, init_window_list, insert_root_schema_version, read_window_list,
 };
 use oneiron::sync::server_state;
 use oneiron::sync::{EphemeralStore, WindowManager};
@@ -20,7 +20,7 @@ use crate::config::SyncServerConfig;
 use crate::embedder::EmbedderSlot;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
 use crate::oneironer::TaggerSlot;
-use crate::usage::UsageLedger;
+use crate::usage::{RetrievalMeterBuffer, UsageLedger};
 
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
@@ -84,7 +84,9 @@ pub struct SyncServer {
     /// Process-local session component for lifecycle job debounce keys.
     pub(super) lifecycle_session_id: u64,
     /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
-    pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
+    /// Held only to insert or remove a key, never across an await, so a
+    /// job's guard ends it when dropped ([`super::lifecycle::LifecycleJob`]).
+    pub(super) lifecycle_in_flight: std::sync::Mutex<HashSet<LifecycleJobKey>>,
     /// Housekeeping passes in flight, scheduled or asked for by the owner.
     pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
     /// Server configuration.
@@ -117,6 +119,9 @@ pub struct SyncServer {
     pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
     /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    /// The recall doors' buffered retrieval rows, flushed in one grouped write
+    /// per tick (FIX 11011).
+    pub(crate) retrieval_buffer: RetrievalMeterBuffer,
     /// Stable across served runs and policy refreshes; empty until the host grants.
     host_account: Arc<oneiron::llm::run_admission::HostAccount>,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,

@@ -21,9 +21,11 @@ async fn owned<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let owner = owner_proof(auth, server, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(server.vault(), &owner).map_err(MemoryError::from))
-        .await
-        .map_err(|_| internal(verb))?
+    super::clock_ingress::run_blocking(move || {
+        act(server.vault(), &owner).map_err(MemoryError::from)
+    })
+    .await
+    .map_err(|_| internal(verb))?
 }
 
 /// [`owned`] for a door whose answer is ids and control metadata only: the

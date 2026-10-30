@@ -93,11 +93,20 @@ pub struct WholeVaultExportReceipt {
     /// binding as the snapshot read it, for the export's audit and notices
     /// (FIX 6427, 6681). Never serialized.
     pub(crate) thread_roots: crate::workspace_roster::ExportThreadRoots,
+    /// FIX 4624(b): each custody value the archive carries as its handle
+    /// because it did not open here, and where its holder's sealed copy
+    /// stands once the export's audit recorded it.
+    pub(crate) holder_requests: Vec<crate::authority::HolderExportRequest>,
 }
 
 impl WholeVaultExportReceipt {
     pub fn diary_reads(&self) -> &[super::ExportDiaryRead] {
         &self.diary_reads
+    }
+    /// FIX 4624(b): each custody value carried as its handle that its holder
+    /// is asked for, and where that stands.
+    pub fn holder_requests(&self) -> &[crate::authority::HolderExportRequest] {
+        &self.holder_requests
     }
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest

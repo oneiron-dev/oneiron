@@ -153,6 +153,7 @@ fn answer_text(response: &LlmResponse) -> String {
 fn lens_request(
     model: ModelId,
     locality: ModelLocality,
+    keyless: bool,
     instruction: String,
     text: String,
 ) -> Result<LlmRequest> {
@@ -173,6 +174,7 @@ fn lens_request(
                 schema: crate::claim::weave_lens_plan_schema()?,
             },
             locality,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -216,6 +218,7 @@ pub fn live_weave_lens_request(
     let request = lens_request(
         model,
         locality,
+        false,
         live.instruction.clone(),
         live.input.clone(),
     )?;
@@ -305,7 +308,8 @@ pub async fn run_weave_lens(
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
-    let request = lens_request(model.model.clone(), locality, instruction, text)?;
+    let keyless = model.inference.selected_keyless();
+    let request = lens_request(model.model.clone(), locality, keyless, instruction, text)?;
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?

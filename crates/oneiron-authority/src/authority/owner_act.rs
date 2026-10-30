@@ -105,7 +105,9 @@ pub enum OwnerActKind {
     /// it stood.
     PolicySetting,
     /// A whole-vault export the owner made (Engine 10-19 02:4x; `ExportAct`,
-    /// FIX 4624). It changes nothing, so its `seen` is zero.
+    /// FIX 4624). It changes nothing, so its `seen` is zero. An export secret
+    /// request (FIX 4624(b)) carries the same act, as the export door
+    /// authenticated it, to the holder of a secret the export could not open.
     Export,
     /// The owner's pick of the vault's home node (`HomeNodePick`; DOOR-101
     /// PR2a). Its `seen` is over the vault's live picks.

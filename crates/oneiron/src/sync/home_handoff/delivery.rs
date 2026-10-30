@@ -51,6 +51,9 @@ pub(crate) struct FrozenHandoff {
     /// The endpoint captured for its target with the move; `None` when none
     /// was named for that node.
     pub(crate) endpoint: Option<String>,
+    /// FIX 8875: the refs of the erasable keys its actors' content is sealed
+    /// under, which go to its target before its parts.
+    pub(crate) keys: Vec<String>,
 }
 
 /// What the source's worker does next for the state this node holds or
@@ -173,6 +176,7 @@ fn frozen_in_txn(
             .route
             .filter(|route| route.to == target)
             .and_then(|route| route.endpoint),
+        keys: transfer.keys,
     }))
 }
 

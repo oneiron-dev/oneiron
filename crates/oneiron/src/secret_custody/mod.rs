@@ -73,6 +73,7 @@ mod control;
 mod doors;
 mod floor;
 mod found_keys;
+pub(crate) mod holder_export;
 mod known_values;
 mod masked_files;
 mod owner_door;
