@@ -6,7 +6,8 @@
 //! here as a call runs, in the same sandbox and under the same contract.
 //!
 //! An erase reaches them ([`erase`]): an erased caller is kept in its erased
-//! form, an erased skill's cases go, and so does a case naming an erased row.
+//! form, an erased skill's cases go, and so does a case naming an erased row,
+//! found through the cases' [`index`].
 
 use std::io::Read;
 use std::sync::Arc;
@@ -29,9 +30,11 @@ use crate::side_table::{self, Named, SideTable};
 use crate::skill::helper::CallableCase;
 use crate::skill::{SkillRecord, SkillRole};
 use crate::skill_hub::HubFile;
+use crate::store::Store;
 use crate::{EntityId, Vault};
 
 mod erase;
+mod index;
 
 pub(crate) use self::erase::{erase_callable_case_actor_in_txn, erase_callable_cases_in_txn};
 
@@ -129,12 +132,21 @@ pub(super) fn freeze_callable_case(
     vault.with_write_txn_grouped(|txn| {
         // The side-row wall admits the texts as it does other caller text.
         CASES.put(&vault.store, txn, &key, &row)?;
+        index::index_case_in_txn(&vault.store, txn, &key, &row)?;
         let kept = CASES.scan_keys(&vault.store, &*txn, skill.as_bytes())?;
         for old in kept.iter().take(kept.len().saturating_sub(FROZEN_CASES_PER_SKILL)) {
-            CASES.delete(&vault.store, txn, old)?;
+            delete_case_in_txn(&vault.store, txn, old)?;
         }
         Ok(())
     })
+}
+
+/// Deletes the case under `key` with its index entries (FIX 12180).
+fn delete_case_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>, key: &Vec<u8>) -> Result<()> {
+    let row = CASES.get_lenient(store, wtxn, key)?;
+    index::unindex_case_in_txn(store, wtxn, key, row.as_ref())?;
+    CASES.delete(store, wtxn, key)?;
+    Ok(())
 }
 
 /// The frozen cases the helper gate scores `helper` on (FIX 12093): the

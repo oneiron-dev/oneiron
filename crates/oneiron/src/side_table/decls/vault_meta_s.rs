@@ -359,6 +359,10 @@ side_tables! {
     /// at + u64be step seq + receipt string.
     SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
         [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
+    /// The frozen callable cases by what they were made from, so an erase reads only the cases
+    /// naming its row (FIX 12180). Key: b'S' + source id16 + case key, or, when the sources are
+    /// unknown, b'R' + u16be receipt length + receipt string + case key. Value: empty.
+    SKILL_CALLABLE_CASE_INDEX: VaultMeta b"skill:callable_case_index:v1:" Raw;
     /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
     /// the exact content hash it scored). Key: id16 (skill entity).
     SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
