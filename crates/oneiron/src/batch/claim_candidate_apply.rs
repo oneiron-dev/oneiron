@@ -245,6 +245,12 @@ pub(super) fn reconcile_claim_of_edges(
     }
 
     for subject in &stale_subjects {
+        crate::channel_identity::note_claim_delete_for_rekey(
+            store,
+            wtxn,
+            claim_id,
+            Some(*subject),
+        )?;
         apply_delete_edge(store, wtxn, *claim_id, EdgeKind::ClaimOf, *subject)?;
     }
     Ok(stale_subjects)
