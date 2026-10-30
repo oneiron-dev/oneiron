@@ -20,6 +20,8 @@
 //! the store identity only. Identity mappings are recorded too, so every
 //! copy object names its original; a copy object may stand for several
 //! originals, and nothing reads a newest or equal-content guess into it.
+//! Each copy commit also names every original it stands for in one keyed
+//! record (FIX 10275), so a received push's base is one read.
 
 #![allow(
     dead_code,
@@ -81,7 +83,8 @@ pub(crate) enum RepoProjectionRecord {
         roots: Vec<(String, GitOid)>,
         /// An admitted lease's original pin, copied as a private root.
         private_root: Option<GitOid>,
-        /// Every readable mark the copy was made under, sorted.
+        /// Every readable mark naming a blob of the copy's closure, sorted
+        /// (FIX 9105): a mark no blob of it carries never moves the copy.
         marks: Vec<EntityId>,
         /// Who the copy serves (FIX 9328).
         audience: RepoProjectionAudience,
@@ -135,6 +138,12 @@ pub(crate) enum RepoProjectionRecord {
     /// (FIX 7608 pre-flip, FIX 10271): a companion of its checkout
     /// binding, never a change of it.
     CheckoutRecipient(RepoProjectionCheckoutRecipient),
+    /// Every ORIGINAL commit one copy commit stands for, sorted (FIX
+    /// 10275): the commit object records keyed by their copy.
+    CommitOriginals {
+        copy: GitOid,
+        originals: Vec<GitOid>,
+    },
 }
 
 /// The recipient a run's checkout lease was bound for: the lease's
@@ -468,11 +477,7 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
             original,
             occurrence,
             ..
-        } => Value::Array(vec![
-            Value::from("object"),
-            oid(original),
-            occurrence_value(occurrence.as_deref()),
-        ]),
+        } => object_key(original, occurrence.as_deref()),
         RepoProjectionRecord::Ref { name, .. } => {
             Value::Array(vec![Value::from("ref"), Value::from(name.as_str())])
         }
@@ -517,7 +522,22 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
         RepoProjectionRecord::CheckoutRecipient(recipient) => {
             checkout_recipient_key(&recipient.checkout, recipient.epoch)
         }
+        RepoProjectionRecord::CommitOriginals { copy, .. } => commit_originals_key(copy),
     }
+}
+
+/// The identity an object record's id is derived from.
+fn object_key(original: &GitOid, occurrence: Option<&[u8]>) -> Value {
+    Value::Array(vec![
+        Value::from("object"),
+        oid(original),
+        occurrence_value(occurrence),
+    ])
+}
+
+/// The identity a copy commit's originals record's id is derived from.
+fn commit_originals_key(copy: &GitOid) -> Value {
+    Value::Array(vec![Value::from("commit_originals"), oid(copy)])
 }
 
 /// The identity a checkout recipient's id is derived from.
