@@ -4,7 +4,6 @@
 //! path the row names under the same origin (scheme, host and port), with
 //! the key, which goes back only to the host it was already sent to.
 
-use std::future::Future;
 use std::io;
 use std::time::Duration;
 
@@ -15,7 +14,8 @@ use reqwest::{Certificate, Client, Method, Url};
 use tokio::io::AsyncWrite;
 use zeroize::Zeroizing;
 
-use crate::frame::{STREAM_CHUNK, write_chunk, write_stream_end, write_stream_header};
+use crate::deadline::{CallDeadline, within};
+use crate::frame::{STREAM_CHUNK, write_chunk, write_reply, write_stream_end, write_stream_header};
 use crate::strip::{KeyWatch, admits, contains_key, strip};
 use crate::{
     CallHeader, Failure, MAX_BODY, MAX_SECRET, MAX_STREAM, Outcome, PROTOCOL_VERSION, Refusal,
@@ -33,7 +33,10 @@ const MAX_REPLY_HEADER_BYTES: usize = 32 << 10;
 /// How the broker's client sends.
 #[derive(Debug, Clone)]
 pub struct SendPolicy {
-    /// The whole call's time limit, from connect to the last reply byte.
+    /// The send's time limit. A call's deadline is this and one frame
+    /// allowance from the moment the broker accepts it: the wait for a slot,
+    /// the frame read and the send, to the last reply byte, end within this
+    /// much of it (FIX 8559).
     pub timeout: Duration,
     /// Extra trust anchors (PEM) for a self-hosted provider's private CA,
     /// beside the WebPKI and the platform roots.
@@ -43,6 +46,8 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
+    /// [`SendPolicy::timeout`].
+    timeout: Duration,
 }
 
 impl Sender {
@@ -67,21 +72,28 @@ impl Sender {
         }
         Ok(Self {
             client: builder.build()?,
+            timeout: policy.timeout,
         })
+    }
+
+    /// The deadline of a call accepted now.
+    pub(crate) fn deadline(&self) -> CallDeadline {
+        CallDeadline::start(self.timeout)
     }
 
     /// Sends `body` to `url` once with the key in the shape's auth header,
     /// then strips the key from what came back. `call` has passed
-    /// [`CallHeader::check`].
+    /// [`CallHeader::check`]. The send ends by `deadline`'s send limit.
     pub(crate) async fn send(
         &self,
         call: &CallHeader,
         url: Url,
         body: &[u8],
         secret: &[u8],
+        deadline: CallDeadline,
     ) -> (Outcome, Zeroizing<Vec<u8>>) {
         let empty = Zeroizing::new(Vec::new());
-        let mut response = match self.reach(call, url, body, secret).await {
+        let mut response = match self.reach(call, url, body, secret, deadline).await {
             Ok(response) => response,
             Err(outcome) => return (outcome, empty),
         };
@@ -115,8 +127,9 @@ impl Sender {
     /// in the body is replaced at its bytes as the buffered strip replaces
     /// it, and the stream goes on (FIX 6103): nothing is cut for holding the
     /// key. So the key stays until the last chunk is read. `checked` is the call's
-    /// [`CallHeader::check`]. Each write has `deadline`; a daemon that takes
-    /// longer is gone, and the reply is dropped.
+    /// [`CallHeader::check`]. The send ends by `deadline`'s send limit, and
+    /// each write within its frame allowance and the deadline; a daemon that
+    /// takes longer is gone, and the reply is dropped.
     pub(crate) async fn stream<W: AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
@@ -124,7 +137,7 @@ impl Sender {
         body: &[u8],
         secret: &[u8],
         writer: &mut W,
-        deadline: Duration,
+        deadline: CallDeadline,
     ) {
         let _ = self
             .stream_to(call, checked, body, secret, writer, deadline)
@@ -138,30 +151,22 @@ impl Sender {
         body: &[u8],
         secret: &[u8],
         writer: &mut W,
-        deadline: Duration,
+        deadline: CallDeadline,
     ) -> io::Result<()> {
-        let header = |outcome| ReplyHeader {
-            version: PROTOCOL_VERSION,
-            call: call.call.clone(),
-            digest: call.digest.clone(),
-            outcome,
-        };
         let reached = match checked {
-            Ok(url) => self.reach(call, url, body, secret).await,
+            Ok(url) => self.reach(call, url, body, secret, deadline).await,
             Err(reason) => Err(Outcome::Refused { reason }),
         };
         let mut response = match reached {
             Ok(response) => response,
-            Err(outcome) => {
-                within(deadline, write_stream_header(writer, &header(outcome))).await?;
-                return within(deadline, write_stream_end(writer, None)).await;
-            }
+            Err(outcome) => return answer(writer, call, outcome, deadline).await,
         };
         let answered = Outcome::Answered {
             status: response.status().as_u16(),
             headers: reply_headers(response.headers(), secret),
         };
-        within(deadline, write_stream_header(writer, &header(answered))).await?;
+        let header = reply(call, answered);
+        within(deadline, write_stream_header(writer, &header)).await?;
         let mut watch = KeyWatch::new(secret);
         let mut cleared = Zeroizing::new(Vec::new());
         let mut read = 0_usize;
@@ -199,16 +204,22 @@ impl Sender {
     /// redirect, follows it once: only to the row's path under the call's own
     /// origin, with the key but none of the call's other headers. Returns the
     /// response whose body is the reply, or the outcome that ends the call
-    /// before one.
+    /// before one. Each request gets only the send's time left, to the last
+    /// reply byte; a call with none left is not sent (FIX 8559).
     async fn reach(
         &self,
         call: &CallHeader,
         url: Url,
         body: &[u8],
         secret: &[u8],
+        deadline: CallDeadline,
     ) -> Result<reqwest::Response, Outcome> {
+        let timed_out = || Outcome::Failed {
+            reason: Failure::Timeout,
+        };
+        let left = deadline.send_left().ok_or_else(timed_out)?;
         let request = self
-            .request(call, url.clone(), body, secret)
+            .request(call, url.clone(), body, secret, left)
             .map_err(|reason| Outcome::Refused { reason })?;
         let mut response = match self.client.execute(request).await {
             Ok(response) => response,
@@ -238,11 +249,13 @@ impl Sender {
             // The same scheme, host and port the key was just sent to, so
             // the key goes along: the provider's download hop asks for it.
             let auth = auth_value(call, secret).map_err(|reason| Outcome::Refused { reason })?;
+            let left = deadline.send_left().ok_or_else(timed_out)?;
             let follow = self
                 .client
                 .get(target)
                 .header(ACCEPT_ENCODING, "identity")
                 .header(call.shape.auth_header(), auth)
+                .timeout(left)
                 .build()
                 .map_err(|_| redirected.clone())?;
             response = self
@@ -268,12 +281,14 @@ impl Sender {
         url: Url,
         body: &[u8],
         secret: &[u8],
+        left: Duration,
     ) -> Result<reqwest::Request, Refusal> {
         let auth = auth_value(call, secret)?;
         let method = Method::from_bytes(call.method.as_bytes()).map_err(|_| Refusal::Method)?;
         let mut builder = self
             .client
             .request(method, url)
+            .timeout(left)
             .header(ACCEPT_ENCODING, "identity")
             .header(call.shape.auth_header(), auth);
         for (name, value) in &call.headers {
@@ -363,11 +378,32 @@ fn failure(error: &reqwest::Error) -> Failure {
     }
 }
 
-/// One write to the daemon, within `deadline`.
-async fn within(deadline: Duration, write: impl Future<Output = io::Result<()>>) -> io::Result<()> {
-    tokio::time::timeout(deadline, write)
-        .await
-        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
+/// The reply header that answers `call` with `outcome`.
+fn reply(call: &CallHeader, outcome: Outcome) -> ReplyHeader {
+    ReplyHeader {
+        version: PROTOCOL_VERSION,
+        call: call.call.clone(),
+        digest: call.digest.clone(),
+        outcome,
+    }
+}
+
+/// Answers `call` with `outcome` and no body, in its shape's reply form: one
+/// segment, or a stream that ends clean at once. Each write is within its
+/// frame allowance and `deadline`.
+pub(crate) async fn answer<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    call: &CallHeader,
+    outcome: Outcome,
+    deadline: CallDeadline,
+) -> io::Result<()> {
+    let header = reply(call, outcome);
+    if call.shape.streams() {
+        within(deadline, write_stream_header(writer, &header)).await?;
+        within(deadline, write_stream_end(writer, None)).await
+    } else {
+        within(deadline, write_reply(writer, &header, &[])).await
+    }
 }
 
 /// Appends `chunk`, growing into a fresh buffer when full so the old one is

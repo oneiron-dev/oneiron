@@ -15,6 +15,7 @@
 
 mod call;
 pub mod cli;
+mod deadline;
 mod digest;
 mod error;
 mod form;

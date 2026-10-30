@@ -48,16 +48,48 @@ async fn read_segment<R: AsyncRead + Unpin>(
     reader: &mut R,
     max: usize,
 ) -> io::Result<Zeroizing<Vec<u8>>> {
+    let len = read_len(reader).await?;
+    read_sized(reader, len, max).await
+}
+
+/// Reads a segment's length word.
+async fn read_len<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<u32> {
     let mut len = [0; 4];
     reader.read_exact(&mut len).await?;
-    let len = usize::try_from(u32::from_be_bytes(len))
-        .ok()
-        .filter(|len| *len <= max)
-        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
+    Ok(u32::from_be_bytes(len))
+}
+
+/// Reads a segment's `len` bytes, `len` at most `max`.
+async fn read_sized<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    len: u32,
+    max: usize,
+) -> io::Result<Zeroizing<Vec<u8>>> {
+    let len = bounded(len, max)?;
     // Sized once, so no reallocation leaves an unwiped copy behind.
     let mut bytes = Zeroizing::new(vec![0; len]);
     reader.read_exact(&mut bytes).await?;
     Ok(bytes)
+}
+
+/// Passes over a segment's `len` bytes, `len` at most `max`, keeping none.
+async fn skip_sized<R: AsyncRead + Unpin>(reader: &mut R, len: u32, max: usize) -> io::Result<()> {
+    bounded(len, max)?;
+    let len = u64::from(len);
+    let skipped = tokio::io::copy(&mut (&mut *reader).take(len), &mut tokio::io::sink()).await?;
+    if skipped == len {
+        Ok(())
+    } else {
+        Err(io::ErrorKind::UnexpectedEof.into())
+    }
+}
+
+/// `len` as a size, when it is at most `max`.
+fn bounded(len: u32, max: usize) -> io::Result<usize> {
+    usize::try_from(len)
+        .ok()
+        .filter(|len| *len <= max)
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
 }
 
 /// Writes one call: its header, its body, then the key.
@@ -84,10 +116,7 @@ pub(crate) struct ReadCall {
 /// Reads one call. Any cut, oversized or undecodable segment is
 /// [`Refusal::Frame`].
 pub(crate) async fn read_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<ReadCall, Refusal> {
-    let header = read_segment(reader, MAX_HEADER)
-        .await
-        .map_err(|_| Refusal::Frame)?;
-    let header: CallHeader = serde_json::from_slice(&header).map_err(|_| Refusal::Frame)?;
+    let header = read_call_header(reader).await?;
     let body = read_segment(reader, MAX_BODY)
         .await
         .map_err(|_| Refusal::Frame)?;
@@ -99,6 +128,29 @@ pub(crate) async fn read_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Re
         body,
         secret,
     })
+}
+
+/// Reads one call's header, then passes over its body, keeping none of it,
+/// and reads its key into a buffer wiped as it drops: for a call answered
+/// without a send (FIX 8559). Any cut, oversized or undecodable segment is
+/// [`Refusal::Frame`].
+pub(crate) async fn skip_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<CallHeader, Refusal> {
+    let header = read_call_header(reader).await?;
+    let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
+    skip_sized(reader, len, MAX_BODY)
+        .await
+        .map_err(|_| Refusal::Frame)?;
+    read_segment(reader, MAX_SECRET)
+        .await
+        .map_err(|_| Refusal::Frame)?;
+    Ok(header)
+}
+
+async fn read_call_header<R: AsyncRead + Unpin>(reader: &mut R) -> Result<CallHeader, Refusal> {
+    let header = read_segment(reader, MAX_HEADER)
+        .await
+        .map_err(|_| Refusal::Frame)?;
+    serde_json::from_slice(&header).map_err(|_| Refusal::Frame)
 }
 
 /// Writes one reply: its header, then its body.
