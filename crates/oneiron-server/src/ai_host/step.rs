@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_run_actor};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
-use oneiron::compaction::output::restore_output;
+use oneiron::compaction::output::{OUTPUT_WINDOW_BYTES, restore_output_window};
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::self_heal::audit::ObjectiveConfession;
@@ -275,7 +275,7 @@ impl StepRunner {
         let briefing = context.briefing.filter(|text| !text.trim().is_empty());
         let mut earlier = Vec::with_capacity(context.workflow_output_refs.len());
         for output in &context.workflow_output_refs {
-            let bytes = restore_output(vault, output.source)?;
+            let bytes = restore_output_window(vault, output.source, OUTPUT_WINDOW_BYTES)?;
             earlier.push(message(
                 LlmMessageRole::User,
                 String::from_utf8_lossy(&bytes).into_owned(),
