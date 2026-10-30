@@ -41254,6 +41254,17 @@ pub enum ContractDiff {
         #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
         after: Option<CommandOutput>,
     },
+    #[serde(rename = "SchemaBytesDrift")]
+    SchemaBytesDrift {
+        #[serde(rename = "contract")]
+        contract: String,
+        #[serde(rename = "offset")]
+        offset: u64,
+        #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
+    },
 }
 
 /// `oneiron::contract_oracle::types::ContractVerdict`.

@@ -6,7 +6,7 @@ mod storage;
 mod types;
 
 pub use graph::{AffectedTests, WorkspaceGraph};
-pub use rust_api::rust_public_names;
+pub use rust_api::{RustPublicNames, rust_public_names};
 pub use storage::ContractOracle;
 pub use types::{
     CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict,
