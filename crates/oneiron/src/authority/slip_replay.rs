@@ -5,6 +5,10 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::{Vault, VaultWriterLease};
 
+mod spent_nonces;
+pub(super) use spent_nonces::SpentKey;
+pub(crate) use spent_nonces::SpentNonces;
+
 /// How far, either way, a proof's signed timestamp may sit from the vault's
 /// proof clock ([`request_now_in_txn`]).
 const WINDOW_SECS: u64 = 60;
@@ -65,6 +69,20 @@ pub(super) fn request_now_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result
         now: proof_floor_in_txn(vault, txn)?.max(vault.store.clock.wall_now()),
         not_before: PROOF_NOT_BEFORE.get(&vault.store, txn, &())?.unwrap_or(0),
     })
+}
+
+/// [`request_now_in_txn`] once an admission has committed the proof clock's
+/// floor, for an admission that takes no writer (FIX 12023 W0). `None`
+/// before the first: that admission's writer reads the recording clock's
+/// floor as it observes it, which a snapshot cannot.
+pub(super) fn committed_request_now_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<ProofClock>> {
+    if PROOF_CLOCK_FLOOR.get(&vault.store, txn, &())?.is_none() {
+        return Ok(None);
+    }
+    request_now_in_txn(vault, txn).map(Some)
 }
 
 /// [`request_now_in_txn`] for the transaction that admits a proof. The
@@ -221,9 +239,12 @@ impl Vault {
         if verified.claims().single_use {
             return Ok(None);
         }
-        // A proof the vault admitted before stays refused on any clock.
-        let admitted = nonce_key(&verified.claims().binding_key, nonce, timestamp);
-        if REPLAY_NONCE.contains(&self.store, &txn, &admitted)? {
+        // A proof the vault admitted before stays refused on any clock, its
+        // row landed or still on its way (FIX 12023 W0).
+        let admitted = SpentKey::of(&verified.claims().binding_key, nonce, timestamp);
+        if REPLAY_NONCE.contains(&self.store, &txn, &admitted.row())?
+            || self.spent_nonces.admitted(&admitted)
+        {
             return Ok(None);
         }
         Ok(Some((
@@ -242,31 +263,39 @@ impl Vault {
 /// would not know a proof `vault` admitted since, nor an owner clock
 /// recovery's mark, so a proof refused here would get in there. Read in
 /// `txn`, under `vault`'s writer, before the swap.
+///
+/// A nonce an admission spent in memory whose row has not landed moved it
+/// too, and once this fence passes no admission spends one in memory on
+/// `vault` again (FIX 12023 W0).
 pub(crate) fn refuse_moved_proof_freshness(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     replacement: &Vault,
 ) -> Result<()> {
-    let their_txn = replacement.store.env.read_txn()?;
-    let mut same = PROOF_CLOCK_FLOOR.get(&vault.store, txn, &())?
-        == PROOF_CLOCK_FLOOR.get(&replacement.store, &their_txn, &())?
-        && PROOF_NOT_BEFORE.get(&vault.store, txn, &())?
-            == PROOF_NOT_BEFORE.get(&replacement.store, &their_txn, &())?;
-    let mut ours_rows = REPLAY_NONCE.iter_from(&vault.store, txn, &[])?;
-    let mut their_rows = REPLAY_NONCE.iter_from(&replacement.store, &their_txn, &[])?;
-    while same {
-        match (
-            ours_rows.next().transpose()?,
-            their_rows.next().transpose()?,
-        ) {
-            (None, None) => break,
-            (Some((ours, ())), Some((theirs, ()))) => {
-                same = ours.timestamp == theirs.timestamp && ours.digest_hex == theirs.digest_hex;
+    let rows_match = || -> Result<bool> {
+        let their_txn = replacement.store.env.read_txn()?;
+        let mut same = PROOF_CLOCK_FLOOR.get(&vault.store, txn, &())?
+            == PROOF_CLOCK_FLOOR.get(&replacement.store, &their_txn, &())?
+            && PROOF_NOT_BEFORE.get(&vault.store, txn, &())?
+                == PROOF_NOT_BEFORE.get(&replacement.store, &their_txn, &())?;
+        let mut ours_rows = REPLAY_NONCE.iter_from(&vault.store, txn, &[])?;
+        let mut their_rows = REPLAY_NONCE.iter_from(&replacement.store, &their_txn, &[])?;
+        while same {
+            match (
+                ours_rows.next().transpose()?,
+                their_rows.next().transpose()?,
+            ) {
+                (None, None) => break,
+                (Some((ours, ())), Some((theirs, ()))) => {
+                    same =
+                        ours.timestamp == theirs.timestamp && ours.digest_hex == theirs.digest_hex;
+                }
+                _ => same = false,
             }
-            _ => same = false,
         }
-    }
-    if same {
+        Ok(same)
+    };
+    if vault.spent_nonces.fence(vault, txn, rows_match)? {
         Ok(())
     } else {
         Err(Error::InvalidConfig(
@@ -303,17 +332,6 @@ impl SideKey for NonceKey {
             timestamp: u64::from_str_radix(ts_hex, 16).ok()?,
             digest_hex: digest_hex.to_owned(),
         })
-    }
-}
-
-/// The row an admitted proof leaves: its signed time, and the keyed digest of
-/// the binding key and nonce.
-fn nonce_key(binding_key: &[u8; 32], nonce: &[u8], timestamp: u64) -> NonceKey {
-    let mut material = binding_key.to_vec();
-    material.extend_from_slice(nonce);
-    NonceKey {
-        timestamp,
-        digest_hex: blake3::hash(&material).to_hex().to_string(),
     }
 }
 
@@ -375,6 +393,10 @@ fn unmarked_not_before(oldest: Option<u64>, now: u64) -> u64 {
 /// One row per admitted proof, keyed by its signed timestamp. The timestamp
 /// bounds the table: rows signed a day before the proof clock are evicted in
 /// the same transaction, and a crowded table admits every fresh proof.
+///
+/// A nonce an admission spent in memory is spent, its row landed or not
+/// (FIX 12023 W0), and this writer's own spend is staged there until its
+/// transaction is decided, so no admission spends the nonce beside it.
 pub(super) fn record_nonce(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -384,6 +406,27 @@ pub(super) fn record_nonce(
     clock: ProofClock,
 ) -> Result<()> {
     request_challenge(timestamp, nonce, clock)?;
+    let spent = SpentKey::of(binding_key, nonce, timestamp);
+    if !vault.spent_nonces.stage(vault, spent) {
+        return Err(invalid_authority());
+    }
+    if !put_nonce_row_in_txn(vault, txn, &spent.row(), clock)? {
+        return Err(invalid_authority());
+    }
+    Ok(())
+}
+
+/// The rows the proof `spent` leaves in `txn`, judged on `clock`, which is
+/// committed with them: rows signed a day before the clock are evicted,
+/// `not_before` rises past them, and `spent`'s row is put. `false` when its
+/// row is there already. A writer's spend and the rows of a spend made in
+/// memory (FIX 12023 W0) both write through here.
+fn put_nonce_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    spent: &NonceKey,
+    clock: ProofClock,
+) -> Result<bool> {
     // An evicted proof already fails `request_challenge`, and `clock.now`
     // never runs back (callers pass `admission_now_in_txn`, committed with
     // this row). Only an owner clock recovery lowers it, so `not_before`
@@ -407,24 +450,35 @@ pub(super) fn record_nonce(
     if let Some(newest) = expired.last() {
         not_before = not_before.max(newest.timestamp.saturating_add(1));
     }
+    // Rows of a spend made in memory that land a day after its proof was
+    // signed are past the rows kept: the mark covers that proof instead. A
+    // writer's own proof is inside the window, never past them.
+    let late = spent.timestamp < floor;
+    if late {
+        not_before = not_before.max(spent.timestamp.saturating_add(1));
+    }
     if kept != Some(not_before) {
         PROOF_NOT_BEFORE.put(&vault.store, txn, &(), &not_before)?;
     }
     for key in expired {
         REPLAY_NONCE.delete(&vault.store, txn, &key)?;
     }
-    let key = nonce_key(binding_key, nonce, timestamp);
-    if REPLAY_NONCE.contains(&vault.store, txn, &key)? {
-        return Err(invalid_authority());
+    if late {
+        return Ok(true);
     }
-    REPLAY_NONCE.put(&vault.store, txn, &key, &())?;
-    Ok(())
+    if REPLAY_NONCE.contains(&vault.store, txn, spent)? {
+        return Ok(false);
+    }
+    REPLAY_NONCE.put(&vault.store, txn, spent, &())?;
+    Ok(true)
 }
 
 /// Whether a holder proof signed at `timestamp` with `nonce` was admitted for
-/// `binding_key` ([`record_nonce`]) and its row is still kept. A door that
-/// rides an admitted request reads it to know the values it was handed are
-/// that request's own, without spending the nonce a second time (FIX 3377).
+/// `binding_key` ([`record_nonce`]) and its row is still kept, or an
+/// admission spent it in memory and its row is still on its way (FIX 12023
+/// W0). A door that rides an admitted request reads it to know the values it
+/// was handed are that request's own, without spending the nonce a second
+/// time (FIX 3377).
 pub(super) fn nonce_admitted_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -432,7 +486,9 @@ pub(super) fn nonce_admitted_in_txn(
     nonce: &[u8],
     timestamp: u64,
 ) -> Result<bool> {
-    REPLAY_NONCE.contains(&vault.store, txn, &nonce_key(binding_key, nonce, timestamp))
+    let spent = SpentKey::of(binding_key, nonce, timestamp);
+    Ok(REPLAY_NONCE.contains(&vault.store, txn, &spent.row())?
+        || vault.spent_nonces.admitted(&spent))
 }
 
 #[cfg(test)]

@@ -26,6 +26,17 @@ impl Vault {
             Arc::downgrade(self),
         );
     }
+
+    /// This very handle, while it is the one this process serves at its root
+    /// and a holder keeps it: a write queued off its caller's thread runs on
+    /// it (FIX 12023 W0).
+    pub(crate) fn served_handle(&self) -> Option<Arc<Self>> {
+        let served = SERVED.lock().unwrap_or_else(PoisonError::into_inner);
+        served
+            .get(&self.store.owner._registered_path.path)
+            .filter(|vault| std::ptr::eq(vault.as_ptr(), self))
+            .and_then(Weak::upgrade)
+    }
 }
 
 /// The handle this process serves at canonical `root`, while a holder keeps

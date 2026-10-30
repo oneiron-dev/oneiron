@@ -246,6 +246,7 @@ pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
 pub(crate) use group_commit::{
     AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
+    release_vault_handle,
 };
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
