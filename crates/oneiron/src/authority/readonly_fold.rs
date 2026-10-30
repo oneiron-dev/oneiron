@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 mod adopted;
 mod arriving;
+mod held_rows;
 mod row_receipts;
 #[cfg(feature = "sync")]
 mod stored_records;
@@ -20,6 +21,7 @@ mod stored_records;
 pub(super) use adopted::adopted_history_request_in_txn;
 use adopted::fold_adopted_in_txn;
 pub(super) use arriving::{ArrivingFold, authority_view_with_rows_for_store_in_txn};
+use held_rows::HeldRows;
 use row_receipts::RowReceipts;
 #[cfg(feature = "sync")]
 pub(crate) use stored_records::folded_vault_id_of_records;
@@ -515,20 +517,9 @@ fn fold_stored_tail_in_txn(
     {
         return Ok(fold);
     }
-    let mut held = BTreeSet::new();
+    // The baseline's rows are counted, not inserted (FIX 12331).
     let mut tail = Vec::new();
-    for id in authority_log_ids_in_txn(store, txn)? {
-        // The store id is the row's content hash, and a stored authority
-        // row's body never changes: the baseline already read this one.
-        if let Some(hash) = baseline.and_then(|baseline| baseline.ids.get(&id)) {
-            held.insert(*hash);
-            continue;
-        }
-        let entry = decode_authority_log_entry_body(&authority_log_body_in_txn(store, txn, &id)?)?;
-        let hash = authority_entry_hash(&entry)?;
-        held.insert(hash);
-        tail.push((hash, entry));
-    }
+    let mut held = HeldRows::scan_in_txn(store, txn, baseline, &mut tail)?;
     let mut unstored = Vec::new();
     for (hash, entry) in arriving {
         if held.insert(*hash) {
@@ -537,18 +528,25 @@ fn fold_stored_tail_in_txn(
         }
     }
     let checkpoint = super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)?;
-    let mut named = required.clone();
-    if let Some((_, covered)) = &checkpoint {
-        named.extend(covered.iter().copied());
-    }
-    if let Some(baseline) = baseline {
-        named.extend(baseline.ids.values().copied());
-    }
-    if !named.is_subset(&held) {
+    // Each row a fold names is held: the baseline's by its count, every
+    // other one by hash.
+    let named_held = held.holds_baseline()
+        && required
+            .iter()
+            .chain(checkpoint.iter().flat_map(|(_, covered)| covered))
+            .all(|hash| held.contains(hash));
+    if !named_held {
+        let mut named = required.clone();
+        if let Some((_, covered)) = &checkpoint {
+            named.extend(covered.iter().copied());
+        }
+        if let Some(baseline) = baseline {
+            named.extend(baseline.ids.values().copied());
+        }
         let baseline_parents = baseline
             .into_iter()
             .flat_map(|baseline| baseline.base.parents())
-            .filter(|(hash, _)| held.contains(*hash))
+            .filter(|(hash, _)| held.contains(hash))
             .flat_map(|(_, parents)| parents.iter().copied());
         let tail_parents = tail
             .iter()
