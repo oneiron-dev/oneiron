@@ -33,11 +33,12 @@
 //! on a cadence, since no mesh signal says a peer's offer changed, and writes
 //! their own-server rows.
 //!
-//! On a managed vault (WILL-PLAN L14 row 14) the connection runs under one
-//! admission of the reap freeze, taken before the home is held and kept
-//! until its task ends: a frozen vault starts none, and while it runs, its
-//! imports, renewals and catalog writes keep a reap from finding the vault
-//! quiescent. Its enrolment is looked for beside the supervisor's key
+//! On a managed vault (WILL-PLAN L14 row 14) the reap freeze governs the
+//! connection ([`freeze`], FIX 5127): each run between freezes, and each
+//! catalog refresh, holds an admission of its own, so an idle connection
+//! keeps no reap away. A freeze pauses the run, and the same connection runs
+//! again once the vault thaws; a reap that stops the process ends it as any
+//! stop does. Its enrolment is looked for beside the supervisor's key
 //! directory alone, never under HOME or XDG (FIX 5768).
 
 use std::sync::Arc;
@@ -47,13 +48,13 @@ use tokio::task::JoinHandle;
 
 use crate::config::ServeConfig;
 use crate::handler::mesh::MeshHost;
-use crate::server::{HousekeepingAdmission, SyncServer};
+use crate::server::SyncServer;
 
-/// The admission a managed vault's connection holds for its whole run.
-type Admission = Box<dyn Send>;
-
+#[cfg(feature = "mesh")]
+mod catalog;
 mod dial;
 mod enrolment;
+mod freeze;
 mod removal_delivery;
 #[cfg(feature = "mesh")]
 mod renewal;
@@ -62,6 +63,8 @@ mod route;
 use dial::Dial;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{EnrolmentFiles, enrol};
+use freeze::Admitted;
+pub(crate) use freeze::ReapFreeze;
 
 /// The running connection to the home.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -82,29 +85,31 @@ impl DeviceSyncHost {
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Plain)?;
-        Self::open_logged(server, dial, mesh, None).await
+        let freeze = ReapFreeze::never();
+        let first = freeze.admit()?;
+        Self::open_logged(server, dial, mesh, freeze, first).await
     }
 
-    /// [`Self::start`] on a managed vault: the connection, and every write
-    /// it makes, run under one admission `admit` grants, taken before the
-    /// home is held and kept until the connection's task ends. A frozen
-    /// vault starts none; it says so, and serve runs on without it. Its
-    /// enrolment is the one beside the supervisor's key directory, if any.
+    /// [`Self::start`] on a managed vault, under its reap `freeze`: the
+    /// opening writes and the first run hold an admission taken before the
+    /// home is held. A frozen vault starts none; it says so, and serve runs
+    /// on without it. Its enrolment is the one beside the supervisor's key
+    /// directory, if any.
     pub(crate) async fn start_admitted(
         server: &Arc<SyncServer>,
         config: &ServeConfig,
         mesh: Option<&MeshHost>,
-        admit: &HousekeepingAdmission,
+        freeze: ReapFreeze,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Managed)?;
-        let Some(admission) = admit() else {
+        let Some(first) = freeze.admit() else {
             tracing::warn!(
                 "device sync disabled: the vault is paused for reap preparation; it starts with \
                  the next serve"
             );
             return None;
         };
-        Self::open_logged(server, dial, mesh, Some(admission)).await
+        Self::open_logged(server, dial, mesh, freeze, first).await
     }
 
     /// What this machine dials, its enrolment looked for where `source`
@@ -120,16 +125,18 @@ impl DeviceSyncHost {
     }
 
     /// The connection to `dial`'s home and its archive receiver, or, with the
-    /// line that says why, the receiver alone or `None`. `admission` ends with the task.
+    /// line that says why, the receiver alone or `None`. `first` is the
+    /// first run's admission.
     async fn open_logged(
         server: &Arc<SyncServer>,
         dial: Dial,
         mesh: Option<&MeshHost>,
-        admission: Option<Admission>,
+        freeze: ReapFreeze,
+        first: Admitted,
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396).
         let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault);
-        match open(server, dial, mesh, admission).await {
+        match open(server, dial, mesh, freeze, first).await {
             Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
@@ -181,21 +188,22 @@ async fn open(
     _server: &Arc<SyncServer>,
     _dial: Dial,
     _mesh: Option<&MeshHost>,
-    _admission: Option<Admission>,
+    _freeze: ReapFreeze,
+    _first: Admitted,
 ) -> anyhow::Result<DeviceSyncHost> {
     anyhow::bail!("this server was built without the `mesh` feature")
 }
 
-/// Holds the home and opens the connection to it. `admission`, a managed
-/// vault's, was taken before anything here writes; it moves into the
-/// connection's task and ends with it, and a failed open drops it only
-/// once its own work has ended.
+/// Holds the home and opens the connection to it. `first` was taken before
+/// anything here writes; it moves into the first run and ends with it, and
+/// a failed open drops it only once its own work has ended.
 #[cfg(feature = "mesh")]
 async fn open(
     server: &Arc<SyncServer>,
     dial: Dial,
     mesh: Option<&MeshHost>,
-    admission: Option<Admission>,
+    freeze: ReapFreeze,
+    first: Admitted,
 ) -> anyhow::Result<DeviceSyncHost> {
     use oneiron::sync::SyncDialer;
     use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
@@ -237,6 +245,7 @@ async fn open(
     let resolve = route::resolver(Arc::clone(&server.vault), home, machine, routes());
     let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
     let link = Link {
+        freeze: freeze.clone(),
         windows: Arc::clone(&server.reassert_manager),
         topology,
         url,
@@ -261,25 +270,24 @@ async fn open(
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
     let over = if mesh.is_some() { "mesh" } else { "url" };
-    let catalog = mesh.map(|mesh| MeshCatalog {
-        vault: Arc::clone(&server.vault),
-        transport: mesh.transport(),
-        backend: None,
-        routes: server
-            .ai
-            .models()
-            .mesh_routes(&server.vault, mesh.transport()),
-        staging: server.model_budgets.mesh_staging(),
+    let catalog = mesh.map(|mesh| {
+        catalog::MeshCatalog::new(
+            Arc::clone(&server.vault),
+            mesh.transport(),
+            server
+                .ai
+                .models()
+                .mesh_routes(&server.vault, mesh.transport()),
+            server.model_budgets.mesh_staging(),
+            freeze.admission(),
+        )
     });
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
-        // Held through every run, reconnect, renewal and catalog refresh,
-        // and dropped only once all of them end.
-        let _admission = admission;
         // The observer is synchronous, so each status goes to the catalog
         // loop; the channel closes when the last connection's run ends.
         let (statuses, status_rx) = tokio::sync::mpsc::unbounded_channel();
-        let dialing = link.run(connection, renewal, stop_rx, statuses, &home);
+        let dialing = link.run(connection, renewal, stop_rx, statuses, first, &home);
         // Off the mesh there are no other nodes to ask, so no catalog.
         let catalog = async {
             match catalog {
@@ -299,6 +307,8 @@ async fn open(
 /// What each connection to the home is built from, but its credential.
 #[cfg(feature = "mesh")]
 struct Link {
+    /// The reap freeze each run is admitted under and paused by.
+    freeze: ReapFreeze,
     windows: Arc<oneiron::sync::WindowManager>,
     url: String,
     worlds: Vec<oneiron::EntityId>,
@@ -375,9 +385,10 @@ impl Link {
         mut renewal: renewal::Renewal,
         stop: oneshot::Receiver<()>,
         statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
+        first: Admitted,
         home: &str,
     ) {
-        self.run_connections(connection, &mut renewal, stop, statuses, home)
+        self.run_connections(connection, &mut renewal, stop, statuses, first, home)
             .await;
         renewal.stop().await;
     }
@@ -387,18 +398,26 @@ impl Link {
     /// built. Each connection's own loop reconnects with backoff. Every
     /// status goes to `statuses`, which closes when the last run ends.
     ///
+    /// Each run holds an admission of the reap freeze, `first` for the
+    /// first. A freeze pauses the run: it ends as a stop ends it, its
+    /// admission drops, and once the vault thaws the same connection runs
+    /// again on a fresh one. A stop while paused ends it there.
+    ///
     /// A renewed credential is written here, never by the request that
     /// fetched it (FIX 3563). A stop sent before the write wins, and the file
     /// stays as it was; a write once begun ends before the stop is seen, and
     /// stays. The old connection stops only once the write has landed.
     async fn run_connections(
-        self,
+        mut self,
         mut connection: Arc<oneiron::sync::SyncConnection>,
         renewal: &mut renewal::Renewal,
         mut stop: oneshot::Receiver<()>,
         statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
+        first: Admitted,
         home: &str,
     ) {
+        // Dropped only once the run it admits has ended; none while paused.
+        let mut _admitted = Some(first);
         loop {
             let (config, committed) = {
                 let (end, ended) = oneshot::channel();
@@ -411,17 +430,19 @@ impl Link {
                         self.always_on,
                         self.primary,
                         self.macro_ready,
+                        self.freeze.admission(),
                     ),
                 );
                 tokio::pin!(observed);
-                let renewed = loop {
+                let next = loop {
                     tokio::select! {
                         biased;
-                        _ = &mut stop => break None,
+                        _ = &mut stop => break RunEnd::Stop,
                         ran = &mut observed => {
                             stopped(home, ran);
                             return;
                         }
+                        () = self.freeze.frozen() => break RunEnd::Pause,
                         candidate = renewal.next() => {
                             // Configured before the write, so a credential
                             // that configures none leaves the file as it was.
@@ -438,19 +459,36 @@ impl Link {
                             // Nothing is awaited from this look to the
                             // write's end.
                             if stop_sent(&mut stop) {
-                                break None;
+                                break RunEnd::Stop;
                             }
                             if let Some(committed) = renewal.commit(&candidate) {
-                                break Some((config, committed));
+                                break RunEnd::Renewed(config, committed);
                             }
                         }
                     }
                 };
                 let _ = end.send(());
                 let ran = observed.await;
-                let Some((config, committed)) = renewed else {
-                    stopped(home, ran);
-                    return;
+                let (config, committed) = match next {
+                    RunEnd::Stop => {
+                        stopped(home, ran);
+                        return;
+                    }
+                    RunEnd::Pause => {
+                        if let Err(error) = ran {
+                            tracing::warn!(%home, %error, "device sync ended at the reap pause");
+                        }
+                        _admitted = None;
+                        tracing::info!(%home, "device sync paused: the vault is frozen for reap");
+                        let Some(admitted) = self.freeze.resumed(&mut stop).await else {
+                            tracing::info!(%home, "device sync stopped");
+                            return;
+                        };
+                        _admitted = Some(admitted);
+                        tracing::info!(%home, "device sync resumes: the vault thawed");
+                        continue;
+                    }
+                    RunEnd::Renewed(config, committed) => (config, committed),
                 };
                 if let Err(error) = ran {
                     tracing::warn!(%home, %error, "device sync ended on its old credential");
@@ -487,10 +525,20 @@ impl Link {
     }
 }
 
+/// How a run ended short of its own end.
+#[cfg(feature = "mesh")]
+enum RunEnd {
+    Stop,
+    /// The vault froze for reap.
+    Pause,
+    Renewed(oneiron::sync::SyncClientConfig, renewal::CommitOutcome),
+}
+
 /// A connection's event observer: each status to `statuses`, each error to
 /// the log. An authority catch-up that took rows declares this machine's
 /// MACRO home candidacy again off the async thread, so a freshly enrolled
-/// device counts at once, not at its next start.
+/// device counts at once, not at its next start: under an admission of its
+/// own from `admit`, as it may outlast the run, and not while frozen.
 #[cfg(feature = "mesh")]
 fn observer(
     home: String,
@@ -499,6 +547,7 @@ fn observer(
     always_on: bool,
     primary: bool,
     macro_ready: bool,
+    admit: crate::server::HousekeepingAdmission,
 ) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
     use oneiron::sync::SyncEvent;
 
@@ -508,8 +557,13 @@ fn observer(
             let _ = statuses.send(status);
         }
         SyncEvent::AuthorityCaughtUp => {
+            let Some(admitted) = admit() else {
+                tracing::debug!(%home, "home candidacy left as it was: the vault is frozen");
+                return;
+            };
             let vault = Arc::clone(&vault);
             tokio::task::spawn_blocking(move || {
+                let _admitted = admitted;
                 crate::home_candidacy::declare(&vault, always_on, primary, macro_ready);
             });
         }
@@ -531,103 +585,6 @@ fn stopped(home: &str, ran: Result<(), impl std::fmt::Display>) {
     match ran {
         Ok(()) => tracing::info!(%home, "device sync stopped"),
         Err(error) => tracing::warn!(%home, %error, "device sync ended"),
-    }
-}
-
-/// How often a synced device asks the owner's other nodes for their models
-/// again. A catalog is pulled, never pushed: no mesh signal says a peer's
-/// roster entry or offer changed.
-#[cfg(feature = "mesh")]
-const MESH_CATALOG_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// The device's view of the models the owner's other nodes offer
-/// ([`oneiron_llm_own_server::OwnServerBackend::refresh_from_mesh`]), over the
-/// mesh listener's own transport.
-#[cfg(feature = "mesh")]
-struct MeshCatalog {
-    vault: Arc<oneiron::Vault>,
-    transport: Arc<dyn oneiron_mesh_transport::MeshTransport>,
-    /// Built at the first refresh; a failed build is tried again at the next.
-    backend:
-        Option<oneiron_llm_own_server::OwnServerBackend<oneiron_llm_own_server::MeshLlmTransport>>,
-    /// The router's routes to those models (FIX 3229), published after each
-    /// refresh.
-    routes: crate::models::MeshRoutes,
-    /// The vault's one mesh budget its transport's calls hold bytes on.
-    staging: oneiron_llm_own_server::StagingBudget,
-}
-
-#[cfg(feature = "mesh")]
-impl MeshCatalog {
-    /// Refreshes on each `Synced`, then every [`MESH_CATALOG_EVERY`] while
-    /// the connection stays synced. Ends when `statuses` closes, after any
-    /// refresh in flight: its catalog call runs on a task of its own, so a
-    /// dropped refresh would leave that call running past the mesh.
-    async fn run(
-        mut self,
-        mut statuses: tokio::sync::mpsc::UnboundedReceiver<oneiron::sync::SyncStatus>,
-        home: &str,
-    ) {
-        let mut synced = false;
-        let mut every = tokio::time::interval(MESH_CATALOG_EVERY);
-        every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            tokio::select! {
-                status = statuses.recv() => match status {
-                    None => return,
-                    Some(oneiron::sync::SyncStatus::Synced) => {
-                        synced = true;
-                        self.refresh(home).await;
-                        every.reset();
-                    }
-                    Some(_) => synced = false,
-                },
-                _ = every.tick(), if synced => self.refresh(home).await,
-            }
-        }
-    }
-
-    async fn refresh(&mut self, home: &str) {
-        use oneiron_llm_own_server::{MeshLlmTransport, OwnServerBackend, VaultLlmNodes};
-
-        if self.backend.is_none() {
-            let transport = MeshLlmTransport::new(
-                Arc::clone(&self.transport),
-                Arc::new(VaultLlmNodes(Arc::clone(&self.vault))),
-                tokio::runtime::Handle::current(),
-                // What its calls hold at once (FIX 8619, FIX 9323).
-                self.staging.clone(),
-            );
-            match OwnServerBackend::from_registry(&self.vault, transport) {
-                Ok(backend) => self.backend = Some(backend),
-                Err(error) => {
-                    tracing::warn!(%home, %error, "mesh model catalog unavailable");
-                    return;
-                }
-            }
-        }
-        let Some(backend) = &self.backend else {
-            return;
-        };
-        match backend.refresh_from_mesh(&self.vault).await {
-            Ok(refresh) => {
-                self.routes.publish(&self.vault);
-                if !refresh.conflicts.is_empty() {
-                    tracing::warn!(
-                        %home,
-                        conflicts = ?refresh.conflicts,
-                        "mesh model catalog kept the vault's own routes"
-                    );
-                }
-                tracing::debug!(
-                    %home,
-                    written = ?refresh.written,
-                    unreached = ?refresh.unreached,
-                    "mesh model catalog refreshed"
-                );
-            }
-            Err(error) => tracing::warn!(%home, %error, "mesh model catalog refresh failed"),
-        }
     }
 }
 
