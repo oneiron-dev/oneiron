@@ -128,9 +128,9 @@ pub(super) fn record_review_outcome_in_txn(
                     write_claim(vault, txn, &id, &body, actor, at)?;
                     actor
                 }
-                OutcomeWriter::Review => settled_actor::write_settled_outcome_in_txn(
-                    vault, txn, &id, &body, actor, at,
-                )?,
+                OutcomeWriter::Review => {
+                    settled_actor::write_settled_outcome_in_txn(vault, txn, &id, &body, actor, at)?
+                }
             };
             if let Some((old, _)) = &standing {
                 let old_start = vault
@@ -353,11 +353,72 @@ pub(super) fn finish_owed_outcomes(vault: &Vault, at: u64) -> Result<()> {
     Ok(())
 }
 
+/// Withdraws the world-outcome evidence a settled fact gave the critique
+/// `artifact` of the review `verdict`, once the fact's calibration pairs are
+/// gone, and in the same write records the evidence the critique's standing
+/// outcome owes in its place (FIX 12219). Calibration reads that outcome at
+/// once, not only after the next sweep, and under the critique's one
+/// receipt, so it is counted once. An outcome that does not read or record
+/// warns, and the withdraw stands.
+pub(super) fn withdraw_fact_evidence(
+    vault: &Vault,
+    verdict: &EntityId,
+    artifact: &CritiqueArtifact,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::learning::evidence::withdraw_evidence_in_txn(
+            vault,
+            txn,
+            &artifact.calibration,
+            &calibration_receipt(verdict, &artifact.artifact_id),
+            at,
+        )?;
+        let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+        match restore_outcome_evidence_in_txn(vault, &mut savepoint, verdict, artifact, at) {
+            Ok(()) => savepoint.commit()?,
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "a critique's outcome evidence was not restored after its fact went; the next sweep records it"
+            ),
+        }
+        Ok(())
+    })
+}
+
+/// Records the evidence the standing outcome of the critique `artifact` of
+/// the review `verdict` owes, as [`finish_owed_outcomes`] records it; a
+/// critique with no standing outcome, or one that owes none, records nothing.
+fn restore_outcome_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    verdict: &EntityId,
+    artifact: &CritiqueArtifact,
+    at: u64,
+) -> Result<()> {
+    let Some(body) = vault.get_claim_in_txn(txn, verdict)? else {
+        return Ok(());
+    };
+    let Some(session) = body.session_tag.as_deref() else {
+        return Ok(());
+    };
+    let session = EntityId::from_hex(session)?;
+    let Some((id, _)) =
+        standing_outcome_in_txn(vault, txn, &session, verdict, &artifact.artifact_id)?
+    else {
+        return Ok(());
+    };
+    let Some((verdict, artifact, outcome)) = owed_outcome_in_txn(vault, txn, &id)? else {
+        return Ok(());
+    };
+    record_outcome_evidence_in_txn(vault, txn, &verdict, &artifact, &outcome, at)?;
+    Ok(())
+}
+
 /// Whether `actor` is an active human owner of the vault.
 fn active_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> bool {
     actor.actor_class() == crate::EdgeActorClass::Human
-        && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
-            .is_ok()
+        && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_ok()
 }
 
 pub(super) fn calibration_receipt(verdict: &EntityId, artifact: &str) -> String {

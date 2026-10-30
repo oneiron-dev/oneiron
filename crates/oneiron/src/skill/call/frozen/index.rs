@@ -13,8 +13,7 @@ use crate::store::Store;
 
 /// Key: [`SOURCE`] + source id16 + case key, or [`RECEIPT`] + u16be receipt
 /// length + receipt + case key.
-const INDEX: SideTable<Vec<u8>, (), Raw> =
-    SideTable::new(&side_table::SKILL_CALLABLE_CASE_INDEX);
+const INDEX: SideTable<Vec<u8>, (), Raw> = SideTable::new(&side_table::SKILL_CALLABLE_CASE_INDEX);
 
 /// The stored cases, read for the two fields their entries are made from.
 const INDEXED: SideTable<Vec<u8>, IndexedFields, Named> =

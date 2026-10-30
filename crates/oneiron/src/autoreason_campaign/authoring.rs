@@ -533,8 +533,7 @@ pub fn settle_claim_tournament_outcome(
         vault,
         &run.team_ref,
         &outcome,
-        &run
-            .winner
+        &run.winner
             .as_ref()
             .map(|winner| winner.claim)
             .into_iter()

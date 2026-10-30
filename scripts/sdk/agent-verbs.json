@@ -1583,6 +1583,21 @@
       "openapi": true
     },
     {
+      "name": "vault.message_streams.refused",
+      "description": "Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::memory::StreamRecoveryRefusal>",
+      "call": "memory.vault().stream_recovery_refusals(&memory.embedded_owner(\"vault.message_streams.refused\")?).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.messages.durability",
       "description": "Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane.",
       "input": "crate::memory::MessageDurabilityRequest",
@@ -10619,7 +10634,7 @@
       "name": "vault.code.checkout.get",
       "description": "Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it.",
       "input": "crate::memory::checkout_doors::CheckoutGetInput",
-      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::checkout_doors::CheckoutLeaseView>>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.get\", &input)?",
       "scope": "Read",
       "admission": {
@@ -10887,7 +10902,7 @@
     },
     {
       "name": "vault.code.merge_queue.enqueue",
-      "description": "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.",
+      "description": "Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.",
       "input": "crate::memory::merge_queue_doors::MergeQueueEnqueueRequest",
       "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
       "call": "memory.merge_queue_enqueue_as(&memory.embedded_owner(\"vault.code.merge_queue.enqueue\")?, input)?",
@@ -15578,7 +15593,7 @@
       "refs": [
         "/subject_ref",
         "/world_ref",
-        "/relationship_ref"
+        "/relationship_ref/*"
       ],
       "uniffi": {
         "args": {

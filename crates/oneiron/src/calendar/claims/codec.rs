@@ -41,6 +41,8 @@ pub(super) const KEY_MINUTE: &str = "mi";
 
 pub(super) const KEY_SECOND: &str = "s";
 
+pub(super) const KEY_END: &str = "end";
+
 pub(super) const KEY_RRULE: &str = "rrule";
 
 pub(super) const KEY_DTSTART_UTC: &str = "dtstart_utc";
@@ -170,16 +172,41 @@ pub(in crate::calendar) fn decode_time_kind_value(value: &Value) -> Result<Calen
     })
 }
 
-/// Decodes a `calendar.wall_time` value.
+/// Decodes a `calendar.wall_time` value's start.
 ///
 /// Field ranges are checked structurally; this is storage, not a calendar
-/// computation, so day-of-month is not validated against the month.
+/// computation, so day-of-month is not validated against the month. The
+/// optional `end` key carries the exclusive end of an all-day or floating
+/// event in the same six-field shape; [`decode_wall_time_end`] reads it.
 pub(in crate::calendar) fn decode_wall_time_value(value: &Value) -> Result<CalendarWallTimeValue> {
     let entries = value_map(value)?;
     let keys = [
         KEY_YEAR, KEY_MONTH, KEY_DAY, KEY_HOUR, KEY_MINUTE, KEY_SECOND,
     ];
-    validate_keys(entries, &keys, &keys)?;
+    let allowed = [
+        KEY_YEAR, KEY_MONTH, KEY_DAY, KEY_HOUR, KEY_MINUTE, KEY_SECOND, KEY_END,
+    ];
+    validate_keys(entries, &allowed, &keys)?;
+    if let Some(end) = optional_value(entries, KEY_END)? {
+        let end = value_map(end)?;
+        validate_keys(end, &keys, &keys)?;
+        wall_fields(end)?;
+    }
+    wall_fields(entries)
+}
+
+/// Decodes the exclusive end a `calendar.wall_time` value carries, if any.
+pub(in crate::calendar) fn decode_wall_time_end(
+    value: &Value,
+) -> Result<Option<CalendarWallTimeValue>> {
+    decode_wall_time_value(value)?;
+    optional_value(value_map(value)?, KEY_END)?
+        .map(|end| value_map(end).and_then(wall_fields))
+        .transpose()
+}
+
+/// The six structural wall-time fields of one map whose key set is checked.
+fn wall_fields(entries: &[(Value, Value)]) -> Result<CalendarWallTimeValue> {
     Ok(CalendarWallTimeValue {
         y: required_i32(entries, KEY_YEAR)?,
         mo: required_u8_in_range(entries, KEY_MONTH, 1, 12)?,

@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub trait LanguageServer: Send {
     fn request(&mut self, method: &str, params: Value) -> Result<Value>;
@@ -19,7 +19,13 @@ pub trait LanguageServer: Send {
 /// Bounded stdio JSON-RPC adapter. No shell, no inherited stdin, no raw secrets.
 pub struct StdioLanguageServer {
     child: Child,
-    input: ChildStdin,
+    /// Framed messages for the thread that owns the child's stdin. It answers
+    /// each write, so a child that stops reading holds a caller no longer than
+    /// its deadline (FIX 9723).
+    writes: mpsc::Sender<Vec<u8>>,
+    written: mpsc::Receiver<std::io::Result<()>>,
+    /// Writes handed over and not yet answered.
+    unwritten: usize,
     responses: mpsc::Receiver<std::io::Result<Value>>,
     next_id: u64,
     timeout: Duration,
@@ -33,7 +39,7 @@ impl StdioLanguageServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
-        let input = child
+        let mut input = child
             .stdin
             .take()
             .ok_or(Error::InvariantViolation("LSP stdin"))?;
@@ -52,9 +58,22 @@ impl StdioLanguageServer {
                 }
             }
         });
+        let (writes, queued) = mpsc::channel::<Vec<u8>>();
+        let (wrote, written) = mpsc::channel();
+        std::thread::spawn(move || {
+            for bytes in queued {
+                let result = input.write_all(&bytes).and_then(|()| input.flush());
+                let failed = result.is_err();
+                if wrote.send(result).is_err() || failed {
+                    break;
+                }
+            }
+        });
         let mut server = Self {
             child,
-            input,
+            writes,
+            written,
+            unwritten: 0,
             responses,
             next_id: 1,
             timeout,
@@ -66,11 +85,27 @@ impl StdioLanguageServer {
     pub fn process_id(&self) -> u32 {
         self.child.id()
     }
-    fn send(&mut self, body: Value) -> Result<()> {
+    /// Writes one message by `deadline`. A write an earlier call left stuck
+    /// is waited out first, within the same deadline.
+    fn send(&mut self, body: Value, deadline: Instant) -> Result<()> {
         let bytes = serde_json::to_vec(&body).map_err(|_| Error::InvalidClaimBody("LSP encode"))?;
-        write!(self.input, "Content-Length: {}\r\n\r\n", bytes.len())?;
-        self.input.write_all(&bytes)?;
-        self.input.flush()?;
+        let mut framed = format!("Content-Length: {}\r\n\r\n", bytes.len()).into_bytes();
+        framed.extend_from_slice(&bytes);
+        self.await_writes(deadline)?;
+        self.writes
+            .send(framed)
+            .map_err(|_| Error::InvalidClaimBody("LSP timeout or exited"))?;
+        self.unwritten += 1;
+        self.await_writes(deadline)
+    }
+    /// Waits for every handed-over write to be answered, until `deadline`.
+    fn await_writes(&mut self, deadline: Instant) -> Result<()> {
+        while self.unwritten > 0 {
+            self.written
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|_| Error::InvalidClaimBody("LSP timeout or exited"))??;
+            self.unwritten -= 1;
+        }
         Ok(())
     }
 }
@@ -80,12 +115,16 @@ impl LanguageServer for StdioLanguageServer {
         self.next_id = id
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("LSP request id"))?;
-        self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
-        let deadline = std::time::Instant::now() + self.timeout;
+        // The deadline starts before the write, so it bounds the write too.
+        let deadline = Instant::now() + self.timeout;
+        self.send(
+            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),
+            deadline,
+        )?;
         loop {
             let message = self
                 .responses
-                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .map_err(|_| Error::InvalidClaimBody("LSP timeout or exited"))??;
             if message.get("id").and_then(Value::as_u64) == Some(id) {
                 if message.get("error").is_some() {
@@ -99,12 +138,16 @@ impl LanguageServer for StdioLanguageServer {
             // Server-initiated requests must receive a response; notifications
             // are not replies to the outstanding request.
             if let Some(server_id) = message.get("id") {
-                self.send(json!({"jsonrpc":"2.0","id":server_id,"error":{"code":-32601,"message":"unsupported request"}}))?;
+                self.send(json!({"jsonrpc":"2.0","id":server_id,"error":{"code":-32601,"message":"unsupported request"}}), deadline)?;
             }
         }
     }
     fn notify(&mut self, method: &str, params: Value) -> Result<()> {
-        self.send(json!({"jsonrpc":"2.0","method":method,"params":params}))
+        let deadline = Instant::now() + self.timeout;
+        self.send(
+            json!({"jsonrpc":"2.0","method":method,"params":params}),
+            deadline,
+        )
     }
 }
 impl Drop for StdioLanguageServer {

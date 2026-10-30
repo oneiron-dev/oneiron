@@ -49,10 +49,7 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     ));
     entries.push((
         Value::from(KEY_REL),
-        body.rel.map_or_else(
-            || Value::from("all"),
-            |id| Value::Array(vec![scope_stamp::id_value(id)]),
-        ),
+        encode_relationship_scope(body.rel.as_ref()),
     ));
     entries.push((Value::from(KEY_SUBJ), Value::Binary(body.subject.encode())));
     if let Some(scope) = &body.scope {
@@ -105,9 +102,10 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// * `from`/`to` must be non-negative integers fitting `u64`;
 /// * `src`/`appr`/`life` must be the pinned enum strings;
 /// * `stale` must be a boolean (absent = `false`);
-/// * `world` and `rel` must be the explicit defaults `base` and `all`,
-///   respectively, or a 16-byte MessagePack Binary [`EntityId`]; entity
-///   existence and type validation belongs to retrieval;
+/// * `world` must be the explicit default `base` or a 16-byte MessagePack
+///   Binary [`EntityId`]; `rel` must be `all` or an array of such ids (`[]`
+///   is the explicit empty set); entity existence and type validation
+///   belongs to retrieval;
 /// * `subj` must be a 16-byte entity id or 33-byte EdgeRef ([`ClaimSubject`]);
 /// * `pred` must satisfy the D17 grammar; reserved `edge.*` and `skill.*`
 ///   predicates are rejected unless `allow_reserved_predicate` is set
@@ -140,7 +138,7 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     let mut valid_to: Option<u64> = None;
     let mut source: Option<ClaimSource> = None;
     let mut world: Option<EntityId> = None;
-    let mut rel: Option<EntityId> = None;
+    let mut rel: RelationshipScope = None;
     let mut scope: Option<Value> = None;
     let mut session_tag: Option<String> = None;
     let mut stale: Option<bool> = None;
@@ -226,20 +224,7 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
             "scopeFacetId" => scope_facet = Some(scope_stamp::scope_id(&value)?),
             "scopeProjectId" => scope_project = Some(scope_stamp::scope_id(&value)?),
             "scopeVersion" => scope_version = value.as_u64(),
-            "scopeRelationshipId" => {
-                if value.as_str() == Some("all") {
-                    rel = None;
-                } else if let Value::Array(ids) = value {
-                    if ids.len() != 1 {
-                        return Err(Error::InvalidClaimBody(
-                            "relationship scope requires all or one id",
-                        ));
-                    }
-                    rel = Some(scope_stamp::scope_id(&ids[0])?);
-                } else {
-                    return Err(Error::InvalidClaimBody("invalid relationship scope"));
-                }
-            }
+            "scopeRelationshipId" => rel = decode_relationship_scope(&value)?,
             "subj" => {
                 let Value::Binary(bytes) = &value else {
                     return Err(Error::InvalidClaimBody("subj must be MessagePack binary"));

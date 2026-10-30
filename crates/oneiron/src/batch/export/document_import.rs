@@ -349,6 +349,11 @@ impl Vault {
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
+        // FIX 1162: every imported agent gets its model PERSON in this same
+        // writer, once the bundle's own PERSON and anchor rows are in.
+        super::agent_person_import::ensure_imported_agent_persons_in_txn(
+            self, &mut wtxn, &archive,
+        )?;
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =

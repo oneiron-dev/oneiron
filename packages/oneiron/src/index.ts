@@ -659,6 +659,10 @@ export class Oneiron {
     cancel_stream: (input: Facade.CancelStreamRequest): Facade.MessageStreamReceipt => this.#call(() => this.#client.vaultCancelStream(input) as Facade.MessageStreamReceipt),
     /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
     message_stream_partial: (input: Facade.MessageStreamRequest): Facade.MessageStreamPartial => this.#call(() => this.#client.vaultMessageStreamPartial(input) as Facade.MessageStreamPartial),
+    message_streams: {
+      /** Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again. */
+      refused: (input: Facade.EmptyRequest = {}): Facade.StreamRecoveryRefusal[] => this.#call(() => this.#client.vaultMessageStreamsRefused(input) as Facade.StreamRecoveryRefusal[]),
+    },
     messages: {
       /** Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane. */
       durability: (input: Facade.MessageDurabilityRequest): Facade.ScopedReadResult<Facade.MessageDurability | null> => this.#call(() => this.#client.vaultMessagesDurability(input) as Facade.ScopedReadResult<Facade.MessageDurability | null>),
@@ -2279,7 +2283,7 @@ export class Oneiron {
         /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
         claim: (input: Facade.CheckoutClaimInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutClaim(input) as Facade.CheckoutLeaseView),
         /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
-        get: (input: Facade.CheckoutGetInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.CheckoutLeaseView),
+        get: (input: Facade.CheckoutGetInput): Facade.ScopedReadResult<Facade.CheckoutLeaseView | null> => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.ScopedReadResult<Facade.CheckoutLeaseView | null>),
         /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
         renew: (input: Facade.CheckoutRenewInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutRenew(input) as Facade.CheckoutLeaseView),
         /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
@@ -2320,7 +2324,7 @@ export class Oneiron {
         read: (input: Facade.CodeSnapshotReadRequest): Facade.CodeSnapshotPinnedFile | null => this.#call(() => this.#client.vaultCodeSnapshotsRead(input) as Facade.CodeSnapshotPinnedFile | null),
       },
       merge_queue: {
-        /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
+        /** Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
         enqueue: (input: Facade.MergeQueueEnqueueRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueEnqueue(input) as Facade.MergeQueueBatchView),
         /** Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move. */
         stage: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueStage(input) as Facade.MergeQueueBatchView),

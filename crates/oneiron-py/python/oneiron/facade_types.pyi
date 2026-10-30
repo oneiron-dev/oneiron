@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1213 facade rows, 4401 declarations.
-Inputs: 1141 of 1213 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1047 of 1213 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1214 facade rows, 4403 declarations.
+Inputs: 1142 of 1214 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1048 of 1214 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -2731,6 +2731,14 @@ class MessageStreamPartial(TypedDict):
     text: str
     sequence: int
     mode: MessageWriteMode
+class StreamRecoveryRefusal(TypedDict):
+    message_id: EntityId
+    generation: EntityId
+    conversation: EntityId
+    actor: EntityId
+    code: str
+    message: str
+    reason_codes: NotRequired[list[str]]
 class MessageDurabilityRequest(TypedDict):
     message_id: str
     after_generation: NotRequired[str | None]
@@ -3828,6 +3836,7 @@ class VaultReceiptsPage(TypedDict):
     next_after: NotRequired[str | None]
     effective_limit: int
     limit_clamped: NotRequired[bool]
+    undecodable: int
 class AssetIngestRequest(TypedDict):
     asset_ref: NotRequired[str | None]
     embedding_kind: InputKind
@@ -6388,6 +6397,7 @@ class PackSetupSecret(TypedDict):
     label: str
     effector: str
     hint: NotRequired[str | None]
+    optional: NotRequired[bool]
 PackSetupRisk = Literal["low", "medium", "high"]
 class PackSetupPermission(TypedDict):
     id: str
@@ -6727,8 +6737,19 @@ class OutboxMemberStatusSourceDigestMismatch(TypedDict):
     member: str
     recorded: str
     read: str
-OutboxMemberStatus = OutboxMemberStatusDivergedUnagreed | OutboxMemberStatusSourceDigestMismatch
-OutboxCardKind = Literal["outbox_diverged", "outbox_source_damaged"]
+class OutboxMemberStatusKeptAside(TypedDict):
+    status: Literal["kept_aside"]
+    kind: VmOutboxKind
+    member: str
+    held_by: VmOutboxSide
+    held: str
+    length: int
+    aside: str
+    kept_at_ms: int
+    removing: bool
+    failed: NotRequired[str | None]
+OutboxMemberStatus = OutboxMemberStatusDivergedUnagreed | OutboxMemberStatusSourceDigestMismatch | OutboxMemberStatusKeptAside
+OutboxCardKind = Literal["outbox_diverged", "outbox_source_damaged", "outbox_kept_aside"]
 class OutboxCardAction(TypedDict):
     label: str
     answer: OutboxDivergedAnswer
@@ -6947,7 +6968,7 @@ ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResour
 class ScopeScope(TypedDict):
     world: str | None
     facet: str | None
-    relationship: str | None
+    relationship: list[str] | None
     project: str | None
     readable: list[ScopeResource]
     writable: list[ScopeResource]
@@ -11895,7 +11916,8 @@ class CodeConflictView(TypedDict):
     right_tree: str
     paths: list[str]
     proposals: list[EntityId]
-    task: EntityId
+    task: NotRequired[EntityId | None]
+    held: NotRequired[str | None]
 class CodeConflictViewRequest(TypedDict):
     branch_subject: EntityId
 class CodeConflictResolutionView(TypedDict):
@@ -12009,7 +12031,7 @@ class ClaimInput(TypedDict):
     confidence: float
     source: str
     world_ref: NotRequired[str | None]
-    relationship_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[list[str] | None]
     scope: NotRequired[Any | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
@@ -12671,6 +12693,7 @@ class OriginPublishReview(TypedDict):
     paths: int
     pages: int
     lfs_bytes: OriginPublishLfsBytes
+    lossy_paths: bool
 MirrorRefOutcome = Literal["pending", "dispatched", "applied", "observed_applied", "rejected", "unknown", "refused", "remote_moved", "paused", "covered", "held"]
 class OriginMirrorPlanRefView(TypedDict):
     ref_name: str
@@ -12941,8 +12964,9 @@ class CodeViewMaterializeRequest(TypedDict):
 class CodeViewFile(TypedDict):
     path: str
     content_hash_blake3: str
-    frontier: CodeDocumentFrontier
-    text_sha256: str
+    frontier: NotRequired[CodeDocumentFrontier | None]
+    text_sha256: NotRequired[str | None]
+    git_oid: NotRequired[str | None]
 class CodeWorkingView(TypedDict):
     view: EntityId
     repo: EntityId
@@ -13102,7 +13126,14 @@ class ContractDiffOutputDriftBody(TypedDict):
     after: NotRequired[CommandOutput | None]
 class ContractDiffOutputDrift(TypedDict):
     OutputDrift: ContractDiffOutputDriftBody
-ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift
+class ContractDiffSchemaBytesDriftBody(TypedDict):
+    contract: str
+    offset: int
+    before: NotRequired[str | None]
+    after: NotRequired[str | None]
+class ContractDiffSchemaBytesDrift(TypedDict):
+    SchemaBytesDrift: ContractDiffSchemaBytesDriftBody
+ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift | ContractDiffSchemaBytesDrift
 class ContractVerdict(TypedDict):
     schema_version: int
     id: str
@@ -14225,6 +14256,7 @@ class SlideJudgment(TypedDict):
     presence: NotRequired[TypedDecision | None]
     location: NotRequired[SlideLocation | None]
     band_mode: BandMode
+    ceiling: DecisionRung
     renderer: str
     frontier: list[int]
     media: NotRequired[list[DecisionMedia]]
@@ -14259,11 +14291,13 @@ class PptxCommentPatch(TypedDict):
 class SlideAbstention(TypedDict):
     target: PptxCommentTarget
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage", "RunDeadline"]
 class SlideUnitRefused(TypedDict):
     target: PptxCommentTarget
     reason: SlideUnitRefusalReason
     offer: NotRequired[PptxCommentTarget | None]
+    judged_live: NotRequired[LivePin | None]
 class SlideReviewOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     judgments: list[SlideJudgment]
@@ -14305,9 +14339,11 @@ class ArtifactAskSubmit(TypedDict):
 class UnitAbstention(TypedDict):
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class UnitRefusal(TypedDict):
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
@@ -14877,7 +14913,12 @@ class DeckStepSetSeriesValuesBody(TypedDict):
     values: list[StepCell]
 class DeckStepSetSeriesValues(TypedDict):
     set_series_values: DeckStepSetSeriesValuesBody
-DeckStep = DeckStepSetText | DeckStepReplaceRunText | DeckStepSetXfrm | DeckStepMoveInSlideSpace | DeckStepSetPicture | DeckStepSetNotes | DeckStepAddShape | DeckStepDeleteShape | DeckStepReparent | DeckStepDuplicateSlide | DeckStepReorderSlides | DeckStepSetTableCell | DeckStepSetSeriesValues
+class DeckStepReleaseMediaBody(TypedDict):
+    slide: str
+    relationships: list[str]
+class DeckStepReleaseMedia(TypedDict):
+    release_media: DeckStepReleaseMediaBody
+DeckStep = DeckStepSetText | DeckStepReplaceRunText | DeckStepSetXfrm | DeckStepMoveInSlideSpace | DeckStepSetPicture | DeckStepSetNotes | DeckStepAddShape | DeckStepDeleteShape | DeckStepReparent | DeckStepDuplicateSlide | DeckStepReorderSlides | DeckStepSetTableCell | DeckStepSetSeriesValues | DeckStepReleaseMedia
 class DeckTransaction(TypedDict):
     schema: int
     base: Digest
@@ -17388,10 +17429,12 @@ class ArtifactUnitReceiptAbstained(TypedDict):
     status: Literal["abstained"]
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptRefused(TypedDict):
     status: Literal["refused"]
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptOmitted(TypedDict):
     status: Literal["omitted"]
 ArtifactUnitReceipt = ArtifactUnitReceiptAbstained | ArtifactUnitReceiptRefused | ArtifactUnitReceiptOmitted
@@ -18079,7 +18122,7 @@ class ClaimDemoteView(TypedDict):
     stale: bool
     receipt_ref: str
 class ReadFilterInput(TypedDict):
-    entity_types: NotRequired[list[int] | None]
+    entity_types: NotRequired[list[str] | None]
     max_sensitivity_band: NotRequired[int | None]
     include_stale: NotRequired[bool | None]
     min_confidence: NotRequired[float | None]
@@ -19350,6 +19393,8 @@ class ChartEditInsertSeriesBody(TypedDict):
     values: NotRequired[list[float | None]]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    x_labels: NotRequired[list[str | None] | None]
+    plot: NotRequired[int | None]
     categories: NotRequired[ChartCategories | None]
     bubble_size: NotRequired[list[float | None] | None]
     bubble_3d: NotRequired[bool | None]
@@ -19382,8 +19427,14 @@ class ChartEditSetSeriesFamily(TypedDict):
 class ChartEditSetSeriesXBody(TypedDict):
     series: NodeId
     x: NotRequired[list[float | None] | None]
+    x_labels: NotRequired[list[str | None] | None]
 class ChartEditSetSeriesX(TypedDict):
     set_series_x: ChartEditSetSeriesXBody
+class ChartEditSetSeriesPlotBody(TypedDict):
+    series: NodeId
+    plot: int
+class ChartEditSetSeriesPlot(TypedDict):
+    set_series_plot: ChartEditSetSeriesPlotBody
 class ChartEditSetSeriesBubbleSizeBody(TypedDict):
     series: NodeId
     bubble_size: NotRequired[list[float | None] | None]
@@ -19447,7 +19498,7 @@ class ChartEditSetSourceBody(TypedDict):
     source: ChartSource
 class ChartEditSetSource(TypedDict):
     set_source: ChartEditSetSourceBody
-ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetSeriesBubbleSize | ChartEditSetSeriesBubble3D | ChartEditSetPlot | ChartEditSetView | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
+ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetSeriesPlot | ChartEditSetSeriesBubbleSize | ChartEditSetSeriesBubble3D | ChartEditSetPlot | ChartEditSetView | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -19666,6 +19717,9 @@ class OfficeBodyExportVerbRequest(TypedDict):
     made_by: NotRequired[Any | None]
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+class OfficeRecalcZone(TypedDict):
+    utc_offset_minutes: int
+    iana_timezone: NotRequired[str | None]
 class OfficeBodyExportRecord(TypedDict):
     artifact: EntityId
     version: int
@@ -19677,6 +19731,7 @@ class OfficeBodyExportRecord(TypedDict):
     at: int
     changes: int
     recalc: NotRequired[str | None]
+    recalc_zone: NotRequired[OfficeRecalcZone | None]
     effects: list[str]
 class OfficeBodyExportView(TypedDict):
     frontier: list[int]
@@ -20411,7 +20466,7 @@ class ConsolidationRootBucket(TypedDict):
     predicate_root: str
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
-    relationship: NotRequired[str | None]
+    relationship: NotRequired[list[str] | None]
     project: str
 class ConsolidationReference(TypedDict):
     source_id: str

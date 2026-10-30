@@ -261,9 +261,10 @@ impl<'v> ScopedRead<'v> {
             return Ok(None);
         };
         // The short-reference hash names the stored revision, so it is taken
-        // before any live projection replaces the body.
+        // before any live projection replaces the body. A file-plane ASSET's
+        // comes from its manifest, never from the manifest's own bytes.
         let content_hash =
-            (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
+            crate::store::short_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
         if mode == ReadMode::Live {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -289,6 +290,9 @@ impl<'v> ScopedRead<'v> {
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend_from_slice(&body);
         }
+        // A file-plane ASSET's live row serves its body, not its manifest;
+        // an older revision keeps the manifest it was stored as.
+        let raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;
         Ok(Some(AdmittedRevision { raw, content_hash }))
     }
 
