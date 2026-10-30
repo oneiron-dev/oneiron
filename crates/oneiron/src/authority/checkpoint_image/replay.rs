@@ -7,7 +7,10 @@
 //! Each row's point is explicit: a row the fold holds no state at is
 //! [`ReplayPoint::Rejected`]; a row with one keeps it whole every
 //! [`AUTHORITY_REPLAY_FULL_STRIDE`] rows down a first-parent chain, and
-//! otherwise as the fields that differ from the whole state it rests on.
+//! otherwise as the fields that differ from the whole state it rests on. A
+//! map field keeps only the entries that differ there, and the keys gone
+//! ([`FieldDelta::Entries`], FIX 11262), where that is smaller and applies
+//! back to the field exactly; any other field keeps its whole value.
 //! The encoding is deterministic and lossless: [`fold_state_fields`] names
 //! every field of the fold state, so a field added there without a name here
 //! does not compile. An image whose evidence would pass the encoded size cap
@@ -58,15 +61,30 @@ pub(in crate::authority) enum ReplayPoint {
     /// The whole state.
     Full(Box<FoldState>),
     /// The whole state at `base`, an ancestor of this row down its
-    /// first-parent chain, with each named field replaced.
+    /// first-parent chain, with each named field changed.
     Delta {
         base: AuthorityEntryHash,
-        fields: BTreeMap<String, FieldBytes>,
+        fields: BTreeMap<String, FieldDelta>,
+    },
+}
+
+/// One field's change against the whole state a delta rests on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::authority) enum FieldDelta {
+    /// The field's whole value.
+    Whole(FieldBytes),
+    /// The field is a map: each entry set, by key, and each key removed,
+    /// every key and value as its own MessagePack bytes, in key byte order
+    /// (FIX 11262).
+    Entries {
+        set: Vec<(FieldBytes, FieldBytes)>,
+        removed: Vec<FieldBytes>,
     },
 }
 
 /// One field's value as its own MessagePack bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::authority) struct FieldBytes(Vec<u8>);
 
 impl Serialize for FieldBytes {
@@ -116,6 +134,85 @@ fn decode_field<T: DeserializeOwned>(bytes: &FieldBytes) -> Option<T> {
     rmp_serde::from_slice(&bytes.0).ok()
 }
 
+/// `state`'s change against `base`: the entries that differ where both
+/// encode as maps, that is smaller than the whole value, and it applies back
+/// to `state` exactly; the whole value otherwise. None where a value does
+/// not encode.
+fn field_delta<T: Serialize + DeserializeOwned + PartialEq>(
+    base: &T,
+    state: &T,
+) -> Option<FieldDelta> {
+    let whole = encode_field(state)?;
+    if let (Some(before), Some(after)) = (map_bytes(&encode_field(base)?), map_bytes(&whole)) {
+        let set: Vec<_> = after
+            .iter()
+            .filter(|(key, value)| before.get(*key) != Some(*value))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let removed: Vec<_> = before
+            .keys()
+            .filter(|key| !after.contains_key(*key))
+            .cloned()
+            .collect();
+        let size: usize = set
+            .iter()
+            .map(|(key, value)| key.0.len() + value.0.len())
+            .chain(removed.iter().map(|key| key.0.len()))
+            .sum();
+        let delta = FieldDelta::Entries { set, removed };
+        if size < whole.0.len() && apply_field_delta(base, &delta).as_ref() == Some(state) {
+            return Some(delta);
+        }
+    }
+    Some(FieldDelta::Whole(whole))
+}
+
+/// `base` with `delta` applied, decoded. None where a removed key is not in
+/// `base`, or a value does not encode or decode.
+fn apply_field_delta<T: Serialize + DeserializeOwned>(base: &T, delta: &FieldDelta) -> Option<T> {
+    let (set, removed) = match delta {
+        FieldDelta::Whole(bytes) => return decode_field(bytes),
+        FieldDelta::Entries { set, removed } => (set, removed),
+    };
+    let mut map = map_bytes(&encode_field(base)?)?;
+    for key in removed {
+        map.remove(key)?;
+    }
+    for (key, value) in set {
+        map.insert(key.clone(), value.clone());
+    }
+    let entries = map
+        .iter()
+        .map(|(key, value)| Some((value_of(key)?, value_of(value)?)))
+        .collect::<Option<Vec<_>>>()?;
+    decode_field(&bytes_of(&rmpv::Value::Map(entries))?)
+}
+
+/// The entries of the map `bytes` encodes, each key and value as its own
+/// bytes, by key bytes. None where it is no map or a key repeats.
+fn map_bytes(bytes: &FieldBytes) -> Option<BTreeMap<FieldBytes, FieldBytes>> {
+    let rmpv::Value::Map(entries) = value_of(bytes)? else {
+        return None;
+    };
+    let mut map = BTreeMap::new();
+    for (key, value) in &entries {
+        if map.insert(bytes_of(key)?, bytes_of(value)?).is_some() {
+            return None;
+        }
+    }
+    Some(map)
+}
+
+fn value_of(bytes: &FieldBytes) -> Option<rmpv::Value> {
+    rmpv::decode::read_value(&mut bytes.0.as_slice()).ok()
+}
+
+fn bytes_of(value: &rmpv::Value) -> Option<FieldBytes> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).ok()?;
+    Some(FieldBytes(bytes))
+}
+
 /// Every field of [`FoldState`], by name: the fields a delta may replace,
 /// the delta between two states, and a delta applied. The pattern names
 /// each field, so the list and the struct cannot drift apart.
@@ -123,29 +220,32 @@ macro_rules! fold_state_fields {
     ($($field:ident),* $(,)?) => {
         const FIELDS: &[&str] = &[$(stringify!($field)),*];
 
-        /// The fields of `state` that differ from `base`, each encoded;
-        /// None where one does not encode.
+        /// The fields of `state` that differ from `base`, each as its
+        /// change ([`field_delta`]); None where one does not encode.
         fn state_delta(
             base: &FoldState,
             state: &FoldState,
-        ) -> Option<BTreeMap<String, FieldBytes>> {
+        ) -> Option<BTreeMap<String, FieldDelta>> {
             let FoldState { $($field: _),* } = state;
             let mut fields = BTreeMap::new();
             $(
                 if base.$field != state.$field {
-                    fields.insert(stringify!($field).to_owned(), encode_field(&state.$field)?);
+                    fields.insert(
+                        stringify!($field).to_owned(),
+                        field_delta(&base.$field, &state.$field)?,
+                    );
                 }
             )*
             Some(fields)
         }
 
-        /// `base` with each field of `fields` replaced; None where a name is
-        /// unknown or a value does not decode.
-        fn apply_delta(base: &FoldState, fields: &BTreeMap<String, FieldBytes>) -> Option<FoldState> {
+        /// `base` with each field of `fields` changed; None where a name is
+        /// unknown or a change does not apply.
+        fn apply_delta(base: &FoldState, fields: &BTreeMap<String, FieldDelta>) -> Option<FoldState> {
             let mut state = base.clone();
-            for (name, bytes) in fields {
+            for (name, delta) in fields {
                 match name.as_str() {
-                    $(stringify!($field) => state.$field = decode_field(bytes)?,)*
+                    $(stringify!($field) => state.$field = apply_field_delta(&base.$field, delta)?,)*
                     _ => return None,
                 }
             }

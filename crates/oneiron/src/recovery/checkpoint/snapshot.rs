@@ -42,14 +42,21 @@ impl Vault {
         // snapshot reads it (the backup watermark).
         self.mint_backup_incarnation()?;
         // Every pad a row holds goes into current custody first, outside
-        // the custody guard, so the image names it by reference (KS-5, FIX
-        // 5686 part 2). One that does not go rides as its carrier.
-        if let Err(error) = self.prepare_image_pads() {
-            tracing::warn!(
+        // the custody guard, and is read back, so the image names it by
+        // reference (KS-5, FIX 5686 part 2, FIX 7313). One that does not go
+        // rides as its carrier, and the receipt counts it.
+        match self.prepare_image_pads() {
+            Ok(0) => {}
+            Ok(unprepared) => tracing::warn!(
+                unprepared,
+                "world key pads current custody does not hold the same ride this image as their \
+                 carriers"
+            ),
+            Err(error) => tracing::warn!(
                 kind = ?error.kind(),
                 "world key pads were not prepared for this image; any custody lacks rides as \
                  its carrier"
-            );
+            ),
         }
         let mut pass = 0_u32;
         loop {
@@ -149,6 +156,9 @@ impl Vault {
         let mut census = carried_bodies::BodyCensus::default();
         // Window snapshots kept as they rest, warned by count (FIX 7107).
         let mut kept_windows = 0;
+        // Pad rows the image carries with their pad, counted in its receipt
+        // (FIX 7313).
+        let mut pads_carried = 0_usize;
         for entry in DB_MANIFEST {
             let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
                 if storage_tier(entry.name, key) != StorageTier::Canonical {
@@ -203,6 +213,11 @@ impl Vault {
                 } else {
                     value.to_vec()
                 };
+                if entry.name == "entities"
+                    && crate::world_keys::image_pad_row_of(&value).is_some_and(|row| row.held)
+                {
+                    pads_carried = pads_carried.saturating_add(1);
+                }
                 // Every queue row goes unleased: an agent dispatch's stub
                 // too, whose instance seals the row as it stood (FIX 7115).
                 // An opaque one's stub, the erased marker, and an opaque row
@@ -366,6 +381,7 @@ impl Vault {
             evidence,
             checkpoint_fact,
             host_holds: host_holds_availability,
+            pads_carried,
         }))
     }
 

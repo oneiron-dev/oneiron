@@ -1,6 +1,6 @@
 //! Overlay lifecycle state machine, leases, seal/rearm/close.
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
 
@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 
 use super::super::keyspace::{KeyspaceState, OverlayKeyspace, OverlayState, OverlayValue};
 use super::ACTIVE_SEGMENT;
+use super::held::Held;
 use super::retained::Retained;
 use super::segment::{NEXT_OVERLAY_GENERATION, TxnSegment};
 use crate::error::OffRecordError;
@@ -60,10 +61,18 @@ pub(in crate::session_overlay) struct Lease {
         reason = "segment generation is consumed once ONE-1728 installs production session writes"
     )]
     pub(super) generation: u64,
+    /// The state a snapshot reads under this lease, counted in what the
+    /// overlay retains until the lease drops. A segment's lease reads none.
+    pub(super) snapshot_state: Option<Arc<OverlayState>>,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
+        // Released before the lease count drains, so a close waiting on it
+        // charges without the state.
+        if let Some(state) = self.snapshot_state.take() {
+            self.overlay.release_snapshot_state(state);
+        }
         if let Ok(mut lifecycle) = self.overlay.lifecycle.lock() {
             lifecycle.leases = lifecycle.leases.saturating_sub(1);
             if lifecycle.leases == 0 {
@@ -85,6 +94,9 @@ pub(crate) struct SessionOverlay {
     /// changes (FIX 10104), and taken and dropped once the closed overlay
     /// is unpublished, or with the overlay.
     charge: Mutex<Option<OverlayCharge>>,
+    /// What live snapshots and promotion plans hold beyond the published
+    /// state, counted in what the overlay retains.
+    pub(super) held: Mutex<Held>,
 }
 
 /// The host's charge beside the bytes its stretch holds before any row.
@@ -110,6 +122,7 @@ impl SessionOverlay {
             segment_available: Condvar::new(),
             budget_bytes,
             charge: Mutex::new(None),
+            held: Mutex::new(Held::default()),
         })
     }
 
@@ -150,8 +163,9 @@ impl SessionOverlay {
         }
     }
 
-    /// The bytes the overlay retains now (FIX 10104): its published state
-    /// and `segment`, a write's live segment, each shared allocation once,
+    /// The bytes the overlay retains now (FIX 10104): its published state,
+    /// `segment`, a write's live segment, the states live snapshots read and
+    /// the copies live promotion plans hold, each shared allocation once,
     /// with `incoming`, the heap a copy about to be made will hold.
     pub(super) fn retained_with(&self, segment: Option<&TxnSegment>, incoming: usize) -> usize {
         let mut retained = Retained::default();
@@ -159,21 +173,26 @@ impl SessionOverlay {
         if let Some(segment) = segment {
             retained.segment(segment);
         }
+        retained.held(&self.held.lock().unwrap_or_else(PoisonError::into_inner));
         retained.bytes().saturating_add(incoming)
     }
 
     /// Moves a bound charge to what the overlay retains now: its published
-    /// state and this thread's segment of it, if any. Never called while
-    /// this thread's segment is borrowed mutably.
+    /// state and this thread's segment of it, if any. A snapshot or plan
+    /// that drops while this thread's segment is borrowed mutably, or while
+    /// the thread's locals are torn down, moves nothing: the next charge
+    /// catches up.
     pub(super) fn charge_now(&self) {
-        let bytes = ACTIVE_SEGMENT.with(|slot| {
-            let slot = slot.borrow();
+        let bytes = ACTIVE_SEGMENT.try_with(|slot| {
+            let slot = slot.try_borrow().ok()?;
             let segment = slot
                 .as_ref()
                 .filter(|segment| std::ptr::eq(segment.overlay.as_ref(), self));
-            self.retained_with(segment, 0)
+            Some(self.retained_with(segment, 0))
         });
-        self.charge_to(bytes);
+        if let Ok(Some(bytes)) = bytes {
+            self.charge_to(bytes);
+        }
     }
 
     /// Releases a closed overlay once its registry entry is unpublished
@@ -373,6 +392,7 @@ impl SessionOverlay {
         Ok(Lease {
             overlay: self.clone(),
             generation: lifecycle.generation,
+            snapshot_state: None,
         })
     }
 
@@ -393,6 +413,7 @@ impl SessionOverlay {
         Ok(Lease {
             overlay: self.clone(),
             generation,
+            snapshot_state: None,
         })
     }
 }
