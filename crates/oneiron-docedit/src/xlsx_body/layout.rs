@@ -2,6 +2,7 @@
 //! Entry: `Book::relayout`.
 //! Definitions live here; xlsx_body retains the old API and shared Book state.
 
+use super::titles::TitleMoves;
 use super::*;
 
 impl Book {
@@ -382,7 +383,21 @@ impl Book {
                 })
                 .map(|(_, name, _)| name.clone())
                 .collect();
-            self.retitle_parts(&old, &new)?;
+            // The other sheets keep their names, laid out (FIX 9084).
+            let others: Vec<String> = layout
+                .iter()
+                .filter(|(at, ..)| {
+                    at.is_some_and(|at| !self.worksheets.contains_key(&self.order[at]))
+                })
+                .map(|(_, name, _)| name.clone())
+                .collect();
+            self.retitle_parts(&TitleMoves {
+                old: &old,
+                new: &new,
+                others: &others,
+                order: &order,
+                fate: &fate,
+            })?;
         }
         self.visibility = layout
             .iter()
