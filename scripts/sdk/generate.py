@@ -1698,11 +1698,12 @@ pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, v
 let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
 super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
 }}
-/// [`call_verb`]'s row for `verb`.
+/// [`call_verb`]'s row for `verb`. Each row's future is on the heap, so this
+/// one stays small however large its largest row is (FIX 12072).
 async fn call_verb_row(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
 match verb {{
 '''
-    dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
+    dispatch += ''.join(f'{json.dumps(r["name"])} => Box::pin({r["name"].replace(".", "_")}(server, call, input)).await,\n' for r in facade_rows)
     for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board' and 'host' not in r]), ('Browser', [r for r in BROWSER_ROWS if 'host' not in r]), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
