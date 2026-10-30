@@ -456,6 +456,7 @@ pub(in crate::server) fn launch_request(
                 schema: schema.clone(),
             },
             locality,
+            host_keyless: false,
         },
         messages: vec![
             LlmMessage {

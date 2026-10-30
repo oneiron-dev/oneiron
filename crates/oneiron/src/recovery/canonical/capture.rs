@@ -11,7 +11,7 @@ pub fn capture_canonical_window(
     window: &str,
     doc: &LoroDoc,
 ) -> Result<CanonicalSnapshot> {
-    capture_canonical_window_within(vault, window, doc, usize::MAX)
+    capture_canonical_window_within(vault, window, doc, usize::MAX).map(|(snapshot, _)| snapshot)
 }
 
 /// Publishes into current custody each pad a row holds that custody lacks,
@@ -41,13 +41,14 @@ pub(crate) fn prepare_artifact_pads(vault: &Vault) {
 /// copy that would pass `limit` is refused with
 /// [`ArtifactError::OverlayLimit`] before it is made, so the copies of a
 /// window far over the limit cost the limit, not the window. One document
-/// is read whole before it is counted, as opening it reads it.
+/// is read whole before it is counted, as opening it reads it. The second
+/// half is the NOTE births' measured overrun, if the measure passed `limit`.
 pub(crate) fn capture_canonical_window_within(
     vault: &Vault,
     window: &str,
     doc: &LoroDoc,
     limit: usize,
-) -> Result<CanonicalSnapshot> {
+) -> Result<(CanonicalSnapshot, Option<RecoveryBudgetOverrun>)> {
     let budget = &mut ByteBudget::new(limit);
     // The shallow value names the roots without copying what they hold.
     let LoroValue::Map(containers) = doc.get_value() else {
@@ -364,7 +365,7 @@ pub(crate) fn capture_canonical_window_within(
             }
         }
     }
-    document::capture(vault, &txn, &mut snapshot, budget)?;
+    let measured = document::capture(vault, &txn, &mut snapshot, budget)?;
     for entity in &snapshot.entity_blobs {
         if crate::batch::EntityMetadataHeader::parse(&entity.blob)
             .is_some_and(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
@@ -488,5 +489,5 @@ pub(crate) fn capture_canonical_window_within(
             ));
         }
     }
-    Ok(snapshot)
+    Ok((snapshot, measured))
 }

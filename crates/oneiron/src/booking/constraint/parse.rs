@@ -179,6 +179,7 @@ fn constraint_parse_llm_request(
                 schema: constraint_response_schema(),
             },
             locality: config.locality,
+            host_keyless: false,
         },
         messages: vec![
             system_message(format!(

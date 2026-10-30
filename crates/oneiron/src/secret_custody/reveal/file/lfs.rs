@@ -17,8 +17,7 @@
 
 use super::{
     FILE_REASK_DOMAIN, KeyRead, REVEALS, ReadGroup, RevealAsker, SEALED_FILE_CLASS,
-    SecretRevealState, checked_text, covering_grant, file_ask_id, load_active_standing_grants,
-    reveal_bound,
+    SecretRevealState, checked_text, file_ask_id, load_active_standing_grants, reveal_class,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -73,7 +72,7 @@ impl Vault {
             self.read_sight_in_txn(txn, &read)
         })?;
         (sight == SecretSight::Granted)
-            .then(|| file_ask_id(asker, &hash, None))
+            .then(|| file_ask_id(asker, &artifact, &hash, None))
             .transpose()
     }
 
@@ -92,21 +91,22 @@ impl Vault {
         oid: LfsOid,
         held: &EntityId,
     ) -> Result<bool> {
-        let Some((_, hash)) = lfs_read_fingerprint(self, oid)? else {
+        let Some((artifact, hash)) = lfs_read_fingerprint(self, oid)? else {
             return Ok(false);
         };
-        let base = file_ask_id(asker, &hash, None)?;
+        let base = file_ask_id(asker, &artifact, &hash, None)?;
         if base != *held {
             return Ok(false);
         }
         let txn = self.store.env.read_txn()?;
-        let bound = reveal_bound(
-            &asker.connection(),
-            SEALED_FILE_CLASS,
-            asker.project.as_ref(),
-        )?;
         let grants = load_active_standing_grants(&self.store, &txn)?;
-        if covering_grant(&bound, asker.project, &grants)?.is_some() {
+        let class = reveal_class(SEALED_FILE_CLASS);
+        // A grant of any reach covers it (FIX 2354).
+        if asker
+            .reach()
+            .covering_grant(&asker.connection(), &class, &grants)?
+            .is_some()
+        {
             return Ok(true);
         }
         // An approval once is delivered on its ask's own row, in the read's

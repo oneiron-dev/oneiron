@@ -68,6 +68,10 @@ async fn submit(
             "a durable model step names one exact configured model, not a multi-offer seat",
         ));
     }
+    // FIX 10592: the durable step below admits on this request, so it carries
+    // whether its ladder may only serve free keyless own-server work.
+    // Unstamped stays paid.
+    input.request.envelope.host_keyless = ladder.all_keyless_own_server();
     let meter = server
         .llm
         .as_ref()

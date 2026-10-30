@@ -5,6 +5,7 @@ use crate::edit_distance::myers::myers_line_diff;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::TypeRef;
+use crate::llm::decision::DecisionReceipt;
 use crate::skill_attribution::{
     AttemptOutcome, AttributionDecisions, AttributionLane, AttributionSplit, AttributionVerdict,
     AuditAnswerSource, EditHunk, HunkVerdict, JudgeRequest, JudgeTrace, OutcomeEvidence, RawAnswer,
@@ -255,6 +256,9 @@ pub struct AmendmentJudgment {
     /// `judge`, when one model gave every answer: the identity an executor
     /// stamp is compared with. `None` wherever `judge` is.
     pub judge_model: Option<String>,
+    /// The receipt of each decision that gave the verdict, in order; empty
+    /// when no ladder was asked (FIX 447, 11511).
+    pub receipts: Vec<DecisionReceipt>,
     /// The actor whose proposal was judged.
     pub actor: Option<EntityId>,
     /// The SKILL the proposal rode, when it rode one.
