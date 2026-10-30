@@ -4632,7 +4632,7 @@ export type ArtifactPublishRequest = { artifact: string; channel: ArtifactPointe
 /** `oneiron::artifact_hosting::door_types::ArtifactPublishApproval` */
 export type ArtifactPublishApproval = { effect_digest: string }
 /** `oneiron::artifact_hosting::vocabulary::ArtifactPublishVerbStatus` */
-export type ArtifactPublishVerbStatus = "proposed" | "published"
+export type ArtifactPublishVerbStatus = "proposed" | "published" | { paced: { retry_at: number } }
 /** `oneiron::artifact_hosting::vocabulary::ArtifactPointer` */
 export type ArtifactPointer = { artifact: string; channel: ArtifactPointerChannel; export: ArtifactExportRef; stale_taint_override: boolean; serve_tier: ArtifactServeTier }
 /** `oneiron::artifact_hosting::door_types::ArtifactPublishView` */
