@@ -1423,7 +1423,7 @@
      "path": "src/agent_dispatch/spend_handoff.rs",
      "purpose": "FIX 5661 seam (L09's spend tree, Engine-approved 10-20 11:5x): a home move carries each free-time cycle's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -38568,7 +38568,7 @@
      "path": "src/inbox/resolve.rs",
      "purpose": "Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 10
      }
     },
@@ -38612,12 +38612,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InboxGroupKind",
       "InboxGroupResolution",
       "InboxGroupResolveRequest",
+      "InboxGroupResolveTarget",
       "UnifiedInboxGroup",
       "UnifiedInboxGroupCursor",
       "UnifiedInboxGroupPage"
@@ -38625,8 +38626,8 @@
      "path": "src/inbox/unified.rs",
      "purpose": "The owner's one inbox over both group kinds (FIX 3026): the Dreamer run groups over the pending-consent tray…",
      "surface": {
-      "enum": 3,
-      "fn": 4,
+      "enum": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -63367,8 +63368,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 22,
-      "re-export": 19
+      "crate-vis": 23,
+      "re-export": 20
      }
     },
     {
@@ -63423,6 +63424,20 @@
      "surface": {
       "crate-vis": 16,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SiteSkillExposure"
+     ],
+     "path": "src/skill_attribution/site_exposure.rs",
+     "purpose": "Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -72894,16 +72909,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/task_verb/consult_party_backfill.rs",
-     "purpose": "One-time open migration for consults minted before ConsultAssignee facts existed",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "ConsultPayload",
       "ConsultPayloadRef",
@@ -77284,7 +77289,7 @@
       "ReadBlobVersionRequest",
       "SafeDeleteRequest"
      ],
-     "path": "src/verbs/memory.rs",
+     "path": "src/verbs/memory_requests.rs",
      "purpose": "Typed inputs for the public memory verbs in the SDK inventory",
      "surface": {
       "crate-vis": 8,
@@ -77359,7 +77364,6 @@
      "path": "src/verbs/mod.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 10,
       "re-export": 91,
@@ -77884,23 +77888,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "DiaryEntryReceipt",
-      "DiaryEntryRequest",
-      "SteerReceipt",
-      "SteerRequest"
-     ],
-     "path": "src/verbs/self.rs",
-     "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 5,
-      "struct": 4
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -77911,6 +77898,23 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DiaryEntryReceipt",
+      "DiaryEntryRequest",
+      "SteerReceipt",
+      "SteerRequest"
+     ],
+     "path": "src/verbs/self_verbs.rs",
+     "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -83800,7 +83804,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83912,7 +83916,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 159,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100042,9 +100046,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/live_lease.rs",
-     "purpose": "A step try's spend lease, read live (FIX 1819)",
+     "purpose": "A metered try's spend lease, read live (FIX 1819): a workflow step's try, a reader child's run, or an…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -112263,7 +112267,7 @@
      "path": "src/mcp/live_lease_backend.rs",
      "purpose": "A backend read live on its spend scope (FIX 11457): for a run outside the step pump that spends on a meter…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -115538,7 +115542,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -119308,6 +119312,7 @@
       "InboxGroupMember",
       "InboxGroupResolution",
       "InboxGroupResolveRequest",
+      "InboxGroupResolveTarget",
       "InboxLensConcern",
       "InboxLensDiaryReview",
       "InboxLensKind",
@@ -121795,7 +121800,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1079,
+      "enum": 1080,
       "struct": 3295
      }
     },
