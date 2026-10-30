@@ -16,7 +16,7 @@ use super::{
     validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
     validate_skill_body_overwrite,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimBody};
+use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
@@ -78,7 +78,6 @@ pub(in crate::batch) fn apply_put(
         short_id_plan,
         authority_first_seen_key,
         escalated_skill_body,
-        reconciled_critical_claim_body,
     } = rewrite::rewrite_put_body(
         store,
         wtxn,
@@ -90,14 +89,9 @@ pub(in crate::batch) fn apply_put(
         &owners.pad_stored_body,
     )?;
     owners.escalated_skill_body = escalated_skill_body;
-    owners.reconciled_critical_claim_body = reconciled_critical_claim_body;
     let data = owners.escalated_skill_body.as_deref().unwrap_or(data);
     let data = owners.task_body_without_streaks.as_deref().unwrap_or(data);
     let data = owners.pad_stored_body.as_deref().unwrap_or(data);
-    let data = owners
-        .reconciled_critical_claim_body
-        .as_deref()
-        .unwrap_or(data);
     let old_record::OldRecord {
         body_changed,
         consolidation_dirty,

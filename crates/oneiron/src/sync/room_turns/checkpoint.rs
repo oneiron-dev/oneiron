@@ -16,12 +16,19 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::store::checkpoint_payload::rows::{NOT_SPELLED_BACK, OwnerRef, bad_part};
+use crate::sync::carrier_parts::is_part_key;
 use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified, ValueSplit};
 use crate::workspace_roster::RoomTurn;
 
 /// A turn row naming its actor or an agent it addressed by anything but an
 /// id.
 const TURN_ACTORS: &str = "a room turn names an actor by something other than its id";
+
+/// A turn row in parts (FIX 11790): only the joined row's split takes its
+/// actors out, so the manifest and its parts stay unclassified, named with
+/// the turn.
+const PARTED_TURN: &str =
+    "a room turn row in parts, whose actors only its joined row's split takes out";
 
 /// The field the turn's actor fills.
 const ACTOR: &str = "actor";
@@ -37,6 +44,18 @@ fn named(hex: &str) -> Option<EntityId> {
 /// Where the turn row under `key` goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
+    // FIX 11790: a part goes with the manifest that lists it, and a manifest
+    // under the turn its key names.
+    if is_part_key(key) {
+        return Placement::Part;
+    }
+    if let Some(parts) = crate::sync::room_parts::manifest(value) {
+        return named(key).map_or_else(undecodable, |id| Placement::Manifest {
+            holders: vec![Holder::new(OwnerRef::entity(&id), Vec::new())],
+            parts,
+            joined: Some(SyncUnclassified::ActorSplit(PARTED_TURN)),
+        });
+    }
     let Ok(turn) = decode(value) else {
         return undecodable();
     };

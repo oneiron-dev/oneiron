@@ -37,6 +37,7 @@ mod docx;
 mod doors;
 mod fork;
 mod holder_ask;
+mod live_units;
 mod pptx;
 mod records;
 mod resources;
@@ -56,6 +57,8 @@ pub use consent::{
 pub(crate) use consent::{DiscardAdmission, MergeAdmission};
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
+pub use live_units::LivePin;
+pub(crate) use live_units::{LiveChange, LiveSheet};
 pub use oneiron_docedit::live::LandingReceipt;
 pub use oneiron_docedit::xlsx_body::{
     XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue,

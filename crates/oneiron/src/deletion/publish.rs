@@ -115,6 +115,7 @@ impl Vault {
             due,
             &mut doc_mutated,
         );
+        crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
         if outcome.is_err() && !doc_mutated {
             // Pre-CRDT errors have no document mutation to recover: drop
             // only this request's Prepared marker. Once the shared live doc

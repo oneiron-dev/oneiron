@@ -7,18 +7,20 @@
 //!
 //! This module holds the item codec, the instance table ([`instance`]) and
 //! the custody glue a capture and a restore call: the binding pinned with
-//! the leaves it protects, the mint under the custody guard, guarded reads,
-//! and the restore plan for a list of compartments. Nothing calls them yet:
-//! projection (KS7-2), the mixed sync carriers (KS7-3), erase, hold and
-//! retention staging (KS7-4) and capture and restore (KS7-5) do. Until KS7-6
-//! flips [`CHECKPOINT_PAYLOADS_ENABLED`], every write here refuses and every
-//! read answers empty.
+//! the leaves it protects, the mint under the custody guard ([`capture`]),
+//! guarded reads, the restore plan for a list of compartments
+//! ([`compartment_access`]) and what the kept copies still need of them
+//! ([`kept`]). Projection (KS7-2), the mixed sync carriers (KS7-3), erase,
+//! hold and retention staging (KS7-4) and capture and restore (KS7-5) call
+//! them, now that KS7-6 turned [`CHECKPOINT_PAYLOADS_ENABLED`] on.
 #![allow(
     dead_code,
-    reason = "KS7-2 to KS7-5 call these; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
+    reason = "a history purge's generation roll and the strict live-key read wait on callers"
 )]
 
+pub(crate) mod capture;
 pub(crate) mod instance;
+pub(crate) mod kept;
 pub(crate) mod loro;
 pub(crate) mod retirement;
 pub(crate) mod rows;
@@ -28,6 +30,7 @@ use oneiron_crypto::Purpose;
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result, StoreError};
+use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason};
 use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::store::key_custody::{
@@ -38,9 +41,10 @@ use crate::store::key_custody::{
 use self::instance::{Lifecycle, PayloadInstance};
 
 /// CALLS CHECKPOINT_PAYLOADS_ENABLED (Engine 10-20 07:1x): the one switch
-/// for all of KS-7, false until KS7-6. While it is false nothing mints a
-/// leaf, writes the instance table, changes a checkpoint manifest or refuses
-/// anything that runs today.
+/// for all of KS-7, on since KS7-6 (Engine 10-30 11:12). A capture seals
+/// each owner's rows under its compartment, an erase retires its leaves,
+/// and a restore opens what its custody still holds. Off, nothing mints a
+/// leaf, writes the instance table or changes a checkpoint manifest.
 ///
 /// Sealing is copy-only (call a): live rows and every reader of them stay as
 /// they are; only the copy a checkpoint takes of an owner's rows is sealed,
@@ -48,7 +52,7 @@ use self::instance::{Lifecycle, PayloadInstance};
 /// occurrences, never a digest (call b, [`Subtype`]). A history purge rolls
 /// the purged owner's generation, so its older checkpoints lose that owner's
 /// pre-purge history (call d, [`instance::roll_generation_in_txn`]).
-pub(crate) const CHECKPOINT_PAYLOADS_ENABLED: bool = false;
+pub(crate) const CHECKPOINT_PAYLOADS_ENABLED: bool = true;
 
 /// The width of an owner's canonical id in an item.
 pub(crate) const OWNER_LEN: usize = 32;
@@ -304,20 +308,66 @@ pub(crate) fn read_key(
 /// generation, from the image's manifest), recorded in the one plan the
 /// restore's claim keys use, so its fork copies these leaves as well. Each
 /// answer stands alone, in order: a live leaf opens; a retired one's rows are
-/// dropped and recorded as erased; an error (a missing leaf, or no source
-/// binding) is the caller's to weigh under KS-4's restore rules, and never
-/// stops the census of the others.
+/// dropped and recorded as erased; a refusal (a missing leaf, or no source
+/// binding, each `custody_key_missing`) is the caller's to weigh under KS-4's
+/// restore rules, and never stops the census of the others.
 pub(crate) fn require_all(
     plan: &mut CustodyPlan,
     required: &[(PayloadItem, u64)],
-) -> Result<Vec<Result<Requirement>>> {
+) -> Result<Vec<std::result::Result<Requirement, Rejected>>> {
     ensure_enabled()?;
     Ok(required
         .iter()
         .map(|(item, generation)| {
-            let source = plan.source().ok_or_else(corrupt)?;
+            let source = plan.source().ok_or_else(custody_missing)?;
             let subject = item.subject(source)?;
-            plan.require(&subject.at(*generation))
+            plan.require_rejected(&subject.at(*generation))
         })
         .collect())
+}
+
+/// A restore whose custody holds no compartment it needs: KS-4's lost
+/// custody, by name.
+fn custody_missing() -> Rejected {
+    Rejected::new(RestoreAdmissionReason::CustodyKeyMissing, corrupt())
+}
+
+/// How a restore opens one compartment its image names (KS7-5).
+pub(crate) enum CompartmentAccess {
+    /// Its leaf is live in the restore's source custody: the compartment
+    /// opens with this key.
+    Open(Zeroizing<[u8; 32]>),
+    /// Its leaf is retired, or committed to be: its owner's rows are
+    /// dropped as its erase took them.
+    Retired,
+}
+
+/// What a restore opens each compartment `required` names with, in order,
+/// through `plan`, the one plan its claim keys use ([`require_all`]). A
+/// missing leaf refuses, as KS-4's lost custody does, `custody_key_missing`:
+/// an image supplies a binding, never a key (ARCH-0038, a restore needs the
+/// key custody).
+///
+/// # Errors
+///
+/// A missing leaf or source binding (`custody_key_missing`), a leaf that
+/// does not read, and custody faults, each typed by its kind.
+pub(crate) fn compartment_access(
+    plan: &mut CustodyPlan,
+    required: &[(PayloadItem, u64)],
+) -> std::result::Result<Vec<CompartmentAccess>, Rejected> {
+    let answers = require_all(plan, required)?;
+    let source = plan.source().cloned();
+    required
+        .iter()
+        .zip(answers)
+        .map(|((item, generation), answer)| match answer? {
+            Requirement::Retired => Ok(CompartmentAccess::Retired),
+            Requirement::Live => {
+                let binding = source.as_ref().ok_or_else(custody_missing)?;
+                let key = read_key(LocalCustody::at(binding), item, *generation)?;
+                Ok(CompartmentAccess::Open(key))
+            }
+        })
+        .collect()
 }
