@@ -469,6 +469,20 @@ impl crate::Vault {
     /// waits up to `OWNER_ACT_LEASE_WAIT` before it refuses as today.
     /// Dropping it releases the lease: hold it for the act alone.
     pub fn hold_writer_lease_for_owner_act(&self) -> Result<VaultWriterLease> {
+        let lease = self.try_acquire_writer_lease()?;
+        #[cfg(unix)]
+        lease.mark_owner_act()?;
+        Ok(lease)
+    }
+
+    /// This process's writer lease on the very directory this handle opened,
+    /// for a host that opened without it, taken without waiting and without
+    /// a mark: another holder, this handle's own lease included, refuses
+    /// `ConcurrentWrite(VAULT_WRITER_LEASE_HELD)` at once. An owned open
+    /// that meets it looks once again before it refuses as today. Dropping
+    /// it releases the lease: a writer's nonce spend holds it for that spend
+    /// alone (FIX 12023 W0).
+    pub(crate) fn try_acquire_writer_lease(&self) -> Result<VaultWriterLease> {
         #[cfg(unix)]
         {
             let root = self
@@ -478,12 +492,10 @@ impl crate::Vault {
                 ._bound_root_dir
                 .as_ref()
                 .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
-            let lease = VaultWriterLease::acquire_held(
+            VaultWriterLease::acquire_held(
                 root.try_clone()?,
                 &self.store.owner._registered_path.path,
-            )?;
-            lease.mark_owner_act()?;
-            Ok(lease)
+            )
         }
         #[cfg(not(unix))]
         {
