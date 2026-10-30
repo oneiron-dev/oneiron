@@ -409,19 +409,17 @@ impl Vault {
         tool: &str,
         at: u64,
     ) -> Result<()> {
-        let retired: Vec<StandingOutboundGrant> =
+        for grant in
             standing_outbound_grants_for_principal_in_txn(&self.store, wtxn, principal_ref)?
-                .into_iter()
-                .filter(|grant| {
-                    grant.is_active()
-                        && grant
-                            .scope
-                            .scoped_mcp_grant()
-                            .is_some_and(|scope| scope.server == server && scope.tool == tool)
-                })
-                .collect();
-        for grant in retired {
-            self.retire_tool_grant_in_txn(wtxn, Some(owner), &grant.id, server, at)?;
+        {
+            if grant.is_active()
+                && grant
+                    .scope
+                    .scoped_mcp_grant()
+                    .is_some_and(|scope| scope.server == server && scope.tool == tool)
+            {
+                self.retire_tool_grant_in_txn(wtxn, Some(owner), &grant.id, server, at)?;
+            }
         }
         Ok(())
     }
