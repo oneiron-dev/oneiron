@@ -55,8 +55,12 @@ pub(super) fn durable_names(
 
 /// `text` with each label in `names` that it writes as a whole word (an
 /// ASCII capital, then digits, neither joined to a letter, digit or `_` on
-/// either side) replaced by what it stands for; all else byte for byte.
-pub(super) fn durable_text(text: &str, names: &BTreeMap<String, String>) -> String {
+/// either side) replaced by what it stands for; all else byte for byte. A
+/// summary's text lands through it too (FIX 10359).
+pub(in crate::dreamer_consolidation) fn durable_text(
+    text: &str,
+    names: &BTreeMap<String, String>,
+) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;

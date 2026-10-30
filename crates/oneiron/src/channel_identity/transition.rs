@@ -12,14 +12,27 @@ use crate::store::Store;
 use super::binding::ChannelIdentityBinding;
 use super::custody::{DelegatedGrant, verify_delegated_custody_in_txn};
 
-use super::keys::{
-    DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
-};
-use super::lifecycle::{ChannelIdentityState, ChannelIdentityStep, IdentityEdge};
+use super::keys::WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE;
+use super::lifecycle::{ChannelIdentityState, ChannelIdentityStep, IdentityEdge, QuarantineWindow};
 use crate::gate::class_policy::WaitResolution;
 
 use super::record::ChannelIdentity;
-use crate::error::RecordError;
+use crate::error::{RecordError, RelayError};
+
+/// The reason code a lifecycle receipt carries when its quarantine ran under
+/// the window the default manifest ships, because this vault's manifest names
+/// no `channel_identity.quarantine` row.
+pub(crate) const REASON_QUARANTINE_SHIPPED_WAIT_POLICY: &str =
+    "channel_identity.quarantine.shipped_wait_policy";
+
+/// A quarantine window resolved in one transaction, and where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResolvedQuarantineWindow {
+    pub(crate) window: QuarantineWindow,
+    /// The manifest names no row for the class, so `window` is
+    /// [`QuarantineWindow::SHIPPED`].
+    pub(crate) shipped: bool,
+}
 
 /// What an adapter hands the delegated door: NAMES, never evidence.
 ///
@@ -184,13 +197,13 @@ pub(crate) fn step_channel_identity_in_txn(
 ) -> Result<ChannelIdentity> {
     let Some(grant) = current.grant() else {
         // Only the Quarantine edge consumes a duration. Other edges must not
-        // be refused because a wait row is missing: they make no wait choice.
-        let min_quarantine_secs = if matches!(step, ChannelIdentityStep::Quarantine { .. }) {
-            resolve_quarantine_floor_in_txn(store, txn, current)?
+        // be refused because a wait row is unreadable: they make no wait choice.
+        let window = if matches!(step, ChannelIdentityStep::Quarantine { .. }) {
+            resolve_quarantine_window_in_txn(store, txn, current)?.window
         } else {
-            DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS
+            QuarantineWindow::SHIPPED
         };
-        return current.step_with_wait(step, at, min_quarantine_secs);
+        return current.step_with_wait(step, at, window);
     };
     let proof = if step.asserts_live_custody() {
         Some(verify_delegated_custody_in_txn(
@@ -203,50 +216,84 @@ pub(crate) fn step_channel_identity_in_txn(
     } else {
         None
     };
-    // A delegated row has no quarantine edge to reach, so the floor it would
-    // pass is unreachable; the shipped default is handed through rather than
-    // resolving a row this machine cannot use.
+    // A delegated row has no quarantine edge to reach, so the window it
+    // would pass is unreachable; the shipped window is handed through rather
+    // than resolving a row this machine cannot use.
     current.step_edge(
         IdentityEdge::delegated(step, proof)?,
         at,
-        DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+        QuarantineWindow::SHIPPED,
     )
 }
 
-/// The quarantine hold floor for `identity`, resolved from the manifest in THIS
-/// transaction (DEC-0005: policy resolves in the same snapshot as the row it
-/// governs).
+/// The quarantine hold window for `identity`, resolved from the manifest in
+/// THIS transaction (DEC-0005: policy resolves in the same snapshot as the row
+/// it governs): the row's floor and, when it sets one, its ceiling.
 ///
 /// The holder is the actor the identity is bound to, so a holder-scoped row can
 /// ask this vault to hold one agent's addresses longer — capped by the vault
 /// row, which is the only place a widen can live.
 ///
+/// A manifest that names no row for the class gets the window the default
+/// manifest's row ships, marked `shipped` for the caller's receipt and logged
+/// here.
+///
 /// # Errors
 ///
-/// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
-/// when the resolved rows contradict each other or the manifest is fail-closed:
-/// an unreadable policy is never read as a shorter hold.
-pub(crate) fn resolve_quarantine_floor_in_txn(
+/// [`RelayError::PolicyManifestInvalid`] naming `wait_policy` when the resolved
+/// rows contradict each other or a loaded manifest is unreadable: an unreadable
+/// policy is never read as a shorter hold, and the owner repairs it through
+/// `put_policy_manifest_as_owner`.
+pub(crate) fn resolve_quarantine_window_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity: &ChannelIdentity,
-) -> Result<u64> {
+) -> Result<ResolvedQuarantineWindow> {
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     match policy.resolved_wait(
         WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
         identity.binding().actor_ref(),
     ) {
-        WaitResolution::Resolved(wait) => Ok(wait.min_secs),
-        // Absence is not a zero-second wait or permission to fall back to an
-        // engine constant. The seeded default manifest supplies this row;
-        // losing it makes the lifecycle act fail closed in this snapshot.
-        WaitResolution::Ungoverned | WaitResolution::Contradictory => {
-            Err(Error::Record(RecordError::InvalidChannelIdentityBody(
-                "channel_identity.quarantine wait policy is unresolvable; refusing to step a \
-                 lifecycle act under a policy this vault cannot read",
-            )))
+        WaitResolution::Resolved(wait) => Ok(ResolvedQuarantineWindow {
+            window: QuarantineWindow {
+                min_secs: wait.min_secs,
+                max_secs: wait.max_secs,
+            },
+            shipped: false,
+        }),
+        WaitResolution::Ungoverned => {
+            tracing::warn!(
+                wait_class = WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
+                min_secs = QuarantineWindow::SHIPPED.min_secs,
+                "the vault's manifest names no wait row for this class; the quarantine runs \
+                 under the window the default manifest ships"
+            );
+            Ok(ResolvedQuarantineWindow {
+                window: QuarantineWindow::SHIPPED,
+                shipped: true,
+            })
         }
+        WaitResolution::Contradictory => Err(Error::Relay(RelayError::PolicyManifestInvalid {
+            field: "wait_policy",
+            reason: "rows for channel_identity.quarantine contradict each other or a loaded \
+                     manifest cannot be read; repair it through put_policy_manifest_as_owner",
+        })),
     }
+}
+
+/// The floor of [`resolve_quarantine_window_in_txn`]'s window.
+///
+/// # Errors
+///
+/// As [`resolve_quarantine_window_in_txn`].
+pub(crate) fn resolve_quarantine_floor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+) -> Result<u64> {
+    Ok(resolve_quarantine_window_in_txn(store, txn, identity)?
+        .window
+        .min_secs)
 }
 
 /// Law C, for the row a birth or a step is about to store.

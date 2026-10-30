@@ -41,8 +41,8 @@ mod peers;
 mod preview;
 mod verbs;
 
-pub(crate) use doc::deck_log_ops;
 pub(super) use doc::{birth, validate};
+pub(crate) use doc::{deck_json_values, deck_log_ops};
 pub use peers::merge_deck_peers;
 pub use preview::{DeckPreview, DeckPreviewRequest, DeckPreviewSlide};
 pub use verbs::{

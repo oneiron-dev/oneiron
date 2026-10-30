@@ -49,8 +49,8 @@ mod weave_correction;
 mod weave_lens;
 pub use weave_lens::{
     WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_PLAN_REPAIRS, WEAVE_LENS_READ_RATE_AXIS,
-    WEAVE_LIVE_LENS_REREADS, WEAVE_REPORT_SKILL_NAME, WeaveLensPlan, WeaveLensPlanLine,
-    WeaveLensPlanSection, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens, weave_report_skill_id,
+    WEAVE_LIVE_LENS_REREADS, WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection,
+    WeaveLensRefusal, WeaveLensRender, WeaveLiveLens, weave_report_lens,
 };
 pub(crate) use weave_lens::{
     weave_lens_answer_plan, weave_lens_attempt_input, weave_lens_attempt_period,
@@ -137,6 +137,10 @@ pub struct ScopedRead<'a> {
     /// `ScopedRead::with_artifact_records_cover`). Empty unless a typed
     /// artifact door opts in.
     records_cover: records_cover::ArtifactRecordsCover,
+    /// When this read judges a claim's time-bound standing: a recall's
+    /// `as_of`, or `None` for now (FIX 12226). See
+    /// `ScopedRead::with_judged_at`.
+    judged_at: Option<u64>,
 }
 
 mod admission;

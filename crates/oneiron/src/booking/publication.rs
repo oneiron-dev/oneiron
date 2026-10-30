@@ -305,12 +305,36 @@ fn load_public_booking_page_in_txn(
     )
 }
 
-fn load_public_booking_page_listed_in_txn(
+/// The verified live owner who published `page_ref`'s live publication: the
+/// principal the page's standing invite grant is bound to, and so the actor
+/// its bookings' invites are sent as (FIX 7850). `None` when the page has no
+/// live, published publication.
+///
+/// # Errors
+///
+/// Storage errors, and a stored publication that does not decode.
+pub fn live_booking_page_publisher(
+    vault: &Vault,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some((_, body, owner)) = live_publication_claim_in_txn(vault, &rtxn, page_ref, now)? else {
+        return Ok(None);
+    };
+    Ok(decode_public_booking_page_value(&body.value)?
+        .published
+        .then_some(owner))
+}
+
+/// The live `booking.public_page` claim of `page_ref`, its id and its
+/// verified live owner. Every check but the decoded value's own.
+fn live_publication_claim_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     page_ref: EntityId,
     now: u64,
-) -> Result<Option<(BookingPagePublication, Vec<EntityId>)>> {
+) -> Result<Option<(EntityId, ClaimBody, EntityId)>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, rtxn, &page_ref)?.is_live() {
         return Ok(None);
     }
@@ -340,6 +364,18 @@ fn load_public_booking_page_listed_in_txn(
     if crate::memory::verify_public_booking_owner_in_txn(vault, rtxn, owner).is_err() {
         return Ok(None);
     }
+    Ok(Some((id, body, owner)))
+}
+
+fn load_public_booking_page_listed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<(BookingPagePublication, Vec<EntityId>)>> {
+    let Some((id, body, _)) = live_publication_claim_in_txn(vault, rtxn, page_ref, now)? else {
+        return Ok(None);
+    };
     let value = decode_public_booking_page_value(&body.value)?;
     if !value.published {
         return Ok(None);

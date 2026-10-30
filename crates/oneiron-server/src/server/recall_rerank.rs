@@ -200,10 +200,10 @@ impl RecallRerankHost for ServedRerank {
         let line = Arc::new(BatchLine {
             meter: self.meter.clone(),
         });
+        let ladder = call.ladder.for_world_routes(egress.model_routes());
         let generate = on_line(
             line,
-            call.ladder
-                .generate_while(&run, call.request, None, &may_send),
+            ladder.generate_while(&run, call.request, None, &may_send),
         );
         // The timer is made inside the runtime that drives it: a sync door's
         // thread has none of its own.

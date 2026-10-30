@@ -89,8 +89,8 @@ pub(crate) enum CustodyKind {
     KnownValueIndex,
     /// One known-value history entry (KS-3): item = the holding custody
     /// record's id (16 bytes), never a name derived from a value; generation
-    /// = the holder's entry slot; secret = the index's 44-byte entry, `len
-    /// (u32be) | tag (8) | fingerprint (32)`.
+    /// = the holder's entry slot; secret = the index's 46-byte entry, `len
+    /// (u32be) | tag (8) | rolling (u16be) | fingerprint (32)` (FIX 12209).
     KnownValueEntry,
     /// One world key's pad (KS-5, FIX 346): item = the key's full id (40
     /// bytes: the world's id (16), the key generation (8, big-endian), the
@@ -214,7 +214,7 @@ impl CustodyKind {
             | Self::ConnectorResume
             | Self::ErasableKey
             | Self::HostIssuerSeed => 32,
-            Self::KnownValueEntry => 44,
+            Self::KnownValueEntry => 46,
             Self::InferenceSnapshot => 61,
         }
     }

@@ -110,7 +110,16 @@ pub(super) enum EditorIngress {
     /// one of the editor's two slots it waited for. The permit moves into
     /// the worker that spools and computes, and lives until that worker
     /// exits.
-    Admitted(OwnedSemaphorePermit),
+    Admitted(EditorSlot),
+}
+
+/// An admitted editor POST's slot, and the owner it computes for.
+pub(super) struct EditorSlot {
+    pub(super) permit: OwnedSemaphorePermit,
+    /// The vault owner or co-owner the token was minted for, when the
+    /// caller's credential names one: a limits row the computation crosses
+    /// asks naming them (FIX 5702). A record, not authority.
+    pub(super) owner: Option<oneiron::EntityId>,
 }
 
 impl FromRequestParts<Arc<SyncServer>> for EditorIngress {
@@ -155,7 +164,10 @@ impl FromRequestParts<Arc<SyncServer>> for EditorIngress {
         if !caller.credential_is_live(server.vault()) {
             return Err(editor_refused("editor_caller_not_live"));
         }
-        Ok(Self::Admitted(permit))
+        Ok(Self::Admitted(EditorSlot {
+            permit,
+            owner: caller.principal_entity(),
+        }))
     }
 }
 

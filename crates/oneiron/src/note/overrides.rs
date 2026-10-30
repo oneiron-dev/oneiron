@@ -151,6 +151,62 @@ pub(super) fn delete_overrides_in_txn(
     NOTE_OVERRIDE.delete(store, txn, note)
 }
 
+/// The overrides section of `note`'s next frame (FIX 3819): its row in the
+/// side table's own encoding, or an empty set when it overrides nothing.
+/// Read in the export's own `txn`, beside the seal it rides with.
+#[cfg(feature = "sync")]
+pub(crate) fn encode_frame_overrides_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: &EntityId,
+) -> Result<Vec<u8>> {
+    match note_overrides_in_txn(&vault.store, txn, note)? {
+        Some(overrides) => {
+            rmp_serde::to_vec_named(&overrides).map_err(|_| invalid("NOTE overrides encode"))
+        }
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Installs the overrides section of a NOTE frame (FIX 3819): it decodes
+/// through [`NoteOverrides`] to its one canonical spelling, validates, and
+/// lands beside a live NOTE row in the frame's own write, as
+/// `set_note_overrides` lands it — an empty set deletes the row. A set that
+/// does not decode or validate is refused like any undecodable frame. A
+/// frame never recreates overrides for a NOTE this vault deleted, erased or
+/// tombstoned; that stays `delete_overrides_in_txn`'s path.
+#[cfg(feature = "sync")]
+pub(crate) fn install_frame_overrides_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    note: &EntityId,
+    overrides: &[u8],
+) -> Result<()> {
+    let row = if overrides.is_empty() {
+        None
+    } else {
+        let row: NoteOverrides =
+            rmp_serde::from_slice(overrides).map_err(|_| invalid("NOTE frame overrides"))?;
+        let canonical =
+            rmp_serde::to_vec_named(&row).map_err(|_| invalid("NOTE frame overrides"))?;
+        if canonical != overrides {
+            return Err(invalid("NOTE frame overrides"));
+        }
+        row.validate()?;
+        Some(row)
+    };
+    if vault.local_hard_delete_marker_exists_in_txn(txn, note)?
+        || crate::ports::TombstoneStore::port_tombstone_is_deleted(vault, txn, note)?
+        || vault.get_entity_type_in_txn(txn, note)? != Some(crate::registry::ENTITY_TYPE_NOTE)
+    {
+        return Ok(());
+    }
+    match row {
+        Some(row) if !row.is_empty() => NOTE_OVERRIDE.put(&vault.store, txn, note, &row),
+        _ => NOTE_OVERRIDE.delete(&vault.store, txn, note).map(|_| ()),
+    }
+}
+
 impl Vault {
     /// `note`'s overrides and the defaults its gates read.
     pub fn note_defaults(&self, note: EntityId) -> Result<NoteDefaultsView> {

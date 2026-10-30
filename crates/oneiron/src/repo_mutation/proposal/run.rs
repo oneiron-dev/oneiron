@@ -93,6 +93,7 @@ impl Vault {
             review,
             ProposalBase::Pinned(base),
             Some(stamp),
+            None,
             check,
         )
     }

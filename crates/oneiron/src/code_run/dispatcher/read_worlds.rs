@@ -7,13 +7,15 @@
 //! fails leaves the epoch open, so the ledger never reads complete past it.
 //! A blocked report the run files freezes its ledger only under a clean epoch
 //! ([`HostSelfDispatcher::read_world_seal`]). Instrumentation never refuses or
-//! fails the call it watches.
+//! fails the call it watches. A search also freezes each served row's Scope
+//! at its bridge position for a later step-capsule projection (FIX 7162).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::code_run::storage::{ReadWorldSeal, ReadWorldUnknown};
 use crate::code_run::types::SelfDispatchOutcome;
+use crate::federation::Scope;
 use crate::{EntityId, ScoredEntity, Vault};
 
 /// The capture epoch a dispatcher holds for one run.
@@ -30,9 +32,15 @@ pub(super) struct ReadWorldLive {
     covered: bool,
 }
 
-/// Each served row's worlds as the read that served it proves them, base
-/// reality by its own id: `None` for a row that read cannot prove.
-pub(super) type ServedWorlds = HashMap<EntityId, Option<BTreeSet<EntityId>>>;
+/// A served row's worlds and scope as the read that served it proves them;
+/// either is `None` when that read cannot prove it.
+pub(super) struct ServedRow {
+    worlds: Option<BTreeSet<EntityId>>,
+    scope: Option<Scope>,
+}
+
+/// Each served row's proof, or `None` where the row itself did not read.
+pub(super) type ServedRows = HashMap<EntityId, Option<ServedRow>>;
 
 /// One entry's capture epoch, closed as the entry ends when every ledger
 /// write of it landed. An entry that unwinds leaves it open.
@@ -158,26 +166,50 @@ impl HostSelfDispatcher<'_> {
     /// Notes the worlds of `hits`, the hits a canonical executor run's search
     /// serves at `site`, in the run's ledger: each as `scored` proves it in
     /// the read that scored it and, for a keyed search, as `admitted` proves
-    /// it in the read that admitted it. A hit either read cannot prove marks
-    /// the ledger unknown instead.
+    /// it in the read that admitted it. A hit whose worlds either read
+    /// cannot prove marks the ledger unknown instead. A scope gap leaves only
+    /// that row's scope proof missing; it never takes away proved worlds.
     pub(super) fn note_search_worlds(
         &self,
         site: ExecutorCallSite<'_>,
         hits: &[ScoredEntity],
-        scored: &ServedWorlds,
-        admitted: Option<&ServedWorlds>,
+        scored: &ServedRows,
+        admitted: Option<&ServedRows>,
     ) {
         let mut worlds = BTreeSet::new();
+        let mut rows = BTreeMap::new();
+        let mut unproved_rows = BTreeSet::new();
         for hit in hits {
             for proofs in std::iter::once(scored).chain(admitted) {
                 let Some(served) = proofs.get(&hit.id).and_then(Option::as_ref) else {
                     self.read_worlds_unknown(site.run_id, ReadWorldUnknown::Unproved);
                     return;
                 };
-                worlds.extend(served.iter().copied());
+                let Some(served_worlds) = served.worlds.as_ref() else {
+                    self.read_worlds_unknown(site.run_id, ReadWorldUnknown::Unproved);
+                    return;
+                };
+                worlds.extend(served_worlds.iter().copied());
+                if unproved_rows.contains(&hit.id) {
+                    continue;
+                }
+                if let Some(scope) = served.scope.as_ref() {
+                    if rows
+                        .insert(hit.id, scope.clone())
+                        .is_some_and(|prior| prior != *scope)
+                    {
+                        rows.remove(&hit.id);
+                        unproved_rows.insert(hit.id);
+                    }
+                } else {
+                    rows.remove(&hit.id);
+                    unproved_rows.insert(hit.id);
+                }
             }
         }
-        if self.read_worlds_noted(site.run_id, site.seq, &worlds) {
+        let worlds_noted = self.read_worlds_noted(site.run_id, site.seq, &worlds);
+        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows);
+        if worlds_noted && rows_noted {
             let mut live = self.read_worlds.get();
             live.covered = true;
             self.read_worlds.set(live);
@@ -200,26 +232,50 @@ impl HostSelfDispatcher<'_> {
         }
         noted
     }
+
+    /// Notes `rows` and their scopes as served to `run` at bridge position
+    /// `at`: `true` once the ledger holds them. A write that fails marks the
+    /// ledger unknown and leaves the epoch open.
+    fn read_rows_noted(&self, run: EntityId, at: u64, rows: &BTreeMap<EntityId, Scope>) -> bool {
+        if rows.is_empty() {
+            return true;
+        }
+        let mut live = self.live_for(run);
+        let noted = self.storage.note_read_rows(run, at, rows).is_ok();
+        live.clean &= noted;
+        self.read_worlds.set(live);
+        if !noted {
+            self.read_worlds_unknown(run, ReadWorldUnknown::WriteFailed);
+        }
+        noted
+    }
 }
 
-/// The worlds the row `id` sits in as the read `txn` serves it, base reality
-/// by its own id; `None` where that read cannot prove them (FIX 6130). A
-/// NOTE in several worlds outside base notes every one (FIX-LIST 9433).
-pub(super) fn served_world_in(
+/// The worlds and scope of the row `id` as the read `txn` serves it, base
+/// reality by its own id; either is `None` where that read cannot prove it
+/// (FIX 6130, FIX 7162). A NOTE in several worlds outside base notes every
+/// one (FIX-LIST 9433).
+pub(super) fn served_row_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-) -> Option<BTreeSet<EntityId>> {
+) -> Option<ServedRow> {
     use crate::ports::EntityStore;
     let row = vault.port_entity_get(txn, &id).ok()??;
-    crate::federation::record_scope::note_world::served_worlds_in(
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id).ok()??;
+    let worlds = crate::federation::record_scope::note_world::served_worlds_in(
         &vault.store,
         txn,
         id,
         row.entity_type,
         &row.body,
     )
-    .ok()?
+    .ok()
+    .flatten();
+    let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, id, &raw)
+        .ok()
+        .flatten();
+    Some(ServedRow { worlds, scope })
 }
 
 /// Whether `outcome` carries no row of the vault (FIX 6130): a speech

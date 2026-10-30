@@ -153,17 +153,31 @@ pub fn share_coreference_as_owner(
 }
 
 /// The owning engine unlink retracts metadata and removes both link orientations.
+/// A link between two CLAIMs is a Dreamer's consolidated SameAs (FIX 8363, L13
+/// 03:00) and goes through its own unlink; every other pair, as before.
 pub fn unlink_coreference_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CoreferencePairRequest,
 ) -> MemoryResult<CoreferenceUnlinkReceipt> {
-    let retracted_claims = crate::federation::unlink_coreference_link(
-        vault,
-        owner,
-        input.local_person,
-        input.other_person,
-    )?;
+    let claim = crate::registry::ENTITY_TYPE_CLAIM;
+    let consolidated = vault.get_entity_type(&input.local_person)? == Some(claim)
+        && vault.get_entity_type(&input.other_person)? == Some(claim);
+    let retracted_claims = if consolidated {
+        crate::federation::unlink_consolidated_same_as(
+            vault,
+            owner,
+            input.local_person,
+            input.other_person,
+        )?
+    } else {
+        crate::federation::unlink_coreference_link(
+            vault,
+            owner,
+            input.local_person,
+            input.other_person,
+        )?
+    };
     Ok(CoreferenceUnlinkReceipt {
         local_person: input.local_person,
         other_person: input.other_person,

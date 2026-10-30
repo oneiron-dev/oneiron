@@ -244,13 +244,13 @@ impl CheckpointKey {
         self.opened.as_ref()
     }
 
-    /// [`CheckpointKey::unlock`] with this install's keystore at the platform
-    /// defaults, from the device wrap it holds a slot for, trusting the
-    /// signers whose seeds that keystore holds. `vault_dir` is the vault's
-    /// directory, which the keystore must lie outside.
-    pub fn unlock_on_this_device(path: &Path, vault_dir: &Path) -> Result<Self> {
-        let keystore = oneiron_keystore::default_platform_keystore(&[vault_dir])
-            .map_err(crate::world_keys::keystore_error)?;
+    /// [`CheckpointKey::unlock`] with this install's keystore, trusting its signers;
+    /// `None` is a host with none, which unlocks nothing (FIX 12225).
+    pub fn unlock_on_this_device(
+        path: &Path,
+        keystore: Option<&std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
+    ) -> Result<Self> {
+        let keystore = keystore.cloned().ok_or_else(commitment::no_keystore_for_restore)?;
         Ok(
             Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
                 .trusting_device(keystore),

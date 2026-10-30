@@ -210,7 +210,7 @@ source = "relay-protocol-src"
 [inputs.contracts.vault]
 contract_version = 3
 vm_provision_revision = 1
-vm_outbox_wire_revision = 3
+vm_outbox_wire_revision = 4
 vm_restore_wire_revision = 1
 vm_anchor_wire_revision = 1
 vm_anchor_proxy_revision = 1

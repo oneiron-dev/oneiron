@@ -104,7 +104,7 @@ impl HookVerdict for ServerHookVerdict {
         evidence.extend(producers.take());
         HookVerdictReply {
             reply,
-            evidence: Some(evidence),
+            evidence,
             calls,
         }
     }

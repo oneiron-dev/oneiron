@@ -18,6 +18,7 @@ use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
 
 use super::credential_faults::{forgone, fork_step};
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
+use super::holders::HolderDebt;
 use super::identity::{CustodyBinding, CustodyId, CustodySubject, custody_corrupt};
 use super::platform;
 use super::retirement::RetirementIntent;
@@ -44,6 +45,10 @@ pub(crate) struct CustodyPlan {
     subjects: BTreeMap<CustodySubject, (u64, Option<u64>)>,
     exact: BTreeMap<CustodySubject, BTreeSet<u64>>,
     optional: BTreeSet<CustodySubject>,
+    /// Each holder debt the copy carries (FIX 12192): planned from the
+    /// debts standing at the source, never required, and copied only
+    /// while it still stands there when the fork runs.
+    holders: BTreeSet<HolderDebt>,
 }
 
 impl CustodyPlan {
@@ -66,6 +71,7 @@ impl CustodyPlan {
             subjects,
             exact: BTreeMap::new(),
             optional: BTreeSet::new(),
+            holders: BTreeSet::new(),
         }
     }
 
@@ -175,6 +181,13 @@ impl CustodyPlan {
         })
     }
 
+    /// Plans `debt` for the copy to carry (FIX 12192): a fork copies it
+    /// while it still stands at the source, never required and never a
+    /// refusal when it does not.
+    pub(crate) fn plan_holder_debt(&mut self, debt: HolderDebt) {
+        self.holders.insert(debt);
+    }
+
     /// Whether a fork copies `id` while it is live: every generation of a
     /// subject not required by exact id, else only those required.
     fn copies(&self, id: &CustodyId) -> bool {
@@ -281,9 +294,11 @@ impl LocalCustody<'_> {
     /// retirement destroys is retired there as well, and every other entry
     /// still live here is copied (of a subject required by exact id, only
     /// those ids), each re-checked here as it is copied; an optional one
-    /// this custody cannot read is not copied, warned. The copy thus
-    /// counts generations as this custody does, so its own
-    /// retirements reach every entry it holds. Everything is synced before
+    /// this custody cannot read is not copied, warned. Each holder debt
+    /// `plan` carries that still stands here is copied as well (FIX
+    /// 12192). The copy thus counts generations as this custody does, so
+    /// its own retirements reach every entry it holds. Everything is
+    /// synced before
     /// this returns; a fork that fails removes what it created. `None` when
     /// there is nothing to copy.
     pub(crate) fn fork(
@@ -296,7 +311,7 @@ impl LocalCustody<'_> {
             .into_iter()
             .filter_map(|(id, state)| (state == EntryState::Retired).then_some(id))
             .collect();
-        if retired.is_empty() && plan.subjects.is_empty() {
+        if retired.is_empty() && plan.subjects.is_empty() && plan.holders.is_empty() {
             return Ok(None);
         }
         let target = LocalCustody::at(destination);
@@ -356,6 +371,27 @@ impl LocalCustody<'_> {
                             fork_step(&id, target.publish(&id, &secret))?;
                         }
                     }
+                }
+            }
+            // Every holder debt the plan carries that still stands here
+            // (FIX 12192): a retired key's copy kept elsewhere still
+            // reads `custody_remote_retirement_pending(<holder>)` at the
+            // copy. The debts are re-listed here, so one cleared after
+            // the plan is not copied; a fault listing them is warned and
+            // none are copied, as for an unreadable optional subject,
+            // while a fault writing one fails the fork, as any other
+            // copied entry's does.
+            if !plan.holders.is_empty() {
+                match self.holder_debts() {
+                    Ok(standing) => {
+                        for debt in plan.holders.intersection(&standing) {
+                            target.put_holder_debt(debt)?;
+                        }
+                    }
+                    Err(error) => tracing::warn!(
+                        kind = ?error.kind(),
+                        "the holder debts did not list for this fork;                          the copy carries none of them"
+                    ),
                 }
             }
             forked.sync()?;
