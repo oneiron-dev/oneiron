@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use heed::RwTxn;
 
-use super::{IdempotencyEntry, Rows, Store};
+use super::{IdempotencyEntry, ManifestDbs, Rows, Store};
 use crate::error::{Error, Result};
 
 thread_local! {
@@ -69,8 +69,12 @@ impl IdempotencyIntent {
     ///
     /// Storage errors, which the write answers as its own.
     #[cfg(feature = "sync")]
-    fn count_commit_in_txn(&self, store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
-        let kept = match store.sync_state.get(txn, &self.0)? {
+    pub(super) fn count_commit_in_txn(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<()> {
+        let kept = match store.sync_state().get(txn, &self.0)? {
             Some(row) => IdempotencyEntry::decode(&row).ok(),
             None => None,
         };
@@ -84,7 +88,11 @@ impl IdempotencyIntent {
 
     /// A build without sync keeps no HTTP idempotency rows to count on.
     #[cfg(not(feature = "sync"))]
-    fn count_commit_in_txn(&self, _store: &Store, _txn: &mut RwTxn<'_>) -> Result<()> {
+    pub(super) fn count_commit_in_txn(
+        &self,
+        _store: &impl ManifestDbs,
+        _txn: &mut RwTxn<'_>,
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -133,7 +141,7 @@ where
 }
 
 /// The intent open on this thread.
-fn open_intent() -> Option<IdempotencyIntent> {
+pub(super) fn open_intent() -> Option<IdempotencyIntent> {
     OPEN_INTENT.with(|slot| slot.borrow().clone())
 }
 

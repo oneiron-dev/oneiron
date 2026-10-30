@@ -45,6 +45,11 @@
 //! the commits of the writes already answered are decided
 //! ([`Store::wait_for_deferred_commits`]).
 //!
+//! A detached write (FIX 12023) waits for less still: it takes its place in
+//! the same arrival order and returns at once, before the writer is taken, and
+//! the group's leader runs its closure on its own thread when its turn comes
+//! ([`detached`]).
+//!
 //! This is the store's existing single writer taking many rows per commit. It
 //! is not a lock: correctness is still LMDB's one write transaction, and a
 //! writer that opens `env.write_txn()` itself waits for the group like any
@@ -61,6 +66,7 @@ use std::time::{Duration, Instant};
 
 use heed::{RoTxn, RwTxn};
 
+use crate::Vault;
 use crate::error::Error;
 use crate::learning_setting::{
     GROUP_COMMIT_MAX_WRITES, GROUP_COMMIT_WINDOW_MS, SettingSpec, setting_value_in_txn,
@@ -68,6 +74,11 @@ use crate::learning_setting::{
 
 use super::legal_hold::RefusalBatch;
 use super::{Store, StoreCore, active_write_txn_depth};
+
+mod detached;
+
+pub(crate) use detached::{AfterCommit, DetachedWrite};
+use detached::{DetachedGroup, DetachedWrites};
 
 /// Whose closure a write runs, which decides whether its group may go on
 /// after it.
@@ -156,6 +167,8 @@ pub(crate) struct GroupCommit {
     deferred_leader: DeferredCommitLeader,
     /// The deferred-commit writes answered, and how many of them settled.
     deferred: DeferredCommits,
+    /// The detached writes queued, and how many of them settled (FIX 12023).
+    detached: DetachedWrites,
     #[cfg(test)]
     pub(crate) hooks: hooks::GroupCommitHooks,
 }
@@ -164,15 +177,38 @@ pub(crate) struct GroupCommit {
 struct Waiting {
     /// A group is open or committing; arrivals queue behind it.
     leading: bool,
-    queue: VecDeque<Arc<Ticket>>,
+    queue: VecDeque<Arrival>,
+    /// How many of `queue` are detached writes (FIX 12023).
+    detached: usize,
+}
+
+/// One arrival at the writer, in the one arrival order every write keeps
+/// (FIX 12023): a write whose thread waits for its turn, or a detached write
+/// whose closure the leader runs on its own thread.
+enum Arrival {
+    Write(Arc<Ticket>),
+    Detached(DetachedWrite),
+}
+
+impl Waiting {
+    /// The first arrival, taken out of the queue.
+    fn take_front(&mut self) -> Option<Arrival> {
+        let front = self.queue.pop_front();
+        if matches!(front, Some(Arrival::Detached(_))) {
+            self.detached -= 1;
+        }
+        front
+    }
 }
 
 /// The store's own leader for deferred-commit writes (Engine ruling 10-30
 /// 23:09): a thread, started by the first such write that holds the writer
 /// (it found it idle, or a group handed it on), that opens a group for that
 /// write, runs the writes queued there as any leader does, commits once and
-/// passes the writer on. It holds the store's core, never a store view, and
-/// the store's drop ends it after the group it leads
+/// passes the writer on. It also leads the group of a detached write that
+/// finds the writer idle, or heads the queue when a group hands the writer on
+/// (FIX 12023). It holds the store's core, never a store view, and the store's
+/// drop ends it after the group it leads
 /// ([`GroupCommit::stop_deferred_commit_leader`]).
 #[derive(Default)]
 struct DeferredCommitLeader {
@@ -195,10 +231,19 @@ impl DeferredCommitLeader {
     /// Asks the leader thread to lead the group a deferred-commit write just
     /// took the writer for, starting the thread on first use. False when it
     /// cannot start: that write leads its group itself.
+    ///
+    /// A dropping store starts none: the thread it stops leads what is asked
+    /// next, since its own last group may pass the writer back to it for the
+    /// detached writes queued behind (FIX 12023).
     fn request(&self, core: &Arc<StoreCore>, limits: Limits) -> bool {
         {
             let mut thread = self.thread.lock().unwrap_or_else(PoisonError::into_inner);
-            if thread.as_ref().is_none_or(JoinHandle::is_finished) {
+            let stopping = self
+                .requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .stopping;
+            if !stopping && thread.as_ref().is_none_or(JoinHandle::is_finished) {
                 let core = Arc::clone(core);
                 let started = std::thread::Builder::new()
                     .name("oneiron-deferred-commit".into())
@@ -246,8 +291,15 @@ impl DeferredCommitLeader {
         }
     }
 
-    /// Ends the leader thread once the group it leads, if any, is committed.
+    /// Ends the leader thread once the group it leads, and each one asked of
+    /// it after, is committed. The store is marked dropping first, so no
+    /// request starts a thread again meanwhile.
     fn stop(&self) {
+        self.requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopping = true;
+        self.requested.notify_all();
         let Some(thread) = self
             .thread
             .lock()
@@ -256,11 +308,6 @@ impl DeferredCommitLeader {
         else {
             return;
         };
-        self.requests
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .stopping = true;
-        self.requested.notify_all();
         if thread.join().is_err() {
             tracing::warn!("the deferred-commit leader ended in a panic");
         }
@@ -409,6 +456,18 @@ impl Limits {
             hold_until: store.group_commit.hooks.take_hold(),
         }
     }
+
+    /// These bounds for the group the store's leader opens next, for the
+    /// detached writes this group leaves queued (FIX 12023). A test's hold is
+    /// this group's alone.
+    fn again(&self) -> Self {
+        Self {
+            window: self.window,
+            max_writes: self.max_writes,
+            #[cfg(test)]
+            hold_until: 0,
+        }
+    }
 }
 
 impl GroupCommit {
@@ -424,7 +483,7 @@ impl GroupCommit {
     }
 
     /// The next member for the open group, or `None` when the group closes.
-    fn next_member(&self, size: usize, limits: &Limits, opened: Instant) -> Option<Arc<Ticket>> {
+    fn next_member(&self, size: usize, limits: &Limits, opened: Instant) -> Option<Arrival> {
         if size >= limits.max_writes {
             return None;
         }
@@ -434,8 +493,14 @@ impl GroupCommit {
             match waiting.queue.front() {
                 // An opaque callback joins no group: this one closes, and the
                 // hand-off makes it the next leader, alone.
-                Some(ticket) if ticket.callback == Callback::Opaque => return None,
-                Some(_) => return waiting.queue.pop_front(),
+                Some(Arrival::Write(ticket)) if ticket.callback == Callback::Opaque => return None,
+                Some(_) => {
+                    let next = waiting.take_front();
+                    if matches!(next, Some(Arrival::Detached(_))) {
+                        self.detached.drained.notify_all();
+                    }
+                    return next;
+                }
                 None => {}
             }
             let (keep_open, deadline) = self.keep_open(size, limits, (opened, deadline));
@@ -476,30 +541,59 @@ impl GroupCommit {
         (self.announced.load(Ordering::Acquire) > 0, deadline)
     }
 
-    /// Passes the writer to the first queued write, or stands down.
-    fn hand_off(&self) {
-        let mut waiting = self.lock();
-        match waiting.queue.pop_front() {
-            Some(next) => {
-                drop(waiting);
-                next.set(Turn::Lead);
-            }
-            None => waiting.leading = false,
+    /// Passes the writer on. A detached write the store's leader can run at
+    /// the head of the queue goes to that leader, which runs the writes behind
+    /// it as members (FIX 12023); else the first queued write leads, and runs
+    /// first any detached write left ahead of it; with none queued, the writer
+    /// stands down. `next` is the store's core and the bounds of the group
+    /// that closes, for the leader's next group; `None`, after a writer did
+    /// not open, asks no leader to try again.
+    fn hand_off(&self, next: Option<(&Arc<StoreCore>, &Limits)>) {
+        if let Some((core, limits)) = next
+            && self.detached_heads_for_leader()
+            && self.deferred_leader.request(core, limits.again())
+        {
+            return;
         }
+        let mut waiting = self.lock();
+        let first = waiting
+            .queue
+            .iter()
+            .position(|arrival| matches!(arrival, Arrival::Write(_)));
+        if let Some(at) = first
+            && let Some(Arrival::Write(next)) = waiting.queue.remove(at)
+        {
+            drop(waiting);
+            next.set(Turn::Lead);
+            return;
+        }
+        // Detached writes no leader can take now stay queued for the next
+        // writer, or the vault's own close; an enqueuer waiting past the
+        // bound takes the writer for them.
+        waiting.leading = false;
+        drop(waiting);
+        self.detached.drained.notify_all();
     }
 
-    /// Puts a deferred-commit write that holds the writer back at the head of
-    /// the queue, for the store's leader to run it first.
+    /// Puts a deferred-commit write that holds the writer back where it was
+    /// queued, behind the detached writes that arrived before it, for the
+    /// store's leader to run them and it first.
     fn requeue_first(&self, ticket: &Arc<Ticket>) {
-        self.lock().queue.push_front(Arc::clone(ticket));
+        let mut waiting = self.lock();
+        let at = waiting
+            .queue
+            .iter()
+            .take_while(|arrival| matches!(arrival, Arrival::Detached(_)))
+            .count();
+        waiting.queue.insert(at, Arrival::Write(Arc::clone(ticket)));
     }
 
     /// Takes a deferred-commit write back out of the queue: the store's
     /// leader did not start, and it leads its group itself.
     fn withdraw(&self, ticket: &Arc<Ticket>) {
-        self.lock()
-            .queue
-            .retain(|queued| !Arc::ptr_eq(queued, ticket));
+        self.lock().queue.retain(
+            |arrival| !matches!(arrival, Arrival::Write(queued) if Arc::ptr_eq(queued, ticket)),
+        );
     }
 
     /// Ends the store's deferred-commit leader after the group it leads, if
@@ -630,12 +724,28 @@ impl Store {
             drop(announced);
             return self.solo_write(write);
         }
+        self.queue_write(callback, announced, write, None)
+    }
+
+    /// Queues `write` behind the open group, or leads one, and runs it there.
+    /// `closing` is the vault whose drop this write is, for the detached
+    /// writes that need it and run in this write's group (FIX 12023).
+    fn queue_write<T, E>(
+        &self,
+        callback: Callback,
+        announced: Option<Announced<'_>>,
+        write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+        closing: Option<&Vault>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
         let group = &self.group_commit;
         let ticket = {
             let mut waiting = group.lock();
             if waiting.leading {
                 let ticket = Arc::new(Ticket::new(callback));
-                waiting.queue.push_back(Arc::clone(&ticket));
+                waiting.queue.push_back(Arrival::Write(Arc::clone(&ticket)));
                 group.arrival.notify_all();
                 Some(ticket)
             } else {
@@ -645,10 +755,10 @@ impl Store {
         };
         drop(announced);
         let Some(ticket) = ticket else {
-            return self.lead(callback, write);
+            return self.lead(callback, write, closing);
         };
         match ticket.wait_for_turn() {
-            Assigned::Lead => self.lead(callback, write),
+            Assigned::Lead => self.lead(callback, write, closing),
             Assigned::Run(shared) => self.join(&ticket, shared, write, AnswerAt::Commit),
         }
     }
@@ -669,6 +779,11 @@ impl Store {
     /// segment it commits after the base), answers after the commit as any
     /// write does, and so does one that leads its group itself because the
     /// store's leader could not take it.
+    #[allow(
+        dead_code,
+        reason = "the call receipt moved to the detached door (FIX 12023); this door stays for a \
+                  write whose own checks must still refuse before its reply"
+    )]
     pub(crate) fn group_write_deferred_commit<T, E>(
         &self,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
@@ -684,7 +799,7 @@ impl Store {
         let ticket = Arc::new(Ticket::new(Callback::Audited));
         let idle = {
             let mut waiting = group.lock();
-            waiting.queue.push_back(Arc::clone(&ticket));
+            waiting.queue.push_back(Arrival::Write(Arc::clone(&ticket)));
             group.arrival.notify_all();
             !std::mem::replace(&mut waiting.leading, true)
         };
@@ -696,7 +811,7 @@ impl Store {
             if holds_writer {
                 if !self.request_deferred_commit_leader() {
                     group.withdraw(&ticket);
-                    return self.lead(Callback::Audited, write);
+                    return self.lead(Callback::Audited, write, None);
                 }
                 asked = true;
             }
@@ -706,7 +821,7 @@ impl Store {
                 }
                 // The store's leader handed the writer back: it could not
                 // open the group, and this write leads it itself.
-                Assigned::Lead if asked => return self.lead(Callback::Audited, write),
+                Assigned::Lead if asked => return self.lead(Callback::Audited, write, None),
                 Assigned::Lead => {
                     group.requeue_first(&ticket);
                     holds_writer = true;
@@ -736,15 +851,18 @@ impl Store {
     }
 
     /// Blocks until the group commit of every deferred-commit write answered
-    /// so far is decided (Engine ruling 10-30 23:09), so a reader sees what
-    /// such a write answered once it committed: a receipt a reply named. A
-    /// thread inside a write, whose own group cannot commit while it waits,
-    /// does not wait. Returns at once when none is in flight.
+    /// so far, and of every detached write queued so far (FIX 12023), is
+    /// decided (Engine ruling 10-30 23:09), so a reader sees what such a write
+    /// answered once it committed: a receipt a reply named. A thread inside a
+    /// write, whose own group cannot commit while it waits, does not wait.
+    /// Returns at once when none is in flight.
     pub(crate) fn wait_for_deferred_commits(&self) {
         if active_write_txn_depth() > 0 {
             return;
         }
+        self.take_writer_for_left_detached();
         self.group_commit.deferred.wait_settled();
+        self.group_commit.detached.wait_settled();
     }
 
     /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
@@ -784,6 +902,7 @@ impl Store {
         &self,
         callback: Callback,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+        closing: Option<&Vault>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -792,13 +911,17 @@ impl Store {
         let mut shared = match self.env.write_txn() {
             Ok(txn) => txn,
             Err(err) => {
-                group.hand_off();
+                group.hand_off(None);
                 return Err(E::from(err));
             }
         };
         let opened = Instant::now();
         let limits = Limits::read(self, &shared);
-        // The leader's rows go first, in a transaction nested in the shared
+        // Detached writes left ahead of this one run first, in their arrival
+        // order (FIX 12023): no leader could take the writer for them.
+        let mut detached = DetachedGroup::new(closing);
+        self.core.run_queued_detached(&mut shared, &mut detached);
+        // The leader's rows go next, in a transaction nested in the shared
         // one, so dropping them keeps the refusals logged beside them.
         let (staged, refusals) = self.stage(&mut shared, write);
         // An engine write's group also carries the refusals queued outside
@@ -812,25 +935,60 @@ impl Store {
             Staged::Kept(answer) => answer,
             Staged::Dropped(answer) => {
                 // Nothing of it joined: the group closes at once, carrying
-                // only those refusals, and drops whole when there are none.
-                if refusals.write_in(&mut shared) {
+                // only those refusals and the detached writes that ran before
+                // it, and drops whole when there are none.
+                let logged = refusals.write_in(&mut shared);
+                if detached.ran() > 0 {
+                    let _ = self.core.close_group(
+                        shared,
+                        &limits,
+                        opened,
+                        (1, 0),
+                        true,
+                        Some(refusals),
+                        detached,
+                    );
+                    return answer;
+                }
+                if logged {
                     refusals.landed(shared.commit().is_ok());
                 } else {
                     drop(shared);
                 }
-                group.hand_off();
+                group.hand_off(Some((&self.core, &limits)));
                 return answer;
             }
             Staged::Panicked(panic) => {
-                drop(shared);
-                group.hand_off();
+                if detached.ran() > 0 {
+                    let _ = self.core.close_group(
+                        shared,
+                        &limits,
+                        opened,
+                        (1, 0),
+                        true,
+                        None,
+                        detached,
+                    );
+                } else {
+                    drop(shared);
+                    group.hand_off(Some((&self.core, &limits)));
+                }
                 resume_unwind(panic);
             }
         };
         refusals.write_in(&mut shared);
         // An opaque leader runs alone (no member is ever opaque).
         let closes = callback == Callback::Opaque || holds_postcommit_permit();
-        self.close_group(shared, &limits, opened, (1, 1), closes, Some(refusals))
+        self.core
+            .close_group(
+                shared,
+                &limits,
+                opened,
+                (1, 1),
+                closes,
+                Some(refusals),
+                detached,
+            )
             .map_err(|err| E::from(Error::from(err)))?;
         answer
     }
@@ -945,36 +1103,71 @@ impl StoreCore {
     /// The rest of an open group after its leader's own rows: each queued
     /// write in turn until the group closes, then one commit, the leader's
     /// refusals settled, every member settled and the writer passed on. `ran`
-    /// writes ran in it before the members, `kept` of them keeping rows.
+    /// writes ran in it before the members, `kept` of them keeping rows, and
+    /// `detached` holds the detached writes that ran before them (FIX 12023).
+    #[allow(clippy::too_many_arguments)]
     fn close_group(
-        &self,
+        self: &Arc<Self>,
         mut shared: RwTxn<'_>,
         limits: &Limits,
         opened: Instant,
         (ran, mut kept): (usize, usize),
         mut closes: bool,
         refusals: Option<RefusalBatch<'_>>,
+        mut detached: DetachedGroup<'_>,
     ) -> heed::Result<()> {
         let group = &self.group_commit;
         let mut members = Vec::new();
-        while !closes && let Some(ticket) = group.next_member(ran + members.len(), limits, opened) {
-            let (joined, closed) = ticket.run(SharedTxn::lend(&mut shared));
-            kept += usize::from(joined);
-            closes = closed;
-            members.push(ticket);
+        while !closes
+            && let Some(next) =
+                group.next_member(ran + members.len() + detached.ran(), limits, opened)
+        {
+            match next {
+                Arrival::Write(ticket) => {
+                    let (joined, closed) = ticket.run(SharedTxn::lend(&mut shared));
+                    kept += usize::from(joined);
+                    closes = closed;
+                    members.push(ticket);
+                }
+                // A detached write runs on this thread. One whose vault
+                // closes elsewhere goes back to the head, and the group
+                // closes for that close to run it.
+                Arrival::Detached(write) => {
+                    if let Some(back) = self.run_detached(&mut shared, write, &mut detached) {
+                        group.requeue_detached(back);
+                        closes = true;
+                    }
+                }
+            }
         }
         // Each deferred-commit write this group carries has answered by now,
         // and none of the next group can answer before this one hands off.
         let deferred = group.deferred.answered();
+        // A group whose rows are only a clock floor's (FIX 11568) is noted
+        // as its own writer noted it: by the txn id it took, once it
+        // committed, when no other commit came between.
+        let replay_only = detached
+            .only_replay_rows(kept)
+            .then(|| self.env.info().last_txn_id);
         #[cfg(test)]
-        group.hooks.before_commit(ran + members.len());
+        group
+            .hooks
+            .before_commit(ran + members.len() + detached.ran());
         #[cfg(not(test))]
         let committed = shared.commit();
         #[cfg(test)]
         let committed = group.hooks.commit(shared);
+        let kept = kept + detached.kept();
         if committed.is_ok() && kept > 0 {
             self.diagnostics.group_commit.record(kept as u64);
         }
+        if let Some(before) = replay_only
+            && committed.is_ok()
+            && self.env.info().last_txn_id == before + 1
+        {
+            self.diagnostics.replay_only_commits.note(before + 1);
+        }
+        detached.settle(&group.detached, &committed);
         let settled = group.deferred.settle_to(deferred);
         // The deferred-commit writes it carried answered already: a failed
         // commit loses their rows, said here as no answer can say it.
@@ -995,41 +1188,53 @@ impl StoreCore {
         for ticket in &members {
             ticket.set(Turn::Settled(committed.as_ref().err().map(replicate)));
         }
-        group.hand_off();
+        group.hand_off(Some((self, limits)));
+        detached.release();
         committed
     }
 
     /// The deferred-commit leader thread: each group asked for, until the
     /// store drops (Engine ruling 10-30 23:09).
-    fn lead_deferred_commit_groups(&self) {
+    fn lead_deferred_commit_groups(self: &Arc<Self>) {
         while let Some(limits) = self.group_commit.deferred_leader.next_request() {
             self.lead_deferred_commit_group(&limits);
         }
     }
 
-    /// Leads the group a deferred-commit write took the writer for. It has no
-    /// write of its own: the writes queued there run in arrival order, as in
-    /// any group, and it commits once. Its deferred-commit members carry the
-    /// legal-hold refusals queued outside any writer, which a leader with a
-    /// write would carry.
-    fn lead_deferred_commit_group(&self, limits: &Limits) {
+    /// Leads the group a deferred-commit or detached write took the writer
+    /// for. It has no write of its own: the writes queued there run in arrival
+    /// order, as in any group, and it commits once. Its deferred-commit
+    /// members carry the legal-hold refusals queued outside any writer, which
+    /// a leader with a write would carry.
+    fn lead_deferred_commit_group(self: &Arc<Self>, limits: &Limits) {
         let group = &self.group_commit;
         let shared = match self.env.write_txn() {
             Ok(txn) => txn,
             Err(error) => {
                 // The first queued write takes the writer and leads itself.
+                // The detached writes queued have no caller to answer: their
+                // writer did not open, and they are said lost.
                 tracing::warn!(
                     %error,
                     "the deferred-commit leader could not open its group; the write leads its own"
                 );
-                group.hand_off();
+                group.discard_detached("the store's writer did not open for it");
+                group.hand_off(None);
                 return;
             }
         };
         let opened = Instant::now();
         // A failed commit reaches each member that waits for it, and the
         // group says what it lost of the writes that did not wait.
-        let _ = self.close_group(shared, limits, opened, (0, 0), false, None);
+        let _ = self.close_group(
+            shared,
+            limits,
+            opened,
+            (0, 0),
+            false,
+            None,
+            DetachedGroup::new(None),
+        );
     }
 }
 
@@ -1060,7 +1265,8 @@ impl GroupCommit {
     /// everything it does before its transaction, so a test can act between
     /// a write's checks and its transaction.
     pub(crate) fn queued(&self) -> usize {
-        self.lock().queue.len()
+        let waiting = self.lock();
+        waiting.queue.len() - waiting.detached
     }
 }
 
