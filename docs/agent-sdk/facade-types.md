@@ -8068,7 +8068,7 @@ export type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effec
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowPreview` */
 export type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution }
 /** `oneiron::verbs::connector::OutboundScheduleRequest` */
-export type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null }
+export type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null; selection?: ChannelSelectionRequest | null; counterparty_class?: string | null }
 /** `oneiron::scope_summary::public_types::SummaryPath` */
 export type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string }
 /** `oneiron::scope_summary::public_types::SummaryScope` */
