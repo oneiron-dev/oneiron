@@ -87,7 +87,8 @@ pub struct ConnectorToolConsent {
     /// The catalog connector's name.
     pub connector: String,
     pub target: ConnectorConsentTarget,
-    /// The resolved endpoint the owner was shown: the one the host installed.
+    /// The resolved endpoint the owner was shown: the one the host installed;
+    /// the door unions it with the actor's live allowlist for the tool.
     pub endpoint: String,
     pub rows: Vec<ConnectorToolConsentRow>,
 }
@@ -190,6 +191,9 @@ impl Vault {
                 return Err(invalid("the slate allows no such tool"));
             }
             let manifest = tool_snapshot(&admitted.slate, &row.tool)?;
+            let mut endpoints =
+                self.live_endpoint_union_in_txn(wtxn, &principal_ref, &admitted.server, &row.tool)?;
+            endpoints.insert(consent.endpoint.clone());
             self.retire_actor_tool_grants_in_txn(
                 wtxn,
                 &principal_ref,
@@ -214,7 +218,7 @@ impl Vault {
                     tool: row.tool.clone(),
                     data_class_ceiling: row.data_class_ceiling,
                     tool_data_classes,
-                    endpoint_allowlist: vec![consent.endpoint.clone()],
+                    endpoint_allowlist: endpoints.into_iter().collect(),
                 },
                 at,
             )?;
@@ -400,6 +404,36 @@ impl Vault {
             append_op(&self.store, wtxn, &key_id, op, &next, at)?;
         }
         Ok(())
+    }
+
+    /// The actor's live endpoint allowlist union for one server and tool,
+    /// across the same live grants `retire_actor_tool_grants_in_txn` retires.
+    /// The consent door unions the consented endpoint with this, so an
+    /// accepted widening adds to the grant rather than replacing it.
+    fn live_endpoint_union_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        principal_ref: &str,
+        server: &str,
+        tool: &str,
+    ) -> Result<BTreeSet<String>> {
+        let mut live = BTreeSet::new();
+        for id in standing_outbound_grant_ids_for_principal(&self.store, wtxn, principal_ref)? {
+            let Some(grant) = standing_outbound_grant_in_txn(&self.store, wtxn, &id)? else {
+                continue;
+            };
+            if grant.principal_ref != principal_ref
+                || grant.status != StandingOutboundGrantStatus::Active
+            {
+                continue;
+            }
+            if let Some(scope) = grant.scope.scoped_mcp_grant() {
+                if scope.server == server && scope.tool == tool {
+                    live.extend(scope.endpoint_allowlist.iter().cloned());
+                }
+            }
+        }
+        Ok(live)
     }
 
     /// Retires the actor's live grants for one server and tool, so the call
