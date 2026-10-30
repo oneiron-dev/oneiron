@@ -118,7 +118,7 @@ pub fn use_secret_as_caller(
             MEMORY_CODE_MODEL_UNAVAILABLE,
             "self.use's connector.call sends through a server's installed connector transports; \
              an embedded vault has none",
-            &[super::sdk_host::SERVED_CLIENT_HINT],
+            &[super::host::SERVED_CLIENT_HINT],
         ));
     }
     let outcome = memory
@@ -215,7 +215,7 @@ pub fn use_secret_grant_as_caller(
             MEMORY_CODE_MODEL_UNAVAILABLE,
             "self.use's connector.call sends through a server's installed connector transports; \
              an embedded vault has none",
-            &[super::sdk_host::SERVED_CLIENT_HINT],
+            &[super::host::SERVED_CLIENT_HINT],
         ));
     }
     let caller = SecretGrantCaller::of(memory, run)?;
