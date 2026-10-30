@@ -1,11 +1,12 @@
 //! A STOP written as a message (FIX 12101). A Slack or LINE counterparty
 //! opts out by writing a stop keyword as their whole message; a Slack
-//! message may lead with user mentions (`<@U123> stop`). The connector
-//! bridge reads the message's words before it wakes anyone, and a STOP
-//! becomes the typed OptOut interaction an adapter or `/v1/core` admits,
-//! through the same admission: it holds sends to the sender on the channel
-//! from that write, and the comm projector makes it their standing opt-out.
-//! The message itself still wakes its actor as any other message does.
+//! message may lead with user mentions (`<@U123> stop`). The surface-event
+//! drain reads the message's words before any dispatcher wakes anyone on
+//! it, and a STOP becomes the typed OptOut interaction an adapter or
+//! `/v1/core` admits, through the same admission: it holds sends to the
+//! sender on the channel from that write, and the comm projector makes it
+//! their standing opt-out. The message itself still wakes its actor as any
+//! other message does.
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -13,10 +14,13 @@ use crate::Vault;
 use crate::channel_identity_provider::{
     LINE_CHANNEL, SLACK_CHANNEL, is_line_chat_audience_key, line_source_audience_key,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 use super::handoff::admit_surface_event_once_in_txn;
-use super::{SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAction, SurfaceInteractionKind};
+use super::{
+    SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAction, SurfaceEventDispatchDisposition,
+    SurfaceInteractionKind,
+};
 
 /// The words that opt a sender out of a channel when they are the whole
 /// message: trimmed, NFKC-folded (full-width letters read as ASCII) and
@@ -38,6 +42,10 @@ const STOP_REPLY_CORRELATION_SUFFIX: &str = ":stop_reply";
 
 /// Where an archived LINE event names the member who wrote it.
 const LINE_SOURCE_USER_POINTER: &str = "/event/source/userId";
+
+/// How long a STOP message's dispatch waits before it retries, after a
+/// transient failure to admit its OptOut.
+const STOP_REPLY_RETRY_BACKOFF_SECS: u64 = 30;
 
 /// Where a Slack user mention token starts: `<@U123>` or `<@U123|name>`.
 const SLACK_USER_MENTION_OPEN: &str = "<@";
@@ -70,16 +78,35 @@ fn slack_text_for_stop(text: &str) -> &str {
     rest
 }
 
+/// Admits `event`'s STOP as its sender's OptOut ahead of its dispatch
+/// (FIX 12240), whatever dispatcher is installed, so a reply the message
+/// wakes is already held. `None` lets the dispatch go on: the message wakes
+/// its actor either way, and an opt-out the admission refuses is logged.
+/// `Some` is the retry a transient failure to admit it settles on.
+pub(super) fn admit_stop_reply_before_dispatch(
+    vault: &Vault,
+    event: &SurfaceEvent,
+    now: u64,
+) -> Option<SurfaceEventDispatchDisposition> {
+    match admit_stop_reply_opt_out(vault, event, now) {
+        Ok(_) => None,
+        Err(Error::InvalidConfig(reason)) => {
+            tracing::warn!(%reason, "a STOP message's opt-out was refused; the message goes on");
+            None
+        }
+        Err(err) => Some(SurfaceEventDispatchDisposition::Retry {
+            backoff_until: now.saturating_add(STOP_REPLY_RETRY_BACKOFF_SECS),
+            reason: err.to_string(),
+        }),
+    }
+}
+
 /// Admits the OptOut interaction a STOP message becomes, for `event`'s
 /// sender on its channel, beside the message. `false` when `event` is not a
 /// message, carries no words the vault holds, is not a STOP, or is a chat
 /// message that names no member. A second call for the same message replays
 /// the first admission.
-pub(super) fn admit_stop_reply_opt_out(
-    vault: &Vault,
-    event: &SurfaceEvent,
-    now: u64,
-) -> Result<bool> {
+fn admit_stop_reply_opt_out(vault: &Vault, event: &SurfaceEvent, now: u64) -> Result<bool> {
     if !matches!(event.action, SurfaceEventAction::Message) {
         return Ok(false);
     }
