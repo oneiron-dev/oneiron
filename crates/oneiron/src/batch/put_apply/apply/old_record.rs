@@ -55,7 +55,8 @@ pub(super) fn apply_old_record(
         // Retaining an indexed text revision is not permission to retain a
         // withdrawn claim or a replicated LWW loser in the search index.
         // Local, still-surfaceable text edits alone await idle publication.
-        let withdrawn_claim = dispatch.decoded_claim_body
+        let withdrawn_claim = dispatch
+            .decoded_claim_body
             .as_ref()
             .is_some_and(|body| !crate::claim::claim_surfaceable(body));
         let should_deindex_stale_text = body_changed
@@ -106,7 +107,8 @@ pub(super) fn apply_old_record(
             )?;
         }
         if old_type == ENTITY_TYPE_SKILL && body_changed {
-            let updated = dispatch.new_skill_record
+            let updated = dispatch
+                .new_skill_record
                 .as_ref()
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
             validate_skill_body_overwrite(
@@ -119,11 +121,13 @@ pub(super) fn apply_old_record(
             )?;
         }
         if old_type == ENTITY_TYPE_AGENT_DEF && body_changed {
-            let updated = dispatch.new_agent_definition
-                .as_ref()
-                .ok_or(Error::InvariantViolation(
-                    "validated AGENT_DEF record missing",
-                ))?;
+            let updated =
+                dispatch
+                    .new_agent_definition
+                    .as_ref()
+                    .ok_or(Error::InvariantViolation(
+                        "validated AGENT_DEF record missing",
+                    ))?;
             // No legacy-opaque escape hatch (contrast SKILL): AGENT_DEF is a
             // brand-new kind with no pre-existing bodies, so a prior body that
             // fails to decode is corruption — fail closed.
@@ -169,7 +173,8 @@ pub(super) fn apply_old_record(
         // STORED ceiling — the relocated no-widen check, which necessarily
         // lives here because body-only validation cannot load the parent row.
         // The gate-time clamp (GATE-HALF) covers the same bound live.
-        let created = dispatch.new_agent_definition
+        let created = dispatch
+            .new_agent_definition
             .as_ref()
             .ok_or(Error::InvariantViolation(
                 "validated AGENT_DEF record missing",
@@ -178,7 +183,8 @@ pub(super) fn apply_old_record(
         *portable_agent_source =
             crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &fixed.id, created)?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
-        let created = dispatch.new_skill_record
+        let created = dispatch
+            .new_skill_record
             .as_ref()
             .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
         // ONE-1449 MATERIAL-6 R1: origin is a birth fact that outlives the
@@ -202,7 +208,11 @@ pub(super) fn apply_old_record(
         // same rule a local recreate is, which is a remote rejection the sync
         // door quarantines rather than a divergence it hides.
         optimizer_birth_marker = crate::skill_optimize::optimizer_birth_marker_for_create_in_txn(
-            store, &*wtxn, &fixed.id, created, fixed.replicated,
+            store,
+            &*wtxn,
+            &fixed.id,
+            created,
+            fixed.replicated,
         )?;
         // The birth law itself is LOCAL-only, and stays that way: sync remat
         // keeps writing already-lifecycled records.

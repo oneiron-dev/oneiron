@@ -1,8 +1,8 @@
 //! Base-apply misc arms: edge dispatch and commitment gap-decay.
 
-use super::*;
 use super::edge::{apply_edge_op, edge_op_endpoints};
 use super::validation::take_lapse_decisions;
+use super::*;
 use crate::write_envelope::WriteEnvelope;
 
 pub(super) fn apply_edge_arm(
@@ -35,8 +35,7 @@ pub(super) fn apply_commitment_gap_decay_arm(
     // Hand each id its preflight identity in recorded order. The
     // nested ClaimCandidate applies consume its marker, not this
     // outer arm; consuming here a second time aborts the lapse.
-    let lapse_decision_ids =
-        take_lapse_decisions(&mut state.preflight_gate_decision_ids, &ids);
+    let lapse_decision_ids = take_lapse_decisions(&mut state.preflight_gate_decision_ids, &ids);
     crate::commitment::lapse_commitments_in_txn(
         store,
         config,

@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -15,17 +14,34 @@ use axum::routing::post;
 use oneiron::secret_custody::SecretBindRequest;
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::owner::secret_bindings::{self, BoundView};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/secrets/bind", post(bind))
-        .route("/secrets/unbind", post(unbind))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/bind",
+                summary: "With {\"handle\"} or {\"name\"}, \"effector\", and optionally \"tier_ceiling\" and \"scopes\".",
+                row: None,
+            },
+            post(bind),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/unbind",
+                summary: "With {\"handle\"} or {\"name\"} and \"effector\": withdraws that one binding; every other stays.",
+                row: None,
+            },
+            post(unbind),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/bind`'s body (FIX 11611): [`BindBody`].

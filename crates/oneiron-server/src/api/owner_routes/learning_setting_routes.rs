@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -19,17 +18,43 @@ use oneiron::learning_setting_doors::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/settings/learning", get(list).post(put))
-        .route("/settings/learning/clear", post(clear))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/settings/learning",
+                summary: "The catalog, each knob with the value the vault reads now, and the owner's rows.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/learning",
+                summary: "Lays one seed or pin, replacing the row of the same key, mode and scope.",
+                row: None,
+            },
+            post(put),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/learning/clear",
+                summary: "Clears one row; an absent row clears too.",
+                row: None,
+            },
+            post(clear),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/settings/learning`'s body (FIX 11611):
