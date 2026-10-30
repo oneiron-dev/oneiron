@@ -24,6 +24,7 @@ pub(super) fn persist_review(
     request: &ReviewRequest,
     triage: &CritiqueTriage,
     artifacts: &[CritiqueArtifact],
+    receipts: &[DecisionReceipt],
 ) -> Result<ReviewResult> {
     let value = value_of(&(
         request.kind,
@@ -93,7 +94,7 @@ pub(super) fn persist_review(
             verdict_claim: id,
             triage: triage.clone(),
             artifacts: artifacts.clone(),
-            receipts: Vec::new(),
+            receipts: receipts.to_vec(),
             spawn_attempt: request.spawn_attempt,
         };
         let stored = StoredReview {
@@ -103,6 +104,7 @@ pub(super) fn persist_review(
             verdict: id.to_hex(),
             triage: triage.clone(),
             artifacts,
+            receipts: receipts.to_vec(),
             spawn_attempt: request.spawn_attempt,
         };
         let hash = review_identity_hash(request)?;
@@ -194,6 +196,7 @@ struct StoredReview {
     verdict: String,
     triage: CritiqueTriage,
     artifacts: Vec<CritiqueArtifact>,
+    pub receipts: Vec<DecisionReceipt>,
     /// The launched run the review was first declared for. A review declared
     /// for none stores none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,7 +258,7 @@ pub(super) fn cached_review(
         verdict_claim: id,
         triage: stored.triage,
         artifacts: stored.artifacts,
-        receipts: Vec::new(),
+        receipts: stored.receipts,
         spawn_attempt: stored.spawn_attempt,
     }))
 }
@@ -501,7 +504,7 @@ pub(super) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {
                 verdict_claim: EntityId::from_hex(&stored.verdict)?,
                 triage: stored.triage,
                 artifacts: stored.artifacts,
-                receipts: Vec::new(),
+                receipts: stored.receipts,
                 spawn_attempt: stored.spawn_attempt,
             })
         })
@@ -552,7 +555,7 @@ pub(crate) fn trusted_review_in_txn(
         verdict_claim: *verdict,
         triage: stored.triage,
         artifacts: stored.artifacts,
-        receipts: Vec::new(),
+        receipts: stored.receipts,
         spawn_attempt: stored.spawn_attempt,
     }))
 }
