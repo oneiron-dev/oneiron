@@ -120,17 +120,6 @@ impl DreamerWakeDriver<'_> {
         {
             self.progress = workers[0].progress.take();
         }
-        for worker in workers {
-            for signal in worker.steering {
-                if !self
-                    .steering
-                    .iter()
-                    .any(|old| old.threshold == signal.threshold)
-                {
-                    self.steering.push(signal);
-                }
-            }
-        }
         let mut aggregate = WakePassReport {
             admitted: 0,
             completed: 0,
@@ -142,8 +131,29 @@ impl DreamerWakeDriver<'_> {
             stop: WakePassStop::QueueEmpty,
             claim_authoring_fallback: None,
         };
+        for worker in workers {
+            for signal in worker.steering {
+                if !self
+                    .steering
+                    .iter()
+                    .any(|old| old.threshold == signal.threshold)
+                {
+                    self.steering.push(signal);
+                }
+            }
+            aggregate.claim_authoring_fallback = aggregate
+                .claim_authoring_fallback
+                .or(worker.claim_authoring_fallback_stash);
+        }
         for report in reports {
-            let report = report?;
+            let report = match report {
+                Ok(report) => report,
+                Err(error) => {
+                    self.claim_authoring_fallback_stash =
+                        aggregate.claim_authoring_fallback.clone();
+                    return Err(error);
+                }
+            };
             aggregate.admitted = aggregate.admitted.saturating_add(report.admitted);
             aggregate.completed = aggregate.completed.saturating_add(report.completed);
             aggregate.failed = aggregate.failed.saturating_add(report.failed);
@@ -160,6 +170,7 @@ impl DreamerWakeDriver<'_> {
                 .claim_authoring_fallback
                 .or(report.claim_authoring_fallback);
         }
+        warn_claim_authoring_fallback(&aggregate.claim_authoring_fallback);
         Ok(aggregate)
     }
 }
