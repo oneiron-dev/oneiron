@@ -3424,7 +3424,7 @@ declare namespace Sdk {
   type OutcomeWindowClose = { answer: string; question_version: number; ends_at: number; closed_at: number; outcome: WindowOutcome };
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" };
-  type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null } | { status: "refused"; unit: unknown; reason: string } | { status: "omitted" };
+  type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null } | { status: "refused"; unit: unknown; reason: string; judged_live?: LivePin | null } | { status: "omitted" };
   type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[] };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
