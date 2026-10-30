@@ -54,10 +54,7 @@ pub(super) fn keep_decision_receipts_in_txn(
 /// # Errors
 ///
 /// Storage errors; a row that does not decode.
-pub fn attribution_decision_receipts(
-    vault: &Vault,
-    sequence: u64,
-) -> Result<Vec<DecisionReceipt>> {
+pub fn attribution_decision_receipts(vault: &Vault, sequence: u64) -> Result<Vec<DecisionReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(DECISION_RECEIPTS
         .get(&vault.store, &rtxn, &sequence)?
@@ -78,7 +75,11 @@ pub(crate) fn erase_decision_receipts_entity_in_txn(
     entity: &EntityId,
 ) -> Result<()> {
     for (sequence, mut row) in super::erase_scan_in_txn(vault, wtxn, DECISION_RECEIPTS)? {
-        if row.receipts.iter().any(|receipt| receipt.principal == *entity) {
+        if row
+            .receipts
+            .iter()
+            .any(|receipt| receipt.principal == *entity)
+        {
             DECISION_RECEIPTS.delete(&vault.store, wtxn, &sequence)?;
             continue;
         }
