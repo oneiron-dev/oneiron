@@ -941,6 +941,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.skills.save", post(facade_route))
         .route("/self.skills.fork", post(facade_route))
         .route("/self.skills.callables", post(facade_route))
+        .route("/vault.skills.callable.amend", post(facade_route))
         .route("/vault.skills.pack_receipt", post(facade_route))
         .route("/vault.skills.outcomes.project", post(facade_route))
         .route("/vault.skills.outcomes.get", post(facade_route))

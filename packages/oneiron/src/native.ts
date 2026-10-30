@@ -886,6 +886,7 @@ vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
 selfSkillsFork(input: unknown): unknown
 selfSkillsCallables(input: unknown): unknown
+vaultSkillsCallableAmend(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown

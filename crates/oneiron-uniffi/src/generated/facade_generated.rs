@@ -4261,6 +4261,11 @@ export_facade! {
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
 };
+"vault.skills.callable.amend" => fn vault_skills_callable_amend(&self, input: CallableAmendRequest) -> CallableAmendReceipt = |client| {
+    let input: oneiron::skill::helper::CallableAmendRequest = crate::codec::lower_record("vault.skills.callable.amend", input)?;
+    let output = client.vault_skills_callable_amend(&input)?;
+    crate::codec::lift_record("vault.skills.callable.amend", &output)
+};
 "vault.skills.pack_receipt" => fn vault_skills_pack_receipt(&self, input: SkillPackReceiptRequest) -> SkillPackReceipt = |client| {
     let input: oneiron::task_verb::sdk::SkillPackReceiptRequest = crate::codec::lower_record("vault.skills.pack_receipt", input)?;
     let output = client.vault_skills_pack_receipt(&input)?;
