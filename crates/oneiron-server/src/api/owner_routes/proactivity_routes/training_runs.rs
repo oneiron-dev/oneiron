@@ -8,12 +8,15 @@
 //! owner's own doors with no offer. `prepare` takes a detector question's
 //! plan and the owner's adjudicated rows in custody; `authorize` is the
 //! owner's yes on any prepared run at the spec they saw.
+//!
+//! `PUT /v1/owner/coach/training-checkpoints` (FIX 12086, `checkpoints`):
+//! the owner's starting checkpoint into custody, its files streamed.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::extract::State;
 use axum::response::Json;
-use axum::routing::post;
+use axum::routing::{post, put};
 use oneiron::edit_distance::reservoir::ReservoirScope;
 use oneiron::skill_optimize::{OfferTrainingHandoff, TrainingChoice};
 use oneiron::training_pack::{
@@ -29,6 +32,8 @@ use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
+
+pub(super) mod checkpoints;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
@@ -76,6 +81,15 @@ pub(super) fn owner_table() -> OwnerTable {
                 row: None,
             },
             post(authorize_run),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/coach/training-checkpoints",
+                summary: "The owner's starting checkpoint into custody: the body is its files' raw bytes back to back, in the order the x-oneiron-checkpoint header's JSON manifest names them, spooled to disk as it arrives; the answer is the pinned checkpoint a training draft names.",
+                row: None,
+            },
+            put(checkpoints::keep_checkpoint),
         ),
     ]
 }
