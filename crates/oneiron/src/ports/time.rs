@@ -414,7 +414,12 @@ fn renew_authorization_lease_in_txn(
 ) -> Result<Option<AfterCommit>> {
     let dbs = core.canonical_dbs();
     let (persisted, lease) = clock_floor_and_lease_in_txn(&dbs, txn)?;
-    let now = core.clock.observe_leased_floor(persisted, lease)?;
+    // Never below a time a lapsed decision already took, even past a clock
+    // step back, so the lease covers every judged time (L02 10-31).
+    let now = core
+        .clock
+        .observe_leased_floor(persisted, lease)?
+        .max(core.clock.judged());
     // A lease another handle committed may already cover it.
     let leased = if lease >= now {
         lease
