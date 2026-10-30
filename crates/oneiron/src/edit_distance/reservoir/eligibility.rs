@@ -168,7 +168,16 @@ pub(crate) fn owner_readable_proposal_in(
 ) -> Result<Option<RetainedProposal>> {
     let policy = reader.live_policy_manifest_in(rtxn)?;
     let readable = |id: &EntityId| reader.is_entity_readable_with_policy_in(rtxn, &policy, id);
-    match refusal_in(vault, rtxn, &readable, None, artifact) {
+    // No run: refusal never reaches the source-people memo on this path.
+    let mut imported_owner_side = BTreeMap::new();
+    match refusal_in(
+        vault,
+        rtxn,
+        &readable,
+        None,
+        artifact,
+        &mut imported_owner_side,
+    ) {
         Ok(None) => {}
         Err(error) if fails_export(&error) => return Err(error),
         Ok(Some(_)) | Err(_) => return Ok(None),
