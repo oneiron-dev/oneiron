@@ -6418,7 +6418,7 @@ export type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "une
 /** `oneiron_model::llm::error::TransportFault` */
 export type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string }
 /** `oneiron_model::llm::error::RetryableLlmError` */
-export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault }
+export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault }
 /** `oneiron_model::llm::error::BudgetDenied` */
 export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck"
 /** `oneiron_model::llm::error::LlmError` */
