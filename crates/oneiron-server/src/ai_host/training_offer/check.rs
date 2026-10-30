@@ -1,10 +1,10 @@
 //! The check of one approved offer's promise against the seat's metered
 //! calls: fixed code, no model call.
 use super::{
-    Alone, COST_TOLERANCE, DAY_SECS, DreamerAdmittedAttempt, Error, MONTH_SECS,
-    OfferCheckInput, OfferCheckOutcome, OfferIntent, Sources, SyncServer, TrainingState,
-    Unverifiable, WINDOW_SECS, coach_offer_check_target, offer_training_handoff, role_key,
-    seat_model_role, training_offer, training_offer_checks, training_offers,
+    Alone, COST_TOLERANCE, DAY_SECS, DreamerAdmittedAttempt, Error, MONTH_SECS, OfferCheckInput,
+    OfferCheckOutcome, OfferIntent, Sources, SyncServer, TrainingState, Unverifiable, WINDOW_SECS,
+    coach_offer_check_target, offer_training_handoff, role_key, seat_model_role, training_offer,
+    training_offer_checks, training_offers,
 };
 
 /// Checks one approved offer's promise against the seat's metered calls.

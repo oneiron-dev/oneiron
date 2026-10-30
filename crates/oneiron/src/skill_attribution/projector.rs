@@ -9,8 +9,8 @@ use super::codec::{
     CURSOR, EDIT_PROPOSAL, EVIDENCE, EvidenceRow, JUDGMENT, evidence_after,
     next_evidence_sequence_in_txn, validate_evidence,
 };
-use super::judge::{AttributionDecisions, verdict_subject};
 use super::decision_receipts::keep_decision_receipts_in_txn;
+use super::judge::{AttributionDecisions, verdict_subject};
 use super::split::{classify_split_traced, measure_split_notes, unclear_floor_sourced};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
