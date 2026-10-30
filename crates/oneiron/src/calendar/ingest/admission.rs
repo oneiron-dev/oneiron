@@ -1,5 +1,6 @@
 //! Diff-to-claim admission path and its test module.
 
+mod continuation;
 mod import_claim;
 mod preflight;
 mod recurrence;
@@ -25,6 +26,11 @@ use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use continuation::OwedProperties;
+pub use continuation::{
+    ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
+    run_ics_property_continuation,
+};
 pub(in crate::calendar) use import_claim::admit_calendar_import_claim;
 pub(crate) use import_claim::ensure_ics_import_actor;
 pub use import_claim::ics_import_actor_id;
@@ -45,6 +51,11 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
     pub(crate) verdict_fold: VerdictFold,
+    /// The events whose property admissions passed one pass's count, each
+    /// queued a continuation once the feed is applied (FIX 11997): `blob_ref`
+    /// names an archived feed version the continuation reads again. `None`
+    /// for a connector admission, which admits each one.
+    pub(crate) continuations: Option<Vec<OwedProperties>>,
 }
 
 impl PollAdmission<'_> {
@@ -61,7 +72,7 @@ impl PollAdmission<'_> {
         for event in &feed.events {
             self.apply_event(event)?;
         }
-        Ok(())
+        self.queue_property_continuations()
     }
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
@@ -265,6 +276,9 @@ impl PollAdmission<'_> {
 
     /// Reconciles this source's properties, including removing its time kind
     /// when DTSTART disappears. Claims owned by other sources are untouched.
+    /// While the admission keeps continuations, one pass admits at most
+    /// [`super::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS`] new
+    /// ones and a queued continuation admits the rest (FIX 11997).
     fn admit_properties(
         &mut self,
         event_ref: EntityId,
@@ -273,16 +287,23 @@ impl PollAdmission<'_> {
         let body = screen_body(event);
         let source_prefix = super::property_claims::source_prefix(self.system);
         let source_record_id = format!("{source_prefix}{}", self.source_record_id(event));
-        super::property_claims::reconcile(
+        let budget = self
+            .continuations
+            .is_some()
+            .then_some(super::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS);
+        let owed = super::property_claims::reconcile(
             self.vault,
             event_ref,
             event,
             &source_prefix,
             self.now,
+            budget,
             |predicate, value| {
                 self.admit_screened(event_ref, &body, &source_record_id, predicate, value)
             },
-        )
+        )?;
+        self.signal_property_continuation(event_ref, event, owed);
+        Ok(())
     }
 
     /// Screens and admits the next passport head for `(system × UID)` —
@@ -560,6 +581,7 @@ fn connector_admission<'a>(
         now,
         blob_ref: source,
         verdict_fold: VerdictFold::default(),
+        continuations: None,
     }
 }
 pub(in crate::calendar) fn preflight_connector_feed(

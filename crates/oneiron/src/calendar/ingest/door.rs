@@ -248,6 +248,7 @@ fn apply_upload(
         now: vault.now_recorded_at(),
         blob_ref: &blob_ref,
         verdict_fold: VerdictFold::default(),
+        continuations: Some(Vec::new()),
     };
     admission.apply_feed(feed).map_err(calendar_error)?;
     if complete {
