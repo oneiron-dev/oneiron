@@ -25339,7 +25339,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "mod": 4,
       "re-export": 25
      }
@@ -25796,7 +25796,7 @@
      "path": "src/dreamer_consolidation/resources/write.rs",
      "purpose": "Sealed resource handoff",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 2,
       "struct": 1
      }
@@ -26190,6 +26190,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/stage_log.rs",
+     "purpose": "The one line a consolidation partition attempt logs when it ends (L07 DREAM-OBSERVE): the wall ms of each…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
@@ -26493,7 +26503,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "struct": 2
      }
     },
@@ -29445,7 +29455,7 @@
      "path": "src/dreamer_wake/driver/observe.rs",
      "purpose": "The wake observation's seams in the pass (DOOR-144): its header and end, the attempt generations it admits…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -83687,7 +83697,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 148,
+     "files": 149,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84753,7 +84763,7 @@
    },
    "over_bar": 110,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5704,
+   "source_files": 5705,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86694,7 +86704,7 @@
      "path": "src/load/client.rs",
      "purpose": "One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -86705,6 +86715,76 @@
      "purpose": "The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan…",
      "surface": {
       "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream.rs",
+     "purpose": "`load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream/cycle.rs",
+     "purpose": "The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream/proof.rs",
+     "purpose": "Whether a recall finds what the cycle landed: the landed claim ids (the stage lines' `landed_ids`, else the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream/report.rs",
+     "purpose": "The `load dream` result: the JSON report and the 15-line summary on stdout",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream/server_log.rs",
+     "purpose": "The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream/setup.rs",
+     "purpose": "What `load dream` sets up before the server starts: the model check, the `[models]` section that routes…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream/turns.rs",
+     "purpose": "The recorded corpus `load dream` seeds: one JSON line per turn (world, person, day, conversation_ref…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -87280,7 +87360,7 @@
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
     "load": {
-     "files": 9,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87345,7 +87425,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 145,
+   "source_files": 152,
    "test_files": 18
   },
   "oneiron-broker": {
