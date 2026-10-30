@@ -115,6 +115,10 @@ side_tables! {
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// FIX 8531: the first frame after a follower session's keyframe that holds one chunk, and
+    /// the chunk's place in it, written with the frame. Key: hash32(session) + id16(turn) +
+    /// id16(source) + hash32(chunk words); value: (frame ordinal, chunk index).
+    DREAMER_FOLLOWER_CHUNK: VaultMeta b"dreamer:follower:chunk:v1:" Named;
     /// FIX 7510: one admitted source observation of a follower session, its exact rendered bytes
     /// and source pins. Key: hash32(session) + u64be(frame ordinal).
     DREAMER_FOLLOWER_FRAME: VaultMeta b"dreamer:follower:frame:v1:" Named Admitted;
