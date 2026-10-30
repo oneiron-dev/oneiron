@@ -8,7 +8,7 @@
 //! the rest is still read, and a malformed document is told as one first.
 
 use std::fs::File;
-use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, Seek, SeekFrom, Write};
 
 use base64::Engine as _;
 use serde::de::DeserializeOwned;
@@ -382,11 +382,11 @@ pub(in crate::api) struct SpooledField {
 }
 
 impl SpooledField {
-    /// The field's bytes in one buffer, for a door that takes a slice.
-    pub(in crate::api) fn read_all(mut self) -> io::Result<Vec<u8>> {
-        let mut bytes = Vec::with_capacity(usize::try_from(self.len).unwrap_or(0));
-        self.file.read_to_end(&mut bytes)?;
-        Ok(bytes)
+    /// The field's file and its length, for a door that reads the bytes
+    /// where they lie, from the file's start, never as one buffer (FIX
+    /// 11140).
+    pub(in crate::api) fn file(&self) -> (&File, u64) {
+        (&self.file, self.len)
     }
 }
 

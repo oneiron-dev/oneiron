@@ -29162,8 +29162,8 @@ async fn vault_graph_ask(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.graph.ask")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.graph.ask", &value)?;

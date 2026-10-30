@@ -29,7 +29,9 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::authority::{CustodyChange, CustodyRecipientPermit};
-use oneiron::secret_custody::{SealedCustodyChange, SecretCustodyStatus, SecretCustodyView};
+use oneiron::secret_custody::{
+    SealedCustodyChange, SealedInput, SecretCustodyStatus, SecretCustodyView,
+};
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
@@ -348,8 +350,8 @@ pub(crate) fn sealed_change_body_schema() -> serde_json::Value {
 /// `disk_capacity` is the only refusal its size meets (FIX 5674), and its
 /// input decoded into a file of its own (FIX 7917); the floor keeps the room
 /// the engine stores the input in until the change returns. The custody
-/// door takes the input as one slice, so it is read from that file once,
-/// here (FIX 11140: L04's reader path through persistence and execution).
+/// door reads the input from that file where it lies, never as one buffer
+/// (FIX 11140).
 async fn sealed_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -385,11 +387,11 @@ async fn sealed_change(
                 })
             })
             .collect::<OwnerResult<Vec<_>>>()?;
-        let input = sealed
+        let (file, len) = sealed
             .input
+            .as_ref()
             .ok_or_else(|| OwnerError::Invalid("input_base64 must be standard base64".into()))?
-            .read_all()
-            .map_err(|error| OwnerError::Host(error.into()))?;
+            .file();
         let vault = server.vault();
         let custody = vault.seal_custody_change_as_owner(
             &owner,
@@ -402,7 +404,7 @@ async fn sealed_change(
                 seen: parse_revision("seen", &request.seen)?,
                 holder: entity_id("holder", &request.holder)?,
                 recipients: &recipients,
-                input: &input,
+                input: SealedInput::File { file, len },
             },
             vault.now_recorded_at(),
         )?;

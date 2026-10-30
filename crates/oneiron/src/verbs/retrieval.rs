@@ -273,10 +273,10 @@ pub fn retrieval_replay_as_owner(
 pub fn retrieval_recall_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
-    input: super::sdk::RecallRequest,
+    input: super::RecallRequest,
 ) -> MemoryResult<crate::memory::MemoryPack> {
     admitted(memory, owner)?;
-    super::sdk::recall_unembedded(memory, input)
+    super::recall_unembedded(memory, input)
 }
 
 /// Optional tuning bounds for a policy train/evaluate/admit/update call.
@@ -419,7 +419,7 @@ fn policy_view(memory: &Memory<'_>) -> MemoryResult<RetrievalPolicyView> {
 pub fn retrieval_policy_get_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
-    _input: super::sdk::EmptyRequest,
+    _input: super::EmptyRequest,
 ) -> MemoryResult<RetrievalPolicyView> {
     admitted(memory, owner)?;
     policy_view(memory)

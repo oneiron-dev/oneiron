@@ -214,8 +214,11 @@ impl EngineNativeExecutor<'_> {
                 &wire_prompt.stamp.resolved_fingerprint,
             );
             let response = {
+                let sources = self.step_source_rows(config, &record);
                 let _generating = self.gated_write.activity_generating();
-                self.backend.generate(request, self.lease).await
+                self.backend
+                    .generate_sourced(request, self.lease, sources)
+                    .await
             }?;
             let execution_text = self.post_turn_hooks(turn, &response)?;
             // Only the post-hook execution view is healed below. The raw
@@ -297,6 +300,7 @@ impl EngineNativeExecutor<'_> {
                 Err(err) => {
                     // A cancelled root fails the step: the bridge rows it
                     // left stay recorded, and no wait it reached hides that.
+                    let callable_rows = host.result_rows();
                     let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
@@ -310,6 +314,7 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
                             repairs.healed(),
@@ -336,6 +341,7 @@ impl EngineNativeExecutor<'_> {
                 // The guest saw a typed Denied/Failed response (budget
                 // attached) at the chokepoint; the STEP still fails with
                 // the original error after persisting the bridge rows.
+                let callable_rows = host.result_rows();
                 let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
                 let captured = host.captured;
@@ -348,6 +354,7 @@ impl EngineNativeExecutor<'_> {
                     bridge_start,
                     bridge_calls,
                     captured,
+                    callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
                     repairs.healed(),
@@ -372,6 +379,7 @@ impl EngineNativeExecutor<'_> {
             let (bodies, runtime_output_paths) = match step_bodies {
                 Ok(found) => found,
                 Err(err) => {
+                    let callable_rows = host.result_rows();
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
@@ -385,6 +393,7 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            callable_rows,
                             durable_wait,
                             format!(
                                 "Runtime output recording failed after host bridge calls: {err}"
@@ -404,6 +413,7 @@ impl EngineNativeExecutor<'_> {
                 bridge_start as u64,
                 &host.bridge_calls,
             )?;
+            record.record_callable_rows(host.result_rows());
             record.bridge_calls.extend(host.bridge_calls);
             // Bridge results too large for one reply and stored values, as
             // bodies; the calls' rows and the step's bindings carry their
