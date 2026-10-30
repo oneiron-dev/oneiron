@@ -650,11 +650,12 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     }
 }
 
-/// The worlds a run born in `execute` may read (FIX 11768): the opener
-/// slip's worlds axis — its named set, every world the vault holds for
-/// `All`, none for `Bottom` or no slip at all — plus the request's own
-/// `world_ref` when it names one absent from the set. The seat birth
-/// pre-filters to the routes their orders name; empty inherits, as before.
+/// The worlds a run — `execute`'s, or a turn program's seat — may read
+/// (FIX 11768): the opener slip's worlds axis — its named set, every world
+/// the vault holds for `All`, none for `Bottom` or no slip at all — plus
+/// the request's own `world_ref` when it names one absent from the set.
+/// The seat birth pre-filters to the routes their orders name; empty
+/// inherits, as before.
 ///
 /// `All` meets the authority fold's worlds: the only world enumeration
 /// this host may read without a vault-shape door. An unlisted world
@@ -664,7 +665,8 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
 /// # Errors
 ///
 /// The `All` enumeration read the vault and failed: the run is not born.
-fn run_read_worlds(
+/// The binding carries a fixed opaque string, never the vault's text.
+pub(crate) fn run_read_worlds(
     vault: &Vault,
     opener: Option<&oneiron::authority::VerifiedSlip>,
     world_ref: Option<EntityId>,
@@ -673,7 +675,7 @@ fn run_read_worlds(
         Some(oneiron::federation::ScopeAxis::Some(set)) => set.iter().map(|id| id.0).collect(),
         Some(oneiron::federation::ScopeAxis::All) => vault
             .authority_fold()
-            .map_err(|error| error.to_string())?
+            .map_err(|_| "the run's worlds did not read".to_owned())?
             .worlds
             .keys()
             .copied()

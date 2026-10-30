@@ -40,7 +40,7 @@ use oneiron::{
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use super::dreamer::QuestionTimer;
-use crate::mcp::{McpCodeModeProvider, run_seat};
+use crate::mcp::{McpCodeModeProvider, run_read_worlds, run_seat};
 use crate::server::{RunHostDoor, SyncServer};
 
 /// The server's binding of its Dreamer's turn programs.
@@ -176,15 +176,22 @@ impl TurnProgramRuntime for ServerTurnPrograms {
             }
         };
         // Born once on the program's code run, as an engine-native run's
-        // seat is, from the program's own task. No read scope is threaded
-        // here: the birth inherits (FIX 11768).
-        let seat = run_seat(
-            vault,
-            provider.as_ref(),
-            code_run,
-            None,
-            Vec::new(),
-            |facet| SeatTask {
+        // seat is, from the program's own task, under the slip's read
+        // scope (FIX 11768). Without one the birth inherits, as before. A
+        // scope the vault cannot read parks the program, as a run it
+        // cannot seat does.
+        let worlds = match run_read_worlds(vault, request.proof, None) {
+            Ok(worlds) => worlds,
+            Err(_) => {
+                tracing::warn!(
+                    code_run = %code_run.to_hex(),
+                    "a turn program's read scope did not read; it parks"
+                );
+                return None;
+            }
+        };
+        let seat = run_seat(vault, provider.as_ref(), code_run, None, worlds, |facet| {
+            SeatTask {
                 kind: SeatKind::Attempt,
                 warm_scope: format!("turn-program:{}", code_run.to_hex()),
                 task: config.task.clone(),
@@ -198,9 +205,10 @@ impl TurnProgramRuntime for ServerTurnPrograms {
                 override_model: None,
                 override_effort: None,
                 listed: Vec::new(),
+                // Stamped by `run_seat` from the slip's read scope (FIX 11768).
                 worlds: Vec::new(),
-            },
-        );
+            }
+        });
         // Its refusal's text can quote the vault: it is not logged.
         let Ok(seat) = seat else {
             tracing::warn!(code_run = %code_run.to_hex(), "a turn program's run is not seated; it parks");
