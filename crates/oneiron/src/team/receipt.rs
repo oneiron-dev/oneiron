@@ -139,8 +139,8 @@ pub struct TeamOutcome {
     pub at: u64,
     /// The critics whose persisted reviews of the team's deliverable the
     /// outcome settled (OF-420), as the settler read them. `None` is unknown
-    /// (a settler that read none); empty, no critic reviewed it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// (a settler that read none); empty, no critic reviewed it. Always on
+    /// the wire: no old-format reader (Engine 00:35, L09 00:36).
     pub critics: Option<Vec<TeamCritic>>,
 }
 
