@@ -74,7 +74,6 @@ const MAX_ARTIFACT_ID_BYTES: usize = 128;
 const MAX_RUN_ID_BYTES: usize = 128;
 const MAX_CANDIDATE_REF_BYTES: usize = 256;
 const MAX_PROVENANCE_REF_BYTES: usize = 256;
-const MAX_EVIDENCE_REFS: usize = 64;
 const MAX_EVIDENCE_REF_BYTES: usize = 256;
 const MAX_SUGGESTED_EDIT_BYTES: usize = 8192;
 const DEFAULT_UCB_EXPLORATION: f64 = 0.35;
