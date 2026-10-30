@@ -59,10 +59,14 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// it aborts the renewal ([`Renewal::stop`]).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// The pairing again a refusal asks for.
+/// The pairing again a refusal asks for. A home that still holds this
+/// machine live in its class pairs it again on the machine's possession
+/// proof, credential only (FIX 8636); any other home enrols it anew.
 const PAIR_AGAIN: &str = "pair this machine again: stop the vault, remove its device-sync \
                           enrolment (the .json and .cred files) and run `oneiron device enrol` \
-                          with a new link";
+                          with a new machine link (`oneiron token pair --machine yours` on the \
+                          home); a home that still holds this machine pairs it again under its \
+                          own identity and class, credential only";
 
 /// A renewed credential the home answered, not yet written to its file,
 /// and how long its slip lives.
@@ -72,6 +76,16 @@ pub(super) struct Candidate {
     /// The file's own credential, handed back as the home the link dials
     /// moved: nothing is written for it.
     retarget: bool,
+}
+
+/// What [`Renewal::commit`] landed: a route move's own credential, handed
+/// back unwritten, or a renewed credential, written over the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CommitOutcome {
+    /// The file's own credential, for the moved route: nothing was written.
+    Retargeted,
+    /// The renewed credential, written over the file.
+    Renewed,
 }
 
 /// Why a renewal did not land.
@@ -202,15 +216,15 @@ impl Renewal {
     }
 
     /// Writes `candidate` over the credential file, whole or not at all
-    /// ([`credential_file::replace`]), and says whether it landed. It awaits
-    /// nothing, so no stop comes between the caller's last look for one and
-    /// the write's end. Only a landed write is a renewal: the next one is due
-    /// at half the new slip's lifetime. A failed write keeps the old file and
-    /// is tried again as any failed renewal is.
-    pub(super) fn commit(&mut self, candidate: &Candidate) -> bool {
+    /// ([`credential_file::replace`]), and says what landed, if anything. It
+    /// awaits nothing, so no stop comes between the caller's last look for
+    /// one and the write's end. Only a landed write is a renewal: the next
+    /// one is due at half the new slip's lifetime. A failed write keeps the
+    /// old file and is tried again as any failed renewal is.
+    pub(super) fn commit(&mut self, candidate: &Candidate) -> Option<CommitOutcome> {
         if candidate.retarget {
             tracing::info!("device sync follows the home its dials resolve to");
-            return true;
+            return Some(CommitOutcome::Retargeted);
         }
         let written = credential_file::replace(
             &self.credential_file,
@@ -222,11 +236,11 @@ impl Renewal {
                 self.due = Instant::now() + next;
                 self.retry = RETRY_FIRST;
                 tracing::info!(next_in_secs = next.as_secs(), "device credential renewed");
-                true
+                Some(CommitOutcome::Renewed)
             }
             Err(error) => {
                 self.failed(&format!("{error:#}"));
-                false
+                None
             }
         }
     }

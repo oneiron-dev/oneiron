@@ -13,7 +13,7 @@ use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::{BudgetGuard, Vault};
 
 /// One try's meter, bounded by its spend scope's live room.
-pub(super) struct LiveLease<'a> {
+pub(crate) struct LiveLease<'a> {
     vault: &'a Vault,
     /// The scope the try spends under; `None` when it spends unmetered,
     /// and then nothing is booked or bounded here.
@@ -29,7 +29,7 @@ pub(super) struct LiveLease<'a> {
 
 impl<'a> LiveLease<'a> {
     /// `meter` has spent `booked` already, all of it on `scope`.
-    pub(super) fn new(
+    pub(crate) fn new(
         vault: &'a Vault,
         scope: Option<SpendScopeId>,
         meter: BudgetGuard,
@@ -52,7 +52,7 @@ impl<'a> LiveLease<'a> {
     /// admission as the meter's own exhaustion, and an admitted call goes
     /// on. A booking or read that fails leaves the limit, and what is
     /// unbooked, as they were: the next look or the try's end books it.
-    pub(super) fn book_and_revise(&self) {
+    pub(crate) fn book_and_revise(&self) {
         let Some(scope) = &self.scope else {
             return;
         };
@@ -88,7 +88,7 @@ impl<'a> LiveLease<'a> {
 
     /// Books on the scope what the try spent and no look booked, at the
     /// try's end, whatever its calls answered.
-    pub(super) fn book_rest(&self) -> oneiron::Result<()> {
+    pub(crate) fn book_rest(&self) -> oneiron::Result<()> {
         let Some(scope) = &self.scope else {
             return Ok(());
         };

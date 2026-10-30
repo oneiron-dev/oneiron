@@ -1,6 +1,7 @@
 //! Recovery: the start scan for leases a stopped worker left, the rehome of
-//! markers an earlier build left below the owner-retained range, and the
-//! hand-back of every marker this reconciler holds unsettled.
+//! markers an earlier build left below the owner-retained range, the hand-back
+//! of every marker this reconciler holds unsettled, and the wake of waiting
+//! retries when the tagger answers again.
 
 use std::sync::atomic::Ordering;
 
@@ -121,6 +122,47 @@ impl TaggingReconciler {
         }
         self.stale_scanned.store(true, Ordering::Release);
         Ok(found)
+    }
+
+    /// Brings each waiting tagging retry forward to `now` (FIX 11614): when
+    /// the tagger answers again after an outage, the marker its failure
+    /// ladder put on a backoff runs at once. The ladder's tries and its
+    /// escalation stay as they were. A row this build cannot read is left
+    /// to its own pass. Returns how many markers woke.
+    pub fn wake_tagging_retries(&self, now: u64) -> Result<usize> {
+        let queue = AttemptQueue::from_store(&self.vault.store);
+        let waiting = {
+            let txn = self.vault.store.env.read_txn()?;
+            let mut waiting = Vec::new();
+            for row in crate::ports::JobQueueRead::port_job_rows(&self.vault.store, &txn, None)? {
+                let (id, raw) = match row {
+                    Ok(row) => row,
+                    Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))) => continue,
+                    Err(error) => return Err(error),
+                };
+                let Ok(record) = decode_record(&raw, id) else {
+                    continue;
+                };
+                if record.kind != TAGGING_MARKER_KIND || record.state != AttemptState::Scheduled {
+                    continue;
+                }
+                if !crate::attempt_queue::owner_retained_id(&id) {
+                    continue;
+                }
+                waiting.push(id);
+            }
+            waiting
+        };
+        let mut txn = self.vault.store.env.write_txn()?;
+        let mut woke = 0;
+        for id in waiting {
+            woke += usize::from(queue.advance_retry_in_txn(&mut txn, id, now)?);
+        }
+        if woke > 0 {
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+        }
+        Ok(woke)
     }
 
     /// Moves a marker an earlier build left waiting below the owner-retained

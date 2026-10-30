@@ -202,6 +202,7 @@ impl Store {
             policy_manifest_updates: tokio::sync::watch::channel(0).0,
             decision_answers: tokio::sync::watch::channel(0).0,
             notification_updates: tokio::sync::watch::channel(0).0,
+            credential_revocations: tokio::sync::watch::channel(0).0,
             container_output: Default::default(),
             live_speakers: Default::default(),
             #[cfg(feature = "sync")]

@@ -1,4 +1,9 @@
 //! Snapshot-then-update recovery and transactional text-plane persistence.
+//! A NOTE's text plane is its NOTE storage; every other record's is its
+//! entity document's (`entity_doc::sync`), which writes its own rows. A
+//! record of a kind with no document birth that holds no document keeps its
+//! text in the sequence rows of its own slot, which [`append`] and
+//! [`snapshot`] write and [`load`] reads.
 
 use crate::error::{Error, Result};
 use crate::ports::{DocumentRowStore, DocumentSlot};
@@ -55,7 +60,9 @@ pub(crate) fn compact(vault: &Vault, id: EntityId, erased: bool) -> Result<()> {
         if erased {
             return crate::note::delete_document_in_txn(&vault.store, txn, &id);
         }
+        // Ordinary compaction folds the updates into a full snapshot and keeps
+        // the history; only an authorized purge drops it (FIX 8874).
         let doc = load(vault, txn, id)?;
-        snapshot(vault, txn, id, &doc, true)
+        snapshot(vault, txn, id, &doc, false)
     })
 }

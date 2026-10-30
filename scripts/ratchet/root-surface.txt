@@ -364,6 +364,7 @@ InboundSurfaceEventInput
 InboundSurfaceRejectionReason
 InboundSurfaceRouteOutcome
 InboundSurfaceRouteReceipt
+IncompleteReason
 InterlocutorPartyInput
 InterlocutorResolutionInput
 InterlocutorSet
@@ -670,6 +671,7 @@ parse_codebase_fork_hash_hex
 parse_presentation_id
 persist_imip_blob
 plan_partitions
+policy_manifest_doors
 prefilter_turn
 prepare_feedback_preview
 propose_commitment_fulfilled

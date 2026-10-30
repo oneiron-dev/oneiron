@@ -376,6 +376,10 @@ pub(crate) fn mcp_text_content(text: impl Into<String>) -> Value {
 }
 
 pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
+    if let Some(legal_hold) = error.legal_hold().cloned().map(Box::new) {
+        return McpGatewayError::new(-32020, "legal_hold", error.message())
+            .with_legal_hold(legal_hold);
+    }
     // The typed 403 refusals answer as the facade's copy of each does: one
     // MCP code and stable kind, whichever door reported it (FIX 11434).
     let typed = match error.code() {
@@ -449,6 +453,7 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
         ErrorKind::HostActionRequiresSupportGrant => {
             McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
+        ErrorKind::LegalHold => mcp_facade_error(oneiron::MemoryError::from(error)),
         _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
     }
 }
@@ -562,6 +567,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("hook".to_owned(), json!(*stop));
+    }
+    if let Some(legal_hold) = error.legal_hold
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("legal_hold".to_owned(), json!(*legal_hold));
     }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
@@ -678,17 +688,25 @@ async fn mcp_task_row<T: Send + 'static>(
     row: impl FnOnce(&oneiron::Memory<'_>) -> oneiron::memory::MemoryResult<T> + Send + 'static,
 ) -> Result<(oneiron::memory::MemoryResult<T>, Vec<oneiron::EntityId>), McpGatewayError> {
     let (server, actor) = (Arc::clone(server), actor.clone());
+    // A code-mode call writes for the leased run its origin seals, on this
+    // thread too (FIX 10748).
+    let run_writes = surface
+        .run
+        .as_ref()
+        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
         let producers = oneiron::memory::ProducerRows::default();
-        let output = server
-            .decision_host()
-            .task_decisions()
-            .map_err(oneiron::memory::MemoryError::from)
-            .and_then(|decisions| {
-                row(&surface
-                    .memory(&server, &actor, &producers)
-                    .with_task_decisions(decisions))
-            });
+        let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
+            server
+                .decision_host()
+                .task_decisions()
+                .map_err(oneiron::memory::MemoryError::from)
+                .and_then(|decisions| {
+                    row(&surface
+                        .memory(&server, &actor, &producers)
+                        .with_task_decisions(decisions))
+                })
+        });
         (output, producers.take())
     })
     .await

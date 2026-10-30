@@ -115,7 +115,6 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.identity.events.get"
         | "vault.identity.proposals.resolve"
         | "vault.identity.proposals.for_pair"
-        | "vault.packs.put"
         | "vault.packs.preview"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"
@@ -201,10 +200,6 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.hooks.regen.adopt"
         | "vault.lenses.activate"
         | "vault.lenses.deactivate"
-        | "vault.packs.setup.prepare"
-        | "vault.packs.setup.get"
-        | "vault.packs.setup.answer"
-        | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
         | "vault.records.erase_sweep"
@@ -509,6 +504,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.coach.training_offers.pilots.prepare"
         | "vault.coach.training_offers.pilots.complete"
         | "vault.coach.training_offers.pilots.get"
+        | "vault.coach.training_offers.sources"
         | "vault.code.symbols.declare"
         | "vault.code.symbols.renew"
         | "vault.code.symbols.release"
@@ -535,6 +531,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.code.ingress.get"
         | "vault.code.origin.register"
         | "vault.code.origin.mirror.get"
+        | "vault.code.origin.mirror.plan"
         | "vault.code.origin.mirror.set"
         | "vault.code.origin.mirror.strategy"
         | "vault.code.origin.mirror.clear"
@@ -609,7 +606,11 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.secrets.rewrap"
         | "vault.secrets.revoke"
         | "vault.secrets.custody.get"
-        | "vault.secrets.custody.submit" => owner_proof(auth, server, verb).map(drop),
+        | "vault.secrets.custody.submit"
+        | "vault.custody.members.drain.begin"
+        | "vault.custody.members.drain.commit"
+        | "vault.custody.members.drain.folder"
+        | "vault.custody.members.reenrol" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -740,6 +741,13 @@ pub(in crate::api::facade) fn door_admits(
             .map(drop)
             .map_err(crate::api::facade::FacadeApiError::into_memory_error),
         "ai.verdict" => asking(auth, server).map(drop),
+        // The pack setup doors (OF-378) and the pack put: the owner's proof,
+        // or an agent acting for the owner (an agent puts `local` alone).
+        "vault.packs.put"
+        | "vault.packs.setup.prepare"
+        | "vault.packs.setup.get"
+        | "vault.packs.setup.answer"
+        | "vault.packs.setup.verify" => super::packs::setup_admits(server, auth, verb),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)
         }

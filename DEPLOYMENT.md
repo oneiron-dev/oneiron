@@ -344,6 +344,10 @@ connector_suggested_budget_rows = 16  # suggested budget rows one connector key 
 connector_charter_caps = 16       # cap rows one compiled connector charter carries; past it every cap is compiled and enforced and the row asks
 connector_catalog_verbs = 64      # verbs one connector's advertised catalog carries; past it the whole catalog is kept and the row asks
 connector_dispatch_batch = 4096   # dispatches one connector-key batch admission accounts; past it the whole batch is accounted in 4096-dispatch transaction chunks and the row asks
+identity_decision_state_bytes = 65536 # whole encoded identity-decision state; past it the row asks and the whole state is still sent
+identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
+community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
+connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

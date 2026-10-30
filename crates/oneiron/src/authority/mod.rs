@@ -70,6 +70,7 @@ mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
 mod export_act;
+mod export_secret_work;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_project;
@@ -127,6 +128,7 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod retired_signers;
+mod revocation_notice;
 mod revoke_proof;
 mod sequence_ancestry;
 mod sequence_observation;
@@ -148,6 +150,7 @@ mod withdrawn_grant;
 mod work_rebind;
 mod world_key_fold;
 mod world_key_support;
+mod world_models;
 mod world_privacy;
 mod world_privacy_door;
 mod world_refold;
@@ -198,6 +201,13 @@ pub use oneiron_authority::authority::{
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// The export secret work body and its sealed result (FIX 4624(b)).
+pub use export_secret_work::{
+    ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
+    OpenedSecretSupplement, SecretSupplementImport,
+};
+pub(crate) use export_secret_work::{HolderExportBasis, HolderExportNeed, export_secret_executor};
+pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's
@@ -322,8 +332,9 @@ pub use recover_many::{
 pub use slip::*;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
-    format_pairing_link, format_pinned_pairing_link, pairing_binding_transcript,
-    pairing_binding_transcript_pinned, parse_pairing_link, parse_pinned_pairing_link,
+    format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
+    pairing_binding_transcript, pairing_binding_transcript_pinned, parse_pairing_link,
+    parse_pinned_pairing_link,
 };
 pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
@@ -348,7 +359,7 @@ pub use weave_admin::{
 };
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
-    mark_if_withdrawn_grant_in_txn, mark_withdrawn_grant_in_txn,
+    mark_if_withdrawn_grant_in_txn, withdraw_grant_row_in_txn,
 };
 pub use work_rebind::{
     InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,
@@ -361,6 +372,7 @@ pub(crate) use act_standing::{
     CausalPoints, ExternalAct, ExternalActStanding, act_heads, causal_points_in_txn,
 };
 pub(crate) use adopted_evidence::{adopted_evidence_in_txn, carried_residence_rows_in_txn};
+pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
@@ -369,12 +381,16 @@ pub(crate) use checkpoint_adopt::{
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
+#[cfg(feature = "sync")]
+pub(crate) use current_scope::current_grant_scope;
 pub(crate) use first_seen_clock::*;
 pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;
-pub(crate) use history_admission::preflight_authority_rows_in_txn;
+pub(crate) use history_admission::{
+    RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
+};
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
@@ -400,6 +416,8 @@ pub(crate) use principal_standing::{
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use readonly_fold::folded_vault_id_of_records;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
@@ -429,6 +447,7 @@ pub(crate) use world_key_support::{
     KeyFrontier, next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
     owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows,
 };
+pub use world_models::WorldModelRoutes;
 #[cfg(feature = "sync")]
 pub(crate) use world_privacy::side_world;
 pub use world_privacy::{

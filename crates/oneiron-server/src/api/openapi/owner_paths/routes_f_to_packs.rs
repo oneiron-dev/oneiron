@@ -450,6 +450,18 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/outbox/diverged",
+        summary: "A vault VM's outbox carrier members the owner should see (FIX 11074): each copy kept that the carrier never agreed on, after its origin retired the agreed version (`diverged_unagreed`: kind, member, the end that holds it, both digests, his answer), and each file held back as damaged at its source (`source_digest_mismatch`), each with a card. `carrier` is false where no companion answers.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/outbox/diverged",
+        summary: "With {\"kind\", \"member\", \"held\", \"answer\": \"remove\" | \"keep\"}: passes the owner's answer to the diverged copy the page lists with that digest to the companion, which carries it out at its next turn; nothing removes the copy without it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/owner-signing-keys",
         summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live and whether a checkpoint policy may name it now. Empty before any enrollment.",
         row: None,
@@ -494,6 +506,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/packs",
         summary: "Install a pack folder, or replace the one under its name.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/packs/activate",
+        summary: "The owner activates a hub Candidate held for its advisories, or for code that is organs only.",
         row: None,
     },
     OwnerRoute {

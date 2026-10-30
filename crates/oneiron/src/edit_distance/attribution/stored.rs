@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
+use crate::llm::decision::DecisionReceipt;
 use crate::side_table::{self, CodecError, FixedSideKey, HexId, Raw, RawValue, SideKey, SideTable};
 use crate::skill_attribution::AuditBatch;
 
@@ -22,6 +23,11 @@ pub(super) const EVIDENCE: SideTable<String, StoredEvidence, Raw> =
 /// Routed judgments, keyed by receipt id.
 pub(super) const JUDGMENT: SideTable<String, StoredJudgment, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_JUDGMENT);
+
+/// Amendment cause rows (FIX 11638), keyed by blake3 of the receipt id, then
+/// the judge revision's text — empty for judgments that stand on no revision.
+pub(super) const AMENDMENT_CAUSE: SideTable<([u8; 32], String), StoredAmendmentCause, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_CAUSE);
 
 /// Minted preference proposals, keyed by receipt id.
 pub(super) const PREFERENCE: SideTable<String, StoredPreference, Raw> =
@@ -84,6 +90,8 @@ pub(super) const ROW_VERSION: u8 = 1;
 pub(super) const EVIDENCE_ROW_LABEL: &str = "amendment evidence row";
 
 pub(super) const JUDGMENT_ROW_LABEL: &str = "amendment judgment row";
+
+pub(super) const CAUSE_ROW_LABEL: &str = "amendment cause row";
 
 pub(super) const PREFERENCE_ROW_LABEL: &str = "preference proposal row";
 
@@ -183,6 +191,45 @@ pub(super) struct StoredJudgment {
     /// A rejection's judgment, which carries no Δ (FIX 7823).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) rejected: bool,
+    /// The receipt of each decision that gave the verdict, in order; empty
+    /// when no ladder was asked (FIX 447, 11511).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) receipts: Vec<DecisionReceipt>,
+}
+
+/// One amendment judgment's labels, kept write-once per receipt and judge
+/// revision (FIX 11638): the cause row beside the judgment row a re-judgment
+/// overwrites.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredAmendmentCause {
+    pub(super) v: u8,
+    /// The judged receipt; the key hashes it.
+    pub(super) receipt: String,
+    /// The row's source id (hex): immutable per receipt and revision slot.
+    pub(super) source: String,
+    /// The actor whose proposal was judged (hex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) actor: Option<String>,
+    /// The skill the proposal rode (hex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) skill: Option<String>,
+    /// The terminal pack receipt of the attempt the proposal came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) attempt: Option<String>,
+    pub(super) split: Vec<StoredShare>,
+    /// The drafting executor at revision; absent when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) executor: Option<String>,
+    /// The project (hex) the judgment named; absent, the vault's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
+    /// The judge revision whose answers the labels stand on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) judge: Option<String>,
+    /// A rejection's judgment, which carries no Δ.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) rejected: bool,
+    pub(super) at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +323,7 @@ macro_rules! row_codec {
 
 row_codec!(StoredEvidence, EVIDENCE_ROW_LABEL);
 row_codec!(StoredJudgment, JUDGMENT_ROW_LABEL);
+row_codec!(StoredAmendmentCause, CAUSE_ROW_LABEL);
 row_codec!(StoredPreference, PREFERENCE_ROW_LABEL);
 row_codec!(StoredTarget, TARGET_ROW_LABEL);
 row_codec!(StoredAudit, AUDIT_ROW_LABEL);

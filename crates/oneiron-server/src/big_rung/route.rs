@@ -134,6 +134,7 @@ impl BigModel {
                             binding: HostInferenceBinding::Advertised {
                                 model: model.clone(),
                                 locality,
+                                keyless: false,
                             },
                             extraction_egress: None,
                         },

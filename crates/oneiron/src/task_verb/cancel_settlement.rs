@@ -8,9 +8,10 @@
 //! `target_ref` is the TASK's id under that TASK's subject, else a spawn's
 //! attempt. An attempt's hex is never read as a TASK id. Mode `force`
 //! forces a TASK's live realizations as the owner's rung does when the
-//! approver is the TASK's creator, the one actor that rung forces for;
-//! every other approved cancel lands as the soft rung's, asking a running
-//! realization to land, so no approval widens who forces. The approval is
+//! approver is the TASK's creator, the one actor that rung forces for, or
+//! the vault owner, whose approval of a force is the owner's own act (FIX
+//! 11105); every other approved cancel lands as the soft rung's, asking a
+//! running realization to land. The approval is
 //! the cancel's authority, so no gate runs again, and the effect names the
 //! approver, else the proposer when the door named no approver.
 //! An effect that does not land is logged and leaves the approval as it is;
@@ -127,7 +128,7 @@ fn attempt_id(hex: &str) -> Option<AttemptId> {
 }
 
 /// Stops `target` in `wtxn` as `memory`'s actor: forced only when `force`
-/// asks it of a TASK that actor created.
+/// asks it of a TASK that actor created, or that actor is the vault owner.
 fn apply_in(
     memory: &Memory<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -151,7 +152,14 @@ fn apply_in(
         }
         CancelTarget::Task(task)
             if force
-                && task_create_owner_in(memory.vault(), &*wtxn, task)? == Some(memory.actor()) =>
+                && (task_create_owner_in(memory.vault(), &*wtxn, task)?
+                    == Some(memory.actor())
+                    || crate::memory::actor_is_vault_owner_in_txn(
+                        memory.vault(),
+                        &*wtxn,
+                        memory.actor(),
+                        memory.actor_class(),
+                    )?) =>
         {
             memory.force_cancel_task_in(wtxn, task, None, now)?;
         }

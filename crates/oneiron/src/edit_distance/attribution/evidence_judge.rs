@@ -366,6 +366,9 @@ fn persist_amendment_split(
         attempt_receipt: evidence.attempt_receipt.clone(),
         judge: judge.and_then(|trace| trace.revision.clone()),
         judge_model: judge.and_then(|trace| trace.model.clone()),
+        receipts: judge
+            .map(|trace| trace.receipts.clone())
+            .unwrap_or_default(),
         actor: Some(evidence.actor),
         skill: evidence.skill,
         rejected: false,
@@ -390,9 +393,18 @@ fn persist_amendment_split(
 
     let receipt_id_owned = receipt_id.to_owned();
     vault.with_write_txn_grouped(|wtxn| {
+        // A displaced judge's answers no longer land (FIX 11638): the fence
+        // the attempt lane checks before its judgment put.
+        if let Some(revision) = judgment.judge.as_deref() {
+            crate::skill_attribution::ensure_current_attribution_judge_in_txn(
+                vault, &*wtxn, revision,
+            )?;
+        }
         let mut row = row.clone();
         row.proposal = settle_edit_proposal_in_txn(vault, wtxn, &receipt_id_owned, &judgment)?;
         JUDGMENT.put(&vault.store, wtxn, &receipt_id_owned, &row)?;
+        // The labels settle their write-once cause row in the same write.
+        super::causes::put_amendment_cause_in_txn(vault, wtxn, &judgment)?;
         // A note and the judgment that demanded it land together, and a
         // re-judgment that no longer carries the share withdraws the note it
         // no longer stands behind.
@@ -464,6 +476,7 @@ pub(super) fn judgment_row(judgment: &AmendmentJudgment) -> StoredJudgment {
         actor: judgment.actor.map(|id| id.to_hex()),
         skill: judgment.skill.map(|id| id.to_hex()),
         rejected: judgment.rejected,
+        receipts: judgment.receipts.clone(),
     }
 }
 
@@ -577,7 +590,7 @@ pub(super) fn amendment_judgments_in_txn(
 }
 
 /// The judgment persisted for `receipt_id` on the caller's snapshot, if any.
-pub(super) fn amendment_judgment_in_txn(
+pub(in crate::edit_distance) fn amendment_judgment_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt_id: &str,
@@ -628,6 +641,7 @@ fn judgment_from_row(
         attempt_receipt: row.attempt.map(|join| join.receipt),
         judge: row.judge,
         judge_model: row.judge_model,
+        receipts: row.receipts,
         actor: optional_entity(row.actor.as_deref())?,
         skill: optional_entity(row.skill.as_deref())?,
         rejected: row.rejected,

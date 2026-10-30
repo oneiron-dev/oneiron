@@ -234,6 +234,11 @@ impl AttemptQueue<'_> {
         let outcome = self.intervene_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        // FIX 11482: a cancelled row's job notice commits here, outside
+        // any owner scope, so this door sends the signal itself.
+        if outcome.effect == AttemptInterventionEffect::Cancelled {
+            self.store.notify_notification_updates();
+        }
         Ok(outcome)
     }
 

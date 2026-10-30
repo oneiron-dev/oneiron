@@ -272,6 +272,10 @@ side_tables! {
     /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
     /// budget (FIX 7964), `rmp_serde::to_vec_named`. Key: hash32 (intent id).
     OUTBOUND_INTENT_SETTLEMENT: VaultMeta b"outbound:intent_settlement:v1:" Named;
+    /// A call a restore holds no record of, as its per-tool bound counts it (FIX 6260): the
+    /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
+    /// seq).
+    OUTBOUND_INTENT_UNAVAILABLE: VaultMeta b"outbound:intent_unavailable:v1:" Raw;
     /// The owner press a Linear dispatch's, a campaign leg's or (FIX 6424 part 3) a scoped-MCP
     /// call's admission spent, kept beside its ledger row for its retry once the admission
     /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).
@@ -359,6 +363,10 @@ side_tables! {
     /// A bundled skill the owner's pack removal retired, and the pack that removed it; the pack's
     /// next install brings it back (OF-519). Key: id16.
     SKILL_HUB_PACK_SKILL_REMOVED: VaultMeta b"pack.skill-removed.v1/" Raw;
+    /// One pending Slack OAuth install awaiting its redirect (OF-519): the owner's proof snapshot,
+    /// the install link's client id and redirect, and the custody the bot token takes. Key: the
+    /// install state string.
+    SKILL_HUB_PACK_SLACK_INSTALL: VaultMeta b"pack.slack-install.v1/" Named;
     /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SOURCE_ALIAS: VaultMeta b"pack.source-alias.v1/" LegacyJson;
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;

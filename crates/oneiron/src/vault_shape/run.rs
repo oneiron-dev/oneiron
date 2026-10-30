@@ -59,6 +59,14 @@ pub fn shape_item_ref(frontier: &str, seq: u32) -> String {
     format!("{SHAPE_RUN_PREFIX}{frontier}#{seq}")
 }
 
+/// The frontier and `seq` a [`shape_item_ref`] names; `None` for any other
+/// reference.
+#[must_use]
+pub fn shape_item_ref_parts(reference: &str) -> Option<(&str, u32)> {
+    let (frontier, seq) = reference.strip_prefix(SHAPE_RUN_PREFIX)?.split_once('#')?;
+    Some((frontier, seq.parse().ok()?))
+}
+
 fn row_hex(id: AttemptId) -> String {
     bytes_to_hex_lower(id.as_bytes())
 }

@@ -120,7 +120,15 @@ pub(super) fn before_seat(
                     return Ok(BeforeSeat::Unbound);
                 }
             }
-            match preflight_task_workflow(door, record, args, &origin, InvocationId::mint())? {
+            let secret_args = pinned.active_secret_args().cloned().unwrap_or_default();
+            match preflight_task_workflow(
+                door,
+                record,
+                args,
+                &secret_args,
+                &origin,
+                InvocationId::mint(),
+            )? {
                 WorkflowPreflight::Done(output) => TaskWorkflowReport::Ran {
                     output,
                     checks: read_checks(door, &dispatcher, &pinned.goal().browser_checks)?,

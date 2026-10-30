@@ -34,14 +34,13 @@ use oneiron::{
 };
 
 use super::CHAT_ROLE;
+use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
 
-mod live_lease;
 mod secret_use;
 
-use live_lease::LiveLease;
 use secret_use::StepSecretUse;
 
 /// The purpose a workflow step's calls are metered and routed under.
@@ -490,6 +489,7 @@ impl StepRunner {
                 class: CallClass::BestEffort,
                 response_format,
                 locality: seat.locality,
+                host_keyless: false,
             },
             messages,
             tools: Vec::new(),
@@ -504,6 +504,10 @@ impl StepRunner {
             .admit_role(vault, CHAT_ROLE, request)
             .map_err(|refusal| Error::InvalidConfig(format!("workflow step refused: {refusal}")))?;
         let mut request = call.request;
+        // FIX 10592: beside the door-stamped locality, the request carries
+        // whether its ladder may only serve free keyless own-server work, so
+        // the replay below admits unmetered. Unstamped stays paid.
+        request.envelope.host_keyless = call.ladder.all_keyless_own_server();
         let offers_use = offers_use && secret_use::offer(&call.ladder, &mut request);
         // The agent pays: its live budget policy rows, its own meter. Every
         // earlier try of this step failed its model call, and each rung it
@@ -531,6 +535,15 @@ impl StepRunner {
         let charged = match carried {
             Some(units) => units.div_ceil(reserve),
             None => u64::from(earlier).saturating_mul(call.ladder.rungs() as u64),
+        };
+        // The estimate counts metered reservations only: on a free ladder the
+        // earlier tries spent nothing, so no replay is owed. A restart across
+        // a paid-to-keyless route move replays 0 for tries that paid, the
+        // same estimate class as above.
+        let charged = if request.envelope.host_keyless {
+            0
+        } else {
+            charged
         };
         // A step launched under a spend lease (OF-532) is bounded by it too:
         // beside its policy rows, this try may spend no more than the lease
