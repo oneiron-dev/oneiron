@@ -11,7 +11,9 @@
 //! fields. The challenge is the candidate's own signed one, read as an
 //! issuance label ([`own_receive_challenge`]). So this path proves no
 //! receiver freshness: a fresh receiver cannot tell the latest tip from an
-//! older one, and a stored pin is never rolled back. The strict public doors
+//! older one, and a stored pin is never rolled back. The receiver-challenge
+//! exchange (`history_pin_freshness`, FIX 4294) proves it beside the pin, as
+//! a status; this path is unchanged by it. The strict public doors
 //! (`pin_machine_history_handoff_pending`, `adopt_machine_history_handoff`)
 //! keep their challenge-bound contract.
 //!
@@ -89,9 +91,19 @@ impl PinExchangeOutcome {
 /// The challenge the own-receive pin expects of `packet`: its own signed
 /// challenge, read as an issuance label. It gives NO receiver-freshness
 /// proof: production challenges are random bytes (OsRng) that no receiver
-/// asked for. CALLS: "FIX 3821 own-receive pin".
+/// asked for; a receiver's own challenge proves freshness beside the pin
+/// (`Vault::accept_machine_history_freshness`). CALLS: "FIX 3821 own-receive
+/// pin".
 fn own_receive_challenge(packet: &ClaimHistoryHandoff) -> [u8; 32] {
     packet.challenge
+}
+
+/// What this vault keeps in memory for its machine histories: the
+/// freshness challenges it issued and the answers it accepted (FIX 4294).
+/// Never persisted.
+#[derive(Debug, Default)]
+pub(crate) struct MachineHistoryRuntime {
+    pub(crate) freshness: std::sync::Mutex<super::history_pin_freshness::FreshnessLedger>,
 }
 
 /// The `CorruptedIndex` reasons the history readers give for a resident

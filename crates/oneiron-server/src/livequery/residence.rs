@@ -448,6 +448,9 @@ pub(super) fn run(
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)
             }
+            "residence.machine-history.freshness" => {
+                machine_history::freshness(server, auth, peer, request.params)
+            }
             method if method.starts_with("residence.home_handoff.") => {
                 home_handoff::run(server, auth, peer, method, request.params)
             }

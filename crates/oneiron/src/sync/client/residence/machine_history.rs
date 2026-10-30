@@ -26,6 +26,7 @@ use serde_json::json;
 use super::super::base::home_reads_window;
 use super::{ResidenceRpc, refused, residence_budgets};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::MachineHistoryFreshnessResponse;
 use crate::sync::client::{ImportTier, SyncClientConfig};
 use crate::sync::machine_history::{
     OwedHistory, OwedStatus, is_history_of, keep_cursor, note_home, note_home_whole, owed_targets,
@@ -121,8 +122,53 @@ pub(crate) async fn fetch_owed_machine_history(
             }
         }
     }
-    release_targets(manager, fetched).await?;
+    let owed: BTreeSet<EntityId> = release_targets(manager, fetched.clone())
+        .await?
+        .into_iter()
+        .collect();
+    // FIX 4294: each history this round settled asks the home to prove its
+    // pin here the latest.
+    if failed.is_none() {
+        for (target, _) in fetched.iter().filter(|(target, _)| !owed.contains(target)) {
+            prove_freshness(vault, &mut rpc, &selector, *target).await;
+        }
+    }
     failed.map_or(Ok(landed), Err)
+}
+
+/// Asks the home to prove `target`'s pin here the latest (FIX 4294): this
+/// machine's fresh challenge out (`residence.machine-history.freshness`), the
+/// home's signed answer in. A home that cannot answer, or an answer that
+/// does not verify, leaves the pin's freshness unproven; the round goes on.
+async fn prove_freshness(vault: &Vault, rpc: &mut ResidenceRpc, selector: &str, target: EntityId) {
+    let Ok(Some(challenge)) = vault.issue_machine_history_freshness_challenge(target) else {
+        return;
+    };
+    let params = json!({
+        "selector": selector,
+        "challenge": base64::engine::general_purpose::STANDARD.encode(challenge.encode()),
+    });
+    let Ok(Ok(reply)) = rpc
+        .call("residence.machine-history.freshness", params)
+        .await
+    else {
+        return;
+    };
+    let Some(response) = reply
+        .get("response")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|encoded| {
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .ok()
+        })
+        .and_then(|bytes| MachineHistoryFreshnessResponse::decode(&bytes))
+    else {
+        return;
+    };
+    if let Err(error) = vault.accept_machine_history_freshness(&response) {
+        tracing::debug!(%error, target = %target.to_hex(), "machine history freshness not kept");
+    }
 }
 
 /// [`release`] off the async worker: its drain rematerializes whole windows.

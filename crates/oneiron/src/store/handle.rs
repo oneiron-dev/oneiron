@@ -243,6 +243,9 @@ pub struct StoreCore {
     /// Opt-in host root for signing scoped MACHINE history. Never populated
     /// from a transport key, peer assertion, or relay-mode vault.
     pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
+    /// The machine histories' in-memory state: freshness challenges and
+    /// proofs (FIX 4294). Never persisted.
+    pub(crate) machine_history_runtime: crate::claim::MachineHistoryRuntime,
     /// Host-provided software signers are scoped to this vault handle and never
     /// persisted, inferred from transport credentials, or shared across vaults.
     pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
