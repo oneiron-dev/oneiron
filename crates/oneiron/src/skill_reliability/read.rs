@@ -103,6 +103,27 @@ pub fn read_skill_reliability(
     read_cell_in_txn(vault, &txn, &cell, &query.type_parents)
 }
 
+/// A person's measured fit for `query`: the (task-type, person) cell fed by
+/// the runs the person drove, for L05 (FIX 8968). Model-agnostic: the cell's
+/// executor is the person, not the model.
+pub fn person_skill_fit(
+    vault: &Vault,
+    person: &EntityId,
+    query: &SkillReliabilityQuery,
+) -> Result<LearningRead> {
+    query.validate()?;
+    let cell = LearningCell::new(LearningPredicate::Reliability, *person)
+        .executor(person.to_hex())
+        .type_ref(query.type_ref.clone())
+        .axis(query.axis.clone())
+        .project(query.project);
+    cell.validate()?;
+    let txn = vault.store.env.read_txn()?;
+    // Persons start from the shared borrowed/shipped prior, never a skill's
+    // provenance trust: the skill reader's fallback names a SKILL only.
+    crate::learning::read::read_learning_in_txn(vault, &txn, &cell, &query.type_parents)
+}
+
 /// Diagnostic unqualified read: the richest cell, never a pooled posterior.
 /// Selection for a task uses read_skill_reliability instead.
 pub fn skill_reliability_posterior(

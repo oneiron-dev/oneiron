@@ -264,18 +264,26 @@ pub(super) fn project_in_txn(
         anchored.iter().map(|held| held.attempt.as_str()).collect();
     let mut anchored_writes = Vec::new();
     let mut anchored_withdrawals = Vec::new();
+    // The same anchored restatements under person cells (FIX 8968): the
+    // attempt beside each write, so the person's cell needs no re-read.
+    let mut anchored_person_writes: Vec<(String, LearningEvidence)> = Vec::new();
+    let mut anchored_person_withdrawals: Vec<(String, String)> = Vec::new();
     for held in &anchored {
         match effective_evidence_in_txn(vault, txn, skill, held, &amended)? {
             AnchoredEffect::Stand => {}
             AnchoredEffect::Record(evidence) => {
+                anchored_person_writes.push((held.attempt.clone(), evidence.clone()));
                 anchored_writes.push((held.cell.clone(), evidence));
             }
             AnchoredEffect::Withdraw => {
+                anchored_person_withdrawals.push((held.receipt.clone(), held.attempt.clone()));
                 anchored_withdrawals.push((held.cell.clone(), held.receipt.clone()));
             }
         }
     }
     let mut desired: BTreeMap<LearningCell, (SkillReliabilityQuery, Vec<LearningEvidence>)> =
+        BTreeMap::new();
+    let mut person_desired: BTreeMap<LearningCell, (SkillReliabilityQuery, Vec<LearningEvidence>)> =
         BTreeMap::new();
     for (receipt_ref, outcome) in &outcomes {
         let Some(outcome) = outcome else {
@@ -324,6 +332,27 @@ pub(super) fn project_in_txn(
         evidence.judge = judge;
         // The revision frozen beside the outcome; a re-projection keeps it.
         evidence.goal_revision = receipt.fields.get(FIELD_SKILL_GOAL_REVISION).cloned();
+        // The same outcome evidence under the person's own cell (FIX 8968):
+        // a (task-type, person) fit fed by the runs the person drove.
+        if let Some(person) = receipt
+            .on_behalf_of
+            .as_deref()
+            .or(receipt.actor.as_deref())
+            .and_then(|s| EntityId::from_hex(s).ok())
+        {
+            let person_cell =
+                LearningCell::new(crate::learning::LearningPredicate::Reliability, person)
+                    .executor(person.to_hex())
+                    .type_ref(query.type_ref.clone())
+                    .axis(query.axis.clone())
+                    .project(query.project);
+            person_cell.validate()?;
+            person_desired
+                .entry(person_cell)
+                .or_insert_with(|| (query.clone(), Vec::new()))
+                .1
+                .push(evidence.clone());
+        }
         desired
             .entry(cell)
             .or_insert_with(|| (query, Vec::new()))
@@ -349,6 +378,27 @@ pub(super) fn project_in_txn(
             {
                 EVIDENCE.delete(&vault.store, txn, &(digest, receipt))?;
                 changed.insert(digest);
+                // The same stale row under the person's cell (FIX 8968).
+                if let Some(attempt) =
+                    crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &receipt)?
+                    && let Some(person) = attempt
+                        .on_behalf_of
+                        .as_deref()
+                        .or(attempt.actor.as_deref())
+                        .and_then(|s| EntityId::from_hex(s).ok())
+                    && let (Some(type_ref), Some(axis)) =
+                        (row.cell.type_ref.clone(), row.cell.axis.clone())
+                {
+                    let person_cell =
+                        LearningCell::new(crate::learning::LearningPredicate::Reliability, person)
+                            .executor(person.to_hex())
+                            .type_ref(type_ref)
+                            .axis(axis)
+                            .project(row.cell.project);
+                    let person_digest = person_cell.digest();
+                    EVIDENCE.delete(&vault.store, txn, &(person_digest, receipt))?;
+                    changed.insert(person_digest);
+                }
             }
         }
     }
@@ -384,15 +434,94 @@ pub(super) fn project_in_txn(
         }
         changed.remove(&cell.digest());
     }
+    // The same desired evidence under person cells (FIX 8968). Persons start
+    // from the shared borrowed/shipped prior, never a skill's provenance.
+    for (cell, (query, evidence)) in person_desired {
+        crate::learning::prior::capture_borrowed_prior_in_txn(
+            vault,
+            txn,
+            &cell,
+            &query.type_parents,
+            crate::learning::EstimateForm::Beta,
+        )?;
+        for row in evidence {
+            crate::learning::record_evidence_in_txn(vault, txn, &cell, &row, at)?;
+        }
+        changed.remove(&cell.digest());
+    }
     // The anchored writes land in cells the credit recording already kept a
     // prior for; the stable key replaces the row in place.
     for (cell, evidence) in anchored_writes {
         crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, at)?;
         changed.remove(&cell.digest());
     }
+    // The same anchored restatements under person cells (FIX 8968).
+    for (attempt_ref, evidence) in anchored_person_writes {
+        let Some(attempt) =
+            crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &attempt_ref)?
+        else {
+            continue;
+        };
+        let Some(person) = attempt
+            .on_behalf_of
+            .as_deref()
+            .or(attempt.actor.as_deref())
+            .and_then(|s| EntityId::from_hex(s).ok())
+        else {
+            continue;
+        };
+        let query = receipt_query(&attempt)?;
+        let person_cell =
+            LearningCell::new(crate::learning::LearningPredicate::Reliability, person)
+                .executor(person.to_hex())
+                .type_ref(query.type_ref.clone())
+                .axis(query.axis.clone())
+                .project(query.project);
+        person_cell.validate()?;
+        crate::learning::prior::capture_borrowed_prior_in_txn(
+            vault,
+            txn,
+            &person_cell,
+            &query.type_parents,
+            crate::learning::EstimateForm::Beta,
+        )?;
+        crate::learning::record_evidence_in_txn(vault, txn, &person_cell, &evidence, at)?;
+        changed.remove(&person_cell.digest());
+    }
     for (cell, receipt) in anchored_withdrawals {
         crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, &cell, &receipt, at)?;
         changed.remove(&cell.digest());
+    }
+    // The same anchored withdrawals under person cells (FIX 8968).
+    for (receipt, attempt_ref) in anchored_person_withdrawals {
+        let Some(attempt) =
+            crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &attempt_ref)?
+        else {
+            continue;
+        };
+        let Some(person) = attempt
+            .on_behalf_of
+            .as_deref()
+            .or(attempt.actor.as_deref())
+            .and_then(|s| EntityId::from_hex(s).ok())
+        else {
+            continue;
+        };
+        let query = receipt_query(&attempt)?;
+        let person_cell =
+            LearningCell::new(crate::learning::LearningPredicate::Reliability, person)
+                .executor(person.to_hex())
+                .type_ref(query.type_ref.clone())
+                .axis(query.axis.clone())
+                .project(query.project);
+        crate::learning::evidence::withdraw_evidence_in_txn(
+            vault,
+            txn,
+            &person_cell,
+            &receipt,
+            at,
+        )?;
+        changed.remove(&person_cell.digest());
     }
     for digest in changed {
         project_cell_in_txn(vault, txn, &digest, at)?;
