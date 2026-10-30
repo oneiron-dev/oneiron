@@ -278,7 +278,9 @@ mod carrier {
                     // delete, or a host move aside that did not go through
                     // (FIX 12010).
                     (false, Some(failed)) => (
-                        format!("{end}'s kept copy of {member}, under its own name {aside}: {failed}"),
+                        format!(
+                            "{end}'s kept copy of {member}, under its own name {aside}: {failed}"
+                        ),
                         vec![action("Remove this copy", OutboxDivergedAnswer::Remove)],
                     ),
                     (false, None) => (

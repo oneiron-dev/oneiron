@@ -47,9 +47,9 @@ pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats, HandleLine};
 pub(crate) use self::core::BroadcastPayload;
 pub(crate) use self::core::ManagedIssuer;
 pub use self::core::{SyncServer, TaskWorkTurn};
+pub(crate) use self::deletion::DeletionMarker;
 pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::desktop_seats::{RunSeats, Seat, SeatGuest};
-pub(crate) use self::deletion::DeletionMarker;
 pub(crate) use self::housekeeping::{HousekeepingAdmission, PassControl, admit_every_pass};
 pub(crate) use self::lifecycle::LifecycleScheduler;
 pub(crate) use self::live_runs::{

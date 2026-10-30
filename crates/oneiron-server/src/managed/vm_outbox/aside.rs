@@ -44,7 +44,9 @@ pub(super) fn record_kept_aside(
     }
     let kept_at_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX));
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
     record.aside.push(KeptAside {
         held_by,
         held: held.clone(),
@@ -124,8 +126,9 @@ impl Carrier {
         }
         let host = self.side.peer();
         let mut record = self.store.get(kind, &member);
-        let answered =
-            |entry: &KeptAside| entry.removing && entry.held_by == host && entry.held.blake3 == held;
+        let answered = |entry: &KeptAside| {
+            entry.removing && entry.held_by == host && entry.held.blake3 == held
+        };
         match failed {
             None => record.aside.retain(|entry| !answered(entry)),
             Some(why) => {
@@ -205,9 +208,9 @@ impl Carrier {
         } else {
             Ok(())
         };
-        let failed = removed
-            .err()
-            .map(|error| vm_outbox_detail(&format!("the host's kept copy was not removed: {error}")));
+        let failed = removed.err().map(|error| {
+            vm_outbox_detail(&format!("the host's kept copy was not removed: {error}"))
+        });
         match &failed {
             Some(what) => self.say(kind, member, what),
             None => self.settled(kind, member),
@@ -308,7 +311,9 @@ impl Carrier {
     ) -> std::io::Result<()> {
         match self.roots.open(kind)? {
             Some(root) => local::remove_aside(&root, kind, member, held),
-            None => Err(std::io::Error::other("this end has no root for the kind now")),
+            None => Err(std::io::Error::other(
+                "this end has no root for the kind now",
+            )),
         }
     }
 

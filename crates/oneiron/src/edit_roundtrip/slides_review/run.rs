@@ -246,9 +246,7 @@ pub fn review_slides(
                 .map_err(|_| invalid("slide review unit state"))?;
             let state_bytes =
                 serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
-            if text.len() > limits.max_text_bytes
-                || state_bytes.len() > MAX_DECISION_STATE_BYTES
-            {
+            if text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
                 refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
                 continue;
             }

@@ -54,9 +54,10 @@ pub(super) fn capture(
     };
     let map = match containers.get(ROW_BIRTHS) {
         None => None,
-        Some(LoroValue::Container(id)) => {
-            Some(doc.try_get_map(id).ok_or(super::invalid("nonmap Layer-1 carrier"))?)
-        }
+        Some(LoroValue::Container(id)) => Some(
+            doc.try_get_map(id)
+                .ok_or(super::invalid("nonmap Layer-1 carrier"))?,
+        ),
         Some(_) => return Err(super::invalid("nonmap Layer-1 carrier")),
     };
     let mut overrun = None;

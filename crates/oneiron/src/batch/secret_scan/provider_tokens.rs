@@ -156,7 +156,14 @@ impl ProviderRule {
                 suffix_len,
                 exact_len,
                 alphanumeric,
-            } => key_matches(candidate, self.prefix, suffix_len, exact_len, alphanumeric, body),
+            } => key_matches(
+                candidate,
+                self.prefix,
+                suffix_len,
+                exact_len,
+                alphanumeric,
+                body,
+            ),
         }
     }
 

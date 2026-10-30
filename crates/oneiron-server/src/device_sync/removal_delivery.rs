@@ -226,9 +226,7 @@ async fn receive(
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
             Err(error) => {
                 if freeze.admit().is_none() {
-                    tracing::info!(
-                        "removal archive receiver paused: the vault is frozen for reap"
-                    );
+                    tracing::info!("removal archive receiver paused: the vault is frozen for reap");
                     let Some(_thawed) = freeze.resumed(&mut stop).await else {
                         return;
                     };
@@ -294,9 +292,7 @@ async fn receive_mesh(
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
             Err(error) => {
                 if freeze.admit().is_none() {
-                    tracing::info!(
-                        "removal archive receiver paused: the vault is frozen for reap"
-                    );
+                    tracing::info!("removal archive receiver paused: the vault is frozen for reap");
                     let Some(_thawed) = freeze.resumed(&mut stop).await else {
                         return;
                     };

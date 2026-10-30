@@ -119,7 +119,10 @@ impl Vault {
     /// else the rows `durable_send_receipts` returns apart. A read error of
     /// the table itself still fails.
     pub(crate) fn undecodable_send_receipts_for_kinds(&self, kinds: &[String]) -> Result<u32> {
-        if !kinds.iter().any(|kind| kind.trim() == ReceiptKind::Outbound.as_str()) {
+        if !kinds
+            .iter()
+            .any(|kind| kind.trim() == ReceiptKind::Outbound.as_str())
+        {
             return Ok(0);
         }
         durable_send_receipts(self)

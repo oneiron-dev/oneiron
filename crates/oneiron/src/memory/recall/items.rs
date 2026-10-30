@@ -78,7 +78,9 @@ impl Memory<'_> {
                     .get(&world)
                     .copied()
                     .map(|stamp| {
-                        let at = lane.judged_at().unwrap_or_else(|| self.vault.now_recorded_at());
+                        let at = lane
+                            .judged_at()
+                            .unwrap_or_else(|| self.vault.now_recorded_at());
                         MemoryStaleStamp::from_stamp(stamp, at)
                     }),
                 None => None,

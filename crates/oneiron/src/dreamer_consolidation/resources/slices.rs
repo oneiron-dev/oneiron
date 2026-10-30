@@ -66,10 +66,10 @@ impl BranchResources<'_> {
         // not say which hook added it, so a slice that carries any is
         // low-trust, kept off a thing agent's clean loan.
         let mut material = String::new();
-        for text in self
-            .prepared_wake
-            .map_or(&[][..], crate::dreamer_consolidation::PreparedWake::hook_material)
-        {
+        for text in self.prepared_wake.map_or(
+            &[][..],
+            crate::dreamer_consolidation::PreparedWake::hook_material,
+        ) {
             material.push_str("[host material] ");
             material.push_str(text);
             material.push('\n');

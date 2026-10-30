@@ -145,16 +145,17 @@ pub(super) fn remember_in_txn(
     let len =
         u32::try_from(value.len()).map_err(|_| Error::ArithmeticOverflow("known value length"))?;
     let window = &value[..value.len().min(TAG_WINDOW)];
-    let changed = store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
-        let keys = Keys::derive(master);
-        KnownEntry {
-            len,
-            tag: keys.tag(window),
-            // The window the tag keys, as a match rolls it (FIX 12209).
-            rolling: keys.rolling.value(window),
-            fingerprint: keys.fingerprint(value),
-        }
-    })?;
+    let changed =
+        store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
+            let keys = Keys::derive(master);
+            KnownEntry {
+                len,
+                tag: keys.tag(window),
+                // The window the tag keys, as a match rolls it (FIX 12209).
+                rolling: keys.rolling.value(window),
+                fingerprint: keys.fingerprint(value),
+            }
+        })?;
     // A value the history did not hold drops the index this write keeps
     // (FIX 12210).
     if changed {
@@ -449,11 +450,7 @@ impl KnownValues {
         // FIX 12250: only an offset whose tag window's rolling value the
         // index holds is read; a value arriving there always is, and each
         // one read is confirmed by its keyed tag as before.
-        let Some(lane) = self
-            .windows
-            .iter()
-            .position(|&window| window == TAG_WINDOW)
-        else {
+        let Some(lane) = self.windows.iter().position(|&window| window == TAG_WINDOW) else {
             return (None, held);
         };
         let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, &bytes[from..]);
