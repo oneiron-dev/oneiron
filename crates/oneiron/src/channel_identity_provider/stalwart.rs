@@ -146,7 +146,7 @@ impl StalwartClient {
             .get(config.session_url.clone())
             .header(AUTHORIZATION, authorization.clone())
             .send()
-            .map_err(|_| invalid("Stalwart session request failed"))?;
+            .map_err(|_| transport("Stalwart session request failed"))?;
         let session: Value = serde_json::from_slice(&read_response(response)?)
             .map_err(|_| invalid("invalid Stalwart JMAP session"))?;
         for capability in [CORE, MAIL, SUBMISSION, STALWART] {
@@ -303,7 +303,7 @@ impl StalwartClient {
                 "methodCalls": [[method, arguments, "mail"]]
             }))
             .send()
-            .map_err(|_| invalid("Stalwart JMAP request failed"))?;
+            .map_err(|_| transport("Stalwart JMAP request failed"))?;
         serde_json::from_slice(&read_response(response)?)
             .map_err(|_| invalid("invalid Stalwart JMAP response"))
     }
@@ -348,9 +348,9 @@ impl StalwartClient {
             .get(url)
             .header(AUTHORIZATION, self.authorization.clone())
             .send()
-            .map_err(|_| invalid("Stalwart message download failed"))?;
+            .map_err(|_| transport("Stalwart message download failed"))?;
         if !response.status().is_success() {
-            return Err(invalid("Stalwart HTTP request was refused"));
+            return Err(refused(response.status()));
         }
         Ok(std::io::copy(&mut response, out)?)
     }
@@ -444,7 +444,7 @@ fn require_same_origin(base: &reqwest::Url, url: &reqwest::Url) -> Result<()> {
 
 fn read_response(response: Response) -> Result<Vec<u8>> {
     if !response.status().is_success() {
-        return Err(invalid("Stalwart HTTP request was refused"));
+        return Err(refused(response.status()));
     }
     let mut bytes = Vec::new();
     response
@@ -460,4 +460,21 @@ fn read_response(response: Response) -> Result<Vec<u8>> {
 
 pub(super) fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
+}
+
+/// The server could not be reached, or its reply could not be read: an I/O
+/// failure a later call may not meet, kept apart from an invalid reply.
+fn transport(reason: &str) -> Error {
+    Error::Io(std::io::Error::other(reason.to_owned()))
+}
+
+/// A reply whose status is not a success. A server error or a rate limit
+/// is the server's passing state, a transport failure; any other status
+/// refused the request.
+fn refused(status: reqwest::StatusCode) -> Error {
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        transport("Stalwart is unavailable")
+    } else {
+        invalid("Stalwart HTTP request was refused")
+    }
 }

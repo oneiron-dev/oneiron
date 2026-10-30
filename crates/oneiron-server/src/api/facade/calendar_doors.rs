@@ -244,11 +244,11 @@ pub(crate) async fn calendar_imip_get(
     .await
 }
 
+use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
     self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
     CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
-use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 
 pub(crate) async fn calendar_ics_configure(
     server: &Arc<SyncServer>,
@@ -302,7 +302,7 @@ pub(crate) async fn calendar_ics_poll(
                 &memory,
                 &owner,
                 &fetcher,
-                None,
+                crate::calendar_host::calendar_body_screener(),
                 &row.config,
                 oneiron::EntityId::now().to_hex(),
             )

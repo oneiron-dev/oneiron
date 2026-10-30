@@ -113,6 +113,7 @@ use axum::Router;
 
 use crate::server::SyncServer;
 
+pub use crate::calendar_host::install_calendar_label_head;
 pub use crate::projection::View;
 
 /// Builds the complete Axum app (WebSocket + HTTP API routes).

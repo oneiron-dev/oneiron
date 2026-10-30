@@ -19,6 +19,7 @@ mod claims;
 mod consent;
 mod descriptor;
 mod generic_put_routing;
+mod inbound_events;
 mod opt_out_slots;
 mod parties;
 mod projection_writes;
@@ -69,7 +70,7 @@ pub(crate) use self::parties::{
 };
 pub(crate) use self::projector::{
     record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
-    run_comm_projector_housekeeping_step,
+    record_comm_inbound_stop_in_txn, run_comm_projector_housekeeping_step,
 };
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
@@ -83,7 +84,7 @@ pub(crate) use self::stop_hold::{
 };
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use self::projector::ProjectorAction;
 use self::records::{CommEventKind, CommRecord, read_comm_record_in_txn};
@@ -397,6 +398,22 @@ struct ProjectorIndexDelta {
     /// The heads the rule minted, superseded or retracted. The index reads
     /// none of them; an in-write projection reports them to its writer.
     heads: Vec<EntityId>,
+    /// Whether the step stamped its source event `projected`, a write of the
+    /// event's own row.
+    source_stamped: bool,
+}
+
+impl ProjectorIndexDelta {
+    /// The rows the step for `event_id` wrote: the source event when it was
+    /// stamped, the heads, and the gates it consumed.
+    fn written_rows(&self, event_id: EntityId) -> BTreeSet<EntityId> {
+        self.source_stamped
+            .then_some(event_id)
+            .into_iter()
+            .chain(self.heads.iter().copied())
+            .chain(self.consumed_gate_ids.iter().map(|(_, gate_id)| *gate_id))
+            .collect()
+    }
 }
 
 /// One source COMM_RECORD event, resolved to the projector rule it fires.

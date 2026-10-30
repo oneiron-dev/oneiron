@@ -9,6 +9,7 @@
 use crate::error::{Error, Result};
 
 mod cc_intake;
+mod comm_intake;
 mod connector_bridge;
 mod handoff;
 pub use cc_intake::CcAgentIntakeOutcome;

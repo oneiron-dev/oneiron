@@ -1,4 +1,4 @@
-//! Atomic named-address CC intake: passport, membership event, then durable coordination handoff.
+//! Atomic named-address CC intake: passport, the sender's membership event, then durable coordination handoff.
 use super::handoff::{
     SurfaceEventKey, admit_surface_event_once_in_txn, attempts_for_run_in_write_txn,
     decode_surface_event_attempt_payload, matching_surface_event_attempt, surface_event_dedupe_key,
@@ -113,18 +113,12 @@ impl Vault {
                 now,
             )?;
             if !admitted.replayed {
-                crate::comm::record_comm_thread_event_in_txn(
+                record_cc_sender_membership_in_txn(
                     self,
                     txn,
                     &passport.canonical_thread_ref,
-                    &event.receiving_address_or_handle,
-                    true,
-                    event.received_at,
-                )
-                .map_err(|error| match error {
-                    crate::comm::CommError::Engine(error) => error,
-                    _ => Error::InvalidClaimBody("CC thread membership refused"),
-                })?;
+                    &event,
+                )?;
             }
             let ack = SurfaceEventAck {
                 status_path: surface_event_status_path(&event.correlation_id),
@@ -279,18 +273,12 @@ impl Vault {
                 now,
             )?;
             if !admitted.replayed {
-                crate::comm::record_comm_thread_event_in_txn(
+                record_cc_sender_membership_in_txn(
                     self,
                     txn,
                     &passport.canonical_thread_ref,
-                    &event.receiving_address_or_handle,
-                    true,
-                    event.received_at,
-                )
-                .map_err(|error| match error {
-                    crate::comm::CommError::Engine(error) => error,
-                    _ => Error::InvalidClaimBody("CC thread membership refused"),
-                })?;
+                    &event,
+                )?;
             }
             let ack = SurfaceEventAck {
                 status_path: surface_event_status_path(&event.correlation_id),
@@ -307,6 +295,34 @@ impl Vault {
             })
         })
     }
+}
+
+/// Records the CC sender's join of the canonical thread `thread_ref`, in the
+/// intake's write: the counterparty who wrote, never our receiving address.
+/// A sender key the comm family cannot hold records nothing; the message is
+/// admitted either way.
+fn record_cc_sender_membership_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    thread_ref: &str,
+    event: &SurfaceEvent,
+) -> Result<()> {
+    let party = event.counterparty.reference_key();
+    if crate::comm::validate_comm_party_key(&party).is_err() {
+        return Ok(());
+    }
+    crate::comm::record_comm_thread_event_in_txn(
+        vault,
+        txn,
+        thread_ref,
+        &party,
+        true,
+        event.received_at,
+    )
+    .map_err(|error| match error {
+        crate::comm::CommError::Engine(error) => error,
+        _ => Error::InvalidClaimBody("CC thread membership refused"),
+    })
 }
 
 /// The attempt that already owns `event`'s identity tuple when it was
