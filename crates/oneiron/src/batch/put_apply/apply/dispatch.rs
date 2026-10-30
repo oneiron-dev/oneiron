@@ -12,13 +12,13 @@ pub(super) struct DispatchCarry {
 
 /// P2: run the CLAIM gate and the per-kind arms, assigning the dispatch
 /// verdicts and carrying the arms' buffers and side rows.
-pub(super) fn dispatch_put_type<R>(
+pub(super) fn dispatch_put_type(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
     dispatch: &mut super::admission::Dispatch,
-    revision: &mut super::admission::RevisionSlot<R>,
+    revision: &mut super::admission::RevisionSlot,
     incoming_claim_body: Option<ClaimBody>,
 ) -> Result<DispatchCarry> {
     let mut hub_origin_marker = None;
@@ -81,7 +81,9 @@ pub(super) fn dispatch_put_type<R>(
         if body.session_tag.is_some()
             && !fixed.replicated
             && !fixed.claim_gate_prechecked
-            && !fixed.refinement_admission.is_some_and(|proof| proof.binds_claim(&fixed.id, data))
+            && !fixed
+                .refinement_admission
+                .is_some_and(|proof| proof.binds_claim(&fixed.id, data))
             && !fixed.write_envelope.is_some_and(|envelope| {
                 crate::claim::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
             })
@@ -154,19 +156,27 @@ pub(super) fn dispatch_put_type<R>(
             crate::authority::AuthorityDoor::Lands => {}
             crate::authority::AuthorityDoor::AtBound => {
                 let signer = crate::authority::authority_signer_label(entry.signer_key());
-                return Err(Error::Record(RecordError::AuthorityLogFull { id: fixed.id, signer }));
+                return Err(Error::Record(RecordError::AuthorityLogFull {
+                    id: fixed.id,
+                    signer,
+                }));
             }
             crate::authority::AuthorityDoor::Unowned => {
-                return Err(Error::Record(RecordError::AuthorityLogSignerPending { id: fixed.id }));
+                return Err(Error::Record(RecordError::AuthorityLogSignerPending {
+                    id: fixed.id,
+                }));
             }
         }
         dispatch.authority_entry_hash_pin = Some(entry_hash);
         dispatch.authority_entry_observation = Some(entry);
     } else if crate::workspace_roster::is_project_revision_type(store, fixed.entity_type) {
-        // `RevisionPut` is unnameable here (see `RevisionSlot`), so the
-        // squatter verdict is read off the inferred value, not the slot.
         let put = crate::workspace_roster::check_revision_put(
-            store, wtxn, fixed.id, data, fixed.replicated, fixed.posture,
+            store,
+            wtxn,
+            fixed.id,
+            data,
+            fixed.replicated,
+            fixed.posture,
         )?;
         revision.squatter = put.squatter;
         revision.put = Some(put);
@@ -229,7 +239,11 @@ pub(super) fn dispatch_put_type<R>(
         dispatch.new_agent_definition = Some(decoded);
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
         dispatch.new_workflow = Some(crate::agent_def::workflow::validate_workflow_put(
-            store, wtxn, &fixed.id, data, fixed.replicated,
+            store,
+            wtxn,
+            &fixed.id,
+            data,
+            fixed.replicated,
         )?);
     } else if fixed.entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting

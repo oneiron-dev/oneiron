@@ -1,4 +1,6 @@
 use super::*;
+use crate::error::RegistryError;
+use crate::ppr;
 
 /// Applies one op of the edge family and invalidates the PPR caches of both
 /// endpoints when it changes an edge. Returns whether the graph changed: every

@@ -48,22 +48,19 @@ pub(super) struct Dispatch {
     pub(super) authority_dominates_key_squatter: bool,
 }
 
-/// The admitted companion revision. Its type is unnameable outside
-/// `workspace_roster::project` (a private `capture` module holds it), so the
-/// slot stays generic and P2 reads the squatter verdict off the inferred
-/// value, where the compiler still sees the concrete type.
-pub(super) struct RevisionSlot<R> {
-    pub(super) put: Option<R>,
+/// The admitted companion revision and its squatter verdict.
+pub(super) struct RevisionSlot {
+    pub(super) put: Option<crate::workspace_roster::RevisionPut>,
     pub(super) squatter: bool,
 }
 
 /// Everything P1 admitted: the immutable inputs, the first body buffers, the
 /// dispatch verdicts, the revision slot, and the values later phases move.
-pub(super) struct Admission<'a, R> {
+pub(super) struct Admission<'a> {
     pub(super) fixed: FixedPut<'a>,
     pub(super) owners: Owners,
     pub(super) dispatch: Dispatch,
-    pub(super) revision: RevisionSlot<R>,
+    pub(super) revision: RevisionSlot,
     pub(super) incoming_claim_body: Option<ClaimBody>,
     pub(super) project_revisions: Vec<(EntityId, Vec<u8>)>,
     pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
@@ -71,11 +68,11 @@ pub(super) struct Admission<'a, R> {
 
 /// P1: admit the put — unpack the request, run the carrier guards and claim
 /// admission, and set up the verdicts the type dispatch assigns.
-pub(super) fn admit_put<'a, R>(
+pub(super) fn admit_put<'a>(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
-) -> Result<Admission<'a, R>> {
+) -> Result<Admission<'a>> {
     let PutRequest {
         row:
             PutRow {

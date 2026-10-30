@@ -16,13 +16,13 @@ pub(super) struct Rewrite {
 /// P3: reject the envelope, evict a dominated squatter, then rewrite the body
 /// (SKILL escalation, TASK streak strip, pad reference, critical-confirm
 /// reconcile) and plan the short-id update over the rewritten bytes.
-pub(super) fn rewrite_put_body<R>(
+pub(super) fn rewrite_put_body(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
     dispatch: &mut super::admission::Dispatch,
-    revision: &super::admission::RevisionSlot<R>,
+    revision: &super::admission::RevisionSlot,
     task_body_without_streaks: &Option<Vec<u8>>,
     pad_stored_body: &Option<Vec<u8>>,
 ) -> Result<Rewrite> {
@@ -113,20 +113,21 @@ pub(super) fn rewrite_put_body<R>(
     let data = pad_stored_body.as_deref().unwrap_or(data);
     let reconciled_critical_claim_body =
         if fixed.replicated && fixed.entity_type == ENTITY_TYPE_CLAIM {
-        reconcile_replicated_critical_confirm(
-            store,
-            wtxn,
-            &fixed.id,
-            data,
-            &mut dispatch.decoded_claim_body,
-        )?
-    } else {
-        None
-    };
+            reconcile_replicated_critical_confirm(
+                store,
+                wtxn,
+                &fixed.id,
+                data,
+                &mut dispatch.decoded_claim_body,
+            )?
+        } else {
+            None
+        };
     let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
-    let authority_first_seen_key = dispatch.authority_entry_hash_pin
+    let authority_first_seen_key = dispatch
+        .authority_entry_hash_pin
         .as_ref()
         .map(crate::authority::authority_first_seen_sidecar_key);
     // Most maintenance-classified kinds (REDACTION_AUDIT) carry no short ID (static
