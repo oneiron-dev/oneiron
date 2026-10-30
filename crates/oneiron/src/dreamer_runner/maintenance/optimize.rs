@@ -273,10 +273,12 @@ fn optimize(
         }
         // This gate owns its held-out read and revalidates it at commit. The
         // drafting author never receives the scores or reserved receipts.
-        let verdict = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at)?;
+        let scored = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at);
         // An edit the owner approved on an agent-health card settles on that
-        // card now, as the owner's re-apply would (FIX 3725).
+        // card on the gate's ruling, a refusal's included, as the owner's
+        // re-apply would (FIX 3725).
         vault.settle_approved_skill_edit_by_candidate(&proposal)?;
+        let verdict = scored?;
         // A scored edit is a held-out outcome for the improver revision that
         // drafted it, a resumed proposal's included: did the edited
         // instructions beat the current ones. A refusal before scoring is
