@@ -48,12 +48,12 @@ pub(super) use self::sync::SyncCarriers;
 use super::{INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
 use crate::error::{Error, Result};
 use crate::side_table::SideDb;
-use crate::store::{ManifestDbs, Store};
 use crate::store::checkpoint_payload::CHECKPOINT_PAYLOADS_ENABLED;
 use crate::store::checkpoint_payload::rows::{
     Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator, RowPart,
     frame_actor_parts, frame_owner,
 };
+use crate::store::{ManifestDbs, Store};
 
 /// CALLS PAYLOAD_UNCLASSIFIED (Engine 10-20 07:3x): a row of an
 /// Unclassified family, and any row no handler compartments, stays under
