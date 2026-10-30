@@ -88,6 +88,7 @@ pub enum AgentVerb {
     VaultBudgetsResidentSharesSet,
     VaultRunnersSeatsQuotas,
     VaultRunnersSeatsTopUp,
+    VaultRunnersSeatsResume,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -1323,6 +1324,7 @@ impl AgentVerb {
         Self::VaultBudgetsResidentSharesSet,
         Self::VaultRunnersSeatsQuotas,
         Self::VaultRunnersSeatsTopUp,
+        Self::VaultRunnersSeatsResume,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -2561,6 +2563,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => "vault.budgets.resident_shares.set",
             Self::VaultRunnersSeatsQuotas => "vault.runners.seats.quotas",
             Self::VaultRunnersSeatsTopUp => "vault.runners.seats.top_up",
+            Self::VaultRunnersSeatsResume => "vault.runners.seats.resume",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -3826,6 +3829,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -5090,6 +5094,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -6500,6 +6505,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -7615,6 +7621,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiHoldResume
                 | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsTopUp
+                | Self::VaultRunnersSeatsResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -8428,6 +8435,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
+            Self::VaultRunnersSeatsResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -9664,6 +9672,7 @@ impl AgentVerb {
             Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
+            Self::VaultRunnersSeatsResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -11062,6 +11071,9 @@ impl AgentVerb {
             }
             Self::VaultRunnersSeatsTopUp => {
                 "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."
+            }
+            Self::VaultRunnersSeatsResume => {
+                "The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."

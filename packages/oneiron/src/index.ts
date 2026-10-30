@@ -638,6 +638,8 @@ export class Oneiron {
         quotas: (input: Facade.RunnerSeatQuotasRequest): Facade.RunnerSeatQuotasView => this.#call(() => this.#client.vaultRunnersSeatsQuotas(input) as Facade.RunnerSeatQuotasView),
         /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
         top_up: (input: Facade.RunnerSeatCreditTopUpRequest): Facade.RunnerSeatTopUpReceipt => this.#call(() => this.#client.vaultRunnersSeatsTopUp(input) as Facade.RunnerSeatTopUpReceipt),
+        /** The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write. */
+        resume: (input: Facade.RunnerWorkResumeRequest): Facade.RunnerWorkResumeView => this.#call(() => this.#client.vaultRunnersSeatsResume(input) as Facade.RunnerWorkResumeView),
       },
     },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */

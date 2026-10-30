@@ -94,8 +94,8 @@ pub use self::ctl::{
     BrowserReadiness, BrowserTier, BrowserUnavailableReason, CtlBound, CtlBoundKind, CtlBoundPhase,
     CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse, CtlResumeOn,
     FacilityNotice, FacilityReason, GUEST_RUNTIME_FACT_ARG, GuestRuntimeFact, LegalHoldsNotProven,
-    LegalHoldsWire, ManagedFacility, ManagedReadiness, REAP_PAUSE_REFUSAL, ShedBlockerWire,
-    ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING, TRAINING_PURGE_REJECTED,
+    LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, REAP_PAUSE_REFUSAL,
+    ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING, TRAINING_PURGE_REJECTED,
     TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};

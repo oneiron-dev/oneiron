@@ -12,6 +12,12 @@
 //! epoch: `true` once frozen. A thaw starts a fresh epoch and leaves the
 //! last one `true`, closed, so a pass that read it stays paused and its
 //! next pass reads the new one.
+//!
+//! Beside the freeze stands the deletion gate (FIX 11710): once the vault's
+//! deletion marker is present no background pass is admitted, but the
+//! backup schedule's and the custody publication's
+//! ([`ManagedState::backup_admission`]). It refuses no served request, ctl
+//! request or idle reap's backup, and leaves the freeze as it is.
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -19,6 +25,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use oneiron_vault_contract::{IdleReapInFlight, REAP_PAUSE_REFUSAL};
 use tokio::sync::watch;
 
+use super::deletion::DeletionMarker;
 use super::{ManagedState, WRITES_FROZEN_TAG};
 use crate::ai_host::DreamerControl;
 use crate::managed::ManagedError;
@@ -127,6 +134,9 @@ pub(super) struct Admission {
     /// Bumped as each background pass's admission drops, so a wait for
     /// them looks again.
     ended: watch::Sender<u64>,
+    /// The vault's deletion marker, which the deletion gate reads outside
+    /// the freeze's lock.
+    deletion: DeletionMarker,
 }
 
 impl Default for Admission {
@@ -134,6 +144,7 @@ impl Default for Admission {
         Self {
             gate: Mutex::default(),
             ended: watch::channel(0).0,
+            deletion: DeletionMarker::default(),
         }
     }
 }
@@ -217,6 +228,11 @@ impl Admission {
         self.ended.subscribe()
     }
 
+    /// The vault's deletion marker, as the deletion gate and `Ping` read it.
+    pub(super) fn deletion(&self) -> &DeletionMarker {
+        &self.deletion
+    }
+
     /// Counts a `kind` write in flight, unless frozen: then `None`, and
     /// nothing is counted.
     fn admit(self: &Arc<Self>, kind: WriteKind) -> Option<Admitted> {
@@ -280,8 +296,20 @@ impl ManagedState {
 
     /// A worker's admission, counted as `kind` and held on the pass's own
     /// thread until its last write. A refused pass logs the pause's typed
-    /// reason, once per freeze, and asks again later.
+    /// reason, once per freeze, and asks again later. Once the vault's
+    /// deletion marker is present the deletion gate refuses a background
+    /// pass too (FIX 11710), logged once; an `OwnerWrite` it leaves to the
+    /// freeze alone.
     pub(super) fn admit_background(&self, kind: WriteKind) -> Option<Box<dyn Send>> {
+        if kind.background() && self.admission.deletion.stops_pass(self.server.vault()) {
+            return None;
+        }
+        self.admit_pass(kind)
+    }
+
+    /// [`Self::admit_background`] past the deletion gate: only the reap
+    /// freeze refuses it.
+    fn admit_pass(&self, kind: WriteKind) -> Option<Box<dyn Send>> {
         match self.admit(kind) {
             Ok(admission) => Some(Box::new(admission)),
             Err(_) => {
@@ -303,6 +331,18 @@ impl ManagedState {
     pub(super) fn background_admission(self: &Arc<Self>, kind: WriteKind) -> HousekeepingAdmission {
         let state = Arc::clone(self);
         Arc::new(move || state.admit_background(kind))
+    }
+
+    /// The admission of a pass a deleted vault still runs (FIX 11710): a
+    /// backup schedule tick, whose whole pass reaches the drop of the
+    /// vault's backups at their deadline, and a custody publication pass,
+    /// which keeps the heads those backups are recovered with current until
+    /// then. Counted as other background work, and refused while the vault
+    /// is frozen for reap as every pass is; the deletion gate never refuses
+    /// it.
+    pub(super) fn backup_admission(self: &Arc<Self>) -> HousekeepingAdmission {
+        let state = Arc::clone(self);
+        Arc::new(move || state.admit_pass(WriteKind::BackgroundOther))
     }
 
     /// [`Self::background_admission`] with the reap freeze as the pause
