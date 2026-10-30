@@ -239,7 +239,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `share_travel` | file+dir | 6 | L | yes | What travels with a body when it leaves the vault (OF-491) |
 | `side_table` | dir | 15 | L | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `skill` | dir | 22 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
-| `skill_attribution` | dir | 30 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `skill_attribution` | dir | 31 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 7 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
 | `skill_hub` | dir | 95 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `skill_optimize` | dir | 67 | L | yes | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
@@ -255,7 +255,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tagging` | dir | 24 | L | yes | The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036… |
 | `task_authority` | dir | 4 | L | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `task_type` | dir | 4 | L | — | ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree |
-| `task_verb` | dir | 159 | L | yes | Typed, actor-bound verbs over the Context Board TASKS section |
+| `task_verb` | dir | 158 | L | yes | Typed, actor-bound verbs over the Context Board TASKS section |
 | `team` | dir | 15 | m | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `temporal` | file | 1 | s | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
 | `test_support` | file | 1 | s | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
