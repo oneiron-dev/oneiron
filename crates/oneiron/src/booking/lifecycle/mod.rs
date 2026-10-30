@@ -79,7 +79,8 @@ pub(in crate::booking) use self::claim::{
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     enqueue_booking_verb, enqueue_booking_verb_with_publication, issue_checkout_lease,
-    run_booking_lifecycle_attempt, run_booking_lifecycle_once,
+    run_booking_lifecycle_attempt, run_booking_lifecycle_attempt_with_invites,
+    run_booking_lifecycle_once,
 };
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{

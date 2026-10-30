@@ -4,6 +4,7 @@ use oneiron::booking::{
     BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     BookingSolver, BookingVerbReceipt, BookingVerbRequest, SessionKey, SlotOracle, SolveRequest,
     SolveResult, VaultActiveHoldSource, run_booking_lifecycle_attempt,
+    run_booking_lifecycle_attempt_with_invites,
 };
 use oneiron::dreamer_runner::DreamerHomeNodeClass;
 use oneiron::memory::ProducerRows;
@@ -12,6 +13,7 @@ use oneiron::{CalendarSel, DreamerRunnerStore, EntityId, Vault};
 use super::constants::BOOKING_LIFECYCLE_LEASE_OWNER;
 use super::helpers::engine_read_error;
 use super::page_token::page_event_type_configs_listed;
+use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -34,18 +36,21 @@ pub(super) async fn run_booking_verb(
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingVerbReceipt, ApiError> {
-    let vault: &Vault = &server.vault;
     let local_node_id = local_booking_node_id(server)?;
     let attempt = oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(
-        vault,
+        &server.vault,
         request,
         now,
         public_authority,
     )?;
-    let turn = run_booking_lifecycle_attempt(
-        vault,
-        attempt,
-        |oracle_request: &BookingOracleRequest| {
+    // The turn sends each committed revision's invite on the calendar
+    // host's real sink (FIX 7850), whose blocking clients run off the
+    // runtime, so the whole turn does.
+    let turn_server = Arc::clone(server);
+    let line_push_allowance = server.config.line.monthly_push_allowance();
+    let turn = tokio::task::spawn_blocking(move || {
+        let vault: &Vault = &turn_server.vault;
+        let make_oracle = |oracle_request: &BookingOracleRequest| {
             let page_ref = oracle_request.page_ref.ok_or_else(|| {
                 BookingError::SlotOracle(
                     "booking attempt names no page in committed state".to_owned(),
@@ -59,13 +64,32 @@ pub(super) async fn run_booking_verb(
                 calendars: page_calendar_bindings(vault, page_ref)?.0,
                 producers: None,
             })
-        },
-        &BookingLifecycleConsumerInput {
+        };
+        let input = BookingLifecycleConsumerInput {
             local_node_id,
             lease_owner: BOOKING_LIFECYCLE_LEASE_OWNER.to_owned(),
             now_utc: now,
-        },
-    )?;
+        };
+        match CalendarSendClients::new() {
+            Ok(clients) => {
+                let mut sink = CalendarChannelSink::new(vault, line_push_allowance, &clients);
+                run_booking_lifecycle_attempt_with_invites(
+                    vault,
+                    attempt,
+                    make_oracle,
+                    &input,
+                    &mut sink,
+                )
+            }
+            // No send client: the revision commits and sends no invite.
+            Err(error) => {
+                tracing::warn!(%error, "booking lifecycle runs without an invite sink");
+                run_booking_lifecycle_attempt(vault, attempt, make_oracle, &input)
+            }
+        }
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("booking lifecycle turn stopped"))??;
     match turn {
         BookingLifecycleTurn::Executed(receipt) => Ok(receipt),
         BookingLifecycleTurn::NoHomeNode => {
