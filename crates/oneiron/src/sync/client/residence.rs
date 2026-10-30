@@ -7,7 +7,7 @@ mod checkpoint_roots;
 pub(crate) mod custody;
 pub(crate) mod home_handoff;
 mod index;
-mod kit_fetch;
+pub(super) mod kit_fetch;
 mod machine_history;
 mod pad_custody;
 mod promoted_pads;

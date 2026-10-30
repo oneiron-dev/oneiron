@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use oneiron::recovery::checkpoint::CheckpointKey;
-use oneiron::world_keys::{HybridSecretKey, VaultKeyUnlock};
+use oneiron::world_keys::{HybridSecretKey, RecoveryRootSeed, VaultKeyUnlock};
 use zeroize::Zeroizing;
 
 use super::{
@@ -26,6 +26,9 @@ pub(crate) enum HostUnlock {
     Escrow {
         label: String,
         secret: HybridSecretKey,
+        /// The world kit's seed when the kit gave the secret: its owner
+        /// anchor signs a custody fetch from the residence home (FIX 5846).
+        kit_seed: Option<RecoveryRootSeed>,
     },
     /// A registry's escrow capsule, presented in place of a wrap, and its
     /// recipient's released secret.
@@ -206,7 +209,11 @@ impl HostUnlock {
                     None => secret32(&read_secret(secret, "the escrow seed")?, "an escrow seed")?,
                 };
                 let secret = oneiron::world_keys::escrow_recipient(&seed)?;
-                Self::Escrow { label, secret }
+                Self::Escrow {
+                    label,
+                    secret,
+                    kit_seed: None,
+                }
             }
             UnlockMethod::Kit => anyhow::bail!(
                 "--unlock kit opens with the kit's pieces (--piece) and the vault id it is bound \
@@ -234,7 +241,7 @@ impl HostUnlock {
             Self::Device => None,
             Self::Password(password) => Some(VaultKeyUnlock::Password(password)),
             Self::Passkey { credential, prf } => Some(VaultKeyUnlock::Passkey { credential, prf }),
-            Self::Escrow { label, secret } => Some(VaultKeyUnlock::Escrow { label, secret }),
+            Self::Escrow { label, secret, .. } => Some(VaultKeyUnlock::Escrow { label, secret }),
             Self::EscrowCapsule {
                 label,
                 capsule,
@@ -265,7 +272,7 @@ impl HostUnlock {
             Self::Passkey { credential, prf } => {
                 vault.unlock_vault_key_with_passkey(credential, prf)
             }
-            Self::Escrow { label, secret } => vault.unlock_vault_key_with_escrow(label, secret),
+            Self::Escrow { label, secret, .. } => vault.unlock_vault_key_with_escrow(label, secret),
             // The restored vault need not carry the capsule's wrap.
             Self::EscrowCapsule {
                 label,

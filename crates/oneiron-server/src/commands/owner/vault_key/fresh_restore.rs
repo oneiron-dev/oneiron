@@ -16,6 +16,7 @@ use serde::Serialize;
 use zeroize::Zeroizing;
 
 use super::super::base_vault_config;
+use super::super::recovery_kit::kit_custody_seed;
 use super::{
     HostUnlock, RecoveryBox, backup_key, check_name, read_secret, recovery_box, secret32, view,
 };
@@ -165,7 +166,13 @@ impl RestoreWrap {
 /// (`--custody-anchor-credentials-fd`). With `pad_machine`, the named
 /// admitted machine's key opens the worlds that admit it, as `--open-pads`
 /// opens them; a machine whose key this install does not hold opens nothing
-/// and is a note on the receipt (FIX 10468).
+/// and is a note on the receipt (FIX 10468). With `custody_home`, the custody
+/// head and its log are read from that residence home with the kit, in place
+/// of the folder beside the backup (FIX 5846).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the restore command's unlock, wrap, pins and custody sources"
+)]
 pub(in crate::commands::owner) fn restore_fresh(
     backup: &Path,
     config: &ServeConfig,
@@ -175,6 +182,7 @@ pub(in crate::commands::owner) fn restore_fresh(
     pins: Option<Vec<CheckpointSigner>>,
     anchor: Option<Arc<CustodyAnchorCredentials>>,
     pad_machine: Option<&str>,
+    custody_home: Option<&str>,
 ) -> anyhow::Result<FreshRestore> {
     // A handle for the machine opener below: unlocking the backup moves the
     // install's keystore into the key it opens.
@@ -240,6 +248,7 @@ pub(in crate::commands::owner) fn restore_fresh(
     if let Some((machine, secret)) = &machine {
         custody = custody.with_machine(*machine, secret);
     }
+    custody = backup::custody_from_home(custody, backup, custody_home, kit_custody_seed(unlock))?;
     // Before the vault is kept: its key unlocks the same way and is wrapped
     // to this install, and to the wrap the owner named, so a sealed one is
     // published only once it opens here.

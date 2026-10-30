@@ -512,6 +512,14 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "list the kit's sealed bundle generations"
 - safety: Read-only metadata: generation ids, lengths and ciphertext digests, only those named for the kit's root. No bearer: signed by that root's owner anchor like a part request, under its own domain and path. A request that does not verify looks exactly like a root with no generation (`404`).
 
+#### recovery-custody-page - `POST /v1/recovery/custody/page`
+
+- when-to-use: Read one page of a custody lineage's sealed head and log frames from the residence home with the recovery kit alone, to restore on a new host. Page from head offset 0 and sequence 0 until the reply carries no next cursor.
+- trigger phrases:
+  - "fetch key custody with the kit"
+  - "read a custody page from the home"
+- safety: Read-only; serves sealed bytes only, to the kit's recovery root. No bearer: each request is signed by that root's owner anchor, within 300 seconds of the home's clock, with a nonce the home takes once. A request that does not verify, a vault or root the home does not pin, a lineage it holds no head of, and an offset past the head's end all look missing (`404`).
+
 #### booking-agent-instructions - `GET /api/booking/{page_token}/agent-instructions`
 
 - when-to-use: Read the versioned machine-readable instructions document for one booking page before calling any booking operation.

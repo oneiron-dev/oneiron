@@ -33,8 +33,9 @@ use super::head::head_position;
 use super::log::CustodyPosition;
 use super::platform;
 use super::protocol::{
-    ACK_VERSION, AckOperation, AckPosition, AckRecord, DeletionEvidence, DrainAck, DrainTicket,
-    EvidenceKind, Lineage, ResidenceCommit, TargetSpec, hex, operation_id,
+    ACK_VERSION, AckOperation, AckPosition, AckRecord, CustodyHomeCursor, CustodyHomePage,
+    CustodySource, DeletionEvidence, DrainAck, DrainTicket, EvidenceKind, Lineage, ResidenceCommit,
+    TargetSpec, hex, operation_id,
 };
 
 const HOME: &str = "custody-residence";
@@ -89,6 +90,75 @@ impl Store {
         Ok(held_position(
             &FolderTarget::at(self.residence_home()?).dir(lineage),
         ))
+    }
+
+    /// One page of what this home holds of `lineage`, for the kit's custody
+    /// fetch (FIX 5846): the head's bytes from `head_offset`, then, once the
+    /// head is whole, the frames after `after_seq` through the head's, at
+    /// most `fill` bytes of both, or one frame alone where it is larger.
+    /// Read only, under the commit's own lineage lock, so the head and the
+    /// frames it names are one pair; the scan ends at a frame the home
+    /// lacks. `None` with no head here, or an offset past the head's end.
+    pub(crate) fn residence_custody_page(
+        &self,
+        lineage: Lineage,
+        head_offset: u64,
+        after_seq: u64,
+        fill: usize,
+    ) -> Result<Option<CustodyHomePage>> {
+        let root = self.residence_home()?;
+        let _lock = Self::lineage_lock(&root, lineage)?;
+        let target = FolderTarget::at(root);
+        let Some(head) = target.head(lineage)? else {
+            return Ok(None);
+        };
+        let head_seq = head_position(&head)?.seq;
+        let Some(rest) = usize::try_from(head_offset)
+            .ok()
+            .and_then(|offset| head.get(offset..))
+        else {
+            return Ok(None);
+        };
+        let head_part = rest[..rest.len().min(fill)].to_vec();
+        let mut room = fill.saturating_sub(head_part.len());
+        let next_offset = head_offset.saturating_add(head_part.len() as u64);
+        let head_len = head.len() as u64;
+        let mut frames = Vec::new();
+        let mut reached = after_seq;
+        let mut gap = false;
+        while next_offset == head_len && reached < head_seq {
+            let seq = reached.saturating_add(1);
+            let Some(frame) = target.frame(lineage, seq)? else {
+                gap = true;
+                break;
+            };
+            if frame.len() > room && !(head_part.is_empty() && frames.is_empty()) {
+                break;
+            }
+            room = room.saturating_sub(frame.len());
+            frames.push((seq, frame));
+            reached = seq;
+        }
+        let next = if next_offset < head_len {
+            Some(CustodyHomeCursor {
+                head_offset: next_offset,
+                after_seq,
+            })
+        } else {
+            (!gap && reached < head_seq).then_some(CustodyHomeCursor {
+                head_offset: head_len,
+                after_seq: reached,
+            })
+        };
+        Ok(Some(CustodyHomePage {
+            head_object_id: *blake3::hash(&head).as_bytes(),
+            head_len,
+            head_seq,
+            head_offset,
+            head_part,
+            frames,
+            next,
+        }))
     }
 
     /// Ships one log frame of `lineage` here.
