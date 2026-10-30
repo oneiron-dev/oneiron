@@ -88,7 +88,6 @@ impl Store {
                 claim_id: *claim_id.as_bytes(),
                 opened_by,
                 item: owner_answer_item_hash(diff_handle),
-                demotes_peer_revisions: false,
             },
         )?;
         crate::ppr::increment_graph_version(self, wtxn)

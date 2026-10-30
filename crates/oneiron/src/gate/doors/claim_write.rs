@@ -712,9 +712,8 @@ fn check_claim_policy_for_write_with_record_inner(
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
             // A fresh local confirm on this revision is the item the claim's
-            // owner answers now, and the only one that ends the demotion of
-            // peer revisions. Ordinary pending work and replicated input
-            // never end it.
+            // owner answers now. Ordinary pending work and replicated input
+            // never rebind it.
             if attach_critical_confirm {
                 crate::gate::owner_answer::rebind_owner_answer_obligation_in_txn(
                     store, wtxn, id, &pending,
