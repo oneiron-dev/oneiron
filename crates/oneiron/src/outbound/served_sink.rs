@@ -23,7 +23,8 @@
 //! Telegram (its `telegram` module), and email from a native mail identity
 //! through the host's own mail server (its `email` module), ride beside them.
 //! Each provider's API is where the host's installed [`ServedTransports`]
-//! put it.
+//! put it. A LinkedIn reply (its `linkedin` module) calls the installed
+//! LinkedIn connector's tools through the host's connector calls.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -47,6 +48,7 @@ mod content;
 mod email;
 mod host;
 mod line_wire;
+mod linkedin;
 mod telegram;
 
 use self::content::trusted_contact_check_in_text;
@@ -704,6 +706,9 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             (LINE_CHANNEL, "push") => self.line_send(request, LineMode::Push),
             (telegram::TELEGRAM_CHANNEL, "send") => self.telegram_send(request),
             (EMAIL_CHANNEL, "send") => self.email_send(request),
+            (linkedin::LINKEDIN_CHANNEL, linkedin::LINKEDIN_SEND_DM_VERB) => {
+                self.linkedin_send(request)
+            }
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }
