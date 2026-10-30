@@ -27,6 +27,13 @@ pub const WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE: &str = "channel_identity.quara
 /// table.
 pub const ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND: &str = "channel_identity.outbound_send";
 
+/// The posture the default manifest's `act_policy` rows ship for
+/// [`ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND`], for every subject class: the
+/// class is not barred, and the substrate check asks for the capability. A
+/// vault whose manifests name no row for a pairing sends under it.
+pub(crate) const SHIPPED_OUTBOUND_SEND_POSTURE: crate::gate::class_policy::ActPosture =
+    crate::gate::class_policy::ActPosture::RequireCapability;
+
 /// Subject class of every self-held row in the `act_policy` table.
 ///
 /// The three self-held SHAPES answer the same way about outbound reach, so one

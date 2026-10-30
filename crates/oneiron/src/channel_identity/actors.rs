@@ -9,14 +9,25 @@ use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
 use std::collections::BTreeSet;
 
+/// The entity type a channel actor is minted as. A provider's confidence
+/// prior resolves the provider's actor only as a PERSON row that carries its
+/// `provider_key` (`provider_confidence`), and that prior is the channel's
+/// reputation, so the channel actor is that row. It carries `actor_class`
+/// `system`, and no identity routes to it.
+const CHANNEL_ACTOR_ENTITY_TYPE: u8 = crate::registry::ENTITY_TYPE_PERSON;
+
 /// Host-controlled channel registration. Authentication secrets are deliberately absent.
 #[derive(Debug, Clone)]
 pub struct ChannelActorRegistration {
+    /// The identity to register, bound to the recipient its inbound events
+    /// route to; registration keeps that binding.
     pub identity: ChannelIdentity,
     pub provider_key: String,
     pub scope: Scope,
     /// Public half of a throwaway holder key; the private half never enters the vault.
     pub binding_key: [u8; 32],
+    /// The credential lifetime asked for. The slip runs for this or the
+    /// vault's credential-lifetime ceiling, whichever is shorter.
     pub lifetime_secs: u64,
     pub confidence_prior: f32,
     pub prior_evidence: String,
@@ -48,7 +59,7 @@ impl Vault {
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Err(Error::CorruptedIndex("channel actor header"));
         };
-        if header.entity_type != crate::registry::ENTITY_TYPE_PERSON {
+        if header.entity_type != CHANNEL_ACTOR_ENTITY_TYPE {
             return Ok(None);
         }
         let Value::Map(entries) =
@@ -66,9 +77,14 @@ impl Vault {
             .then_some(actor))
     }
 
-    /// Atomically registers one channel actor, its identity route, budget key,
+    /// Atomically registers one channel actor, its identity, budget key,
     /// confidence prior and actual log-backed Scope credential. Sends still
     /// pass the existing effector gate; this is not a dispatch permit.
+    ///
+    /// The identity keeps the binding the caller asked for, so inbound events
+    /// reach that recipient; the channel actor rides on it as its reputation
+    /// and credential holder. The credential's ceiling is the vault's
+    /// `credential_lifetimes` policy, resolved in the mint transaction.
     pub fn register_channel_actor(
         &self,
         issuer: &HostSlipIssuer,
@@ -76,7 +92,6 @@ impl Vault {
     ) -> Result<RegisteredChannelActor> {
         registration.identity.validate()?;
         if registration.lifetime_secs == 0
-            || registration.lifetime_secs > 365 * 24 * 60 * 60
             || !registration.confidence_prior.is_finite()
             || !(0.0..=1.0).contains(&registration.confidence_prior)
             || registration.prior_evidence.is_empty()
@@ -88,30 +103,31 @@ impl Vault {
         self.verified_host_root_slip(issuer)?;
         let mut txn = self.store.env.write_txn()?;
         validate_axes(self, &txn, &registration.scope)?;
+        // The requested lifetime selects within the vault's ceiling, read in
+        // this transaction as the pairing and OAuth mints read theirs.
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let lifetime_secs = registration.lifetime_secs.min(ceiling.initial_owner_secs);
         // A provider name identifies one channel actor. A second claimant may
         // not steal the existing actor's reputation or key lineage.
-        for kind in [crate::registry::ENTITY_TYPE_PERSON] {
-            for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-                &self.store,
-                &txn,
-                kind,
-                None,
-            )? {
-                let id = row?;
-                let Some(raw) =
-                    crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
-                else {
-                    return Err(Error::CorruptedIndex("channel actor index"));
-                };
-                if let Ok(Value::Map(entries)) =
-                    rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-                    && entries.iter().any(|(key, value)| {
-                        key.as_str() == Some("provider_key")
-                            && value.as_str() == Some(registration.provider_key.as_str())
-                    })
-                {
-                    return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
-                }
+        for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            &txn,
+            CHANNEL_ACTOR_ENTITY_TYPE,
+            None,
+        )? {
+            let id = row?;
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
+            else {
+                return Err(Error::CorruptedIndex("channel actor index"));
+            };
+            if let Ok(Value::Map(entries)) =
+                rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                && entries.iter().any(|(key, value)| {
+                    key.as_str() == Some("provider_key")
+                        && value.as_str() == Some(registration.provider_key.as_str())
+                })
+            {
+                return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
             }
         }
         let actor_ref = EntityId::now();
@@ -119,8 +135,7 @@ impl Vault {
         let connector_key_ref = EntityId::now();
         let now = self.instant_in_txn(&txn)?.secs();
         let mut identity = registration.identity;
-        let route_target = identity.binding().actor_ref();
-        identity.bind_to_channel_actor(actor_ref);
+        identity.set_channel_actor(actor_ref);
         let actor_body = Value::Map(vec![
             (
                 Value::from("provider_key"),
@@ -132,10 +147,6 @@ impl Vault {
             ),
             (Value::from("channel"), Value::from(identity.channel())),
             (Value::from("actor_class"), Value::from("system")),
-            (
-                Value::from("route_target_ref"),
-                route_target.map_or(Value::Nil, |id| Value::from(id.to_hex())),
-            ),
         ]);
         let mut actor_bytes = Vec::new();
         rmpv::encode::write_value(&mut actor_bytes, &actor_body)
@@ -147,7 +158,7 @@ impl Vault {
             &mut txn,
             vec![BatchOp::Put {
                 id: actor_ref,
-                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                entity_type: CHANNEL_ACTOR_ENTITY_TYPE,
                 occurred: TimeRange {
                     start: now,
                     end: now,
@@ -196,7 +207,7 @@ impl Vault {
             .vault_id
             .ok_or(Error::InvalidClaimBody("channel has no authority root"))?;
         let expires_at = now
-            .checked_add(registration.lifetime_secs)
+            .checked_add(lifetime_secs)
             .ok_or(Error::ArithmeticOverflow("channel slip expiry"))?;
         let slip = self.mint_slip_in_txn(
             &mut txn,
@@ -210,7 +221,7 @@ impl Vault {
                 scope: registration.scope,
                 issued_at: now,
                 expires_at,
-                ttl_secs: registration.lifetime_secs,
+                ttl_secs: lifetime_secs,
                 single_use: false,
                 records: BTreeSet::new(),
                 channels: BTreeSet::new(),

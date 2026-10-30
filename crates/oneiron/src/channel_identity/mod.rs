@@ -59,7 +59,7 @@ pub use custody::{
     delegated_custody_granted_scope, delegated_custody_scopes, delegated_custody_scopes_for_grant,
     delegated_custody_subject_scope,
 };
-pub use lifecycle::{DelegatedLifecycle, SelfHeldLifecycle};
+pub use lifecycle::{DelegatedLifecycle, QuarantineWindow, SelfHeldLifecycle};
 
 pub use self::binding::{ChannelIdentityBinding, ChannelIdentityFulfillment};
 pub use self::codec::{
@@ -90,7 +90,7 @@ pub use self::transition::DelegatedProvisionRequest;
 
 pub(crate) use self::assignment::{
     AssignmentRekeys, clear_assignment_for_delete, close_claim_heads_for_delete_in_txn,
-    maintain_assignment_put, note_claim_put_for_rekey,
+    maintain_assignment_put, note_claim_delete_for_rekey, note_claim_put_for_rekey,
 };
 #[cfg(test)]
 use self::codec::validate_channel_identity_body_bytes;
@@ -99,12 +99,14 @@ pub(crate) use self::codec::validate_channel_identity_put_carrier;
 #[cfg(test)]
 use self::record::StoredIdentityParts;
 pub use self::sender::ChannelIdentityFaceClassifier;
+pub(crate) use self::sender::channel_identity_selection_candidates_in_txn;
 pub(crate) use self::sender::channel_identity_send_holder_in_txn;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;
 pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::transition::{
-    IdentityTransition, admit_channel_identity_transition_in_txn, resolve_quarantine_floor_in_txn,
-    step_channel_identity_in_txn,
+    IdentityTransition, REASON_QUARANTINE_SHIPPED_WAIT_POLICY,
+    admit_channel_identity_transition_in_txn, resolve_quarantine_floor_in_txn,
+    resolve_quarantine_window_in_txn, step_channel_identity_in_txn,
 };
 
 #[cfg(test)]

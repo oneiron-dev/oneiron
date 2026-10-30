@@ -6,7 +6,7 @@ use super::claims::{PREDICATE_CALENDAR_ATTENDEE, decode_attendee_value};
 use super::payload::{CALENDAR_INVITE_CHANNEL, CalendarInviteMethod, CalendarInvitePayload};
 use crate::Vault;
 use crate::booking::invite_grant::BookingInviteCoverage;
-use crate::channel_identity::{ChannelIdentity, ChannelIdentityShape};
+use crate::channel_identity::{ChannelIdentity, ChannelIdentityFacts, ChannelIdentityShape};
 use crate::claim::ClaimLifecycleStatus;
 use crate::comm::{CommParties, PREDICATE_COMM_LAST_TOUCH, count_active_party_claims_in_txn};
 use crate::entity_id::EntityId;
@@ -162,14 +162,16 @@ pub(super) fn hydrate_calendar_invite_hygiene(
     let recipient = payload.recipient.trim();
     let consent_basis = resolve_consent_basis_in_txn(vault, txn, actor, event_ref, recipient)?;
     let recipient_bound_to_invite = recipient_is_bound_attendee(vault, txn, &event_ref, recipient)?;
+    // The sender's shape and address are its facts (OF-272): a corrected
+    // address is the one the invite goes out from.
     let sender = sending_identity_in_txn(vault, txn, actor)?;
     let primary_domain = primary_calendar_domain_in_txn(vault, txn, actor)?;
     let sender_is_shared_presence = sender
         .as_ref()
-        .is_some_and(|identity| identity.shape() == ChannelIdentityShape::SharedPresence);
+        .is_some_and(|(_, facts)| facts.shape == ChannelIdentityShape::SharedPresence);
     let sender_domain = sender
         .as_ref()
-        .and_then(|identity| email_domain(identity.address_or_handle()));
+        .and_then(|(_, facts)| email_domain(&facts.address_or_handle));
     Ok(CalendarInviteHygieneContext {
         method: payload.method,
         consent_basis,
@@ -563,14 +565,14 @@ pub(super) fn sending_identity(
     actor: EntityId,
 ) -> Result<Option<ChannelIdentity>, CalendarError> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    sending_identity_in_txn(vault, &txn, actor)
+    Ok(sending_identity_in_txn(vault, &txn, actor)?.map(|(identity, _)| identity))
 }
 
 fn sending_identity_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
-) -> Result<Option<ChannelIdentity>, CalendarError> {
+) -> Result<Option<(ChannelIdentity, ChannelIdentityFacts)>, CalendarError> {
     if let Some(identity) = active_identity_for_channel(vault, txn, actor, CALENDAR_INVITE_CHANNEL)?
     {
         return Ok(Some(identity));
@@ -594,24 +596,25 @@ fn primary_calendar_domain_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<Option<String>, CalendarError> {
-    let Some(identity) = active_identity_for_channel(vault, txn, actor, "email")? else {
+    let Some((_, facts)) = active_identity_for_channel(vault, txn, actor, "email")? else {
         return Ok(None);
     };
-    if identity.shape() == ChannelIdentityShape::SharedPresence {
+    if facts.shape == ChannelIdentityShape::SharedPresence {
         return Ok(None);
     }
-    Ok(email_domain(identity.address_or_handle()))
+    Ok(email_domain(&facts.address_or_handle))
 }
 
-/// The single ACTIVE identity bound to `actor` on one channel class.
+/// The single ACTIVE identity bound to `actor` on one channel class, with
+/// the facts its heads hold.
 fn active_identity_for_channel(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     channel_class: &str,
-) -> Result<Option<ChannelIdentity>, CalendarError> {
+) -> Result<Option<(ChannelIdentity, ChannelIdentityFacts)>, CalendarError> {
     let wanted = crate::counterparty_contact::normalize_channel_class(channel_class);
-    let mut found: Option<ChannelIdentity> = None;
+    let mut found: Option<(ChannelIdentity, ChannelIdentityFacts)> = None;
     for entry in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
@@ -643,7 +646,7 @@ fn active_identity_for_channel(
             // Do not turn ambiguity into permission to fall back to email.
             return Err(refused("multiple sending identities on this channel"));
         }
-        found = Some(identity);
+        found = Some((identity, facts));
     }
     Ok(found)
 }
