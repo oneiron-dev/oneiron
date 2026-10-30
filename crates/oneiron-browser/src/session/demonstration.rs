@@ -419,7 +419,18 @@ impl BrowserSession {
             return;
         };
         let cues = self.driver.record_drain();
-        let own = own_steps(&self.trail, from);
+        let mut own = own_steps(&self.trail, from);
+        // Each step's result page as the browser holds its URL (FIX 11584):
+        // its tab's top document in this drain, raw behind the shown one.
+        for step in &mut own {
+            let Some(tab) = step.result_tab.as_deref() else {
+                continue;
+            };
+            step.raw_result_url = cues.iter().rev().find_map(|cue| {
+                let doc = cue.k == "doc" && cue.top && cue.tab.as_str() == tab;
+                doc.then(|| cue.u.clone())
+            });
+        }
         if own.is_empty() {
             for seen in self.driver.record_map(cues, recording.pages(), true) {
                 recording.demonstration_coalesce_policy(seen);
@@ -530,6 +541,7 @@ fn own_steps(trail: &[Event], from: u64) -> Vec<RecordedStep> {
             result_tab: receipt.result_tab.clone(),
             source_url: receipt.source_url.clone(),
             result_url: Some(receipt.url.clone()),
+            raw_result_url: None,
             target_name: receipt.target_name.clone(),
             effect_class: receipt.effect_class.clone(),
             receipt: Some(receipt.seq),
