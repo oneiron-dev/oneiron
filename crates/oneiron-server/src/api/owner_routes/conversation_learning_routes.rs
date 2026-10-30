@@ -28,6 +28,13 @@
 //!   allow opt-outs"), and a choice already made is kept and ignored.
 //!
 //! A stale `seen` is a conflict, never a silent overwrite.
+//!
+//! The two `GET`s also answer a Connect guest on its own live grant-bound
+//! slip (FIX 5538; L13 05:09), which carries no person credential: the
+//! engine's guest doors read its standing in their own transaction and
+//! answer the setting and the guest's own opt-out alone. A slip they do not
+//! admit gets the refusal any other caller gets. Every `PUT` stays the
+//! person's own, and the setting the admin's.
 
 use std::sync::Arc;
 
@@ -36,7 +43,8 @@ use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, put};
-use oneiron::authority::{ConversationLearningView, ConversationTrainingView};
+use oneiron::authority::{ConversationLearningView, ConversationTrainingView, VerifiedSlip};
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
 use oneiron::feedback::{
     AnonymousReceiptView, PersonTrainingReceipts, PersonTrainingSubmission, PieceFilesProblem,
@@ -52,6 +60,7 @@ use super::{OwnerReply, OwnerRoute, OwnerTable, blocking};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::{CoreAuth, CoreScope};
+use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
@@ -246,18 +255,80 @@ fn seen_revision(seen: Option<&str>) -> OwnerResult<Option<PolicyRevision>> {
         .transpose()
 }
 
+/// Who reads one of the two `GET`s: the person [`holder`] admits, on
+/// today's path, or a Connect guest on its own grant-bound slip (FIX 5538;
+/// L13 05:09), with the refusal [`holder`] gave it for when the engine does
+/// not admit the slip.
+enum LearningReader {
+    Person(AuthenticatedOwner),
+    ConnectGuest {
+        slip: Box<VerifiedSlip>,
+        denied: ApiError,
+    },
+}
+
+/// The reader of a `GET`: [`holder`]'s person; else a slip that names a
+/// grant and holds the read scope, judged by the engine's guest doors. Any
+/// other caller gets [`holder`]'s refusal.
+fn learning_reader(auth: &CoreAuth, server: &SyncServer) -> Result<LearningReader, ApiError> {
+    let denied = match holder(auth, server, LEARNING_READS) {
+        Ok(person) => return Ok(LearningReader::Person(person)),
+        Err(denied) => denied,
+    };
+    if auth.managed_owner().is_some()
+        || crate::api::host_action::host_action_of(server.vault(), auth).is_some()
+        || !auth.has_scope(LEARNING_READS)
+    {
+        return Err(denied);
+    }
+    match auth
+        .verified_slip()
+        .filter(|slip| slip.claims().grant_ref.is_some())
+    {
+        Some(slip) => Ok(LearningReader::ConnectGuest {
+            slip: Box::new(slip.clone()),
+            denied,
+        }),
+        None => Err(denied),
+    }
+}
+
+/// A Connect guest's read: the engine refusing the slip as no live Connect
+/// guest's here is `None`, which the route answers as [`holder`] refused it.
+fn guest_read<T>(read: Result<T, oneiron::Error>) -> OwnerResult<Option<T>> {
+    match read {
+        Ok(view) => Ok(Some(view)),
+        Err(oneiron::Error::Record(RecordError::AuthorityRefused(_))) => Ok(None),
+        Err(error) => Err(refusal(error)),
+    }
+}
+
 /// `GET /v1/owner/conversation-learning`: the vault's setting, for a live
-/// member, delegate or guest.
+/// member, delegate or guest, or a Connect guest on its own slip.
 async fn view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<LearningReply> {
-    let person = holder(&auth, &server, LEARNING_READS)?;
-    let answer = blocking(move || -> OwnerResult<LearningReply> {
-        let view = server
-            .vault()
-            .conversation_learning_view(&person)
-            .map_err(refusal)?;
-        Ok(reply(&view))
-    })
-    .await?;
+    let answer = match learning_reader(&auth, &server)? {
+        LearningReader::Person(person) => {
+            blocking(move || -> OwnerResult<LearningReply> {
+                let view = server
+                    .vault()
+                    .conversation_learning_view(&person)
+                    .map_err(refusal)?;
+                Ok(reply(&view))
+            })
+            .await?
+        }
+        LearningReader::ConnectGuest { slip, denied } => {
+            let view = blocking(move || {
+                guest_read(
+                    server
+                        .vault()
+                        .conversation_learning_view_for_connect_guest(&slip),
+                )
+            })
+            .await?;
+            reply(&view.ok_or(denied)?)
+        }
+    };
     Ok(Json(answer))
 }
 
@@ -285,17 +356,32 @@ async fn set(
     Ok(Json(answer))
 }
 
-/// `GET /v1/owner/conversation-learning/me`: the caller's own opt-out.
+/// `GET /v1/owner/conversation-learning/me`: the caller's own opt-out, a
+/// Connect guest's on its own slip too.
 async fn own_view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<OwnReply> {
-    let person = holder(&auth, &server, LEARNING_READS)?;
-    let answer = blocking(move || -> OwnerResult<OwnReply> {
-        let view = server
-            .vault()
-            .conversation_training_view(&person)
-            .map_err(refusal)?;
-        Ok(own_reply(&view))
-    })
-    .await?;
+    let answer = match learning_reader(&auth, &server)? {
+        LearningReader::Person(person) => {
+            blocking(move || -> OwnerResult<OwnReply> {
+                let view = server
+                    .vault()
+                    .conversation_training_view(&person)
+                    .map_err(refusal)?;
+                Ok(own_reply(&view))
+            })
+            .await?
+        }
+        LearningReader::ConnectGuest { slip, denied } => {
+            let view = blocking(move || {
+                guest_read(
+                    server
+                        .vault()
+                        .conversation_training_view_for_connect_guest(&slip),
+                )
+            })
+            .await?;
+            own_reply(&view.ok_or(denied)?)
+        }
+    };
     Ok(Json(answer))
 }
 
