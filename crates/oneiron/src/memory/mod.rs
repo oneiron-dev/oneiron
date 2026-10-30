@@ -345,7 +345,8 @@ pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
-    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
+    StreamSyncVisibility,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,

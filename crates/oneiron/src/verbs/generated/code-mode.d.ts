@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4460 declarations.
-// Replies: 1078 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1266 code-mode rows (1226 host rows, 40 run rows), 4462 declarations.
+// Replies: 1079 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 118; unread shapes: none.
 declare namespace Sdk {
@@ -526,6 +526,7 @@ declare namespace Sdk {
   type CancelStreamRequest = { handle: MessageStreamHandle; reason: MessageCancelReason };
   type MessageWriteMode = "atomic" | { streamed: { visibility: StreamSyncVisibility; cadence: StreamCadence } };
   type MessageStreamPartial = { message_id: EntityId; text: string; sequence: number; mode: MessageWriteMode };
+  type StreamRecoveryRefusal = { message_id: EntityId; generation: EntityId; conversation: EntityId; actor: EntityId; code: string; message: string; reason_codes?: string[] };
   type MessageDurabilityRequest = { message_id: string; after_generation?: string | null; limit?: number | null };
   type MessageCompletion = { incomplete: boolean; generating: boolean; finish_reason?: FinishReason | null };
   type MessageDocumentState = { frontier: number[]; content: string };
@@ -755,7 +756,7 @@ declare namespace Sdk {
   type ScopedExport = { selector: RecordSelector; credential: CredentialCeiling; channel: ExportChannel; applied: Scope; records: ScopedExportRecord[] };
   type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] | null; after?: string | null };
   type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; claim?: RecordRef | null; fields?: Record<string, string> };
-  type VaultReceiptsPage = { receipts: MemoryReceipt[]; next_after?: string | null; effective_limit: number; limit_clamped?: boolean };
+  type VaultReceiptsPage = { receipts: MemoryReceipt[]; next_after?: string | null; effective_limit: number; limit_clamped?: boolean; undecodable: number };
   type AssetIngestRequest = { asset_ref?: string | null; embedding_kind: InputKind; mime_type: string; bytes_b64: string; text?: string | null; occurred_at: number };
   type AssetIngestReceipt = { asset_ref: string; asset_text_ref?: string | null; embedding_kind: InputKind; mime_type: string; blake3: string; byte_size: number };
   type AssetResolveRequest = { asset_ref: string; image_input?: boolean; audio_input?: boolean; room_bytes?: number | null };
@@ -1327,8 +1328,8 @@ declare namespace Sdk {
   type VmOutboxKind = "escrow" | "custody" | "esign" | "training" | "recipients" | "backup" | "backup_stage_ack";
   type VmOutboxSide = "guest" | "host";
   type OutboxDivergedAnswer = "keep" | "remove";
-  type OutboxMemberStatus = { status: "diverged_unagreed"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; retired?: string | null; answer?: OutboxDivergedAnswer | null } | { status: "source_digest_mismatch"; kind: VmOutboxKind; member: string; recorded: string; read: string };
-  type OutboxCardKind = "outbox_diverged" | "outbox_source_damaged";
+  type OutboxMemberStatus = { status: "diverged_unagreed"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; retired?: string | null; answer?: OutboxDivergedAnswer | null } | { status: "source_digest_mismatch"; kind: VmOutboxKind; member: string; recorded: string; read: string } | { status: "kept_aside"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; aside: string; kept_at_ms: number; removing: boolean; failed?: string | null };
+  type OutboxCardKind = "outbox_diverged" | "outbox_source_damaged" | "outbox_kept_aside";
   type OutboxCardAction = { label: string; answer: OutboxDivergedAnswer; route: string };
   type OutboxOwnerCard = { kind: OutboxCardKind; headline: string; body: string; actions: OutboxCardAction[] };
   type OutboxDivergedMember = OutboxMemberStatus & { card: OutboxOwnerCard };
@@ -2875,15 +2876,15 @@ declare namespace Sdk {
   type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; ceiling: DecisionRung; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; judged_live?: LivePin | null; comment: string; labels: SlideReviewLabels };
   type PptxCommentAction = { add: { target: PptxCommentTarget; text: string } } | { reply: { text: string } } | { resolve: { resolved: boolean } };
   type PptxCommentPatch = { asked_by: string; answered_by: string; author: PptxAuthor; thread_id: string; comment_id: string; at: number; action: PptxCommentAction };
-  type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null };
+  type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null; judged_live?: LivePin | null };
   type SlideUnitRefusalReason = "MissingShape" | "AmbiguousShape" | "TargetChanged" | "UnresolvedGeometry" | "EvidenceBudget" | "UnreadableImage" | "RunDeadline";
-  type SlideUnitRefused = { target: PptxCommentTarget; reason: SlideUnitRefusalReason; offer?: PptxCommentTarget | null };
+  type SlideUnitRefused = { target: PptxCommentTarget; reason: SlideUnitRefusalReason; offer?: PptxCommentTarget | null; judged_live?: LivePin | null };
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgments: SlideJudgment[]; comments: PptxCommentPatch[]; abstained: SlideAbstention[]; refused: SlideUnitRefused[] };
   type FolderItemInput = { artifact_ref: string; row: number };
   type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
   type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
-  type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
-  type UnitRefusal = { unit: unknown; reason: string };
+  type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null };
+  type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null };
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
   type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
@@ -3433,7 +3434,7 @@ declare namespace Sdk {
   type OutcomeWindowClose = { answer: string; question_version: number; ends_at: number; closed_at: number; outcome: WindowOutcome };
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" };
-  type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null } | { status: "refused"; unit: unknown; reason: string } | { status: "omitted" };
+  type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null } | { status: "refused"; unit: unknown; reason: string; judged_live?: LivePin | null } | { status: "omitted" };
   type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[] };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
@@ -3667,7 +3668,7 @@ declare namespace Sdk {
   type ClaimDemoteActionInput = { kind: "decay"; new_claim_of_weight: number } | { kind: "weaken"; new_confidence: number } | { kind: "stale" };
   type ClaimDemoteRequest = { claim_ref: string; action: ClaimDemoteActionInput };
   type ClaimDemoteView = { claim_ref: string; short_ref?: string | null; rung: string; stale: boolean; receipt_ref: string };
-  type ReadFilterInput = { entity_types?: number[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
+  type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
   type ClaimFilteredListRequest = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null };
   type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
@@ -3907,7 +3908,8 @@ declare namespace Sdk {
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; effects: string[] };
+  type OfficeRecalcZone = { utc_offset_minutes: number; iana_timezone?: string | null };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
@@ -6399,6 +6401,10 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
   message_stream_partial(input: Sdk.MessageStreamRequest): Promise<Sdk.MessageStreamPartial | StoredResult>;
+  message_streams: {
+    /** Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again. */
+    refused(input: Sdk.EmptyRequest): Promise<Sdk.StreamRecoveryRefusal[] | StoredResult>;
+  };
   messages: {
     /** Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane. */
     durability(input: Sdk.MessageDurabilityRequest): Promise<Sdk.ScopedReadResult<Sdk.MessageDurability | null> | StoredResult>;

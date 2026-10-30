@@ -207,7 +207,11 @@ pub(super) fn drawn_parts(
             return None;
         }
         queue.push(part.clone());
-        for node in deck.descendants(id).iter().filter_map(|id| deck.nodes.get(id)) {
+        for node in deck
+            .descendants(id)
+            .iter()
+            .filter_map(|id| deck.nodes.get(id))
+        {
             // A node moved here keeps the part it was read from.
             if let Some(binding) = &node.binding {
                 queue.push(binding.slide_part.clone());

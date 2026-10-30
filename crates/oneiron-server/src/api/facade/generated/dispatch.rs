@@ -2879,6 +2879,40 @@ async fn vault_message_stream_partial(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_message_streams_refused(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.message_streams.refused")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.message_streams.refused", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.message_streams.refused", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_message_streams_refused(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_messages_durability(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38711,6 +38745,9 @@ async fn call_verb_row(
         "vault.cancel_stream" => Box::pin(vault_cancel_stream(server, call, input)).await,
         "vault.message_stream_partial" => {
             Box::pin(vault_message_stream_partial(server, call, input)).await
+        }
+        "vault.message_streams.refused" => {
+            Box::pin(vault_message_streams_refused(server, call, input)).await
         }
         "vault.messages.durability" => {
             Box::pin(vault_messages_durability(server, call, input)).await
