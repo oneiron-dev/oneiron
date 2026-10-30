@@ -3,8 +3,10 @@
 //! its exact content against its parent's, on the seat whose code mode calls
 //! helpers, with both arms answered by that seat's served model at its
 //! registry revision. The same request again keeps its row, so a measured
-//! helper is not measured twice. With no judge, no served seat or no live
-//! cohort, nothing is asked.
+//! helper is not measured twice. A row that settled Partial is not yet
+//! measured for the gate: the same request queues one new measurement
+//! beside it, and that one takes its place once it settles (FIX 12175).
+//! With no judge, no served seat or no live cohort, nothing is asked.
 //!
 //! Once that row is Final, the same pass asks the gate: the helper and its
 //! parent each run, in the code sandbox, the frozen calls of both that
@@ -81,6 +83,16 @@ pub(in crate::ai_host) fn request_helper_measurements(
             }
             Err(error) => return Err(error),
         };
+        // A Partial row reads as no row: its pair is measured again, and its
+        // results stay as they are until the new measurement replaces them.
+        if let Err(error) = vault.remeasure_partial_eval_measurement(&digest, now) {
+            tracing::warn!(
+                helper = %helper.to_hex(),
+                kind = ?error.kind(),
+                "the helper's Partial measurement was not asked again"
+            );
+            continue;
+        }
         // A gate that does not run through stores no verdict, and the
         // helper stays a Candidate; the next pass asks again.
         match gate_measured_helper(server.vault(), &helper, &digest, &runtimes, now) {
