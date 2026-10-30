@@ -1,4 +1,6 @@
-//! A step try's spend lease, read live (FIX 1819). Each call the try makes
+//! A metered try's spend lease, read live (FIX 1819): a workflow step's
+//! try, a reader child's run, or an engine-native run's entry (FIX 11750).
+//! Each call the try makes
 //! is admitted against what its spend scope has left at that moment, never
 //! against what it had when the try began, and each call's spend is booked
 //! on the scope once it settled: siblings spending under the same scope see
@@ -23,8 +25,8 @@ pub(crate) struct LiveLease<'a> {
     /// and then nothing is booked or bounded here.
     scope: Option<SpendScopeId>,
     meter: BudgetGuard,
-    /// The step's own budget, shared by all its tries: the meter's limit
-    /// never rises past it.
+    /// The try's own budget (a step's, shared by its tries): the meter's
+    /// limit never rises past it.
     budget_units: u64,
     /// How much of the meter's spend is on the scope already: the replayed
     /// tries', which booked their own, then what this try booked since.
@@ -122,7 +124,7 @@ impl<'a> LiveLease<'a> {
                 kind = ?error.kind(),
                 scope = scope.as_str(),
                 unbooked,
-                "a workflow step's spend lease was not read live"
+                "a spend lease was not read live"
             ),
         }
     }
