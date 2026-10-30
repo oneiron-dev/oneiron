@@ -189,6 +189,17 @@ pub enum Effect {
     TimingRemoved { timing_ids: Vec<u32> },
     /// A relationship only the deleted shape used is kept, unreferenced.
     Unreferenced { relationship: String },
+    /// `release_media` (FIX 10387): a relationship no element of its slide
+    /// referenced left the slide, with the part it reached (`part`) once no
+    /// relationship in the package reached that part any more; `None` when
+    /// one still does, or the relationship was external.
+    MediaReleased {
+        relationship: String,
+        part: Option<String>,
+    },
+    /// A relationship `release_media` named that its slide still
+    /// references: it stays.
+    MediaKept { relationship: String },
     /// A copy of a slide, with its slide id and minted `p14:creationId`.
     SlideAdded {
         part: String,
