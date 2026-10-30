@@ -4,7 +4,8 @@
 //! dials its hooks. Hub refs sync at their stored policy, and hub skills
 //! import, sync, restore and read their receipts here (OF-213). The organ
 //! inventory and the owner's organ build upload live here too (OF-575), and
-//! so do the Slack app's manifest and install link (OF-519).
+//! so do the Slack app's manifest and install link (OF-519) and the owner's
+//! shared-skill merges (FIX 952).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,6 +34,7 @@ mod line_chats;
 mod native_mail_identities;
 pub(crate) mod schema;
 mod setup_routes;
+mod skill_merge_routes;
 mod skill_routes;
 
 use setup_routes::{
