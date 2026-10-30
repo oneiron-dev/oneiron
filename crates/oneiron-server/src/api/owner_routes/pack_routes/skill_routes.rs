@@ -74,7 +74,7 @@ pub(super) async fn import_skill(
                 pin_type: None,
                 pin_value: None,
                 publisher: None,
-            } => vault.import_default_hub_skill(&subtree, occurred, at)?,
+            } => vault.import_default_hub_skill(&owner, &subtree, occurred, at)?,
             ImportSkill {
                 subtree: None,
                 hub: Some(hub),
