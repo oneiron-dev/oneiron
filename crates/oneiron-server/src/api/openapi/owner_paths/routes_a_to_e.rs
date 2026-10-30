@@ -23,6 +23,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: Some("vault.agents.base"),
     },
     OwnerRoute {
+        method: "post",
+        path: "/authority/clock/repair",
+        summary: "Repair a damaged authority clock floor (FIX 10106) on its own ingress: the owner's own full human slip and its holder proof headers, which the engine judges, spending the proof's nonce, in the repair's own writer. Answers `sound`, `repaired` or `unproven`; a vault that proves no clock at all answers `authority_clock_corrupt`.",
+        row: Some("vault.authority.clock.repair"),
+    },
+    OwnerRoute {
         method: "get",
         path: "/authority/handoff-alarms",
         summary: "Every saved alarm in the shape and order vault.authority.handoff_alarms answers (OF-158): unix seconds, oldest raised first, then by signer.",
@@ -171,6 +177,36 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         path: "/cleanup/decide",
         summary: "Decide one open cleanup proposal per item in one complete verdict (FIX 1758): `proposal`, `choices` with exactly one `accept` or `reject` for every slot the review lists (by `slot`), and an optional `expected_revision` that binds the decision to that review. Accepted slots are re-checked and archived as a whole accept does; rejected slots are left as they are, unpinned, and recorded as rejected on the decision's one digest. A verdict that accepts nothing records no digest, as a reject. Answers each slot's outcome (`archived`, `skipped`, `rejected` or `erased`) and the digest. A verdict that is not one choice per slot is invalid; a changed review or a proposal no longer open is changed. `/cleanup/accept` and `/cleanup/reject` still decide a whole proposal.",
         row: Some("vault.cleanup.decide"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/cloud-registration/logout",
+        summary: "Stop the vault's cloud account link, or with `erase` (bool) erase every token kept for it first, then try the revoke.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/cloud-registration/poll",
+        summary: "Send at most one due poll of the login `flow` names (the handle `start` answered, never a code or a token): still pending, with when to poll next, or linked, with the link's first status and any link it replaced.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/cloud-registration/refresh",
+        summary: "Refresh the vault's cloud account link once; answers where the link then stands.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/cloud-registration/start",
+        summary: "Start a login that links this vault to the owner's Oneiron cloud account (G7); `replace` (bool) lets the link replace a current link to another cloud account. A pending start answers `flow`, the opaque local handle a poll names, and the `verification_uri` and `user_code` apart: the owner approves where the cloud asks.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/cloud-registration/status",
+        summary: "Where the vault's cloud account link stands, read without refreshing it: not configured, signed out, erasing, registered, needing a refresh or a login, unavailable or failed.",
+        row: None,
     },
     OwnerRoute {
         method: "get",
@@ -363,6 +399,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         path: "/connectors/slate/accept",
         summary: "The owner's stamp on the connector's slate, at the revision reviewed.",
         row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/connectors/slate/redraft",
+        summary: "Ask the host's configured drafter to re-draft one connector grant slate from the owner's instruction (FIX 987, ARCH-0072): it proposes changed rows with their rationale at the reviewed revision, which `/connectors/slate/accept` takes; nothing is stamped, activated or granted. A host with no drafter answers `unavailable` and the slate is unchanged.",
+        row: Some("vault.connectors.slates.redraft"),
     },
     OwnerRoute {
         method: "get",
@@ -747,5 +789,11 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         path: "/embedding-spaces/retire",
         summary: "Drops a space no slot binds and no open move names, with its rows.",
         row: Some("vault.embedding_spaces.retire"),
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/exports",
+        summary: "The vault's export audit (FIX 6427), oldest first: one row per Owner copy of the whole vault or of an off-record room's talk, with its id, what it copied, whose copy it is, when and in what shape. Every live co-Owner reads every row; no row names a thread, a title, a member or a word of what left.",
+        row: None,
     },
 ];

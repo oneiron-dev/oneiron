@@ -533,6 +533,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: Some("vault.support_grants.revoke"),
     },
     OwnerRoute {
+        method: "post",
+        path: "/support-repairs/run",
+        summary: "The support holder runs one repair the customer selected in its support grant (FIX 4407; `repair`), with the support slip and its holder proof headers; no owner credential reaches it. Answers the report of that one sweep; a slip that does not stand, or whose grant names no such repair, is refused as unauthorized and runs nothing.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/usage/events/undecodable",
         summary: "The stored usage events of this server's metering scope that do not decode (FIX 6476), in key order: `events`, each `{rowRef, byteLength, hash, decodeReason}`, the row's opaque locator, its length, the BLAKE3 hash of its exact bytes (64 lowercase hex) and `stored_event_decode_failed`, none of its bytes. The owner, or an agent whose own Grant names the verb, lists them; a server that meters no usage answers `usage_metering_unbound`.",
