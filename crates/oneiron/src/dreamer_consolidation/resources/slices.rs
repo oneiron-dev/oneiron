@@ -1,5 +1,6 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
+use crate::claim::RelationshipRead;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
@@ -108,6 +109,13 @@ impl BranchResources<'_> {
                         scope.writable.remove(version);
                     }
                 }
+                // The relationships a candidate may hold within: the bound
+                // one, or on an unbound branch each one the chunk's words
+                // are scoped to (FIX 10357).
+                let rels: Vec<EntityId> = match scope.relationship {
+                    Some(bound) => vec![bound],
+                    None => self.word_relationships(&ids)?.into_iter().collect(),
+                };
                 for page in &pages {
                     let mut labels = CallLabelMap::default();
                     let mut transcript = String::new();
@@ -124,7 +132,8 @@ impl BranchResources<'_> {
                                 transcript.push_str(&format!("conversation {conversation}\n"));
                             }
                             if at == 0 {
-                                transcript.push_str(&page.render(&mut labels, scope.relationship));
+                                transcript
+                                    .push_str(&page.render(&mut labels, rels.iter().copied()));
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);
@@ -161,6 +170,37 @@ impl BranchResources<'_> {
             }
         }
         Ok((slices, low_trust))
+    }
+}
+
+impl BranchResources<'_> {
+    /// The relationships the words of `turns` are scoped to (FIX 10357):
+    /// each MESSAGE a TURN's text was projected from, at its stored scope.
+    /// A MESSAGE that is private, gone, or whose scope does not read adds
+    /// none; the listing only offers labels, it grants nothing.
+    fn word_relationships(&self, turns: &BTreeSet<EntityId>) -> Result<BTreeSet<EntityId>> {
+        let vault = self.read.vault();
+        let txn = vault.store.env.read_txn()?;
+        let mut rels = BTreeSet::new();
+        let messages = turns
+            .iter()
+            .filter_map(|id| self.texts.get(id))
+            .flat_map(TurnText::versions)
+            .map(|(message, _)| message);
+        for message in messages {
+            let Some(raw) = vault.get_raw_in(&txn, &message)? else {
+                continue;
+            };
+            if let Ok(RelationshipRead::Gated {
+                space,
+                private: false,
+                ..
+            }) = crate::claim::relationship_read(&vault.store, &txn, &message, &raw)
+            {
+                rels.extend(space);
+            }
+        }
+        Ok(rels)
     }
 }
 
