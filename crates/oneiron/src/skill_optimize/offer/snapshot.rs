@@ -11,7 +11,6 @@ use crate::skill_optimize::{EvalSeat, SufficiencyCard};
 use crate::{EntityId, Error, Result, Vault};
 
 const MAX_REF_BYTES: usize = 256;
-const MAX_ALTERNATIVES: usize = 16;
 
 /// A model asset as offered: identity, revision and, for a download, the
 /// content hash it must load at.
@@ -345,9 +344,6 @@ impl TrainingOfferDraft {
         self.baseline.validate()?;
         if self.baseline.model != self.incumbent {
             return Err(invalid("the baseline is today's incumbent"));
-        }
-        if self.alternatives.len() > MAX_ALTERNATIVES {
-            return Err(invalid("an offer compares at most 16 alternatives"));
         }
         for option in &self.alternatives {
             option.validate()?;

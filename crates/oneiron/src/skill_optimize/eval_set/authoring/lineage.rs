@@ -159,7 +159,10 @@ impl LineageReader {
             } else {
                 NOT_PREFERRED
             };
-            // The pair names its responses by receipt key only: unknown.
+            // Key-only-unknown by design (FIX 12041, decided): the pair row
+            // is string-keyed by `pair_ref` and its responses by receipt key
+            // only, never EntityId-addressable. The consumer (FIX 11913)
+            // lists unknown, never a refusal.
             lineage
                 .labels
                 .push(world_label(value, &pick.pair_ref, pick.picked_at, None));
