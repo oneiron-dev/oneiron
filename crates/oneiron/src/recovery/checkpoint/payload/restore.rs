@@ -20,8 +20,7 @@ use super::Deferred;
 #[cfg(feature = "sync")]
 use super::SyncCarriers;
 use super::{
-    BundleRole, Getter, MixedCarrierProjection, open_bundle, opened_content, structure,
-    unavailable,
+    BundleRole, Getter, MixedCarrierProjection, open_bundle, opened_content, structure, unavailable,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -99,7 +98,10 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     }
     let mut bundles = Vec::with_capacity(contents.len());
     for (role, plain) in contents {
-        bundles.push((role, opened_content(&plain, &actor_parts, unopened.clone())?));
+        bundles.push((
+            role,
+            opened_content(&plain, &actor_parts, unopened.clone())?,
+        ));
     }
     let pruned = structure::prune(&mut image.databases, &unopened);
     if pruned > 0 {
@@ -129,7 +131,10 @@ fn take_unavailable_calls(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u
         if !key.starts_with(prefix) {
             return true;
         }
-        taken.push((RowLocator::row(RowDb::VaultMeta, key.clone()), value.clone()));
+        taken.push((
+            RowLocator::row(RowDb::VaultMeta, key.clone()),
+            value.clone(),
+        ));
         false
     });
     taken

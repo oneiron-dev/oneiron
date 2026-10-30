@@ -266,10 +266,24 @@ pub(crate) fn scrub_deleted_room_turns(
                 erased.push((map_key, encode(&turn)?));
             }
         }
+        // FIX 12127: a manifest whose parts never all land drops with the
+        // row it stands for, its room read from this vault's turn for it.
+        for (key, _) in super::room_parts::waiting_manifests(&map) {
+            let Ok(id) = EntityId::from_hex(&key) else {
+                continue;
+            };
+            let Some(turn) = replicated_turn_in(vault, &rtxn, id)? else {
+                continue;
+            };
+            let Ok(room) = EntityId::from_hex(&turn.room_id) else {
+                continue;
+            };
+            if crate::ports::removed_in_txn(&vault.store, &rtxn, &room)? {
+                doomed.push(key);
+            }
+        }
     }
-    if doomed.is_empty()
-        && erased.is_empty()
-        && super::room_parts::unlisted_parts(&map).is_empty()
+    if doomed.is_empty() && erased.is_empty() && super::room_parts::unlisted_parts(&map).is_empty()
     {
         return Ok(false);
     }

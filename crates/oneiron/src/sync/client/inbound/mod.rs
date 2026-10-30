@@ -244,7 +244,6 @@ impl SyncClient {
             .map_err(|_| TransportError::InvalidPayload("queued update import failed"))?;
         Ok(())
     }
-
 }
 
 /// Maps a delta-export error onto the transport taxonomy.

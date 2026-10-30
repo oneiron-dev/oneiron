@@ -32,7 +32,8 @@ use oneiron::sync::residence::{
     index_selection_revision, promotion_snapshot_with, replace_sealed_bundle_pads,
     sealed_bundle_index, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
     sealed_generation_from_hex, sealed_generation_hex, selected_item_blob_with,
-    split_authority_page, stage_sealed_bundle_part, window_index_page, window_index_projection_with,
+    split_authority_page, stage_sealed_bundle_part, window_index_page,
+    window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
