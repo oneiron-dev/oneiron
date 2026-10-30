@@ -56949,7 +56949,7 @@
       "const": 5,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 12,
+      "fn": 13,
       "struct": 6
      }
     },
@@ -67713,7 +67713,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GroupCommitStats"
@@ -67721,7 +67721,7 @@
      "path": "src/store/group_commit.rs",
      "purpose": "Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 23,
       "struct": 1
      }
     },
@@ -85294,7 +85294,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 107,
+   "over_bar": 108,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 5754,
    "test_files": 902
