@@ -42,7 +42,7 @@ use self::relay::kept_output_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::relay::{
     MAX_RELAYED_OUTPUT_BYTES, held_export_outputs, keep_relayed_export_output_in_txn,
-    relayed_export_output_due_in_txn,
+    kept_export_output_sealed_at_in_txn, relayed_export_output_due_in_txn,
 };
 use self::sealed::{SupplementBinding, open_supplement, output_of, seal_supplement};
 use super::control::permits::{permit_for, permitted_keys};

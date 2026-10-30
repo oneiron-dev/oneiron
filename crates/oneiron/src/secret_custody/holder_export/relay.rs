@@ -60,6 +60,23 @@ impl KeptExportOutput {
         out
     }
 
+    /// The length of the frame of a copy `sealed` bytes long: its head, then
+    /// the copy, as [`Self::encode`] writes it (FIX 12294).
+    #[cfg(feature = "sync")]
+    pub(crate) fn frame_len(sealed: u64) -> Option<u64> {
+        sealed.checked_add(u64::try_from(LABEL.len() + 8 + 32).ok()?)
+    }
+
+    /// The second a kept or relayed copy was sealed at and its request, from
+    /// its head alone, as [`Self::decode`] reads them.
+    #[cfg(feature = "sync")]
+    fn head(bytes: &[u8]) -> Option<(u64, &AuthorityEntryHash)> {
+        let rest = bytes.strip_prefix(LABEL)?;
+        let (sealed_at, rest) = rest.split_first_chunk::<8>()?;
+        let (request, _) = rest.split_first_chunk::<32>()?;
+        Some((u64::from_be_bytes(*sealed_at), request))
+    }
+
     /// Decodes a kept or relayed copy strictly; `None` without its label, for
     /// a short frame, a zero request or an empty copy. The copy is read, not
     /// judged: `Self::stands` judges it.
@@ -161,6 +178,24 @@ pub(super) fn kept_output_in_txn(
         .get(&vault.store, txn, request)?
         .and_then(|bytes| KeptExportOutput::decode(&bytes))
         .filter(|kept| kept.request == *request))
+}
+
+/// The second the copy this install keeps under `request` was sealed at,
+/// read from its head alone, the copy lent and never copied (FIX 12294):
+/// `None` when it keeps none for it.
+#[cfg(feature = "sync")]
+pub(crate) fn kept_export_output_sealed_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &AuthorityEntryHash,
+) -> Result<Option<u64>> {
+    Ok(OUTPUTS
+        .get_borrowed(&vault.store, txn, request)?
+        .and_then(|bytes| {
+            KeptExportOutput::head(&bytes)
+                .filter(|(_, kept)| *kept == request)
+                .map(|(sealed_at, _)| sealed_at)
+        }))
 }
 
 /// Every copy this install keeps that decodes as one for its key.
