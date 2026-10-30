@@ -484,6 +484,13 @@ impl Vault {
         }
         Ok(receipt)
     }
+    /// Whether a merge of `candidate` waits on the owner's answer, as
+    /// [`Self::merge_shared_skill_delta`] reads it now.
+    pub fn shared_skill_merge_needs_owner(&self, candidate: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let snapshot = self.shared_merge_snapshot(&txn, candidate)?;
+        self.merge_needs_owner_in_txn(&txn, &snapshot)
+    }
     /// The owner answers a merge only where a review is required. A widening
     /// is any capability the candidate declares beyond the base's admitted
     /// surface; a base with no admitted surface admits none, so every declared

@@ -28,6 +28,7 @@ mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
 mod shared_gate;
+mod shared_merge_queue;
 mod site;
 pub use site::SITE_SEED_DIGEST_MISMATCH;
 mod site_folder;
@@ -74,6 +75,7 @@ pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
     SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, SharedSkillRollback,
 };
+pub use shared_merge_queue::{SharedSkillMergeEntry, SharedSkillMergeState};
 
 #[cfg(test)]
 mod admission_tests;

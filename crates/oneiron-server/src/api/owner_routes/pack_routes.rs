@@ -4,7 +4,8 @@
 //! dials its hooks. Hub refs sync at their stored policy, and hub skills
 //! import, sync, restore and read their receipts here (OF-213). The organ
 //! inventory and the owner's organ build upload live here too (OF-575), and
-//! so do the Slack app's manifest and install link (OF-519).
+//! so do the Slack app's manifest and install link (OF-519) and the owner's
+//! shared-skill merges (FIX 952).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,6 +34,7 @@ mod line_chats;
 mod native_mail_identities;
 pub(crate) mod schema;
 mod setup_routes;
+mod skill_merge_routes;
 mod skill_routes;
 
 use setup_routes::{
@@ -478,7 +480,9 @@ struct PutOrganBuild {
 }
 
 /// `POST /v1/owner/packs/organs/build`: hold one organ build for a staged
-/// pack source. The bytes must match the source's pin; holding grants nothing.
+/// pack source. The build streams from its file into the vault's blob store,
+/// never read whole here; its bytes must match the source's pin. Holding
+/// grants nothing.
 async fn put_organ_build(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -493,13 +497,14 @@ async fn put_organ_build(
                 "a build path must be absolute".to_owned(),
             ));
         }
-        let bytes = std::fs::read(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
+        let build =
+            std::fs::File::open(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
         Ok(server.vault().put_pack_organ_build(
             &owner,
             source,
             &request.organ,
             &request.platform,
-            &bytes,
+            build,
         )?)
     })
     .await?;
