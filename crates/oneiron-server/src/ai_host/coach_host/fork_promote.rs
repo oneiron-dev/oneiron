@@ -54,6 +54,18 @@ pub(super) fn run(
         now,
     )?;
     tracing::debug!(?report, "the Coach's project tree fork and promote pass");
+    // Each callable helper awaiting its gate asks for its paired measurement
+    // against its parent in the same promotion pass (FIX 12069). A request
+    // that does not go through is said here and asked again next pass; the
+    // promotion pass it rides stands.
+    if let Err(error) =
+        crate::ai_host::eval_measurement::request_helper_measurements(server, vault, now)
+    {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "a callable helper's measurement was not requested; the next pass asks again"
+        );
+    }
     Ok(())
 }
 

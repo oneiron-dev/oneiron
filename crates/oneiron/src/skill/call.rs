@@ -3,11 +3,14 @@
 use serde_json::Value as JsonValue;
 
 mod answer;
+mod frozen;
 mod json_tokens;
 #[cfg(test)]
 mod tests;
 
 pub use self::answer::CallableSkillAnswer;
+pub use self::frozen::{callable_case_passes, callable_helper_cases};
+pub(crate) use self::frozen::{erase_callable_case_actor_in_txn, erase_callable_cases_in_txn};
 pub(crate) use self::json_tokens::AnswerMemory;
 
 use crate::attempt_queue::AttemptRecord;
@@ -79,6 +82,46 @@ impl JsCodeModeHost for SkillHost<'_> {
         self.host
             .dispatch_self_nested_cancellable(call, runtime, cancel)
     }
+
+    fn caller_entity(&self) -> Option<EntityId> {
+        self.host.caller_entity()
+    }
+}
+
+/// The step a call runs: its arguments as the host's one prelude line, then
+/// its stored file. JSON serialization safely embeds the arguments as a JS
+/// expression; no host pathname or executable binary ever enters the guest.
+fn callable_script(args: &JsonValue, source: &str) -> Result<String> {
+    Ok(format!(
+        "const skillArgs = {};\n{source}",
+        serde_json::to_string(args).map_err(|_| invalid("call arguments cannot be encoded"))?
+    ))
+}
+
+/// Lends a tier other than first-party its isolated lane's egress proxy for
+/// `run_id`, and its proposal spool.
+fn bind_isolated_lane(
+    vault: &std::sync::Arc<Vault>,
+    runtime: &mut dyn JsCodeModeRuntime,
+    run_id: EntityId,
+    tier: SandboxGuestTier,
+) -> Result<()> {
+    if tier == SandboxGuestTier::FirstPartyDreamer {
+        return Ok(());
+    }
+    runtime.bind_foreign_egress(std::sync::Arc::new(
+        crate::code_sandbox::egress::OpenEgressProxy::new(
+            std::sync::Arc::clone(vault),
+            run_id,
+            crate::code_sandbox::egress::EgressConfig::from_env()
+                .map_err(|e| Error::InvalidConfig(e.to_string()))?,
+        ),
+    ))?;
+    // Its proposed files spool on the host's disk floor (FIX 7650).
+    if let Some(spool) = vault.proposal_spool() {
+        runtime.bind_proposal_spool(spool);
+    }
+    Ok(())
 }
 
 /// Imported source and local revisions descended from it stay on the foreign
@@ -282,12 +325,7 @@ pub(crate) fn execute_callable_skill_cancellable(
         .ok_or(invalid("call reference is absent from stored skill source"))?;
     let source = std::str::from_utf8(&file.content)
         .map_err(|_| invalid("call reference must contain UTF-8 JavaScript"))?;
-    // JSON serialization safely embeds the arguments as a JS expression.
-    // No host pathname or executable binary ever enters the guest.
-    let script = format!(
-        "const skillArgs = {};\n{source}",
-        serde_json::to_string(args).map_err(|_| invalid("call arguments cannot be encoded"))?
-    );
+    let script = callable_script(args, source)?;
     // Prepared once (FIX 8276): a TypeScript skill runs as the JavaScript Oxc
     // prints for it. The arguments line is the host's prelude, so a failed
     // TypeScript skill names the line of its own stored file.
@@ -309,20 +347,8 @@ pub(crate) fn execute_callable_skill_cancellable(
         seq,
         None,
     )?;
-    if tier != SandboxGuestTier::FirstPartyDreamer {
-        runtime.bind_foreign_egress(std::sync::Arc::new(
-            crate::code_sandbox::egress::OpenEgressProxy::new(
-                std::sync::Arc::clone(vault),
-                run_id,
-                crate::code_sandbox::egress::EgressConfig::from_env()
-                    .map_err(|e| Error::InvalidConfig(e.to_string()))?,
-            ),
-        ))?;
-        // Its proposed files spool on the host's disk floor (FIX 7650).
-        if let Some(spool) = vault.proposal_spool() {
-            runtime.bind_proposal_spool(spool);
-        }
-    }
+    bind_isolated_lane(vault, runtime, run_id, tier)?;
+    let caller = host.caller_entity();
     let mut lent = SkillHost {
         host,
         answer: CallableSkillAnswer::spool(),
@@ -363,5 +389,22 @@ pub(crate) fn execute_callable_skill_cancellable(
         seq,
         Some(&digest),
     )?;
+    // The call is kept as a case its helpers' gate scores them on (FIX
+    // 12093): capture only, never a refusal of a call that passed.
+    if let Err(error) = frozen::freeze_callable_case(
+        vault,
+        &loaded.entity,
+        frozen::FrozenCallSite {
+            receipt: crate::receipt::attempt_pack_receipt_id(&leased.id),
+            version: &loaded.record.version,
+            seq,
+            at,
+            caller,
+        },
+        args,
+        &mut answer,
+    ) {
+        tracing::debug!(kind = ?error.kind(), "a callable call was not frozen as a case");
+    }
     Ok(answer)
 }

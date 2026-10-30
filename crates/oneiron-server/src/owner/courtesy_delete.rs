@@ -162,15 +162,20 @@ pub(crate) fn send_with(
         issuer.sign_cooperative_deletion_request(vault, &pact, worlds, epoch_cutoff, nonce)?
     };
     // Each page of the selection queues as its own ask (FIX 7941); the
-    // reply names the first, and the sent list shows every one.
+    // reply names the first in `request` and every page in `pages` (FIX
+    // 11802), and the sent list shows every one.
+    let mut queued = Vec::with_capacity(pages.len());
     let mut first = None;
     for signed in &pages {
         let notice =
             vault.queue_cooperative_deletion_request_as(owner, signed, &destination, now())?;
+        queued.push(notice.request_id.clone());
         first = first.or(Some(notice));
     }
     let notice = first.ok_or_else(|| OwnerError::Invalid("the ask has no page".to_owned()))?;
-    Ok(courtesy_delete_sent_ask(notice))
+    let mut sent = courtesy_delete_sent_ask(notice);
+    sent.pages = queued;
+    Ok(sent)
 }
 
 /// Every ask this vault sent: the engine's ledger projection, shared with

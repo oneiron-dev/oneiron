@@ -12,7 +12,7 @@ use crate::receipt::ReceiptRecord;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
 
-use super::amended::amended_shares_in_txn;
+use super::amended::amended_receipt_shares_in_txn;
 use super::anchored_amendment::{AnchoredEffect, anchored_rows_in_txn, effective_evidence_in_txn};
 use super::codec::invalid;
 use super::equivalent::redirect_equivalent_subjects_in_txn;
@@ -255,17 +255,19 @@ pub(super) fn project_in_txn(
             }
         }
     }
-    // The anchored-amendment join (FIX 10148): an attempt with a native
-    // anchored pack outcome keeps that stable observation as its one
-    // effective run, restated here under its amendment's defect share.
-    let amended = amended_shares_in_txn(vault, txn, skill, Some(executor))?;
-    let anchored = anchored_rows_in_txn(vault, txn, skill, executor)?;
+    // The anchored-amendment join (FIX 10148, FIX 11673, FIX 11674): an
+    // attempt with a native anchored pack outcome keeps that stable
+    // observation as its one effective run, restated here under its
+    // amendment's defect share. The scan covers every redirect-equivalent
+    // subject, and the share reads across every arm.
+    let amended = amended_receipt_shares_in_txn(vault, txn, skill)?;
+    let anchored = anchored_rows_in_txn(vault, txn, &subjects, executor)?;
     let native_attempts: BTreeSet<&str> =
         anchored.iter().map(|held| held.attempt.as_str()).collect();
     let mut anchored_writes = Vec::new();
     let mut anchored_withdrawals = Vec::new();
     for held in &anchored {
-        match effective_evidence_in_txn(vault, txn, skill, held, &amended)? {
+        match effective_evidence_in_txn(vault, txn, held, &amended)? {
             AnchoredEffect::Stand => {}
             AnchoredEffect::Record(evidence) => {
                 anchored_writes.push((held.cell.clone(), evidence));

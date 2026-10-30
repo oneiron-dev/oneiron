@@ -40,6 +40,10 @@ pub struct JudgeConversion {
     /// How many overlap cases the map was fitted from.
     pub overlap_cases: u32,
     pub at: u64,
+    /// Whether this map's chain from `from_judge` through the stored
+    /// conversions resolves or loops; reporting only, recomputed on every
+    /// record/withdraw — recording still succeeds when cyclic.
+    pub chain: ConversionChainStatus,
 }
 
 impl JudgeConversion {
@@ -137,15 +141,21 @@ pub fn record_judge_conversion(
             "a judge revision is at most 256 bytes",
         ));
     }
-    let conversion = JudgeConversion {
+    let mut conversion = JudgeConversion {
         from_judge: from_judge.to_owned(),
         to_judge: to_judge.to_owned(),
         points: fit_score_map(pairs)?,
         overlap_cases: u32::try_from(pairs.len()).unwrap_or(u32::MAX),
         at: now,
+        chain: ConversionChainStatus::Valid,
     };
     vault.with_write_txn_grouped(|wtxn| {
-        CONVERSION.put(&vault.store, wtxn, &conversion.from_judge, &conversion)?;
+        let mut overlaid = conversions_in_txn(vault, wtxn)?;
+        overlaid.insert(conversion.from_judge.clone(), conversion.clone());
+        restamp_chains_in_txn(vault, wtxn, &mut overlaid)?;
+        if let Some(record) = overlaid.get(&conversion.from_judge) {
+            conversion.chain = record.chain;
+        }
         reproject_judged_in_txn(vault, wtxn, now)
     })?;
     Ok(conversion)
@@ -162,9 +172,46 @@ pub fn withdraw_judge_conversion(vault: &Vault, from_judge: &str, now: u64) -> R
         if !CONVERSION.delete(&vault.store, wtxn, &from_judge.to_owned())? {
             return Ok(false);
         }
+        // A withdraw can heal other records' chains: recompute every
+        // remaining record's status in the same txn.
+        let mut remaining = conversions_in_txn(vault, wtxn)?;
+        restamp_chains_in_txn(vault, wtxn, &mut remaining)?;
         reproject_judged_in_txn(vault, wtxn, now)?;
         Ok(true)
     })
+}
+
+/// Recomputes every record in `conversions`' chain status and writes each
+/// row back under its from-key. Chains form and heal through other records'
+/// writes, so a record and a withdraw both restamp the whole table.
+fn restamp_chains_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    conversions: &mut BTreeMap<String, JudgeConversion>,
+) -> Result<()> {
+    let froms: Vec<String> = conversions.keys().cloned().collect();
+    for from in froms {
+        let status = chain_status(&from, conversions);
+        if let Some(record) = conversions.get_mut(&from) {
+            record.chain = status;
+            CONVERSION.put(&vault.store, wtxn, &from, record)?;
+        }
+    }
+    Ok(())
+}
+
+/// This map's chain validity from `from` through `conversions`: the same
+/// rule the fold applies (FIX 9890), so the stored status cannot drift from
+/// it. The probe value is irrelevant — cycle detection is judge-sequence
+/// only.
+fn chain_status(
+    from: &str,
+    conversions: &BTreeMap<String, JudgeConversion>,
+) -> ConversionChainStatus {
+    match super::conversion_chain::resolve(from, 0.0, conversions) {
+        super::conversion_chain::Resolved::Invalid => ConversionChainStatus::Cyclic,
+        _ => ConversionChainStatus::Valid,
+    }
 }
 
 /// Every conversion in force, by old judge.
@@ -195,6 +242,19 @@ fn reproject_judged_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now: u64) 
 pub struct DivergenceCase {
     pub source_family: String,
     pub diverged: bool,
+}
+
+/// Whether a conversion map's chain from its old judge resolves or loops.
+/// Reporting only: recording still succeeds when cyclic, and the status is
+/// recomputed on every record and withdraw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversionChainStatus {
+    /// The chain from `from_judge` through the stored conversions reaches a
+    /// terminal judge.
+    Valid,
+    /// The chain loops back on itself; the lineage folds as unknown.
+    Cyclic,
 }
 
 /// The takeover ladder's answer.
