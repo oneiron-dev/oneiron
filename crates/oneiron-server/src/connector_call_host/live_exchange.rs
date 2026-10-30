@@ -276,6 +276,36 @@ impl LiveSession {
         let _ = self.respond(id, "error", refusal);
     }
 
+    /// Refuses one server request this client does not serve once the
+    /// call's issuer binding is read again (FIX 9303): while a hold stands
+    /// the kept header does not go out and the request goes unanswered; the
+    /// worker's next answer, cancel or end settles the hold.
+    pub(super) fn refuse_unheld(&self, request: &Value, receipts: &AnswerReceipts) {
+        if self.issuer_hold(receipts).is_none() {
+            self.refuse(request);
+        }
+    }
+
+    /// The hold the call `receipts` names meets, its durable issuer binding
+    /// read again before the kept `Authorization` header would go out again
+    /// (FIX 9303): an issuer change the owner has not accepted, or a binding
+    /// that cannot be read. A session that keeps no header meets none.
+    pub(super) fn issuer_hold(&self, receipts: &AnswerReceipts) -> Option<&'static str> {
+        if self.auth.is_none() {
+            return None;
+        }
+        let Some(vault) = receipts.vault.upgrade() else {
+            return Some(ISSUER_BINDING_UNREAD);
+        };
+        let binding = &receipts.binding;
+        vault
+            .connector_issuer_hold(&binding.key_ref, &binding.tool)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "connector issuer binding not read");
+                Some(ISSUER_BINDING_UNREAD)
+            })
+    }
+
     /// Ends the session: a courtesy, whose outcome changes nothing.
     pub(super) fn end(&self) {
         let Some(session) = self.session.as_ref() else {
@@ -438,7 +468,7 @@ impl Worker {
             // lapses (FIX 3837).
             let waited = match &mut self.inbox {
                 Inbox::Commands(commands) => commands.recv().map_or(Waited::Closed, Waited::Answer),
-                Inbox::Pumped(pump) => pump.wait_answer(&self.session),
+                Inbox::Pumped(pump) => pump.wait_answer(&self.session, &self.receipts),
             };
             let command = match waited {
                 Waited::Answer(command) => command,
@@ -546,24 +576,10 @@ impl Worker {
         }
     }
 
-    /// The hold the call's row meets, its durable issuer binding read again
-    /// before the kept `Authorization` header would go out again (FIX 9303):
-    /// an issuer change the owner has not accepted, or a binding that cannot
-    /// be read. A session that keeps no header meets none.
+    /// The hold the call's row meets before the kept header goes out again
+    /// (FIX 9303).
     fn issuer_hold(&self) -> Option<&'static str> {
-        if self.session.auth.is_none() {
-            return None;
-        }
-        let Some(vault) = self.receipts.vault.upgrade() else {
-            return Some(ISSUER_BINDING_UNREAD);
-        };
-        let binding = &self.receipts.binding;
-        vault
-            .connector_issuer_hold(&binding.key_ref, &binding.tool)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "connector issuer binding not read");
-                Some(ISSUER_BINDING_UNREAD)
-            })
+        self.session.issuer_hold(&self.receipts)
     }
 
     /// The call whose row keeps this exchange's questions, once bound.
@@ -642,9 +658,13 @@ impl Worker {
                     }
                 }
                 match &mut self.inbox {
-                    Inbox::Pumped(pump) => {
-                        pump.read_round(&self.session, request_id, last_event_id, CALL_TIMEOUT)
-                    }
+                    Inbox::Pumped(pump) => pump.read_round(
+                        &self.session,
+                        &self.receipts,
+                        request_id,
+                        last_event_id,
+                        CALL_TIMEOUT,
+                    ),
                     Inbox::Commands(_) => Next::Over(WorkerEvent::Failed {
                         sent: true,
                         reason: "connector_reply_unreadable",
@@ -712,7 +732,7 @@ impl Worker {
                 self.receipts
                     .record(generation, &answered, responses, egress);
                 let message = match posted {
-                    Ok(response) => read_retry_reply(&self.session, response, id),
+                    Ok(response) => read_retry_reply(&self.session, &self.receipts, response, id),
                     Err(error) if error.is_connect() || error.is_builder() => {
                         Err(WorkerEvent::Failed {
                             sent: false,

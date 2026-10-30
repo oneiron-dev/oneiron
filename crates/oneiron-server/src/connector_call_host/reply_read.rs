@@ -4,6 +4,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::live_exchange::AnswerReceipts;
 use super::*;
 
 /// One reply body: a JSON body read whole, or an event stream still open.
@@ -242,13 +243,15 @@ pub(super) fn terminal(message: &Value) -> WorkerEvent {
 }
 
 /// Reads the reply to a retried `tools/call` (`id`), refusing any server
-/// request on its stream.
+/// request on its stream once the call's issuer binding is read again (FIX
+/// 9303).
 #[allow(
     clippy::result_large_err,
     reason = "the error is the worker's terminal event, handed on as is"
 )]
 pub(super) fn read_retry_reply(
     session: &LiveSession,
+    receipts: &AnswerReceipts,
     response: reqwest::blocking::Response,
     id: u64,
 ) -> Result<Value, WorkerEvent> {
@@ -277,7 +280,7 @@ pub(super) fn read_retry_reply(
     loop {
         match stream.next(id) {
             Ok(StreamEvent::Answer(message, _)) => return Ok(message),
-            Ok(StreamEvent::Request(request)) => session.refuse(&request),
+            Ok(StreamEvent::Request(request)) => session.refuse_unheld(&request, receipts),
             Ok(StreamEvent::End) | Err(()) => return Err(unreadable),
         }
     }
