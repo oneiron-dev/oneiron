@@ -241,6 +241,7 @@ impl NativeClient {
         let options = oneiron_remote::OpenOptions {
             dimensions,
             device_class: host_device_class(device_class.as_deref())?,
+            hold_checkpoint_root_signer: false,
         };
         let inner = py
             .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))
