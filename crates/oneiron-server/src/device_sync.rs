@@ -61,7 +61,7 @@ mod renewal;
 mod route;
 use dial::Dial;
 use enrolment::EnrolmentSource;
-pub(crate) use enrolment::{EnrolmentFiles, enrol, enrolment_vault_id, home_bind, join};
+pub(crate) use enrolment::{Enrolled, EnrolmentFiles, enrol, enrolment_vault_id, home_bind, join};
 
 /// The running connection to the home.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]

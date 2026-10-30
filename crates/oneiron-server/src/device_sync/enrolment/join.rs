@@ -59,6 +59,47 @@ impl std::fmt::Display for JoinRefusal {
 
 impl std::error::Error for JoinRefusal {}
 
+/// The rows a vault's own open never seeds, by entity type: authority log
+/// entries and what a person or an agent writes. A vault that holds none is
+/// empty though its open seeded agents, skills, policy and its own machine.
+const OWN_ROW_TYPES: &[u8] = &[
+    oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG,
+    oneiron::registry::ENTITY_TYPE_NOTE,
+    oneiron::registry::ENTITY_TYPE_CLAIM,
+    oneiron::registry::ENTITY_TYPE_CONVERSATION,
+    oneiron::registry::ENTITY_TYPE_MESSAGE,
+    oneiron::registry::ENTITY_TYPE_TURN,
+    oneiron::registry::ENTITY_TYPE_EVENT,
+    oneiron::registry::ENTITY_TYPE_ASSET,
+    oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+    oneiron::registry::ENTITY_TYPE_TASK,
+    oneiron::registry::ENTITY_TYPE_ISSUE,
+    oneiron::registry::ENTITY_TYPE_SUMMARY,
+    oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+    oneiron::registry::ENTITY_TYPE_PLACE,
+    oneiron::registry::ENTITY_TYPE_ORG,
+    oneiron::registry::ENTITY_TYPE_COMM_RECORD,
+    oneiron::registry::ENTITY_TYPE_BLOB_ARTIFACT,
+    oneiron::registry::ENTITY_TYPE_CODE_ARTIFACT,
+    oneiron::registry::ENTITY_TYPE_SESSION,
+    oneiron::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT,
+];
+
+/// Whether a vault with no authority root may join from empty: it holds no
+/// rows of its own (Engine 04:4x: never merge rows into a vault that is not
+/// empty). One that does is refused as today, with the reason named.
+pub(crate) fn ensure_joinable(vault: &oneiron::Vault) -> anyhow::Result<()> {
+    for entity_type in OWN_ROW_TYPES {
+        anyhow::ensure!(
+            vault.count_entities_by_type(*entity_type)? == 0,
+            "this vault has no authority root yet, so it is not the home's vault; a device \
+             enrols a copy of its home's vault, and this one holds rows of its own (entity \
+             type {entity_type}), so it does not join from empty either"
+        );
+    }
+    Ok(())
+}
+
 /// Checks `pin` against `named`, the reference the owner's link carries: its
 /// digest is the link's, and each key binding names the pin's storage id and
 /// genesis and verifies under its root, a root of the pin's policy. A pin
