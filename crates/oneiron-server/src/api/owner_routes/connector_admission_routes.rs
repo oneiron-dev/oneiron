@@ -74,6 +74,7 @@ mod admitted;
 mod charter;
 mod qualify;
 mod table;
+pub(crate) use self::admitted::accept_staged_slate;
 use self::admitted::{accept_staged, enabled, refresh};
 use self::charter::{approve_charter, charter, discard_charter, propose_charter};
 pub(crate) use self::qualify::qualify_connector;
