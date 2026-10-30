@@ -32,8 +32,9 @@ use crate::{EntityId, Vault};
 /// mirroring isolation, and a forward claim's low confidence. Every reason of
 /// the hold must be one of these; a Deny, an external-effect hold or any
 /// other reason never is.
-pub(crate) const KEEP_APPROVABLE_PENDING_REASONS: [GateReasonCode; 9] = [
+pub(crate) const KEEP_APPROVABLE_PENDING_REASONS: [GateReasonCode; 10] = [
     GateReasonCode::PendingActorCeiling,
+    GateReasonCode::PendingDelegationChainCeiling,
     GateReasonCode::PendingSourceTrust,
     GateReasonCode::PendingCriticalityFloor,
     GateReasonCode::PendingPolicyManifestAuthority,

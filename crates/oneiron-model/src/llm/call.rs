@@ -232,3 +232,17 @@ pub enum ModelLocality {
     OwnServer,
     ThirdParty,
 }
+
+impl ModelLocality {
+    /// The wire spelling, as the serde `snake_case` above spells it:
+    /// `on_device`/`own_server`/`third_party`. The one spelling every
+    /// route id mints (FIX 11768).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OnDevice => "on_device",
+            Self::OwnServer => "own_server",
+            Self::ThirdParty => "third_party",
+        }
+    }
+}

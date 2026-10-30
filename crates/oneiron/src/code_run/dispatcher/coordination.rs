@@ -292,7 +292,6 @@ impl<'a> HostSelfDispatcher<'a> {
                     let receipt = crate::agent_dispatch::direct_spawn_receipt(
                         &ask,
                         self.planner_bound(),
-                        self.agent_lease.is_some(),
                         self.actor.entity_ref(),
                     );
                     unapplied.clone_from(&receipt.unapplied);

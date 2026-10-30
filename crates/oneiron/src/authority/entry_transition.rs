@@ -642,6 +642,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_) => false,
     }
 }

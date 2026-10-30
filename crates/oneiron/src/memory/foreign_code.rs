@@ -16,9 +16,7 @@ use crate::code_sandbox::{
     SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
 };
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
-use crate::{
-    ClaimApprovalStatus, ClaimSource, EntityId, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteEnvelope, WriteProvenance};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -346,7 +344,7 @@ impl Memory<'_> {
                     SandboxProposalWrite::ClaimCandidate(claim) => {
                         let provenance = WriteProvenance::new(rmpv::Value::from(run_id.to_hex()))?;
                         let envelope = WriteEnvelope::new(
-                            WriteActor::new(self.actor, self.actor_class),
+                            self.write_actor(),
                             ClaimSource::Generated,
                             provenance,
                             ClaimApprovalStatus::Proposed,

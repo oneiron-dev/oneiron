@@ -61,6 +61,10 @@ use std::{
 };
 use tracing::{debug_span, info_span, instrument, warn};
 
+/// Loro SnapshotAt exports this process has made; a fork_at is one (Oneiron vendor patch).
+pub(crate) static SNAPSHOT_AT_EXPORTS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
@@ -2165,6 +2169,9 @@ impl LoroDoc {
 
     #[instrument(skip(self))]
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
+        if matches!(mode, ExportMode::SnapshotAt { .. }) {
+            SNAPSHOT_AT_EXPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         self.with_barrier(|| {
             let ans = match mode {
                 ExportMode::Snapshot => export_fast_snapshot(self)?,

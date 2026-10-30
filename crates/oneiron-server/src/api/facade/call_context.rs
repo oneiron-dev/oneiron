@@ -292,6 +292,7 @@ impl<'a> FacadeCall<'a> {
         oneiron::memory::HomeRecallCaller::admitted(
             self.auth.is_owner_grade(),
             self.forwarded.clone(),
+            self.auth.locality(),
         )
     }
 

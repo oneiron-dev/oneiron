@@ -341,7 +341,7 @@ impl Memory<'_> {
         let mut invitable = std::collections::BTreeSet::new();
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let reader = crate::WriteActor::new(self.actor(), self.actor_class());
+        let reader = self.write_actor();
         if crate::workspace_roster::files_roster_joins_in_txn(vault, &txn, room, reader)?
             || crate::workspace_roster::invites_into_room_in_txn(vault, &txn, room, reader)?
         {

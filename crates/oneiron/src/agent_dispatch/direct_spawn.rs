@@ -60,25 +60,19 @@ pub struct DirectSpawnReceipt {
     pub asker_ref: Option<EntityId>,
 }
 
-/// The receipt of a direct spawn of `ask`. Its need goes unapplied without
-/// the agent's lease, since nothing places the spawn on it; each care,
-/// notes, model, width or pattern it sets goes unapplied, since nothing
-/// plans the spawn. Target, prompt and budget apply and are never listed.
+/// The receipt of a direct spawn of `ask`. Its need always applies: a
+/// leased agent's host places the spawn on it with every rung, and dispatch
+/// places any other on it at the rule rung (FIX 2107). Each care, notes,
+/// model, width or pattern it sets goes unapplied, since nothing plans the
+/// spawn. Target, prompt, need and budget apply and are never listed.
 /// `asker` is the spawner the host authenticated.
 #[must_use]
 pub fn direct_spawn_receipt(
     ask: &SelfSpawnAsk,
     planner_bound: bool,
-    leased: bool,
     asker: EntityId,
 ) -> DirectSpawnReceipt {
     let mut unapplied = Vec::new();
-    if !leased {
-        unapplied.push(SpawnUnapplied {
-            field: SpawnAskField::Need,
-            reason: SpawnUnappliedReason::AgentLeaseUnbound,
-        });
-    }
     let reason = if planner_bound {
         SpawnUnappliedReason::AgentLeaseUnbound
     } else {

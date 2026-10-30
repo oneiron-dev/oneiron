@@ -147,7 +147,7 @@ fn run_embedded(
     call: AgentActionCall,
     owner: Option<&AuthenticatedOwner>,
 ) -> MemoryResult<PolicyActionOutcome> {
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     let principal = action_principal(actor, memory.read_key()?)?;
     let dispatch = ActionRegistry::app()?.execute_call(
         memory.vault(),

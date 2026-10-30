@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4438 declarations.
-// Replies: 1074 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4447 declarations.
+// Replies: 1075 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -666,7 +666,7 @@ declare namespace Sdk {
   type RetrievalPolicyDecision = { state: RetrievalState; action: RetrievalPolicyAction; tier: RetrievalPolicyTier };
   type RetrievalPolicyTrace = { identity: RetrievalPolicyIdentity; envelope: RetrievalPolicyEnvelope; bandit_enabled: boolean; decisions: RetrievalPolicyDecision[] };
   type RetrievalReplayInputs = { query_ref?: string | null; config: unknown; corpus_snapshot_ref?: string | null };
-  type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector";
+  type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector" | "relevance";
   type RetrievalScoreComponent = { signal: RetrievalSignal; rank: number; score: number };
   type RetrievalScoreBreakdown = { result_id: number[]; final_rank: number; final_score: number; components: RetrievalScoreComponent[]; access_factor?: number | null };
   type RetrievalTraceForkHash = number[];
@@ -687,10 +687,10 @@ declare namespace Sdk {
   type RetrievalDiagnosticExport = { contract_version: string; runs: RetrievalRunEvidence[] };
   type RetrievalReplayRun = { source_run_id: RetrievalRunId; turn?: RetrievalTurn | null; state: RetrievalState; result_ids: number[][]; pack: RetrievalScoreBreakdown[]; trace?: RetrievalTrace | null };
   type RetrievalDiagnosticReplay = { contract_version: string; runs: RetrievalReplayRun[] };
-  type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number };
+  type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number; relevance: number };
   type RetrievalBlendWeightDataWindow = { run_count: number; outcome_count: number; candidate_count: number; started_at_min?: number | null; started_at_max?: number | null; outcome_updated_at_min?: number | null; outcome_updated_at_max?: number | null };
   type RetrievalBlendWeightTableEntry = { version: number; weights: RetrievalBlendWeights; tuned_at: number; provenance: Record<string, string>; data_window: RetrievalBlendWeightDataWindow };
-  type RetrievalBlendSignal = "recency" | "salience" | "confidence" | "gravity";
+  type RetrievalBlendSignal = "recency" | "salience" | "confidence" | "gravity" | "relevance";
   type RetrievalWeightOrigin = "bootstrap" | "learned" | "owner_pin";
   type RetrievalWeightRow = { signal: RetrievalBlendSignal; weight: number; origin: RetrievalWeightOrigin; pinned: boolean };
   type RetrievalPolicyPin = { signal: RetrievalBlendSignal; value: number };
@@ -773,7 +773,7 @@ declare namespace Sdk {
   type CallTransport = "http_facade" | "mcp" | "ws" | "open_ai_proxy";
   type CallOutcome = "ok" | { refused: { code: string } };
   type CallAttemptRef = { attempt: EntityId; generation: number };
-  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; attempt_ref?: CallAttemptRef | null; served: string[]; served_records?: RecordRef[] };
+  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; carrier_machine?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; attempt_ref?: CallAttemptRef | null; served: string[]; served_records?: RecordRef[] };
   type AdmissionStatusRequest = { intent_key: string };
   type AdmissionStatus = { status: "queued" } | { status: "held"; reason?: string | null } | { status: "completed"; result_digest: string } | { status: "refused"; code: string; reason: string } | { status: "interrupted"; reason: string };
   type AdmissionReceipt = { receipt_ref: string; intent_key: string; verb: string; request_digest: string; accepted_at: number; updated_at: number; state: AdmissionStatus };
@@ -1368,9 +1368,10 @@ declare namespace Sdk {
   type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string };
   type ScopeScope = { world: string | null; facet: string | null; relationship: string | null; project: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
   type ProjectAuthority = { parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice: ScopeScope; depth_limit: number; depth_remaining: number; leader: string; board: string[]; roster?: string[] | null };
-  type ProjectAnchor = { authority: ProjectAuthority; proof?: ProjectWriteProof | null };
   type ProjectProofVersion = "v2" | "v3";
-  type ProjectWriteProof = { slip_wire: string; holder_signature: number[]; signed_at: number; anchor?: ProjectAnchor | null; version?: ProjectProofVersion };
+  type ProjectRevisionProof = { slip_wire: string; holder_signature: number[]; signed_at: number; version: ProjectProofVersion };
+  type ProjectAnchorLink = { authority: ProjectAuthority; proof?: ProjectRevisionProof | null };
+  type ProjectWriteProof = { slip_wire: string; holder_signature: number[]; signed_at: number; anchor: ProjectAnchorLink[]; version?: ProjectProofVersion };
   type ProjectGoalRecord = { project_id: string; goal: string; why: string; axes: string[] };
   type ProjectBudgetShare = { project_id: string; parent_id: string; share_bps: number };
   type ProjectRecord = { role: ProjectRole; schema_version: number; depth?: number; parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice?: ScopeScope; depth_limit?: number; depth_remaining?: number; write_proof?: ProjectWriteProof | null; leader: string; board: string[]; roster: string[]; sessions: string[]; tasks: string[]; branches: string[]; skill_forks: string[]; goal?: string | null; goal_record?: ProjectGoalRecord | null; why?: string | null; born_from?: string | null; budget?: string | null; budget_share?: ProjectBudgetShare | null; asks: string[]; home_room: string; origin_room?: string | null; origin_thread?: string | null; origin_at?: number | null; wrapper_task?: string | null };
@@ -2216,7 +2217,9 @@ declare namespace Sdk {
   type ClaimSettlementAnswer = { kind: "word"; person_ref: string };
   type ClaimSettlementReason = "gate.claim.settle.approved" | "gate.claim.settle.declined";
   type ClaimSettlementRevert = { verb: string; claim_ref: string };
-  type ClaimSettlement = { receipt_ref: string; proposal_ref: string; review_id: string; changes: ClaimChangeVerdict[]; verdict: ClaimSettlementVerdict; answered_by: ClaimSettlementAnswer; reason: ClaimSettlementReason; summary: string; tray_receipt_ref?: string | null; revert?: ClaimSettlementRevert | null; claim: ClaimView; settled_at: number };
+  type SettleWarningCode = "vad_pending";
+  type SettleWarning = { code: SettleWarningCode; claim_ref: string; detail: string };
+  type ClaimSettlement = { receipt_ref: string; proposal_ref: string; review_id: string; changes: ClaimChangeVerdict[]; verdict: ClaimSettlementVerdict; answered_by: ClaimSettlementAnswer; reason: ClaimSettlementReason; summary: string; tray_receipt_ref?: string | null; revert?: ClaimSettlementRevert | null; claim: ClaimView; settled_at: number; warnings?: SettleWarning[] };
   type CraftCandidatesRequest = { resident?: string | null };
   type CraftCandidateView = { candidate_id: string; content_hash: string; resident: string; predicate: string; text: string; attempt: string; proposed_at: number };
   type CraftCandidatesView = { candidates: CraftCandidateView[] };
@@ -3232,7 +3235,7 @@ declare namespace Sdk {
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "unexpected_frame" | "ended_with_error";
   type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string };
-  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault };
+  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault };
   type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck";
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null };
@@ -4428,6 +4431,12 @@ declare namespace Sdk {
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] } | { state: "target_erased"; kind: AgentSpawnKind };
   type WorkflowBoundDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId };
   type LeaderAdviceInput = { top?: number | null };
+  type TaskTypeRef = { node_id: string; tree_version: number };
+  type SpawnOverride<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
+  type SpawnNeed = { need: string; care?: CareLevel | null; notes?: string | null; type_ref: TaskTypeRef; model?: SpawnOverride<ModelId> | null; width?: SpawnOverride<number> | null; pattern?: SpawnOverride<CoordinationPattern> | null; budget_cap_units?: SpawnOverride<number> | null; balance_free_prompt?: boolean };
+  type ShapeQuote = { candidate: string; shape: TeamShape; model: ModelId; agent_def: EntityId; pattern_skill?: PatternSkillRef | null; expected_success_rate: number; own_runs: number; envelope: CostEnvelope; works_well_for?: string | null };
+  type SkillRevisionRef = { skill: EntityId; version: string };
+  type LeaderAdvice = { task_ref: string; project_ref: string; asked: SpawnNeed; plan: TeamPlan; why: string[]; shapes: ShapeQuote[]; team_shape?: SkillRevisionRef | null; rung_skill?: SkillRevisionRef | null; rung_providers?: ProviderPin[] };
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };
   type LeaderPatternOutput = { skill: EntityId; skill_id: string; version: string; desc: string; files?: LeaderPatternFile[] | null };
@@ -4868,7 +4877,7 @@ declare namespace self {
     mark(input: Sdk.InboxMarkRequest): Promise<Sdk.NotificationRow | StoredResult>;
   };
   const leader: {
-    advice(input: Sdk.LeaderAdviceInput): Promise<unknown>;
+    advice(input: Sdk.LeaderAdviceInput): Promise<Sdk.LeaderAdvice | StoredResult>;
     pattern(input: Sdk.LeaderPatternInput): Promise<Sdk.LeaderPatternOutput | StoredResult>;
     split(input: Sdk.LeaderSplitInput): Promise<Sdk.LeaderSplitOutput | StoredResult>;
   };

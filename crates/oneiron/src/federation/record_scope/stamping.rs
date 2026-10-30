@@ -8,7 +8,7 @@ pub(crate) fn stamp_put(
     id: EntityId,
     kind: u8,
     data: &[u8],
-    replicated: bool,
+    put: RowPut,
 ) -> Result<()> {
     bump_scope_revision(store, txn)?;
     let prior = SCOPE_RECORD.get(store, txn, &id)?;
@@ -31,9 +31,13 @@ pub(crate) fn stamp_put(
         }
         return Ok(());
     }
-    if replicated && kind != crate::registry::ENTITY_TYPE_CLAIM {
+    // A local re-put of a row stored with no position is no birth either, so
+    // a local put of a replicated row keeps it unstamped (FIX 11925).
+    if put != RowPut::Birth && kind != crate::registry::ENTITY_TYPE_CLAIM {
         // A peer cannot mint a birth position for an opaque row merely by
         // picking its ID and bytes. Only an existing stamped row inherits.
+        // A replicated NOTIFICATION stays unstamped through its recipient's
+        // local marks too (FIX 6552).
         return Ok(());
     }
     let stamp = Stamp {
@@ -44,6 +48,15 @@ pub(crate) fn stamp_put(
     };
     SCOPE_RECORD.put(store, txn, &id, &stamp)?;
     Ok(())
+}
+
+/// Whether `id` is stored here with a birth position.
+pub(crate) fn has_stored_position(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<bool> {
+    Ok(SCOPE_RECORD.get(store, txn, &id)?.is_some())
 }
 
 /// Stages the position of `id`, a row a room's write stages in `view`, beside
