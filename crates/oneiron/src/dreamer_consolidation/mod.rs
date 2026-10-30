@@ -74,6 +74,7 @@ pub(crate) mod reviewed;
 mod roles;
 pub(crate) mod root_evidence;
 pub mod routing;
+mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
 mod settle;
@@ -137,6 +138,7 @@ pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,
 };
+pub(crate) use running_buckets::running_bucket_set_in_txn;
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{
     ScopeSummaryEvidence, arc_evidence_in_txn, editor_source_pins_in_txn, note_source_pins_in_txn,

@@ -98,6 +98,10 @@ side_tables! {
     /// Owner-root reference pins and immutable child evidence accounting. Key: id16(root).
     DREAMER_CONSOLIDATION_ROOT: VaultMeta b"dreamer:consolidation:root:v1:" Named
         => crate::dreamer_consolidation::root_evidence::erase_actor_in_txn;
+    /// FIX 7729: the buckets a MACRO run its preparation narrowed holds, under its lease
+    /// generation; node-local lease state. Key: id16(attempt).
+    DREAMER_CONSOLIDATION_RUNNING_BUCKETS: VaultMeta b"dreamer:consolidation:running_buckets:v1:"
+        Named Engine;
     /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
     DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson;
     /// Parent-verified promotion evidence observations. Key: id16(claim).
