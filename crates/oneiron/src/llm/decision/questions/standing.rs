@@ -220,6 +220,9 @@ fn sources_in_txn(
         }
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
+        // A file-plane ASSET's stored row holds its manifest: judge, hash and
+        // scope the body in its place (FIX 5398).
+        let raw = vault.materialized_row_in_txn(txn, id, raw)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("standing source header"))?;
         // A claim awaiting its owner's answer is a missing required source.
@@ -382,9 +385,16 @@ pub(super) fn prepare_graph_answer(
         } else {
             question_lane(vault, key.clone())
         };
-        let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
+        let Some(raw) = lane.graph_ask_raw_in_txn(&txn, id)? else {
             return Err(Error::EntityNotFound);
         };
+        // A file-plane ASSET's row holds its manifest: bound, hash and keep
+        // the body in its place (FIX 5398).
+        let raw = vault.materialized_row_in_txn(&txn, id, raw)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("graph ask entity header"))?;
+        let kind = header.entity_type;
+        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
         if !super::graph_ask::kind_is_graph_evidence(kind)
             || body.is_empty()
             || body.len() > 1_048_576

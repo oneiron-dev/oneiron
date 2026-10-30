@@ -112,8 +112,20 @@ pub(super) fn source_in_txn(
     let kind = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("graph ask source header"))?
         .entity_type;
+    // A file-plane ASSET's row holds its manifest: the hash is the logical
+    // body's own, which the manifest carries, never the manifest's bytes
+    // (FIX 5398).
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let hash = if kind == crate::registry::ENTITY_TYPE_ASSET {
+        match crate::store::asset_file_in_txn(&lane.vault().store, txn, &shown.id, body)? {
+            Some(manifest) => manifest.facts.blake3,
+            None => *blake3::hash(body).as_bytes(),
+        }
+    } else {
+        *blake3::hash(body).as_bytes()
+    };
     if kind != shown.entity_type
-        || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != shown.hash
+        || hash != shown.hash
         || !source_eligible(lane.vault(), txn, &shown.id, kind)?
     {
         return Ok(None);

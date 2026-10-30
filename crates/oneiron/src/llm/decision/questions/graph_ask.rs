@@ -442,7 +442,18 @@ fn answer_unit(
     if !kind_is_graph_evidence(kind) {
         return Ok(UnitOutcome::Hidden);
     }
-    if body.is_empty() || body.len() > MAX_SOURCE_BYTES {
+    // A file-plane ASSET's row holds its manifest: the bound is the logical
+    // length, the manifest's own, not the manifest's bytes (FIX 5398).
+    let txn = vault.store.env.read_txn()?;
+    let body_len = if kind == crate::registry::ENTITY_TYPE_ASSET {
+        match crate::store::asset_file_in_txn(&vault.store, &txn, &unit, &body)? {
+            Some(manifest) => manifest.facts.len,
+            None => body.len() as u64,
+        }
+    } else {
+        body.len() as u64
+    };
+    if body.is_empty() || body_len > MAX_SOURCE_BYTES as u64 {
         return Ok(UnitOutcome::Abstain);
     }
     if !source_eligible(vault, &vault.store.env.read_txn()?, &unit, kind)? {
