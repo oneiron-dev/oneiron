@@ -64,6 +64,7 @@ pub(crate) fn record_turn_program_wakes_in_txn(
             continue;
         }
         WAKE.put(vault, txn, &wake.key(), &wake)?;
+        super::index::index_wake_in_txn(vault, txn, authority.actor(), wake.key())?;
         owed += 1;
     }
     Ok(owed)

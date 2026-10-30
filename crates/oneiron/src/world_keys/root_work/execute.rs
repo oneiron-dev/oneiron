@@ -31,7 +31,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{KitId, KitIssue, KitPassphrase, KitPiece};
+use crate::recovery::{KitIssue, KitPassphrase, KitPiece};
 use crate::{EntityId, Vault};
 
 /// One pending root request this install answers, as the door read it.
@@ -334,12 +334,13 @@ impl Vault {
             })
         })?;
         // A kit the answer made current: its piece leaves its pending key
-        // slots, and the kits it replaced keep none pending (FIX 11977, 12046).
-        let replaced: &[KitId] = match &confirmed {
-            Answered::Done(kit) => kit.replaced.as_slice(),
-            Answered::Refused(_) | Answered::AwaitsBasis => &[],
+        // slots while it is still current, and the kits it replaced keep none
+        // pending (FIX 11977, 12046, 12135, 12136).
+        let settled = match &confirmed {
+            Answered::Done(kit) => Some(kit.kit),
+            Answered::Refused(_) | Answered::AwaitsBasis => None,
         };
-        self.settle_pending_kit_pieces(replaced);
+        self.settle_pending_kit_pieces(settled);
         let mirror_pending = match transition.finish() {
             Ok(()) => false,
             Err(error) => {

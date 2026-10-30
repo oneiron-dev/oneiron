@@ -151,8 +151,8 @@ enum Source<'a> {
         first: LiveCustody,
         #[cfg(unix)]
         shared: Option<crate::store::SharedPath>,
-        /// The install's configured keystore; the platform's at its defaults
-        /// when none was given ([`SideRestoreSource::with_keystore`]).
+        /// The install's configured keystore ([`SideRestoreSource::with_keystore`]);
+        /// none is a host with none, which opens no device wrap (FIX 12225).
         keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
         /// A sealed vault's page seal, which every read of it opens with.
         page_seal: Option<crate::world_keys::VaultPageSeal>,
@@ -210,20 +210,13 @@ impl SideRestoreSource<'_> {
     /// The key the artifact at `checkpoint` opens with. A vault open in this
     /// process gives its own ([`Vault::checkpoint_key`]); one read off the
     /// disk is never opened, so this install's keystore unlocks the key from
-    /// the device wrap the artifact carries
-    /// ([`CheckpointKey::unlock_on_this_device`]).
+    /// the device wrap the artifact carries, or refuses with none (FIX 12225).
     pub fn checkpoint_key(&self, checkpoint: &Path) -> Result<CheckpointKey> {
         match &self.0 {
             Source::Open(vault) => vault.checkpoint_key(),
-            Source::Disk {
-                keystore: Some(keystore),
-                ..
-            } => Ok(CheckpointKey::unlock(
-                checkpoint,
-                &crate::world_keys::VaultKeyUnlock::Device(keystore.as_ref()),
-            )?
-            .trusting_device(std::sync::Arc::clone(keystore))),
-            Source::Disk { dir, .. } => CheckpointKey::unlock_on_this_device(checkpoint, dir),
+            Source::Disk { keystore, .. } => {
+                CheckpointKey::unlock_on_this_device(checkpoint, keystore.as_ref())
+            }
         }
     }
     /// The source's page seal while its pages are sealed (OF-570 maximum

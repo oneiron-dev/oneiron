@@ -10,7 +10,7 @@
 //!   fresh start. Nothing retires it.
 //! - Each history entry is kind `KnownValueEntry`: item = the holding
 //!   custody record's id, never a name derived from a value; generation =
-//!   the holder's entry slot; secret = [`KnownEntry`]'s 44 bytes. A slot is
+//!   the holder's entry slot; secret = [`KnownEntry`]'s 46 bytes. A slot is
 //!   taken past every slot the holder's references or its custody hold, an
 //!   aborted writer's included, and an entry of the same bytes is never
 //!   written twice for one holder. Two holders of the same bytes keep two
@@ -34,6 +34,9 @@
 //! - A pass reads the history in the writer it runs in (no custody guard,
 //!   none after the writer), or, for a stream, through [`KnownHistoryIds`]:
 //!   the ids the stream began with, each pass under the custody read guard.
+
+// A writer's history read with its ids (FIX 12210).
+mod writer_ids;
 
 use std::sync::{Arc, Weak};
 
@@ -121,12 +124,14 @@ impl RawValue for HistoryRefs {
 }
 
 /// One history entry as the index keeps it: a value's byte length, the
-/// keyed tag of its first window and the keyed fingerprint of all of it,
-/// never the value. `len (u32be) | tag (8) | fingerprint (32)` in custody;
-/// wiped when dropped, and never printed.
+/// keyed tag and the keyed rolling value of its first window (FIX 12209),
+/// and the keyed fingerprint of all of it, never the value. `len (u32be) |
+/// tag (8) | rolling (u16be) | fingerprint (32)` in custody; wiped when
+/// dropped, and never printed.
 pub(crate) struct KnownEntry {
     pub(crate) len: u32,
     pub(crate) tag: [u8; KNOWN_TAG_BYTES],
+    pub(crate) rolling: u16,
     pub(crate) fingerprint: [u8; 32],
 }
 
@@ -135,6 +140,7 @@ impl KnownEntry {
         let mut bytes = Zeroizing::new(Vec::with_capacity(ENTRY_BYTES));
         bytes.extend_from_slice(&self.len.to_be_bytes());
         bytes.extend_from_slice(&self.tag);
+        bytes.extend_from_slice(&self.rolling.to_be_bytes());
         bytes.extend_from_slice(&self.fingerprint);
         CustodySecret::from_bytes(bytes)
     }
@@ -146,7 +152,8 @@ impl KnownEntry {
             return None;
         }
         let (len, rest) = bytes.split_at(4);
-        let (tag, fingerprint) = rest.split_at(KNOWN_TAG_BYTES);
+        let (tag, rest) = rest.split_at(KNOWN_TAG_BYTES);
+        let (rolling, fingerprint) = rest.split_at(2);
         let len = u32::from_be_bytes(len.try_into().ok()?);
         if len == 0 {
             return None;
@@ -154,6 +161,7 @@ impl KnownEntry {
         Some(Self {
             len,
             tag: tag.try_into().ok()?,
+            rolling: u16::from_be_bytes(rolling.try_into().ok()?),
             fingerprint: fingerprint.try_into().ok()?,
         })
     }
@@ -162,6 +170,7 @@ impl KnownEntry {
 impl Drop for KnownEntry {
     fn drop(&mut self) {
         self.tag.zeroize();
+        self.rolling.zeroize();
         self.fingerprint.zeroize();
     }
 }

@@ -12,8 +12,11 @@
 //! Parts take what is left of the window beside every claim when every
 //! claim fits beside the smallest piece of a line: each part is then one
 //! call that reads every claim. Otherwise they take what is left beside the
-//! largest claim, and claims are read in review cells. No count, share or
-//! cap bounds a part: only the window does.
+//! largest claim, and claims are read in review cells beside each part's
+//! own ranges. One very large claim reserves no more than
+//! [`CLAIM_RESERVE_DIVISOR`]'s share of the room (FIX 8287): it is read in
+//! pieces, so it never cuts every part small. No count or cap bounds a
+//! part: only the window does.
 
 use super::super::call_labels::LabelKind;
 use super::super::support::invalid_consolidation;
@@ -27,6 +30,12 @@ use crate::scope_summary::{
     SummaryLineSpan, check_manifest, owned_by_parts,
 };
 use std::collections::BTreeMap;
+
+/// When the claims do not all fit beside a part, the room the parts leave
+/// for their review cells is the largest claim's cost, but at most the
+/// spare room divided by this (FIX 8287): a claim wider than that share is
+/// read in pieces, and every part keeps the rest of the room for its lines.
+const CLAIM_RESERVE_DIVISOR: u64 = 2;
 
 /// One member of an Arc's work as its calls show it.
 pub(super) struct MemberText {
@@ -303,10 +312,13 @@ pub(super) fn plan_groups(
     if claim_floor > spare {
         return Ok(None);
     }
+    // Each part's cells take what is left beside its own ranges; the
+    // reserve only keeps that room from shrinking below the largest claim,
+    // or below a share of the spare room when that claim is wider (FIX 8287).
     let reserve = if claims <= spare {
         claims
     } else {
-        largest.min(spare)
+        largest.min(spare / CLAIM_RESERVE_DIVISOR).max(claim_floor)
     };
     let cap = room - reserve;
     let mut groups = Vec::new();

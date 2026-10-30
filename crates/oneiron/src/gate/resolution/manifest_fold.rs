@@ -25,8 +25,9 @@ use crate::gate::decode::{DecodedManifestCarrier, decode_policy_manifest};
 
 mod doors;
 mod fold;
+mod snapshot_cache;
 
-pub(crate) use self::fold::resolve_policy_manifest;
+pub(crate) use self::snapshot_cache::resolve_policy_manifest;
 
 /// The vault ceiling on any project's depth row: the resolved manifest row,
 /// a holder-authored value in place of the shipped fallback (C1). A loaded

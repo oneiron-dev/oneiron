@@ -554,6 +554,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.message_streams.refused",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.messages.durability",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::MessageDurabilityRequest,
@@ -7059,6 +7063,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.finalize_stream",
     "vault.cancel_stream",
     "vault.message_stream_partial",
+    "vault.message_streams.refused",
     "vault.messages.durability",
     "vault.recall",
     "vault.retrieval.aging.get",
@@ -8026,6 +8031,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.message_stream_partial" => {
             crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamPartial>()
         }
+        "vault.message_streams.refused" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::StreamRecoveryRefusal>,
+        >(),
         "vault.messages.durability" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>,
         >(),
@@ -11245,6 +11253,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.message_stream_partial" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.message_streams.refused" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19357,6 +19372,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.message_stream_partial" => {
             let _input: crate::memory::MessageStreamRequest = decode(value.clone())?;
         }
+        "vault.message_streams.refused" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "vault.messages.durability" => {
             let _input: crate::memory::MessageDurabilityRequest = decode(value.clone())?;
         }
@@ -23430,6 +23448,9 @@ pub fn invoke(
         "vault.message_stream_partial" => {
             encode(vault_message_stream_partial(memory, decode(value)?)?)
         }
+        "vault.message_streams.refused" => {
+            encode(vault_message_streams_refused(memory, decode(value)?)?)
+        }
         "vault.messages.durability" => encode(vault_messages_durability(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
@@ -26681,6 +26702,15 @@ pub fn vault_message_stream_partial(
     input: crate::memory::MessageStreamRequest,
 ) -> MemoryResult<crate::memory::MessageStreamPartial> {
     memory.messages_stream_partial(&input)
+}
+pub fn vault_message_streams_refused(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::memory::StreamRecoveryRefusal>> {
+    memory
+        .vault()
+        .stream_recovery_refusals(&memory.embedded_owner("vault.message_streams.refused")?)
+        .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_messages_durability(
     memory: &Memory<'_>,

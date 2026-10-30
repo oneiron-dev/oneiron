@@ -337,6 +337,7 @@ fn export_record(
         at,
         changes,
         recalc: None,
+        recalc_zone: None,
         effects,
     }
 }

@@ -763,6 +763,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_message_streams_refused(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.message_streams.refused", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_messages_durability(
         &self,
         input: serde_json::Value,

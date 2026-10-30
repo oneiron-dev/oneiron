@@ -578,6 +578,8 @@ pub(crate) fn apply_settlement_in_txn(
         Value::Map(resolution),
     );
     let resolved = EntityId::now();
+    // A claim's times are Unix seconds; `now` is milliseconds (FIX 10519).
+    let at = now / 1_000;
     // Rule A: the answer is concluded from the marker it settles and every
     // member it weighed.
     let birth = {
@@ -591,7 +593,7 @@ pub(crate) fn apply_settlement_in_txn(
             "dreamer.settlement",
             &inputs,
             &[],
-            now,
+            at,
         )
     };
     // A MACHINE's answer (the Dreamer's) carries its retained signature, or
@@ -604,11 +606,8 @@ pub(crate) fn apply_settlement_in_txn(
             &resolved,
             candidate,
             &envelope,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
+            TimeRange { start: at, end: at },
+            at,
         )
         .made_by(&resolved, birth)
         .apply(txn)?;
@@ -878,13 +877,15 @@ fn restore_dreamer_member_in_txn(
         },
     );
     let copy = EntityId::now();
+    // A claim's times are Unix seconds; `now` is milliseconds (FIX 10519).
+    let at = now / 1_000;
     let birth = RowBirth::written(
         envelope.actor(),
         MadeByClass::Concluded,
         surface.birth,
         &[loser, reverted],
         &[],
-        now,
+        at,
     );
     vault.sign_retained_machine_claim_in_txn(&*txn, &copy, &candidate, &mut envelope)?;
     vault
@@ -893,11 +894,8 @@ fn restore_dreamer_member_in_txn(
             &copy,
             candidate,
             &envelope,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
+            TimeRange { start: at, end: at },
+            at,
         )
         .made_by(&copy, birth)
         .apply(txn)?;

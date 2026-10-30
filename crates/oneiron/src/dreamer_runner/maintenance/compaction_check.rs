@@ -333,10 +333,7 @@ pub async fn run_compaction_check(
         verdict.spend.note_before_error(ctx);
         return Err(error);
     }
-    Ok(DreamerAttemptExecution::Completed {
-        completed_units: verdict.spend.units,
-        step_hashes: Vec::new(),
-    })
+    Ok(verdict.spend.completed())
 }
 
 /// Where the host's binding lets the judge's call be served.

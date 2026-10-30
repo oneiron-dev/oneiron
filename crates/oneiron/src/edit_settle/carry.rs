@@ -35,14 +35,15 @@ use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::paragraph_review::carry_paragraph_judgments;
-use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
+use crate::edit_roundtrip::pptx::PptxAuthor;
 use crate::edit_roundtrip::slides_review::{
     SlideNow, SlideRenderer, SlideReviewError, SlideReviewImage, SlideReviewLabels,
     SlideReviewRequest, SlideReviewUnit, carry_slide_judgments, deck_slides_now,
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, CellRef, CellValue, EditOp, EditProposal, FolderAsk, FolderItem, OfficeFormat,
-    ParagraphAsk, RangeRef, SheetAnswerBundle, SheetRowReads, SheetRowsAsk, UnitDecider,
+    ParagraphAsk, ParagraphJudgment, RangeRef, SheetAnswerBundle, SheetRowReads, SheetRowsAsk,
+    UnitDecider,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -283,39 +284,84 @@ impl Vault {
         } else {
             (Default::default(), None)
         };
-        let differs = |cell: CellRef| {
+        // Rows read on the live body: their read cells and header compare
+        // from the newest export since the base, which holds them as the body
+        // did at its frontier, compared with the pin (FIX 12017). The answer
+        // cell was read on the version and compares from the base.
+        let exported = self.export_span(
+            artifact,
+            bundle.base_live.as_ref(),
+            base_version,
+            head.version,
+        )?;
+        let exported_sheet = match &exported {
+            Some(span) => self.live_sheet_until(
+                artifact,
+                bundle.base_live.as_ref(),
+                &bundle.sheet,
+                Some((span.frontier.as_slice(), span.version)),
+            )?,
+            None => None,
+        };
+        let export_cells = match exported.as_ref().and_then(|span| span.bytes.as_ref()) {
+            Some(bytes) => named_sheet_cells(bytes, &bundle.sheet, &wanted).ok(),
+            None => None,
+        };
+        let read_from = match &exported {
+            Some(span) if span.bytes.is_none() => now.as_ref(),
+            Some(_) => export_cells.as_ref(),
+            None => Some(&then),
+        };
+        let differs = |from: Option<&std::collections::BTreeMap<CellRef, CellValue>>,
+                       cell: CellRef| {
             let read = |cells: &std::collections::BTreeMap<CellRef, CellValue>| {
                 cells.get(&cell).cloned().unwrap_or(CellValue::Blank)
             };
-            now.as_ref().is_none_or(|now| read(&then) != read(now))
+            match (from, now.as_ref()) {
+                (Some(from), Some(now)) => read(from) != read(now),
+                _ => true,
+            }
         };
         let header_changed = moved
             && header_row.is_some_and(|row| {
                 read_cols
                     .iter()
-                    .any(|col| differs(CellRef { col: *col, row }))
+                    .any(|col| differs(read_from, CellRef { col: *col, row }))
             });
         let mut kept = Vec::new();
         let mut withdrawn = Vec::new();
         for (index, (answer, file)) in bundle.answers.iter().zip(&files).enumerate() {
             let blob = if moved && now.is_none() {
                 Some(WithdrawReason::UnitMissing)
-            } else if moved && differs(answer.cell) {
+            } else if moved && differs(Some(&then), answer.cell) {
                 Some(WithdrawReason::AnswerCellChanged)
             } else if moved
                 && (header_changed
                     || read_cols.iter().any(|col| {
-                        differs(CellRef {
-                            col: *col,
-                            row: answer.cell.row,
-                        })
+                        differs(
+                            read_from,
+                            CellRef {
+                                col: *col,
+                                row: answer.cell.row,
+                            },
+                        )
                     }))
             {
                 Some(WithdrawReason::UnitChanged)
+            } else if let Some(reason) = exported_sheet
+                .as_ref()
+                .and_then(|sheet| live::sheet_row_reason(sheet, answer, &read_cols, header_row))
+            {
+                Some(reason)
             } else if let Some(pin) = &answer.source {
                 match file {
                     None => Some(WithdrawReason::UnitMissing),
-                    Some((_, hash)) if *hash != pin.body_hash => Some(WithdrawReason::UnitChanged),
+                    Some((version, hash))
+                        if *hash != pin.body_hash
+                            && self.folder_file_changed(answer, pin, (*version, *hash))? =>
+                    {
+                        Some(WithdrawReason::UnitChanged)
+                    }
                     Some(_) => None,
                 }
             } else {
@@ -456,20 +502,49 @@ impl Vault {
         // The DOCX read runs in the host's memory (FIX 10651); a resource
         // refusal is the engine's error, never an invalid document (FIX 10587).
         let resources = crate::office_body::document_resources();
-        let blocks = resources
-            .docx(|| oneiron_docedit::docx_body::read_docx_blocks(&current, limits))
-            .map_err(|error| {
-                if let Some(refusal) = error.resource() {
-                    return crate::office_body::document_refused(refusal);
-                }
-                Error::Artifact(ArtifactError::InvalidEditManifest(
-                    "the held paragraphs' document does not read",
-                ))
-            })?;
+        let read_blocks = |bytes: &[u8]| {
+            resources
+                .docx(|| oneiron_docedit::docx_body::read_docx_blocks(bytes, limits))
+                .map_err(|error| {
+                    if let Some(refusal) = error.resource() {
+                        return crate::office_body::document_refused(refusal);
+                    }
+                    Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "the held paragraphs' document does not read",
+                    ))
+                })
+        };
+        let blocks = read_blocks(current.as_slice())?;
+        // Paragraphs read on the live body: their text compares from the
+        // newest export since the base, which holds it as the body did at its
+        // frontier, compared with the pin (FIX 12017).
+        let exported =
+            self.export_span(artifact, judged_live.as_ref(), base_version, head.version)?;
+        let exported_units = match &exported {
+            Some(span) => self.live_paragraphs_until(
+                artifact,
+                judged_live.as_ref(),
+                Some(span.frontier.as_slice()),
+            )?,
+            None => None,
+        };
+        let export_blocks = match exported.as_ref().and_then(|span| span.bytes.as_ref()) {
+            Some(bytes) => Some(read_blocks(bytes.as_slice())?),
+            None => None,
+        };
         let mut kept = Vec::new();
         let mut withdrawn = Vec::new();
         for row in rows {
-            let blob = match blocks.iter().find(|block| block.id == row.block) {
+            let head_block = blocks.iter().find(|block| block.id == row.block);
+            let text_moved = |text: &str| match (&exported, &export_blocks) {
+                (None, _) => *blake3::hash(text.as_bytes()).as_bytes() != row.text_hash,
+                (Some(_), None) => false,
+                (Some(_), Some(was)) => was
+                    .iter()
+                    .find(|was| was.id == row.block)
+                    .is_none_or(|was| was.text != text),
+            };
+            let blob = match head_block {
                 _ if !moved => None,
                 None => Some(WithdrawReason::UnitMissing),
                 Some(block)
@@ -479,15 +554,26 @@ impl Vault {
                             oneiron_docedit::docx_body::DocxBlockKind::Paragraph
                                 | oneiron_docedit::docx_body::DocxBlockKind::Heading(_)
                         )
-                        || *blake3::hash(block.text.as_bytes()).as_bytes() != row.text_hash =>
+                        || text_moved(block.text.as_str()) =>
                 {
                     Some(WithdrawReason::UnitChanged)
                 }
-                Some(_) => None,
+                Some(_) => exported_units
+                    .as_ref()
+                    .and_then(|units| units.change(&row.block))
+                    .map(live::withdraw_reason),
             };
             let live_change = live.as_ref().and_then(|units| units.change(&row.block));
             match blob.or(live_change.map(live::withdraw_reason)) {
-                None => kept.push(row.clone()),
+                // A kept answer's comment quotes the paragraph as the head
+                // holds it, an export's projection of the text it read.
+                None => kept.push(ParagraphJudgment {
+                    text_hash: match (&exported, head_block) {
+                        (Some(_), Some(block)) => *blake3::hash(block.text.as_bytes()).as_bytes(),
+                        _ => row.text_hash,
+                    },
+                    ..row.clone()
+                }),
                 Some(reason) => withdrawn.push(WithdrawnAnswer {
                     unit: WithdrawnUnit::Paragraph {
                         block: row.block.clone(),
@@ -564,7 +650,7 @@ impl Vault {
         let rows = &proposal.manifest.slide_judgments;
         // An edit to the live deck never exported moves no version (FIX 2115).
         let judged_live = rows.first().and_then(|row| row.judged_live.clone());
-        let live = self.live_slides(artifact, judged_live.as_ref())?;
+        let live = self.live_slides(artifact, judged_live.as_ref(), None)?;
         if !moved && live.is_none() {
             return Ok(None);
         }
@@ -576,14 +662,32 @@ impl Vault {
         let current = self
             .read_blob_artifact_version(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
+        // Slides read on the live deck compare from the newest export since
+        // the base, which shows them as the deck did at its frontier,
+        // compared with the pin (FIX 12017).
+        let exported =
+            self.export_span(artifact, judged_live.as_ref(), base_version, head.version)?;
+        let exported_units = match &exported {
+            Some(span) => self.live_slides(
+                artifact,
+                judged_live.as_ref(),
+                Some(span.frontier.as_slice()),
+            )?,
+            None => None,
+        };
+        let export_is_head = exported.as_ref().is_some_and(|span| span.bytes.is_none());
         let (was, now) = if moved {
-            let base = self
-                .read_blob_artifact_version(artifact, base_version)?
-                .ok_or(Error::EntityNotFound)?;
-            (
-                deck_slides_now(&base, limits)?,
-                deck_slides_now(&current, limits)?,
-            )
+            let was = match exported.as_ref().map(|span| span.bytes.as_ref()) {
+                Some(None) => Vec::new(),
+                Some(Some(bytes)) => deck_slides_now(bytes, limits)?,
+                None => {
+                    let base = self
+                        .read_blob_artifact_version(artifact, base_version)?
+                        .ok_or(Error::EntityNotFound)?;
+                    deck_slides_now(&base, limits)?
+                }
+            };
+            (was, deck_slides_now(&current, limits)?)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -600,15 +704,21 @@ impl Vault {
                     .find(|slide| slide.is(&row.anchor))
                     .map(|slide| slide.shows)
             };
+            let slide = (row.anchor.slide_part.clone(), row.anchor.sld_id);
             let blob = match (shows(&was), shows(&now)) {
                 _ if !moved => None,
                 (_, None) => Some(WithdrawReason::UnitMissing),
+                _ if export_is_head => None,
                 (Some(was), Some(now)) if was == now => None,
                 _ => Some(WithdrawReason::UnitChanged),
-            };
-            let live_change = live.as_ref().and_then(|units| {
-                units.change(&(row.anchor.slide_part.clone(), row.anchor.sld_id))
+            }
+            .or_else(|| {
+                exported_units
+                    .as_ref()?
+                    .change(&slide)
+                    .map(live::withdraw_reason)
             });
+            let live_change = live.as_ref().and_then(|units| units.change(&slide));
             match blob.or(live_change.map(live::withdraw_reason)) {
                 None => kept.push((row.clone(), patch.clone())),
                 Some(reason) => withdrawn.push(WithdrawnAnswer {
@@ -1278,36 +1388,26 @@ impl Vault {
                 let bytes = self
                     .read_blob_artifact_version(&wake.artifact, head.version)?
                     .ok_or(Error::EntityNotFound)?;
-                let slides = deck_slides_now(&bytes, self.docedit_package_limits()?)?;
-                // A slide gone from the head has nothing to ask of.
-                let targets: Vec<PptxCommentTarget> = wake
-                    .answers
-                    .iter()
-                    .filter_map(|answer| match &answer.unit {
-                        WithdrawnUnit::Slide {
-                            part,
-                            sld_id,
-                            shape,
-                        } => slides
-                            .iter()
-                            .find(|slide| slide.part == *part && slide.sld_id == *sld_id)
-                            .map(|slide| PptxCommentTarget {
-                                slide: slide.slide,
-                                slide_creation_id: slide.creation_id,
-                                shape_creation_id: shape.clone(),
-                                shape_fingerprint: None,
-                            }),
-                        _ => None,
-                    })
-                    .collect();
+                // A live deck is asked as it renders at its head; the comments
+                // still land on the version (FIX 11981).
+                let live = self.live_head_deck(&wake.artifact)?;
+                let targets = live::reask_slide_targets(
+                    wake,
+                    &bytes,
+                    live.as_ref().map(|(_, deck)| deck.as_slice()),
+                    self.docedit_package_limits()?,
+                )?;
                 if targets.is_empty() {
                     return Ok((Reasked::Nothing, reask_ref));
                 }
                 let renderer = renderer.ok_or_else(|| {
                     Error::InvalidConfig("no slide renderer on this host".to_owned())
                 })?;
-                let numbers: Vec<u64> = targets.iter().map(|target| target.slide).collect();
-                let images = renderer.render(&bytes, &numbers)?;
+                let numbers: Vec<u64> = targets.iter().map(|(_, number)| *number).collect();
+                let rendered = live
+                    .as_ref()
+                    .map_or(bytes.as_slice(), |(_, deck)| deck.as_slice());
+                let images = renderer.render(rendered, &numbers)?;
                 if images.len() != targets.len() {
                     return Err(Error::InvalidConfig(
                         "the slide renderer returned the wrong number of images".to_owned(),
@@ -1316,7 +1416,7 @@ impl Vault {
                 let units: Vec<SlideReviewUnit> = targets
                     .into_iter()
                     .zip(images)
-                    .map(|(target, image)| SlideReviewUnit {
+                    .map(|((target, _), image)| SlideReviewUnit {
                         target,
                         image: SlideReviewImage::Rendered(image),
                         renderer: renderer.name().to_owned(),
@@ -1343,8 +1443,15 @@ impl Vault {
                     // The comment writer stamps epoch milliseconds.
                     at: now.saturating_mul(1000),
                 };
+                let shown = live.as_ref().map(|(pin, deck)| (pin, deck.as_slice()));
                 let run = self
-                    .review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
+                    .review_blob_artifact_slides_at(
+                        &wake.artifact,
+                        head.version,
+                        &bytes,
+                        shown,
+                        &request,
+                    )
                     .map_err(|error| match error {
                         SlideReviewError::Vault(error) => error,
                         other => Error::InvalidConfig(other.to_string()),
