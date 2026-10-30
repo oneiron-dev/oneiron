@@ -38,7 +38,9 @@ use std::ops::Range;
 use super::executor::ConsolidationExecutor;
 use super::executor::extraction::check_extraction_reply;
 use super::extracted_people::{MintNamespace, NoteSource, bind_people, mint_note_people};
-use super::neighbourhood::{Neighbourhood, Passage, discover_in};
+use super::neighbourhood::{
+    ListingPin, Neighbourhood, Passage, discover_in, unpin_note_listing_in_txn,
+};
 use super::note_classification::{PadAsk, note_classification_reply};
 use super::note_topics::{
     NoteTopicLineage, NoteTopicMembership, index_note_topic_in_txn,
@@ -274,6 +276,15 @@ impl ConsolidationExecutor<'_> {
                 DreamerParkCause::Retry,
             )));
         };
+        // The NOTE's listing is pinned before its call goes out, so a replay
+        // lists the same entities and its request meets its memo (FIX 7578).
+        if let Err(error) = super::neighbourhood::pin(
+            ctx.vault,
+            ListingPin::note(run.attempt_id, note.id),
+            &note.listed,
+        ) {
+            return spent_or_deferred(error, ctx, charges).map(Some);
+        }
         let step = DurableStepContext {
             vault: ctx.vault,
             attempt_id: run.attempt_id,
@@ -486,6 +497,7 @@ impl ConsolidationExecutor<'_> {
                 },
             )?;
             index_note_topic_in_txn(ctx.vault, txn, note.id, left.as_ref(), topic.as_ref())?;
+            unpin_note_listing_in_txn(ctx.vault, txn, run.attempt_id, note.id)?;
             // The membership and its topic's summary commit together (FIX
             // 907): a replay never finds this NOTE reviewed and the summary
             // unqueued.
@@ -611,14 +623,15 @@ fn readable_notes(
         };
         // The entities the markdown names, by the transcript listing's own
         // probes, through the review's own scoped read: no claims, so the
-        // review's scope holds no prior head. A NOTE carries no byline.
+        // review's scope holds no prior head. A NOTE carries no byline. A
+        // replay lists what this NOTE's pin keeps (FIX 7578).
         let passage = Passage {
             turns: &[(&[][..], Some(markdown.as_str()))],
             axes: None,
             bound: None,
             thing: None,
         };
-        let (listed, _) = discover_in(vault, &txn, read, attempt, &passage)?;
+        let (listed, _) = discover_in(vault, &txn, read, ListingPin::note(attempt, *id), &passage)?;
         notes.push(Note {
             id: *id,
             version,

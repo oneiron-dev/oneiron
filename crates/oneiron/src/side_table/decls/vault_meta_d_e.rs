@@ -175,8 +175,9 @@ side_tables! {
     /// revision, the before-state its effect changed, its receipt and, once the owner reverts
     /// it, the revert. Key: id16 (finding).
     DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named;
-    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
-    /// lists the same ones. Ids only, never their text. Key: id16.
+    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, or one
+    /// NOTE's within a NOTE review attempt (FIX 7578), so a replay lists the same ones. Ids only,
+    /// never their text. Key: id16(attempt), then id16(note) for a NOTE's listing.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
     /// Atomic merge/narrative outputs for one nightly fan-in receipt. Key: id16.
     DREAMER_NIGHTLY_MERGED: VaultMeta b"dreamer:nightly:merged:v1:" Named;
