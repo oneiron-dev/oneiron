@@ -9,12 +9,11 @@ use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
 use std::collections::BTreeSet;
 
-/// The entity type a channel actor is minted as. A provider's confidence
-/// prior resolves the provider's actor only as a PERSON row that carries its
-/// `provider_key` (`provider_confidence`), and that prior is the channel's
-/// reputation, so the channel actor is that row. It carries `actor_class`
-/// `system`, and no identity routes to it.
-const CHANNEL_ACTOR_ENTITY_TYPE: u8 = crate::registry::ENTITY_TYPE_PERSON;
+/// The entity type a channel actor is minted as. A channel actor is
+/// plumbing, not a someone: it carries `actor_class` `system`, no identity
+/// routes to it, and its `provider_key` makes it the row the provider's
+/// confidence prior (the channel's reputation) resolves to.
+const CHANNEL_ACTOR_ENTITY_TYPE: u8 = crate::registry::ENTITY_TYPE_MACHINE;
 
 /// Host-controlled channel registration. Authentication secrets are deliberately absent.
 #[derive(Debug, Clone)]
@@ -83,8 +82,10 @@ impl Vault {
     ///
     /// The identity keeps the binding the caller asked for, so inbound events
     /// reach that recipient; the channel actor rides on it as its reputation
-    /// and credential holder. The credential's ceiling is the vault's
-    /// `credential_lifetimes` policy, resolved in the mint transaction.
+    /// and credential holder. The actor is a MACHINE; when the binding names
+    /// a PERSON or ORG, its `actor.subject_ref` anchors to that subject. The
+    /// credential's ceiling is the vault's `credential_lifetimes` policy,
+    /// resolved in the mint transaction.
     pub fn register_channel_actor(
         &self,
         issuer: &HostSlipIssuer,
@@ -108,26 +109,30 @@ impl Vault {
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let lifetime_secs = registration.lifetime_secs.min(ceiling.initial_owner_secs);
         // A provider name identifies one channel actor. A second claimant may
-        // not steal the existing actor's reputation or key lineage.
-        for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &self.store,
-            &txn,
-            CHANNEL_ACTOR_ENTITY_TYPE,
-            None,
-        )? {
-            let id = row?;
-            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
-            else {
-                return Err(Error::CorruptedIndex("channel actor index"));
-            };
-            if let Ok(Value::Map(entries)) =
-                rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-                && entries.iter().any(|(key, value)| {
-                    key.as_str() == Some("provider_key")
-                        && value.as_str() == Some(registration.provider_key.as_str())
-                })
-            {
-                return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
+        // not steal the existing actor's reputation or key lineage, whether
+        // that actor is a channel actor or a provider actor a prior minted.
+        for kind in crate::provider_confidence::PROVIDER_ACTOR_ENTITY_TYPES {
+            for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                &self.store,
+                &txn,
+                kind,
+                None,
+            )? {
+                let id = row?;
+                let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
+                else {
+                    return Err(Error::CorruptedIndex("channel actor index"));
+                };
+                if let Ok(Value::Map(entries)) =
+                    rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                    && entries.iter().any(|(key, value)| {
+                        key.as_str() == Some("provider_key")
+                            && value.as_str() == Some(registration.provider_key.as_str())
+                    })
+                {
+                    return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
+                }
             }
         }
         let actor_ref = EntityId::now();
@@ -174,6 +179,24 @@ impl Vault {
             false,
             true,
         )?;
+        // A PERSON or ORG the identity is bound to stands behind the channel
+        // actor, so the actor anchors itself to it as the system writer it
+        // is. Any other binding leaves the actor unanchored plumbing.
+        if let Some(subject) = identity.binding().actor_ref()
+            && matches!(
+                self.get_entity_type_in_txn(&txn, &subject)?,
+                Some(crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_ORG)
+            )
+        {
+            crate::subject_model::ensure_actor_subject_in_txn(
+                self,
+                &mut txn,
+                actor_ref,
+                subject,
+                crate::WriteActor::new(actor_ref, crate::EdgeActorClass::System),
+                now,
+            )?;
+        }
         admit_channel_identity_transition_in_txn(
             &self.store,
             &txn,
