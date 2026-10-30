@@ -711,6 +711,21 @@ fn reread_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> R
     requeue_turn_in_txn(store, txn, turn)
 }
 
+/// Whether a round already took `turn`'s current words, so a Micro
+/// selection retry's widening leaves it out (FIX 12246): only words no round
+/// has queued, or changed since, are new work for the retry.
+pub(crate) fn words_taken_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<bool> {
+    let Some(taken) = taken_in_txn(&vault.store, txn, turn)? else {
+        return Ok(false);
+    };
+    Ok(turn_statements_in_txn(vault, txn, turn)?
+        .is_some_and(|statements| reading(&statements) == taken))
+}
+
 /// The version of one turn's statements.
 fn reading(statements: &BTreeSet<[u8; 32]>) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();

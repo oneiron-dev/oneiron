@@ -6,7 +6,10 @@
 //! thing keeps its originals only: what widening finds there may be another
 //! thing's, so it is owed as per-conversation sibling work and never
 //! attached to this thing. Any other retry runs its originals with the
-//! oldest other sources that fit, the rest owed as before (Rule 5).
+//! oldest other sources that fit, the rest owed as before (Rule 5). A Micro
+//! retry widens only to peers whose current words no round has taken yet
+//! (FIX 12246): a peer another window already queued is that window's work,
+//! and taking it again re-extracts the same facts (Dreamer proof run 2).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -173,7 +176,9 @@ impl Snapshot<'_, '_> {
                 && dreamer_extraction_role_admissible(role)
                 && facts.world_ref.or(parent.world_ref) == branch.world_ref
                 && facts.facet_ref.or(parent.facet_ref) == branch.facet_ref
-                && (original.contains(id) || learned_at >= part.watermark_last_learned_at)
+                && (original.contains(id)
+                    || (learned_at >= part.watermark_last_learned_at
+                        && !self.taken_elsewhere(id)?))
             {
                 turns.push((learned_at, key, *id));
             }
@@ -188,6 +193,16 @@ impl Snapshot<'_, '_> {
             return Ok(Err(Drift::Membership(missing)));
         }
         Ok(Ok(turns))
+    }
+
+    /// Whether another Micro round already took `turn`'s current words, so
+    /// this retry's widening leaves it to that round (FIX 12246). Other
+    /// scopes read their own rounds and widen as before.
+    fn taken_elsewhere(&self, turn: &EntityId) -> Result<bool> {
+        if self.scope != DreamerConsolidationScope::Micro {
+            return Ok(false);
+        }
+        crate::dreamer_wake::words_taken_in_txn(self.vault, self.txn, turn)
     }
 
     /// What a drifted part's whole attempt comes to: a held round's member
