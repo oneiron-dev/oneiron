@@ -69,9 +69,9 @@ mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
     PENDING_PRODUCER, claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
-    claim_ids_for_predicate_page_in_txn, for_each_claim_id_for_predicate_in_txn,
-    maintain_claim_projection_index, remove_claim_projection_index,
-    remove_claim_projection_index_in_rows,
+    claim_ids_for_predicate_page_in_txn, claim_ids_for_world_page_in_txn,
+    for_each_claim_id_for_predicate_in_txn, maintain_claim_projection_index,
+    next_claim_world_in_txn, remove_claim_projection_index, remove_claim_projection_index_in_rows,
 };
 mod put;
 mod read;

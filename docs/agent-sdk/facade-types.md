@@ -2210,7 +2210,7 @@ export type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; 
 /** `oneiron::skill_optimize::gate::tradeoff::JevTradeoffVerdict` */
 export type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin }
 /** `oneiron::skill_optimize::gate::tradeoff::SkillTradeoffAsk` */
-export type SkillTradeoffAsk = { pending: EntityId; skill: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number }
+export type SkillTradeoffAsk = { pending: EntityId; skill: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number; judge_rubric_digest?: string | null }
 /** `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffAskView` */
 export type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk; tradeoff_capacity_advisory?: TradeoffCapacityAdvisory[] | null }
 /** `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffPickRequest` */
@@ -2498,7 +2498,7 @@ export type PackSetupAccount = { id: string; label: string; sign_up?: string | n
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupAuth` */
 export type PackSetupAuth = "oauth" | "api_key" | "bot_token" | "app_password" | "session" | "webhook" | "local"
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupSecret` */
-export type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null }
+export type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null; optional?: boolean }
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupRisk` */
 export type PackSetupRisk = "low" | "medium" | "high"
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupPermission` */
@@ -2704,7 +2704,7 @@ export type ProjectParentWitness = { project: EntityId; head: ProjectRevisionHas
 /** `oneiron_model::llm::scope::ScopeResource` */
 export type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string }
 /** `oneiron_model::llm::scope::Scope` */
-export type ScopeScope = { world: string | null; facet: string | null; relationship: string | null; project: string | null; readable: ScopeResource[]; writable: ScopeResource[] }
+export type ScopeScope = { world: string | null; facet: string | null; relationship: string[] | null; project: string | null; readable: ScopeResource[]; writable: ScopeResource[] }
 /** `oneiron::workspace_roster::project::ProjectAuthority` */
 export type ProjectAuthority = { parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice: ScopeScope; depth_limit: number; depth_remaining: number; leader: string; board: string[]; roster?: string[] | null }
 /** `oneiron::workspace_roster::project::ProjectProofVersion` */
@@ -3710,7 +3710,7 @@ export type CustodyUncheckedReason = "none_named" | "none_published" | "unread" 
 /** `oneiron_authority::authority::owner_work::result::CustodyRegisterCheck` */
 export type CustodyRegisterCheck = { kind: "checked"; manifest_ref: string } | { kind: "unchecked"; reason: CustodyUncheckedReason; refs: string[] }
 /** `oneiron::world_keys::owner_work::diagnostics::BundleHomeWarning` */
-export type BundleHomeWarning = "home_does_not_keep_sealed_bundles" | "home_profile_unknown"
+export type BundleHomeWarning = "home_does_not_keep_sealed_bundles" | "home_profile_unknown" | { awaiting_reader: { worlds: EntityId[] } }
 /** `oneiron::world_keys::owner_work::OwnerWorkCancelState` */
 export type OwnerWorkCancelState = "cancelled" | "already_enacted" | "already_refused"
 /** `oneiron::world_keys::owner_work::OwnerWorkCancelNote` */
@@ -4806,7 +4806,7 @@ export type CodeProposalSubmitted = { proposal: EntityId; repo: EntityId; actor:
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictRecordRequest` */
 export type CodeConflictRecordRequest = { repo: EntityId; branch_subject: EntityId; branch: string; left_proposal: EntityId; right_proposal: EntityId }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictView` */
-export type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task: EntityId }
+export type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task?: EntityId | null; held?: string | null }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictViewRequest` */
 export type CodeConflictViewRequest = { branch_subject: EntityId }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictResolutionView` */
@@ -4860,7 +4860,7 @@ export type CodeFileEdit = { path: string; start: number; end: number; expected:
 /** `oneiron_contracts::claim::confidence::ConfidenceDetails` */
 export type ConfidenceDetails = { band: ConfidenceBand; basis: VerdictBasis }
 /** `oneiron::memory::claims::ClaimInput` */
-export type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null; confidence_details?: ConfidenceDetails | null }
+export type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string[] | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null; confidence_details?: ConfidenceDetails | null }
 /** `oneiron::memory::foreign_code::ForeignCodeEffect` */
 export type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: CodeFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput }
 /** `oneiron::memory::foreign_code::ForeignCodeProposal` */
@@ -5104,7 +5104,7 @@ export type MirrorObservedTip = { state: "absent" } | { state: "at"; oid: string
 /** `oneiron::origin::publish::types::OriginPublishLfsBytes` */
 export type OriginPublishLfsBytes = "not_sent"
 /** `oneiron::origin::publish::types::OriginPublishReview` */
-export type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes }
+export type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes; lossy_paths: boolean }
 /** `oneiron::origin::publish::mirror_plan_types::MirrorRefOutcome` */
 export type MirrorRefOutcome = "pending" | "dispatched" | "applied" | "observed_applied" | "rejected" | "unknown" | "refused" | "remote_moved" | "paused" | "covered" | "held"
 /** `oneiron::origin::publish::mirror_plan_view::OriginMirrorPlanRefView` */
@@ -5206,7 +5206,7 @@ export type VisibleFilePolicy = { version: number; include_prefixes: string[]; e
 /** `oneiron::memory::code_view_doors::types::CodeViewMaterializeRequest` */
 export type CodeViewMaterializeRequest = { repo: EntityId; tested: EntityId; account: EntityId; policy: VisibleFilePolicy }
 /** `oneiron::memory::code_view_doors::types::CodeViewFile` */
-export type CodeViewFile = { path: string; content_hash_blake3: string; frontier: CodeDocumentFrontier; text_sha256: string }
+export type CodeViewFile = { path: string; content_hash_blake3: string; frontier?: CodeDocumentFrontier | null; text_sha256?: string | null; git_oid?: string | null }
 /** `oneiron::memory::code_view_doors::types::CodeWorkingView` */
 export type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string }
 /** `oneiron::memory::code_view_doors::types::CodeViewRequest` */
@@ -5274,7 +5274,7 @@ export type MergeQueueObserveRequest = { repo: EntityId; batches: string[] }
 /** `oneiron::contract_oracle::types::CommandOutput` */
 export type CommandOutput = { status: number; stdout: number[]; stderr: number[] }
 /** `oneiron::contract_oracle::types::ContractDiff` */
-export type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } }
+export type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } } | { SchemaBytesDrift: { contract: string; offset: number; before?: string | null; after?: string | null } }
 /** `oneiron::contract_oracle::types::ContractVerdict` */
 export type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] }
 /** `oneiron::merge_queue::driver_types::QueueDriveStatus` */
@@ -5712,7 +5712,7 @@ export type DecisionMedia = { name: string; reference: DecisionMediaRef; served:
 /** `oneiron::office_body::live_units::LivePin` */
 export type LivePin = { frontier: number[]; commits: number }
 /** `oneiron::edit_roundtrip::slides_review::SlideJudgment` */
-export type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; judged_live?: LivePin | null; comment: string; labels: SlideReviewLabels }
+export type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; ceiling: DecisionRung; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; judged_live?: LivePin | null; comment: string; labels: SlideReviewLabels }
 /** `oneiron_docedit::pptx_comments::model::PptxCommentAction` */
 export type PptxCommentAction = { add: { target: PptxCommentTarget; text: string } } | { reply: { text: string } } | { resolve: { resolved: boolean } }
 /** `oneiron::edit_roundtrip::pptx::package::PptxCommentPatch` */
@@ -5922,7 +5922,7 @@ export type StepSequence = "name" | "categories" | "values"
 /** `oneiron_docedit::edit::transaction::StepCell` */
 export type StepCell = "missing" | { number: number } | { text: string } | { date: string }
 /** `oneiron_docedit::edit::transaction::DeckStep` */
-export type DeckStep = { set_text: { target: StepTarget; text: string } } | { replace_run_text: { target: StepTarget; paragraph: number; run: number; expected: string; text: string } } | { set_xfrm: { target: StepTarget; xfrm: StepXfrm } } | { move_in_slide_space: { target: StepTarget; dx: number; dy: number } } | { set_picture: { target: StepTarget; asset: AssetRef } } | { set_notes: { slide: string; expected?: string | null; text: string } } | { add_shape: { slide: string; preset: StepPreset; name: string; offset: number[]; extent: number[] } } | { delete_shape: { target: StepTarget; cascade?: boolean } } | { reparent: { target: StepTarget; parent?: number | null } } | { duplicate_slide: { slide: string; expected: Digest } } | { reorder_slides: { order: number[] } } | { set_table_cell: { slide: string; table: number; row: number; col: number; expected: string; value: string } } | { set_series_values: { chart: string; series: number; sequence: StepSequence; values: StepCell[] } }
+export type DeckStep = { set_text: { target: StepTarget; text: string } } | { replace_run_text: { target: StepTarget; paragraph: number; run: number; expected: string; text: string } } | { set_xfrm: { target: StepTarget; xfrm: StepXfrm } } | { move_in_slide_space: { target: StepTarget; dx: number; dy: number } } | { set_picture: { target: StepTarget; asset: AssetRef } } | { set_notes: { slide: string; expected?: string | null; text: string } } | { add_shape: { slide: string; preset: StepPreset; name: string; offset: number[]; extent: number[] } } | { delete_shape: { target: StepTarget; cascade?: boolean } } | { reparent: { target: StepTarget; parent?: number | null } } | { duplicate_slide: { slide: string; expected: Digest } } | { reorder_slides: { order: number[] } } | { set_table_cell: { slide: string; table: number; row: number; col: number; expected: string; value: string } } | { set_series_values: { chart: string; series: number; sequence: StepSequence; values: StepCell[] } } | { release_media: { slide: string; relationships: string[] } }
 /** `oneiron_docedit::edit::transaction::DeckTransaction` */
 export type DeckTransaction = { schema: number; base: Digest; marks?: IdMarks; seed: string; steps: DeckStep[] }
 /** `oneiron::edit_roundtrip::deck::DeckRenderSide` */
@@ -7526,7 +7526,7 @@ export type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: 
 /** `oneiron_docedit::live::pptx::table::TableEdit` */
 export type TableEdit = { insert_row: { id?: NodeId | null; after?: NodeId | null } } | { insert_column: { id?: NodeId | null; after?: NodeId | null } } | { delete_row: { row: NodeId } } | { delete_column: { column: NodeId } } | { move_row: { row: NodeId; after?: NodeId | null } } | { move_column: { column: NodeId; after?: NodeId | null } } | { set_cell: { row: NodeId; column: NodeId; text: string } } | { merge: TableMerge } | { unmerge: TableMerge }
 /** `oneiron_docedit::live::pptx::chart::ChartEdit` */
-export type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null } } | { set_series_bubble_size: { series: NodeId; bubble_size?: (number | null)[] | null } } | { set_series_bubble_3d: { series: NodeId; bubble_3d?: boolean | null } } | { set_plot: { plot: ChartPlot } } | { set_view: { view?: ChartView | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: ChartCategories } } | { set_series_categories: { series: NodeId; categories?: ChartCategories | null } } | { insert_category: { owner?: NodeId | null; id?: NodeId | null; after?: NodeId | null; levels?: (string | null)[] } } | { delete_category: { owner?: NodeId | null; category: NodeId } } | { move_category: { owner?: NodeId | null; category: NodeId; after?: NodeId | null } } | { set_category_levels: { owner?: NodeId | null; category: NodeId; levels: (string | null)[] } } | { reserve_categories: { ids: NodeId[] } } | { set_source: { source: ChartSource } }
+export type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; x_labels?: (string | null)[] | null; plot?: number | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null; x_labels?: (string | null)[] | null } } | { set_series_plot: { series: NodeId; plot: number } } | { set_series_bubble_size: { series: NodeId; bubble_size?: (number | null)[] | null } } | { set_series_bubble_3d: { series: NodeId; bubble_3d?: boolean | null } } | { set_plot: { plot: ChartPlot } } | { set_view: { view?: ChartView | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: ChartCategories } } | { set_series_categories: { series: NodeId; categories?: ChartCategories | null } } | { insert_category: { owner?: NodeId | null; id?: NodeId | null; after?: NodeId | null; levels?: (string | null)[] } } | { delete_category: { owner?: NodeId | null; category: NodeId } } | { move_category: { owner?: NodeId | null; category: NodeId; after?: NodeId | null } } | { set_category_levels: { owner?: NodeId | null; category: NodeId; levels: (string | null)[] } } | { reserve_categories: { ids: NodeId[] } } | { set_source: { source: ChartSource } }
 /** `oneiron_docedit::live::pptx::DeckOp` */
 export type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { edit_table: { node: NodeId; edits: TableEdit[] } } | { edit_chart: { node: NodeId; edits: ChartEdit[] } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } }
 /** `oneiron::office_body::verbs::OfficeBodyOps` */
@@ -7826,7 +7826,7 @@ export type ConsolidationEvidenceSource = { source_ref: string; source?: string 
 /** `oneiron::memory::consolidation::ConsolidationPromotion` */
 export type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] }
 /** `oneiron::memory::consolidation_frontier::ConsolidationRootBucket` */
-export type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string | null; project: string }
+export type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string[] | null; project: string }
 /** `oneiron::memory::consolidation_frontier::ConsolidationReference` */
 export type ConsolidationReference = { source_id: string; claim_id?: string | null; byte_range?: [number, number] | null }
 /** `oneiron::memory::consolidation_frontier::ConsolidationRootInput` */

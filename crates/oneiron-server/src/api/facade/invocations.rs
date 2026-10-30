@@ -417,7 +417,10 @@ fn rereleased_refusal(
             "message".to_owned(),
             serde_json::Value::String(words.to_owned()),
         );
-        error.insert("suggestions".to_owned(), serde_json::Value::Array(Vec::new()));
+        error.insert(
+            "suggestions".to_owned(),
+            serde_json::Value::Array(Vec::new()),
+        );
         error.remove("legal_hold");
     }
     body

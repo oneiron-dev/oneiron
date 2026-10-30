@@ -93,7 +93,9 @@ impl CredentialDoorService {
     /// through: the lifetime check, the remaining-validity ceiling, the
     /// absolute lease bound, and the stamped `granted_at` are then all one
     /// observation. Reading twice would reintroduce, inside this module, the
-    /// very gap removing the caller's `now` closed.
+    /// very gap removing the caller's `now` closed. A receive-pack reads it
+    /// under its authorizing writer instead ([`Self::admit_scope_in_txn`]).
+    #[cfg(test)]
     pub(super) fn door_instant(&self) -> DoorResult<VaultInstant> {
         let rtxn = self.vault.store.env.read_txn().map_err(custody)?;
         self.vault.instant_in_txn(&rtxn).map_err(custody)
@@ -127,14 +129,11 @@ impl CredentialDoorService {
                 reason: DoorDenyReason::CredentialAbsent,
             });
         };
-        let now = self.door_instant()?;
-        let admitted = self.admit_scope(DOOR_RECEIVE_PACK_EFFECTOR, now)?;
-        self.authorize(
+        self.authorize_in_writer(
             credential,
             DOOR_VERB_RECEIVE_PACK,
             &repo_record(repo),
-            admitted.effector().as_str(),
-            admitted.instant(),
+            DOOR_RECEIVE_PACK_EFFECTOR,
         )
     }
 
@@ -170,13 +169,17 @@ impl CredentialDoorService {
     /// ceiling, the absolute bound, and the re-admission the stamping
     /// transaction takes. The `()` this used to return left the dial, the
     /// effector and the instant lying around as three separate values that
-    /// nothing tied together — which is how they came apart.
-    pub(super) fn admit_scope(
+    /// nothing tied together — which is how they came apart. The dial and
+    /// the instant both read `txn`, the writer the admitted effect commits
+    /// under, so a holder change that shut the door before it is never
+    /// missed (FIX 9776).
+    pub(super) fn admit_scope_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         effector: &str,
-        at: VaultInstant,
     ) -> DoorResult<AdmittedScope> {
-        AdmittedScope::admit(self.door_policy()?, effector, at)
+        let at = self.vault.instant_in_txn(txn).map_err(custody)?;
+        AdmittedScope::admit(DoorPolicy::resolve(&self.vault.store, txn)?, effector, at)
     }
 }
 

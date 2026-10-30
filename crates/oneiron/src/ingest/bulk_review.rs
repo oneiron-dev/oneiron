@@ -208,6 +208,22 @@ impl Vault {
         }
         if let Some(authorization) = &authorization {
             crate::consent::spend_approve_once_in_txn(&self.store, txn, authorization)?;
+            // FIX 6126: an approved commitment series projects from this
+            // approval's transaction, as one approved anywhere else does.
+            let now = crate::unix_seconds_now();
+            for entry in &batch.entries {
+                if entry.predicate != crate::commitment::PREDICATE_COMMITMENT_RECORD {
+                    continue;
+                }
+                if let Some(claim) = self.get_claim_in_txn(txn, &entry.claim_id)? {
+                    self.index_consented_commitment_series_in_txn(
+                        txn,
+                        &claim,
+                        &entry.claim_id,
+                        now,
+                    )?;
+                }
+            }
         } else {
             // No per-claim review tray: an unconsented import stays Proposed
             // until a new exact batch is explicitly consented at import time.

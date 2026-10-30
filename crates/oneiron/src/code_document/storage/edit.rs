@@ -204,7 +204,8 @@ impl Vault {
     }
 
     /// The edited candidate merged over the durable head in the writer, with
-    /// the head receipts; with no head, the path still free for it.
+    /// the head receipts, while that head is present and still owns its
+    /// path; with no head, the path still free for it.
     fn merge_code_file_candidate_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -215,9 +216,21 @@ impl Vault {
     ) -> Result<(loro::LoroDoc, Vec<ReceiptRow>)> {
         let head = load_head(&self.store, &*wtxn, &session.document_id)?;
         let (merged, receipts) = if let Some(row) = head {
+            // A durable removal freed the path, and a recreation may own it
+            // now: a stale session never reclaims it (FIX 9689).
             if row.initial_hash != session.initial_hash
                 || row.state.frontier.repo != session.repo
                 || row.state.frontier.path != edit.path
+                || row
+                    .state
+                    .frontier
+                    .file_presence
+                    .is_some_and(|state| !state.present)
+                || CODE_DOCUMENT_PATH.get(
+                    &self.store,
+                    &*wtxn,
+                    &path_hash(&session.repo, &edit.path),
+                )? != Some(session.document_id)
             {
                 return Err(invalid());
             }

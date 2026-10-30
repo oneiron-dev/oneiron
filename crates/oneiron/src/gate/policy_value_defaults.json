@@ -1,5 +1,6 @@
 [
   {"row_ref":"default.artifact_answer_quiet_seconds","key":"artifact_answer_quiet_seconds","value":60,"scope":{"level":"vault"}},
+  {"row_ref":"default.calendar_outcome_grace_seconds","key":"calendar_outcome_grace_seconds","value":1800,"scope":{"level":"vault"}},
   {"row_ref":"default.comm_opt_out_posture","key":"comm_opt_out_posture","value":"escalate","scope":{"level":"vault"}},
   {"row_ref":"default.dreamer_retry_park_seconds","key":"dreamer_retry_park_seconds","value":900,"scope":{"level":"vault"}},
   {"row_ref":"default.escalation_standing_rulings","key":"escalation_standing_rulings","value":3,"scope":{"level":"vault"}},

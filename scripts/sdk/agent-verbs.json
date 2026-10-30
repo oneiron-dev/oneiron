@@ -10619,7 +10619,7 @@
       "name": "vault.code.checkout.get",
       "description": "Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it.",
       "input": "crate::memory::checkout_doors::CheckoutGetInput",
-      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::checkout_doors::CheckoutLeaseView>>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.get\", &input)?",
       "scope": "Read",
       "admission": {
@@ -10887,7 +10887,7 @@
     },
     {
       "name": "vault.code.merge_queue.enqueue",
-      "description": "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.",
+      "description": "Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.",
       "input": "crate::memory::merge_queue_doors::MergeQueueEnqueueRequest",
       "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
       "call": "memory.merge_queue_enqueue_as(&memory.embedded_owner(\"vault.code.merge_queue.enqueue\")?, input)?",
@@ -15578,7 +15578,7 @@
       "refs": [
         "/subject_ref",
         "/world_ref",
-        "/relationship_ref"
+        "/relationship_ref/*"
       ],
       "uniffi": {
         "args": {

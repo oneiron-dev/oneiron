@@ -14,8 +14,6 @@ side_tables! {
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
-    /// Owner-configured post-meeting outcome grace. Key: ().
-    CALENDAR_OUTCOME_POLICY: VaultMeta b"calendar.outcome-policy.v1" Named;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;
@@ -129,6 +127,9 @@ side_tables! {
     /// FIX 9598: an approved Dreamer claim whose VAD consolidation is still owed, written in the
     /// approval's commit and cleared in the consolidation's own. Key: id16 (claim).
     CLAIM_VAD_OWED: VaultMeta b"claim:vad_owed:v1:" Named Engine;
+    /// Posting-list row of one claim under its world (base reality under the reserved base id),
+    /// read by the scope-honesty census. Key: id16 (world) + id16 (claim).
+    CLAIM_WORLD_INDEX: VaultMeta b"claim:world:v1:" Raw;
     /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
     /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
     /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).
@@ -353,8 +354,7 @@ side_tables! {
     CODE_SYMBOL_MANIFEST: VaultMeta b"code_symbol:manifest:v1:" Raw
         => crate::code_symbol::erase_manifest_actor_in_txn;
     /// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key:
-    /// string(repo_ref) "\x00" string(path) "\x00" string(name) "\x00" hash32(fingerprint) "\x00"
-    /// id16.
+    /// sha256(domain, repo_ref, path, name, fingerprint) "\x00" id16.
     CODE_SYMBOL_REVISION_INDEX: VaultMeta b"code_symbol:revision:v1:" Raw;
     /// Cache-hit outcome record for one view's build/verify action, keyed by view id and action key.
     /// Key: id16 + bytes32 (view id then build action key).

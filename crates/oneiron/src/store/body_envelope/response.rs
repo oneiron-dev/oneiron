@@ -236,6 +236,12 @@ pub(crate) enum ResponseFamily {
     /// their centroid, carried whole and owned by every member; a retired
     /// cluster leaves nothing.
     ReportCluster,
+    /// A typed question's copies of one judgment answer (FIX 9918, 11236):
+    /// its answer row, carried whole and owned by the answer claim, its
+    /// unit and its receipt's principal; its outcome labels and closed
+    /// window, owned by the answer claim alone. A retired copy leaves
+    /// nothing, as the owner's erase deletes it live.
+    TypedQuestion,
 }
 
 impl ResponseFamily {
@@ -263,6 +269,7 @@ impl ResponseFamily {
                     Self::MessageReplyAssertions,
                 ),
                 (&side_table::FEEDBACK_REPORT_CLUSTER, Self::ReportCluster),
+                (&side_table::TYPED_QUESTION, Self::TypedQuestion),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -310,7 +317,8 @@ impl ResponseFamily {
             | Self::MessageReplyAssertions
             | Self::VoiceBank
             | Self::CentroidEvidence
-            | Self::ReportCluster => ResponseDb::VaultMeta,
+            | Self::ReportCluster
+            | Self::TypedQuestion => ResponseDb::VaultMeta,
         }
     }
 
@@ -356,6 +364,9 @@ impl ResponseFamily {
             Self::MessageReplyAssertions => crate::memory::reply_assertions_scan(value),
             Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
+            Self::TypedQuestion => {
+                crate::llm::decision::questions::typed_question_carriage(key, value)
+            }
         }
     }
 
@@ -472,6 +483,9 @@ impl ResponseFamily {
                     .map(|row| crate::store::media_job_owners(&row))
                     .unwrap_or_default())
             }
+            Self::TypedQuestion => Ok(crate::llm::decision::questions::typed_question_owners(
+                key, value,
+            )),
         }
     }
 
@@ -503,8 +517,9 @@ impl ResponseFamily {
             }
             // A retired memo's row goes; the next evaluation derives anew. A
             // retired cluster's row goes, as its member's erase remakes it
-            // live without that member.
-            Self::SavedQueryMemo | Self::ReportCluster => {
+            // live without that member. A retired answer copy's row goes, as
+            // the owner's erase deletes it live (FIX 9918, 11236).
+            Self::SavedQueryMemo | Self::ReportCluster | Self::TypedQuestion => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
@@ -563,7 +578,7 @@ impl ResponseFamily {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
-            Self::SavedQueryMemo | Self::ReportCluster => {
+            Self::SavedQueryMemo | Self::ReportCluster | Self::TypedQuestion => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

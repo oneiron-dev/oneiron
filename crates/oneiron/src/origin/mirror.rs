@@ -231,6 +231,22 @@ impl Vault {
         Ok(row)
     }
 
+    /// [`Self::set_served_origin_mirror`] as the caller's owner proof,
+    /// revalidated in the transaction that installs the target (FIX 8214).
+    pub fn set_served_origin_mirror_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repo_name: &str,
+        input: OriginMirrorTargetInput,
+    ) -> Result<OriginMirrorTarget> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let row = self.set_served_origin_mirror_in_txn(&mut txn, repo_name, input)?;
+        txn.commit()?;
+        self.wake_origin_mirrors();
+        Ok(row)
+    }
+
     /// The shared setter, checked in the transaction that installs the target.
     pub(crate) fn set_served_origin_mirror_in_txn(
         &self,
@@ -302,6 +318,20 @@ impl Vault {
     /// `true` when a target was set.
     pub fn clear_served_origin_mirror(&self, repo_name: &str) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
+        let removed = self.clear_served_origin_mirror_in_txn(&mut txn, repo_name)?;
+        txn.commit()?;
+        Ok(removed)
+    }
+
+    /// [`Self::clear_served_origin_mirror`] as the caller's owner proof,
+    /// revalidated in the transaction that removes the target (FIX 8214).
+    pub fn clear_served_origin_mirror_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repo_name: &str,
+    ) -> Result<bool> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
         let removed = self.clear_served_origin_mirror_in_txn(&mut txn, repo_name)?;
         txn.commit()?;
         Ok(removed)
