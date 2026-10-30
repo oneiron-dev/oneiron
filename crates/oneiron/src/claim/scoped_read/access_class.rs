@@ -439,6 +439,11 @@ impl<'v> ScopedRead<'v> {
     /// carries, so such a reader takes the row admission, with its support
     /// slip and its artifact records cover.
     fn reads_by_class(&self) -> bool {
+        // L15 try no_class: every CLAIM row takes the row admission, as before FIX 11915 stage B.
+        if crate::stage_timing::try_on("no_class") {
+            return false;
+        }
+        crate::stage_timing::record("count.class_path", 1);
         self.actor_key.record_bound.is_none()
             && self
                 .actor_key
