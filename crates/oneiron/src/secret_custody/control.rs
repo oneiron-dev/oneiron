@@ -51,7 +51,7 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{
-    InputBinding, RelayedInput, input_digest, keep_witnessed_input_in_txn, request_witness_in_txn,
+    InputBinding, RelayedInput, SealedFrame, keep_witnessed_input_in_txn, request_witness_in_txn,
 };
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
@@ -347,9 +347,10 @@ pub(crate) struct ActiveChange<'a> {
     pub(crate) plan: &'a CustodyPlan,
     /// What this install, when it is the holder, executes from.
     pub(crate) material: Material<'a>,
-    /// The protected input the owner's surface sealed itself; `None` has the
+    /// The protected input the owner's surface sealed itself, read where it
+    /// lies with what its recorder attached (FIX 11140); `None` has the
     /// door seal `material` to the holder.
-    pub(crate) sealed: Option<&'a [u8]>,
+    pub(crate) sealed: Option<SealedFrame<'a>>,
     /// The custody revision that surface showed, which its input binds.
     pub(crate) seen: Option<[u8; 32]>,
     /// The exact permits that surface bound; `None` takes the plan's.
@@ -452,14 +453,20 @@ impl Vault {
             permits: &permits,
         };
         // A rewrap carries an input only for a bind (CALLS
-        // CUSTODY_BIND_TRAVEL); a revoke never does.
-        let envelope = match (change.change, &change.material, change.sealed) {
+        // CUSTODY_BIND_TRAVEL); a revoke never does. One the owner's surface
+        // sealed is read where it lies, its digest part by part (FIX 11140).
+        let sealed_here;
+        let frame = match (change.change, &change.material, change.sealed) {
             (CustodyChange::Revoke, ..)
             | (CustodyChange::Rewrap, Material::Held | Material::Input(_), _) => None,
-            (_, _, Some(sealed)) => Some(sealed.to_vec()),
-            (_, material, None) => Some(binding.seal(&holder_key, &plaintext(material)?)?),
+            (_, _, Some(sealed)) => Some(sealed),
+            (_, material, None) => {
+                sealed_here = binding.seal(&holder_key, &plaintext(material)?)?;
+                Some(SealedFrame::whole(&sealed_here))
+            }
         };
-        let input = envelope.as_deref().map(input_digest);
+        let digests = frame.as_ref().map(SealedFrame::digests).transpose()?;
+        let input = digests.as_ref().map(|digests| digests.digest);
         // CALLS CUSTODY_RETRY: the same protected input again is the request
         // that already names it, never a second change.
         if let Some(input) = input
@@ -491,19 +498,20 @@ impl Vault {
         };
         let mut rotation = None;
         let mut manifest = None;
-        if let (Some(envelope), true) = (envelope, holder != machine || change.sealed.is_some()) {
-            keep_witnessed_input_in_txn(
-                self,
-                txn,
-                RelayedInput {
-                    sealed_at: at,
-                    request: hash,
-                    witness: request_witness_in_txn(self, txn, &hash)?,
-                    part: None,
-                    envelope,
-                },
-                &signing,
-            )?;
+        if let (Some(frame), Some(digests), true) = (
+            frame,
+            &digests,
+            holder != machine || change.sealed.is_some(),
+        ) {
+            // What every row carries beside its bytes, read from `frame`.
+            let row = RelayedInput {
+                sealed_at: at,
+                request: hash,
+                witness: request_witness_in_txn(self, txn, &hash)?,
+                part: None,
+                envelope: Vec::new(),
+            };
+            keep_witnessed_input_in_txn(self, txn, row, &frame, digests, &signing)?;
         }
         if holder == machine {
             let request = self
