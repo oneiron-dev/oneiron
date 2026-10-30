@@ -7,8 +7,43 @@
 //! Every field is required: a verdict without its classification is not a
 //! verdict the host can admit a sealed PDF on.
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
+
+/// The longest caller operation id the seal sends its backend as it is: the
+/// backend's 256-byte bound less the 32 bytes the seal's own suffix takes
+/// (`:{16 hex}:{phase}:{capacity}`).
+pub const DIRECT_OPERATION_ID_BYTES: usize = 224;
+
+/// What a backend operation id that aliases a caller's begins with.
+pub const OPERATION_ALIAS_PREFIX: &str = "alias:";
+
+/// The key-derivation context of an operation alias: no other BLAKE3 use
+/// in the engine derives under it.
+const OPERATION_ALIAS_CONTEXT: &str = "oneiron seal backend operation id v1";
+
+/// The operation id the seal's backend sees for a caller's `operation_id`
+/// (FIX 6271), shared by the seal organ's sub-operation ids and the engine
+/// host's binding of them. One of at most [`DIRECT_OPERATION_ID_BYTES`]
+/// that does not begin with [`OPERATION_ALIAS_PREFIX`] goes as it is; any
+/// other becomes the prefix and the hex of its BLAKE3 derived under its own
+/// context (70 bytes). No caller id is refused for its length, and two
+/// caller ids never share a backend id.
+#[must_use]
+pub fn backend_operation_id(operation_id: &str) -> Cow<'_, str> {
+    if operation_id.len() <= DIRECT_OPERATION_ID_BYTES
+        && !operation_id.starts_with(OPERATION_ALIAS_PREFIX)
+    {
+        return Cow::Borrowed(operation_id);
+    }
+    let digest = blake3::derive_key(OPERATION_ALIAS_CONTEXT, operation_id.as_bytes());
+    Cow::Owned(format!(
+        "{OPERATION_ALIAS_PREFIX}{}",
+        blake3::Hash::from(digest).to_hex()
+    ))
+}
 
 /// What one native verification proved about a PDF's revisions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

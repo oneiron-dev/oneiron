@@ -168,6 +168,22 @@ pub(super) async fn gather_validation_material(
     identity: &SigningIdentity,
     token: Option<&tsp::ValidatedToken>,
 ) -> Result<Option<DssMaterial>, SealError> {
+    // The certificate copies below are the seal's own: the DSS's list and
+    // the signer chain checked before it, reserved before they are made
+    // (FIX 8452).
+    let signer_chain_bytes: usize = std::iter::once(&identity.signer_certificate_der)
+        .chain(&identity.certificate_chain_der)
+        .map(Vec::len)
+        .sum();
+    let tsa_chain_bytes: usize = token.map_or(0, |t| t.tsa_chain_ders.iter().map(Vec::len).sum());
+    ctx.limits
+        .memory
+        .admit::<u8>(
+            signer_chain_bytes
+                .saturating_mul(2)
+                .saturating_add(tsa_chain_bytes),
+        )
+        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
     let mut certs_der = vec![identity.signer_certificate_der.clone()];
     certs_der.extend(identity.certificate_chain_der.iter().cloned());
     if let Some(t) = token {

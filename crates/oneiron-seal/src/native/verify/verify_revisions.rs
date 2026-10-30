@@ -10,7 +10,33 @@ use crate::api::{
     SealResourceLimits, SignatureKind, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
 use crate::memory::SealMemoryRefusal;
+use lopdf::xref::XrefEntry;
 use lopdf::{Document, Object, ObjectId};
+
+/// Whether two xref entries say the same, compared in place (FIX 8452):
+/// no string is built for either.
+fn same_entry(before: Option<&XrefEntry>, after: Option<&XrefEntry>) -> bool {
+    match (before, after) {
+        (None, None) => true,
+        (Some(XrefEntry::Free), Some(XrefEntry::Free))
+        | (Some(XrefEntry::UnusableFree), Some(XrefEntry::UnusableFree)) => true,
+        (
+            Some(XrefEntry::Normal { offset, generation }),
+            Some(XrefEntry::Normal {
+                offset: after_offset,
+                generation: after_generation,
+            }),
+        ) => offset == after_offset && generation == after_generation,
+        (
+            Some(XrefEntry::Compressed { container, index }),
+            Some(XrefEntry::Compressed {
+                container: after_container,
+                index: after_index,
+            }),
+        ) => container == after_container && index == after_index,
+        _ => false,
+    }
+}
 
 fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
     if before
@@ -25,8 +51,10 @@ fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
         let current = after.objects.get(id)?;
         // A redefinition with identical effective value is still a write.
         if current != old
-            || format!("{:?}", before.reference_table.get(id.0))
-                != format!("{:?}", after.reference_table.get(id.0))
+            || !same_entry(
+                before.reference_table.get(id.0),
+                after.reference_table.get(id.0),
+            )
         {
             out.insert(*id);
         }
