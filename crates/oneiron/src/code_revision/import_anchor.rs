@@ -7,21 +7,21 @@
 //! checked Baseline, whose typed import-approval receipt names it. Both, if
 //! present, must agree. A chain with neither is unbound, an allowed state:
 //! nothing is resealed or backfilled, and no live snapshot is looked up.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use heed::RoTxn;
 
 use super::CodeRevision;
 use super::import_types::{CodeImportApproval, CodeImportManifest, approval_id, manifest_id};
 use super::promotion::promotion_receipt_in_txn;
+use super::queue_root::queue_chain_root_in_txn;
 use super::storage::read_code_revision_record_in_txn;
 use super::tree_inventory::{CodeTreeInventory, MODE_GITLINK};
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::merge_queue::QueueTestedTarget;
 use crate::origin::tree::OriginTreeFile;
-use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Vault};
 
 /// The import manifest `manifest_ref` names, read in `txn`; `None` when no
@@ -139,29 +139,8 @@ pub(crate) fn resolve_import_anchor_in_txn(
         return Ok(None);
     };
     let bound = revision.snapshot_anchor;
-    let mut root = revision;
-    let mut count = ScanCount::start(
-        &vault.store,
-        txn,
-        EngineScan::DagWalkRecords,
-        revision_id.as_bytes(),
-    )?;
-    let mut visited = HashSet::new();
-    loop {
-        if !visited.insert(root.revision_id) {
-            count.defer(&vault.store);
-            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "code revision parent chain contains a cycle",
-            )));
-        }
-        count.row();
-        let Some(parent) = root.parent_revision_id else {
-            break;
-        };
-        root = read_code_revision_record_in_txn(&vault.store, txn, &parent)?
-            .ok_or(Error::EntityNotFound)?;
-    }
-    count.defer(&vault.store);
+    // The chain's root by its kept key, not by walking the links (FIX 7390).
+    let root = queue_chain_root_in_txn(&vault.store, txn, revision)?;
     let Some(root_tested) = root.tested_queue.as_ref().filter(|root_tested| {
         root.parent_revision_id.is_none()
             && root_tested.target == QueueTestedTarget::Baseline

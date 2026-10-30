@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::CodeRevision;
 use super::promotion::{promotion_receipt_in_txn, put_promotion_receipt_in_txn};
+use super::queue_root::queue_chain_root_in_txn;
 use super::storage::{get_code_revision_in_txn, read_code_revision_record_in_txn};
 use super::tree_inventory::document_mode;
 use crate::error::{ArtifactError, Error, Result};
@@ -139,33 +140,13 @@ impl Vault {
     /// The gap at `revision_id`'s chain root, the checked baseline: `None`
     /// once its import approval holds now (G4 PR1).
     fn queue_root_gap(&self, revision_id: EntityId) -> Result<Option<QueuePromotionGap>> {
+        // The chain's root by its kept key, not by walking the links on
+        // every readiness view and export (FIX 7391).
         let root = {
             let txn = self.store.env.read_txn()?;
-            let mut root = read_code_revision_record_in_txn(&self.store, &txn, &revision_id)?
+            let revision = read_code_revision_record_in_txn(&self.store, &txn, &revision_id)?
                 .ok_or(Error::EntityNotFound)?;
-            let mut count = ScanCount::start(
-                &self.store,
-                &txn,
-                EngineScan::DagWalkRecords,
-                revision_id.as_bytes(),
-            )?;
-            let mut visited = HashSet::new();
-            loop {
-                if !visited.insert(root.revision_id) {
-                    count.defer(&self.store);
-                    return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                        "code revision parent chain contains a cycle",
-                    )));
-                }
-                count.row();
-                let Some(parent) = root.parent_revision_id else {
-                    break;
-                };
-                root = read_code_revision_record_in_txn(&self.store, &txn, &parent)?
-                    .ok_or(Error::EntityNotFound)?;
-            }
-            count.defer(&self.store);
-            root
+            queue_chain_root_in_txn(&self.store, &txn, revision)?
         };
         Ok(self.baseline_promotion_receipt(&root)?.err())
     }

@@ -143,6 +143,7 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    super::queue_root::delete_queue_roots_below_in_txn(store, wtxn, id)?;
     delete_code_revision_record_in_txn(store, wtxn, id)?;
     delete_code_revision_fork_in_txn(store, wtxn, id)?;
     super::proposals::delete_proposal_in_txn(store, wtxn, id)?;
