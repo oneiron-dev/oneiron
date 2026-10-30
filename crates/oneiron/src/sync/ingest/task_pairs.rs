@@ -63,9 +63,9 @@ pub(super) fn put_or_stage(
         return Ok(());
     }
     // FIX 9600: a MESSAGE row an own machine's proven connection sent takes
-    // its own-device lane as far as the put, and no further here: the batch
-    // threads it to the witness gate.
-    let _own_device = super::own_device::lane_in_txn(ctx, wtxn, &id, blob, data)?;
+    // its own-device lane to the put, and the batch threads it to the witness
+    // check, which reads it for this row and these bytes only.
+    let own_device = super::own_device::lane_in_txn(ctx, wtxn, &id, blob, data)?;
     let put = ctx.vault.batch_in().put_replicated(
         &id,
         header.entity_type,
@@ -74,8 +74,10 @@ pub(super) fn put_or_stage(
         data,
     );
     match &ctx.authority_beside {
-        Some(authority) => put.apply_with_authority_beside(wtxn, &|| authority.rows()),
-        None => put.apply(wtxn),
+        Some(authority) => {
+            put.apply_ingested(wtxn, Some(&|| authority.rows()), own_device.as_ref())
+        }
+        None => put.apply_ingested(wtxn, None, own_device.as_ref()),
     }
 }
 

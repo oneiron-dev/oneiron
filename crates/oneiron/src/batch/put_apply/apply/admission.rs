@@ -19,6 +19,10 @@ pub(super) struct FixedPut<'a> {
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
     pub(super) authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    /// The own-device lane the sync ingest door gave a replicated MESSAGE
+    /// row, which the witness check reads for this row and these bytes only
+    /// (FIX 9600).
+    pub(super) own_device: Option<&'a VerifiedOwnDeviceLane>,
     pub(super) replicated: bool,
     pub(super) allow_reserved_predicate: bool,
     pub(super) hub_sync_imported: bool,
@@ -75,6 +79,7 @@ pub(super) fn admit_put<'a>(
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
     authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    own_device: Option<&'a VerifiedOwnDeviceLane>,
 ) -> Result<Admission<'a>> {
     let PutRequest {
         row:
@@ -225,6 +230,7 @@ pub(super) fn admit_put<'a>(
             posture,
             owner_authored,
             authority_beside,
+            own_device,
             replicated,
             allow_reserved_predicate,
             hub_sync_imported,
