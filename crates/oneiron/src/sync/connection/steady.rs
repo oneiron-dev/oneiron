@@ -496,7 +496,11 @@ impl SyncConnection {
         for task in &machine_history_tasks {
             task.abort();
         }
-        for task in sealed_task.into_iter().chain(tombstone_task).chain(machine_history_tasks) {
+        for task in sealed_task
+            .into_iter()
+            .chain(tombstone_task)
+            .chain(machine_history_tasks)
+        {
             let _ = task.await;
         }
         exit

@@ -321,7 +321,10 @@ impl SyncConnection {
         // loopback nor mesh; the socket opens as one with no credential.
         let config = &self.config.client_config;
         let (slip, bearer) = if config.server_admits_credentials() {
-            (config.transport_credential.as_ref(), config.auth_token.as_str())
+            (
+                config.transport_credential.as_ref(),
+                config.auth_token.as_str(),
+            )
         } else {
             let held = config.transport_credential.is_some() || !config.auth_token.is_empty();
             if held && !client.cleartext_withhold_logged {
