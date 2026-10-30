@@ -13,7 +13,7 @@ use crate::Vault;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSource, ScopedRead};
-use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CodebaseForkHash};
+use crate::code_document::CodeSpanAnchor;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{CodeError, Error, Result};
@@ -38,12 +38,17 @@ pub const CODE_MEMORY_CONTENT_HASH_LEN: usize = 32;
 /// Maximum encoded slot-name length.
 pub const CODE_MEMORY_SLOT_NAME_MAX_BYTES: usize = 128;
 
-/// Maximum live values retained in one named slot. The 257th DISTINCT value
-/// is a typed capacity error that leaves the stored slot byte-identical.
-pub const CODE_MEMORY_MAX_VALUES_PER_SLOT: usize = 256;
+/// The most live values one named slot body encodes: its value count is one
+/// `u16` field, a field bound and no count refusal. A value past it is a
+/// typed capacity error that leaves the stored slot byte-identical. Past
+/// 256 values a slot write keeps every value and raises the
+/// `code_memory_slot_values` scan check (FIX 8562).
+pub const CODE_MEMORY_MAX_VALUES_PER_SLOT: usize = 65_535;
 
-/// Registration-side bound on distinct `(symbol, slot, payload)` always-on
-/// contract keys PER SYMBOL. Pull imposes no second, global cut.
+/// The distinct `(symbol, slot, payload)` always-on contract keys PER SYMBOL
+/// past which a registration or transfer raises the
+/// `code_memory_always_on_contracts` scan check and keeps every contract
+/// (FIX 8562; once refused past it). Pull imposes no global cut.
 pub const CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS: usize = 8;
 
 /// PPR expansion depth for an L2 pull.
@@ -61,8 +66,9 @@ const CODE_MEMORY_PPR_ALPHA: f32 = 0.15;
 /// Default caller note limit.
 pub const CODE_MEMORY_DEFAULT_PULL_LIMIT: usize = 32;
 
-/// Hard ceiling on the caller note limit, on seed cardinality, and on the
-/// number of threshold-passing symbols an L2 pull will expand.
+/// The seed count, note limit and threshold-passing symbol count past which
+/// an L2 pull raises its scan checks and serves the whole request (FIX 9690,
+/// FIX 10008, FIX 10210; once refused or cut past it).
 pub const CODE_MEMORY_MAX_PULL_LIMIT: usize = 256;
 
 /// Named code-memory slot holding the live (possibly conflicting) values
@@ -139,16 +145,15 @@ const KEY_SEPARATOR: u8 = 0;
 const PAYLOAD_TAG_NOTE_ENTITY: u8 = 0;
 const PAYLOAD_TAG_CLAIM: u8 = 1;
 
-const REVISION_TAG_COMMIT: u8 = 0;
-const REVISION_TAG_FORK_HASH: u8 = 1;
-
 const TRANSFER_TAG_RENAME: u8 = 0;
 const TRANSFER_TAG_COPY: u8 = 1;
 
 const CONTRACT_TAG_INTERFACE: u8 = 0;
 const CONTRACT_TAG_POLICY: u8 = 1;
 
-const COMMIT_HASH_MAX_HEX_LEN: usize = 64;
+/// The most bytes one encoded document cursor of a locator holds: one
+/// encoded field's bound.
+pub const CODE_MEMORY_CURSOR_MAX_BYTES: usize = 1024;
 
 /// Domain separator for the deterministic transfer-receipt key digest.
 const TRANSFER_DIGEST_DOMAIN: &[u8] = b"oneiron.code_memory.transfer.v1\0";
@@ -189,44 +194,17 @@ impl CodeMemoryPayloadRef {
     }
 }
 
-/// The revision half of a locator: exactly one commit OR one fork hash,
-/// never neither and never both.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CodeMemoryRevision {
-    /// Lowercase-hex commit hash, mirroring the `commit_hash: Option<String>`
-    /// representation the code-symbol/codebase modules already carry.
-    Commit(String),
-    /// A filtered-snapshot fork hash (`codebase::CodebaseForkHash`).
-    ForkHash(CodebaseForkHash),
-}
-
-impl CodeMemoryRevision {
-    fn validate(&self) -> Result<()> {
-        match self {
-            Self::Commit(commit) => {
-                if commit.is_empty()
-                    || commit.len() > COMMIT_HASH_MAX_HEX_LEN
-                    || !commit
-                        .bytes()
-                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-                {
-                    return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
-                        reason: "locator commit must be non-empty lowercase hexadecimal",
-                    }));
-                }
-                Ok(())
-            }
-            Self::ForkHash(_) => Ok(()),
-        }
-    }
-}
-
-/// Revision locator for an attachment. LOCATOR ONLY — no API in this module
-/// resolves attachment identity from any of these fields.
+/// Revision locator for an attachment: a cursor-anchored span on the
+/// symbol's file document, at the document version it was taken at
+/// (ARCH-0050, amended under RD-23; FIX 7810). LOCATOR ONLY — no API in this
+/// module resolves attachment identity from any of these fields. A rename is
+/// an op on the document, so the span follows it with no transfer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeMemoryLocator {
-    pub path_at_revision: String,
-    pub revision: CodeMemoryRevision,
+    /// The document and the encoded cursors that find the span on it.
+    pub span: CodeSpanAnchor,
+    /// The document's canonical Loro version vector the span was taken at.
+    pub version: Vec<(u64, i32)>,
     pub validity: TimeRange,
 }
 
@@ -235,8 +213,13 @@ impl CodeMemoryLocator {
     /// check that the locator "belongs to" a symbol: locators are
     /// caller-asserted values, never identity.
     pub fn validate(&self) -> Result<()> {
-        validate_locator_path(&self.path_at_revision)?;
-        self.revision.validate()?;
+        for cursor in [&self.span.start, &self.span.end] {
+            if cursor.is_empty() || cursor.len() > CODE_MEMORY_CURSOR_MAX_BYTES {
+                return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
+                    reason: "locator cursors must be non-empty and within the encoded cursor bound",
+                }));
+            }
+        }
         validate_time_range(self.validity, "locator validity")
     }
 }
@@ -394,9 +377,10 @@ impl CodeMemorySlot {
     /// `Inserted` appends. `DeduplicatedWithinActor` keeps exactly one
     /// canonical-minimum survivor for the `(actor, content hash)` collision,
     /// replacing the incumbent only when the incoming value is canonically
-    /// smaller — so arrival order cannot change the result. Hitting
-    /// [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] returns the typed capacity error
-    /// and leaves `self` untouched.
+    /// smaller — so arrival order cannot change the result. Only the encoded
+    /// field bound [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] returns the typed
+    /// capacity error, leaving `self` untouched; a slot's count is observed
+    /// where it is written, never refused.
     pub fn insert_multi_value(&mut self, value: CodeMemorySlotValue) -> Result<SlotInsertOutcome> {
         value.validate()?;
         let key = value.dedupe_key();
@@ -534,6 +518,7 @@ pub fn attach_code_memory(
     let outcome = slot.insert_multi_value(value)?;
 
     write_slot(store, txn, &anchor.symbol_id, &slot)?;
+    observe_slot_values(store, txn, &anchor.symbol_id, &slot);
     // Nothing is relabelled by an attach: a payload without a row is new and
     // takes this anchor's locator, and every other payload keeps its own.
     derive_attachment_rows(
@@ -545,4 +530,45 @@ pub fn attach_code_memory(
         &BTreeSet::new(),
     )?;
     Ok(outcome)
+}
+
+/// One written slot's value count against its scan row: past it the write
+/// keeps every value and raises the `code_memory_slot_values` check (FIX
+/// 8562). A threshold row that does not read skips the observation, never
+/// the write.
+fn observe_slot_values(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    symbol_id: &EntityId,
+    slot: &CodeMemorySlot,
+) {
+    if let Ok(mut count) = ScanCount::start(
+        store,
+        txn,
+        EngineScan::CodeMemorySlotValues,
+        symbol_id.as_bytes(),
+    ) {
+        count.rows(slot.values.len());
+        count.defer(store);
+    }
+}
+
+/// One symbol's always-on contract keys, `registered`, against their scan
+/// row: past it the registration or transfer keeps every contract and
+/// raises the `code_memory_always_on_contracts` check (FIX 8562).
+fn observe_always_on_contracts(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    symbol_id: &EntityId,
+    registered: usize,
+) {
+    if let Ok(mut count) = ScanCount::start(
+        store,
+        txn,
+        EngineScan::CodeMemoryAlwaysOnContracts,
+        symbol_id.as_bytes(),
+    ) {
+        count.rows(registered);
+        count.defer(store);
+    }
 }

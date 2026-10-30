@@ -66,7 +66,7 @@ impl DreamerRunnerStore<'_> {
     pub fn macro_schedulable_attempts(&self) -> Result<HashSet<AttemptId>> {
         let txn = self.vault.store.env.read_txn()?;
         let kind = DreamerConsolidationScope::Macro.attempt_kind();
-        let records = self.attempts.list_in_txn(&txn)?;
+        let records = self.attempts.kind_working_rows_in_txn(&txn, kind)?;
         let held = Held::running(&records, kind);
         Ok(records
             .iter()
@@ -86,7 +86,7 @@ impl DreamerRunnerStore<'_> {
         let txn = self.vault.store.env.read_txn()?;
         let buckets: BTreeSet<_> = self
             .attempts
-            .list_in_txn(&txn)?
+            .kind_working_rows_in_txn(&txn, DreamerConsolidationScope::Macro.attempt_kind())?
             .into_iter()
             .filter(|row| {
                 row.kind == DreamerConsolidationScope::Macro.attempt_kind()
@@ -103,7 +103,7 @@ impl DreamerRunnerStore<'_> {
         input: &AdmitDreamerAttempt,
     ) -> Result<Option<AttemptId>> {
         let kind = DreamerConsolidationScope::Macro.attempt_kind();
-        let records = self.attempts.list_in_txn(txn)?;
+        let records = self.attempts.kind_working_rows_in_txn(txn, kind)?;
         let held = Held::running(&records, kind);
         self.attempts
             .ready_kind_matching_in_txn(txn, kind, input.now, |row| {

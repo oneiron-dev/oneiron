@@ -567,10 +567,15 @@ impl Vault {
                 now,
             )?;
         let decision = match (close, binding) {
-            (SupersedeClose::Granted { checker: Some(checker), .. }, Some(binding)) => self
-                .apply_checked_deferred_closure_in_txn(
-                    wtxn, ops, binding, transition, &old_body, checker,
-                )?,
+            (
+                SupersedeClose::Granted {
+                    checker: Some(checker),
+                    ..
+                },
+                Some(binding),
+            ) => self.apply_checked_deferred_closure_in_txn(
+                wtxn, ops, binding, transition, &old_body, checker,
+            )?,
             (_, binding) => {
                 self.apply_lifecycle_materialization(wtxn, ops, binding, transition, true)?;
                 None

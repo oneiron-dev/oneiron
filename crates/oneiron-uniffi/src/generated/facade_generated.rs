@@ -3441,7 +3441,7 @@ export_facade! {
     let output = client.vault_code_checkout_claim(&input)?;
     crate::codec::lift_record("vault.code.checkout.claim", &output)
 };
-"vault.code.checkout.get" => fn vault_code_checkout_get(&self, input: CheckoutGetInput) -> CheckoutLeaseView = |client| {
+"vault.code.checkout.get" => fn vault_code_checkout_get(&self, input: CheckoutGetInput) -> ScopedReadResultOptionalCheckoutLeaseView = |client| {
     let input: oneiron::memory::checkout_doors::CheckoutGetInput = crate::codec::lower_record("vault.code.checkout.get", input)?;
     let output = client.vault_code_checkout_get(&input)?;
     crate::codec::lift_record("vault.code.checkout.get", &output)
