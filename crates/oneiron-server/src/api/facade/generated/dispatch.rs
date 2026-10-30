@@ -1732,7 +1732,7 @@ async fn tasks_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke_born(
@@ -2598,7 +2598,7 @@ async fn tasks_update(
         &["task_ref"],
     )?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke(
@@ -2670,7 +2670,7 @@ async fn tasks_redo(
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke_born(

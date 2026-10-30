@@ -1653,10 +1653,12 @@ def facade_dispatch(facade_rows):
             # OF-533: after the call's own refusals, the whole invoke runs on a
             # blocking thread, its surface, rewrite admission, drain, room turn
             # and hooks with it as one row, since a model rung of the decision
-            # ladder its surface binds may block on the server's runtime.
+            # ladder its surface binds may block on the server's runtime. It
+            # goes through run_blocking, so a code run's write token rides
+            # with it (FIX 11698).
             dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}
         let (server, owned) = (Arc::clone(server), call.owned());
-        tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
+        super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = {result}{landed}
