@@ -34985,6 +34985,10 @@ pub struct RevealReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub delivered_at: Option<u64>,
+    #[serde(rename = "cause", default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 /// `oneiron::verbs::disclosure::RevealAskView`.
@@ -35087,6 +35091,8 @@ pub enum RevealDecision {
     Denied,
     #[serde(rename = "expired")]
     Expired,
+    #[serde(rename = "unavailable")]
+    Unavailable,
 }
 
 /// `oneiron::verbs::secret::RevealWaitAnswer`.

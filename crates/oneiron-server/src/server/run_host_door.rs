@@ -341,6 +341,31 @@ impl AgentVerbDoor for RunHostDoor {
         )
     }
 
+    /// A granted `reveal.wait` the run's step made before a park, made again
+    /// as the resumed step replays it (FIX 2360): on the agent's own surface,
+    /// the value read again under `lease`; nothing is spent, stamped or
+    /// extended. A refusal leaves the step its kept answer.
+    fn replay_reveal(
+        &self,
+        call: &SelfAgentVerbCall,
+        lease: EntityId,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let memory = agent_memory(&self.server, self.actor, origin, invocation);
+        let answered = serde_json::from_value::<sdk::RevealWaitRequest>(call.input.clone())
+            .map_err(|_| MemoryError::bad_request("reveal.wait takes the reveal id"))
+            .and_then(|input| sdk::replay_reveal_as_caller(&memory, input, lease))
+            .and_then(|answer| {
+                serde_json::to_value(answer)
+                    .map_err(|_| MemoryError::bad_request("reveal.wait answer does not encode"))
+            });
+        Ok(match answered {
+            Ok(output) => Ok(AgentVerbAnswer::new(output, None)),
+            Err(error) => Err(AgentVerbRefusal { code: error.code }),
+        })
+    }
+
     /// The run's own calls keep the run's own admission. A consult landing
     /// reads its refs, a TASK binding its TASK and workflow (FIX 5316), and
     /// a search its hits (FIX 5976), and a repo row its repo (FIX 6867), on
