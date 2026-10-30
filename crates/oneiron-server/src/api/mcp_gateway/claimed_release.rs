@@ -79,9 +79,10 @@ pub(super) fn kept(
 /// released, and never run again. A listed row its credential no longer
 /// reads or that was erased since, or a result the release would hold, gives
 /// the content-free word that the call ran; a waiter toward another machine
-/// is answered for its own, never refused for the difference. A result whose
-/// rows are unknown, and a reply kept with nothing beside it, go as they
-/// were.
+/// is answered for its own, never refused for the difference. A refusal kept
+/// with nothing beside it has its words released again for this waiter
+/// (FIX 10497); a result whose rows are unknown, and any other such reply,
+/// go as they were.
 pub(super) fn replayed(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -89,7 +90,7 @@ pub(super) fn replayed(
 ) -> Value {
     let mut reply = outcome.body;
     let Some(release) = outcome.release else {
-        return reply;
+        return super::device_release::mcp_rerelease_refusal(server, actor, reply);
     };
     let peer = actor.auth.as_ref().map(crate::auth::CoreAuth::peer);
     if peer != Some(release.peer) {

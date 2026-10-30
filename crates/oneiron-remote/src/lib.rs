@@ -92,6 +92,14 @@ pub struct OpenOptions {
     /// ExplicitHostInput): `None` is a computer, the generic default. Never
     /// read off the operating system.
     pub device_class: Option<MachineDeviceClass>,
+    /// Hold this install's host root as the vault's checkpoint signer for
+    /// the handle's life (FIX 5343): only `open_with_host_root` reads it.
+    /// `false` drops the issuer after profiling, as before; `true` holds
+    /// the loaded issuer on the vault handle, so the device sync's steady
+    /// pass attests with it the images its home writes. It joins the
+    /// same-vault test like every other option: a reopen names the same
+    /// value. Keeping the signer keeps the root secret resident.
+    pub hold_checkpoint_root_signer: bool,
 }
 
 /// What [`OneironClient::open_with_host_root`] did with the host root it
@@ -204,7 +212,9 @@ impl OneironClient {
     /// `host_root_secret` is the secret's exact bytes (a server's configured
     /// `auth_secret` as its UTF-8, or a retained binary root), borrowed for
     /// this call only. It never enters `options`, so it takes no part in the
-    /// same-vault test, and nothing keeps it or the issuer derived from it.
+    /// same-vault test, and nothing keeps it. The install's issuer is
+    /// dropped after profiling unless `options` opts into holding it as
+    /// the handle's checkpoint signer for its life (FIX 5343).
     /// Rooted-only: the vault must already be rooted, and nothing here roots
     /// it. An empty secret is `BAD_REQUEST`, and a vault open under the
     /// managed or relay posture, or a root the log marks as the provider's,
@@ -212,8 +222,8 @@ impl OneironClient {
     /// open with the engine's reason; [`Self::open`] stays the rootless
     /// door. Over a profile that already stands, a secret that is not the
     /// vault's settled root is reported, never refused. The handle carries
-    /// no owner proof: it binds the generic embedded owner actor, as `open`
-    /// does.
+    /// no owner proof and, without the hold opt-in, no root signer: it
+    /// binds the generic embedded owner actor, as `open` does.
     pub fn open_with_host_root(
         path: Option<&Path>,
         options: &OpenOptions,

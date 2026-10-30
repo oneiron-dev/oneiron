@@ -425,9 +425,7 @@ fn rewrite_outcome_claim_in_txn(
     id: &EntityId,
     body: &crate::claim::ClaimBody,
 ) -> Result<()> {
-    let raw = vault
-        .get_raw_in(wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
+    let raw = vault.get_raw_in(wtxn, id)?.ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("review claim header"))?;
     vault.put_reserved_claim_in_txn(
@@ -453,8 +451,7 @@ fn rewrite_learning_receipts_in_txn(
     renamed: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
     let table = crate::learning::evidence::EVIDENCE;
-    for ((digest, receipt), row) in
-        crate::skill_attribution::erase_scan_in_txn(vault, wtxn, table)?
+    for ((digest, receipt), row) in crate::skill_attribution::erase_scan_in_txn(vault, wtxn, table)?
     {
         let Some((prefix, artifact)) = receipt.rsplit_once(':') else {
             continue;
@@ -513,9 +510,7 @@ fn rewrite_learning_head_citations_in_txn(
                 if !changed {
                     continue;
                 }
-                let raw = vault
-                    .get_raw_in(wtxn, &id)?
-                    .ok_or(Error::EntityNotFound)?;
+                let raw = vault.get_raw_in(wtxn, &id)?.ok_or(Error::EntityNotFound)?;
                 let header = crate::batch::EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("learning head header"))?;
                 vault.put_reserved_claim_in_txn(
