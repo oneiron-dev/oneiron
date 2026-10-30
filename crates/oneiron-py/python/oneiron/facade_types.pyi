@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4382 declarations.
-Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1210 facade rows, 4388 declarations.
+Inputs: 1138 of 1210 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1044 of 1210 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -2495,6 +2495,52 @@ RunnerSeatTopUpEffect = Literal["cleared", "already_clear", "observation_changed
 class RunnerSeatTopUpReceipt(TypedDict):
     effect: RunnerSeatTopUpEffect
     quota: RunnerSeatQuota
+class RunnerWorkResumeChoiceSeat(TypedDict):
+    seat: int
+RunnerWorkResumeChoiceNextSeatBody = TypedDict("RunnerWorkResumeChoiceNextSeatBody", {"from": int})
+class RunnerWorkResumeChoiceNextSeat(TypedDict):
+    next_seat: RunnerWorkResumeChoiceNextSeatBody
+RunnerWorkResumeChoice = RunnerWorkResumeChoiceSeat | RunnerWorkResumeChoiceNextSeat
+OnSeatSpent = Literal["stop", "next_seat", "internal_models"]
+class RunnerSeatPolicy(TypedDict):
+    seats: list[RunnerSeat]
+    on_spent: NotRequired[OnSeatSpent]
+class RunnerWorkResumeRequest(TypedDict):
+    binding: str
+    expected_attempt: str
+    choice: NotRequired[RunnerWorkResumeChoice | None]
+    policy: RunnerSeatPolicy
+class SkippedRunnerSeatView(TypedDict):
+    seat: int
+    runner: str
+    reason: str
+class RunnerWorkResumeViewResumedBody(TypedDict):
+    seat: int
+    attempt: str
+    existing: bool
+    skipped: list[SkippedRunnerSeatView]
+class RunnerWorkResumeViewResumed(TypedDict):
+    resumed: RunnerWorkResumeViewResumedBody
+class RunnerWorkResumeViewCurrentBody(TypedDict):
+    seat: int
+    attempt: str
+class RunnerWorkResumeViewCurrent(TypedDict):
+    current: RunnerWorkResumeViewCurrentBody
+class RunnerWorkResumeViewUnchangedBody(TypedDict):
+    seat: int
+    attempt: str
+class RunnerWorkResumeViewUnchanged(TypedDict):
+    unchanged: RunnerWorkResumeViewUnchangedBody
+class RunnerWorkResumeViewNoSeatBody(TypedDict):
+    skipped: list[SkippedRunnerSeatView]
+class RunnerWorkResumeViewNoSeat(TypedDict):
+    no_seat: RunnerWorkResumeViewNoSeatBody
+class RunnerWorkResumeViewExhaustedBody(TypedDict):
+    back_at: NotRequired[int | None]
+    skipped: list[SkippedRunnerSeatView]
+class RunnerWorkResumeViewExhausted(TypedDict):
+    exhausted: RunnerWorkResumeViewExhaustedBody
+RunnerWorkResumeView = Literal["gone"] | RunnerWorkResumeViewResumed | RunnerWorkResumeViewCurrent | RunnerWorkResumeViewUnchanged | RunnerWorkResumeViewNoSeat | RunnerWorkResumeViewExhausted
 FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
 class FanoutResumeRequest(TypedDict):
     launch_ref: EntityId

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1209 facade rows, 4376 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1161.
+// UniFFI census: 1210 facade rows, 4382 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1162.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -7898,6 +7898,107 @@ pub struct RunnerSeatTopUpReceipt {
     pub effect: RunnerSeatTopUpEffect,
     #[serde(rename = "quota")]
     pub quota: RunnerSeatQuota,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerWorkResumeChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunnerWorkResumeChoice {
+    #[serde(rename = "seat")]
+    Seat(u64),
+    #[serde(rename = "next_seat")]
+    NextSeat {
+        #[serde(rename = "from")]
+        from: u64,
+    },
+}
+
+/// `oneiron::dispatch_byoa::seat::OnSeatSpent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OnSeatSpent {
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "next_seat")]
+    NextSeat,
+    #[serde(rename = "internal_models")]
+    InternalModels,
+}
+
+/// `oneiron::dispatch_byoa::seat::RunnerSeatPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunnerSeatPolicy {
+    #[serde(rename = "seats")]
+    pub seats: Vec<RunnerSeat>,
+    #[serde(rename = "on_spent", default, skip_serializing_if = "Option::is_none")]
+    pub on_spent: Option<OnSeatSpent>,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerWorkResumeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerWorkResumeRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "expected_attempt")]
+    pub expected_attempt: String,
+    #[serde(rename = "choice", default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<RunnerWorkResumeChoice>,
+    #[serde(rename = "policy")]
+    pub policy: RunnerSeatPolicy,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::SkippedRunnerSeatView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkippedRunnerSeatView {
+    #[serde(rename = "seat")]
+    pub seat: u64,
+    #[serde(rename = "runner")]
+    pub runner: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerWorkResumeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunnerWorkResumeView {
+    #[serde(rename = "resumed")]
+    Resumed {
+        #[serde(rename = "seat")]
+        seat: u64,
+        #[serde(rename = "attempt")]
+        attempt: String,
+        #[serde(rename = "existing")]
+        existing: bool,
+        #[serde(rename = "skipped")]
+        skipped: Vec<SkippedRunnerSeatView>,
+    },
+    #[serde(rename = "current")]
+    Current {
+        #[serde(rename = "seat")]
+        seat: u64,
+        #[serde(rename = "attempt")]
+        attempt: String,
+    },
+    #[serde(rename = "unchanged")]
+    Unchanged {
+        #[serde(rename = "seat")]
+        seat: u64,
+        #[serde(rename = "attempt")]
+        attempt: String,
+    },
+    #[serde(rename = "no_seat")]
+    NoSeat {
+        #[serde(rename = "skipped")]
+        skipped: Vec<SkippedRunnerSeatView>,
+    },
+    #[serde(rename = "exhausted")]
+    Exhausted {
+        #[serde(rename = "back_at", default, skip_serializing_if = "Option::is_none")]
+        back_at: Option<u64>,
+        #[serde(rename = "skipped")]
+        skipped: Vec<SkippedRunnerSeatView>,
+    },
+    #[serde(rename = "gone")]
+    Gone,
 }
 
 /// `oneiron::verbs::fanout_launch::FanoutLaunchRuling`.

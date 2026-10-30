@@ -90,6 +90,7 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.resident_shares.set`
 - `vault.runners.seats.quotas`
 - `vault.runners.seats.top_up`
+- `vault.runners.seats.resume`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
