@@ -28,6 +28,7 @@ mod stream_health;
 mod worker_lease;
 
 use futures_util::StreamExt;
+use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
@@ -293,6 +294,38 @@ impl OfferLadder {
     pub(super) fn scoped(mut self, scope: SeatScope) -> Self {
         self.scope = scope;
         self
+    }
+
+    /// This ladder with its rungs in the order `routes` names them (FIX
+    /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
+    /// [`LadderRung::offer_id`], the same route id the ladder's doors
+    /// judge. Name, pick, rests, scope and prefix pass through untouched;
+    /// an order that names no rung yields a ladder with no rungs, which
+    /// reaches the existing no-rung error downstream. Under inherit the
+    /// rungs keep their own order, so a vault with no per-world routes
+    /// behaves as before; routes that name no rung add nothing, and
+    /// duplicates repeat, exactly as `order` reads them.
+    #[must_use]
+    pub(crate) fn for_world_routes(&self, routes: &WorldModelRoutes) -> Self {
+        let keys: Vec<(String, usize)> = self
+            .rungs
+            .iter()
+            .enumerate()
+            .map(|(index, rung)| (rung.offer_id(), index))
+            .collect();
+        let ordered = routes.order(&keys, |key| key.0.as_str());
+        let rungs = ordered
+            .iter()
+            .map(|key| self.rungs[key.1].clone())
+            .collect();
+        Self {
+            name: self.name.clone(),
+            rungs,
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: self.scope,
+            prefix: self.prefix.clone(),
+        }
     }
 
     /// Each rung's engine model id and the prompt it prepends, in ladder
