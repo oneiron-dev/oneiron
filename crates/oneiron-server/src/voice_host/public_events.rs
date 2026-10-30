@@ -27,6 +27,9 @@ pub(super) struct Journal {
     floor: u64,
     /// The rows each generation was made from, by generation, as its brain
     /// handed them over before speech consumed its first event (FIX 4778).
+    /// The listing is total because the voice loop is concrete over
+    /// `ChatBrain`, which always knows its rows (FIX 6080); a loop made
+    /// generic over `Brain` brings back an unknown set.
     sources: BTreeMap<u64, TurnSources>,
 }
 
