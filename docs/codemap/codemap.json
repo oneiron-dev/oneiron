@@ -94884,7 +94884,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 20,
+      "fn": 21,
       "re-export": 1,
       "struct": 8,
       "type": 2
@@ -94936,7 +94936,7 @@
      "path": "src/supervisor/inference_admission/ticket.rs",
      "purpose": "Ticket waits and cancellation for the parent device queue",
      "surface": {
-      "fn": 5
+      "fn": 8
      }
     },
     {
@@ -94980,7 +94980,7 @@
      "surface": {
       "const": 5,
       "enum": 1,
-      "fn": 21,
+      "fn": 22,
       "struct": 7,
       "trait": 2,
       "type": 1
@@ -115076,7 +115076,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/native_exl3/mod.rs",
@@ -115479,7 +115479,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -119192,7 +119192,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 30,
+   "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1479,
    "test_files": 182
