@@ -418,6 +418,11 @@ export_facade! {
     let output = client.vault_runners_seats_top_up(&input)?;
     crate::codec::lift_record("vault.runners.seats.top_up", &output)
 };
+"vault.runners.seats.resume" => fn vault_runners_seats_resume(&self, input: RunnerWorkResumeRequest) -> RunnerWorkResumeView = |client| {
+    let input: oneiron::dispatch_byoa::RunnerWorkResumeRequest = crate::codec::lower_record("vault.runners.seats.resume", input)?;
+    let output = client.vault_runners_seats_resume(&input)?;
+    crate::codec::lift_record("vault.runners.seats.resume", &output)
+};
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;
