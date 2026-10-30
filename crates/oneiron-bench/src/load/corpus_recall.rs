@@ -322,7 +322,8 @@ struct Seeded {
     last_at: u64,
 }
 
-fn seed(plan: &Plan, agent: &Agent, corpus: &[Turn]) -> Seeded {
+/// Witnesses every turn, then writes each saved note as a claim.
+fn seed(plan: &Plan, agent: &Agent, corpus: &[Turn], owner: &str) -> Result<Seeded, String> {
     let mut seeded = Seeded {
         runs: 0,
         messages: 0,
@@ -366,34 +367,39 @@ fn seed(plan: &Plan, agent: &Agent, corpus: &[Turn]) -> Seeded {
                 *seeded.errors.entry(format!("witness {error}")).or_default() += 1;
             }
         }
-        if plan.claims {
-            let at = turn.runs.last().map_or(0, |r| r.at);
-            for note in &turn.notes {
-                let (Some(key), Some(value)) = (&note.key, &note.value) else {
-                    continue;
-                };
-                let body = json!({
-                    "predicate": predicate_of(key),
-                    "subject_ref": turn.conversation_ref,
-                    "value": value,
-                    "occurred_at": at,
-                    "learned_at": at,
-                    "confidence": 0.9,
-                    "source": "user_stated",
-                });
-                let (ms, result) = agent.post("vault.claims.upsert", &body);
-                seeded.claim_ms.push(ms);
-                seeded.claims += 1;
-                if let Err(error) = result {
-                    *seeded.errors.entry(format!("claim {error}")).or_default() += 1;
-                }
-            }
-        }
         if (index + 1) % 50 == 0 {
-            say(&format!("seeded {} of {} turns", index + 1, corpus.len()));
+            say(&format!("witnessed {} of {} turns", index + 1, corpus.len()));
         }
     }
-    seeded
+    if !plan.claims {
+        return Ok(seeded);
+    }
+    let scope = super::client::claim_scope(owner)?;
+    for turn in corpus {
+        let at = turn.runs.last().map_or(0, |r| r.at);
+        for note in &turn.notes {
+            let (Some(key), Some(value)) = (&note.key, &note.value) else {
+                continue;
+            };
+            let body = json!({
+                "predicate": predicate_of(key),
+                "subject_ref": turn.conversation_ref,
+                "value": value,
+                "occurred_at": at,
+                "learned_at": at,
+                "confidence": 0.9,
+                "source": "user_stated",
+                "scope": scope,
+            });
+            let (ms, result) = agent.post("vault.claims.upsert", &body);
+            seeded.claim_ms.push(ms);
+            seeded.claims += 1;
+            if let Err(error) = result {
+                *seeded.errors.entry(format!("claim {error}")).or_default() += 1;
+            }
+        }
+    }
+    Ok(seeded)
 }
 
 struct Timed {
@@ -530,7 +536,7 @@ fn execute(plan: &Plan) -> Result<(), String> {
             claim_ms: Vec::new(),
             last_at,
         },
-        None => seed(plan, &agent, &corpus),
+        None => seed(plan, &agent, &corpus, &vault.owner)?,
     };
     let seed_seconds = seed_started.elapsed().as_secs_f64();
     let seed_cpu = cpu_before_seed
