@@ -108,7 +108,7 @@ pub(super) use self::emergency::{
 };
 pub(super) use self::storage::booking_writer;
 pub(crate) use self::token::hex_lower;
-pub(super) use self::token::{digest_with, mint_raw_token};
+pub(super) use self::token::{digest_with, live_hold_in_txn, mint_raw_token};
 // The three ordinary transitions are reached from outside this module only by
 // sibling test suites; the non-test doors stay behind the consumer turn.
 #[cfg(test)]

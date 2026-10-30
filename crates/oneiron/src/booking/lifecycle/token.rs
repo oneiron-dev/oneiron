@@ -300,19 +300,29 @@ pub fn confirm_hold_taken_at(
     now_utc: u64,
 ) -> Result<Option<u64>, BookingError> {
     let rtxn = read_txn(vault)?;
-    let Some(hold): Option<SoftHoldRow> = HOLD
-        .get(&vault.store, &rtxn, &hold_digest(session_key))
-        .map_err(|error| engine_failure("meta read", error))?
-    else {
-        return Ok(None);
-    };
-    if !hold.is_live_at(now_utc)
-        || hold.token_hash != token_digest(hold_token)
-        || hold.checkout_lease_hash.is_some()
-    {
-        return Ok(None);
-    }
-    Ok(Some(hold.expires_at.saturating_sub(DEFAULT_HOLD_TTL_SECS)))
+    Ok(
+        live_hold_in_txn(vault, &rtxn, session_key, hold_token, now_utc)?
+            .filter(|hold| hold.checkout_lease_hash.is_none())
+            .map(|hold| hold.expires_at.saturating_sub(DEFAULT_HOLD_TTL_SECS)),
+    )
+}
+
+/// This session's live hold, when `hold_token` is its token.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read.
+pub(in crate::booking) fn live_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    session_key: &SessionKey,
+    hold_token: &OpaqueLifecycleToken,
+    now_utc: u64,
+) -> Result<Option<SoftHoldRow>, BookingError> {
+    let hold: Option<SoftHoldRow> = HOLD
+        .get(&vault.store, txn, &hold_digest(session_key))
+        .map_err(|error| engine_failure("meta read", error))?;
+    Ok(hold.filter(|hold| hold.is_live_at(now_utc) && hold.token_hash == token_digest(hold_token)))
 }
 
 /// The event type of the booking a reschedule or cancel token belongs to.

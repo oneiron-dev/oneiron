@@ -2,7 +2,10 @@
 //! booking request to the merged solver and lifecycle, and its listing for
 //! the served `vault.booking.*` doors (FIX 4781).
 
+use oneiron::booking::anti_abuse::BookingQuarantineRestoreInput;
+
 use super::*;
+use crate::api::booking_anti_abuse::enforce_book_restorable;
 
 /// The one door from a booking request to the merged booking capabilities.
 ///
@@ -132,8 +135,15 @@ async fn execute(
             BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
                 enforce_hold(State(Arc::clone(server)), facts).await?
             }
-            BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => {
-                enforce_book(State(Arc::clone(server)), facts).await?
+            BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
+                let hold_token = OpaqueLifecycleToken(input.hold_token.clone());
+                let restore = BookingQuarantineRestoreInput {
+                    session_key: session_key(page_ref, &input.session_ref),
+                    hold_token: &hold_token,
+                    booker_email: &input.booker_email,
+                    intake: &input.intake,
+                };
+                enforce_book_restorable(State(Arc::clone(server)), facts, Some(restore)).await?
             }
             BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
                 enforce_amend(State(Arc::clone(server)), facts).await?
