@@ -25,7 +25,8 @@
 //! resume (`release`, FIX 5880). A try whose sealed slip no longer stands is
 //! its waking actor's to rebind to a live slip of theirs (`rebind`, FIX
 //! 11429), as a queued turn action is, and so is a wake its turn owes that
-//! no admission has judged yet (FIX 11833).
+//! no admission has judged yet (FIX 11833). A wake whose sealed slip lapsed
+//! stays owed for that rebind until its own expiry (FIX 12058).
 
 mod admit;
 mod arm;

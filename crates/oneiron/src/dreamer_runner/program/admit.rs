@@ -1,7 +1,9 @@
 //! DOOR-141 admission: one writer judges a wake against the live vault and,
 //! in one commit, records its Gate decision and admission, queues the program
 //! attempt as the root of its run tree under the waking actor's stamp, ready
-//! for the program runtime, and consumes the wake.
+//! for the program runtime, and consumes the wake. A wake whose sealed slip
+//! lapsed is kept owed instead, until its rebind or its own expiry (FIX
+//! 12058).
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
@@ -19,7 +21,7 @@ use crate::{EntityId, Vault};
 
 use super::authority::Standing;
 use super::types::{
-    ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
+    OwedWakeHold, ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
     TurnProgramAdmissionRecord, TurnProgramWake, run_id,
 };
 use super::{ADMISSION, ARM, WAKE};
@@ -28,6 +30,19 @@ const NOT_ARMED: &str = "the program is no longer armed";
 const NOT_TRIGGERED: &str = "the landed turn does not match the program's trigger";
 const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
 const PIN_MOVED: &str = "the pinned program changed since it was armed";
+/// How long after its turn landed a wake whose sealed slip lapsed stays
+/// owed for its rebind (FIX 12058): the wake's own expiry.
+const LAPSED_WAKE_HOLD_SECS: u64 = 7 * 86_400;
+
+/// What one admission's writer did with an owed wake.
+#[allow(clippy::large_enum_variant)]
+pub(super) enum WakeAdmission {
+    /// It decided the wake: queued or refused, with its receipt.
+    Decided(TurnProgramAdmissionReceipt),
+    /// The wake's sealed slip lapsed before the wake's own expiry: it stays
+    /// owed, the lapse its row's status, for its rebind (FIX 12058).
+    Held,
+}
 
 impl Vault {
     /// Admits one wake a landed turn owed an armed program (DOOR-141 §4).
@@ -44,18 +59,26 @@ impl Vault {
     /// tree, ready for the program runtime: no placeholder park holds it
     /// (DOOR-141 PR2). The wake is consumed in the same commit, so a crash
     /// before it re-admits nothing.
+    ///
+    /// A wake whose sealed slip itself lapsed, so that its rebind can reach
+    /// it, is no final refusal before its own expiry (FIX 12058): its row
+    /// stays owed with AUTHORITY_LAPSED as its status, and no decision is
+    /// recorded. After the expiry it is judged and refused as before.
     pub(super) fn admit_turn_program(
         &self,
         wake: &TurnProgramWake,
         now: u64,
-    ) -> Result<TurnProgramAdmissionReceipt> {
-        let receipt = self.with_write_txn_grouped(|txn| admit_in_txn(self, txn, wake, now))?;
-        if receipt.first && matches!(receipt.outcome, TurnProgramAdmissionOutcome::Queued { .. }) {
+    ) -> Result<WakeAdmission> {
+        let admitted = self.with_write_txn_grouped(|txn| admit_in_txn(self, txn, wake, now))?;
+        if let WakeAdmission::Decided(receipt) = &admitted
+            && receipt.first
+            && matches!(receipt.outcome, TurnProgramAdmissionOutcome::Queued { .. })
+        {
             self.store.notify_attempt_observers();
             // The deadline lane arms the queued program at once.
             self.store.notify_proactivity_changes();
         }
-        Ok(receipt)
+        Ok(admitted)
     }
 }
 
@@ -66,21 +89,42 @@ pub(super) fn admit_in_txn(
     txn: &mut heed::RwTxn<'_>,
     wake: &TurnProgramWake,
     now: u64,
-) -> Result<TurnProgramAdmissionReceipt> {
+) -> Result<WakeAdmission> {
     let admission = wake.admission_id();
-    let wake = &erased_actor_form_in_txn(vault, &*txn, wake)?;
+    let mut wake = erased_actor_form_in_txn(vault, &*txn, wake)?;
+    // The hold is the owed row's status, never part of the wake an
+    // admission records (FIX 12058).
+    let held = wake.held.take();
     if let Some(existing) = ADMISSION.get(vault, &*txn, &admission)? {
-        if existing.wake != *wake {
+        if existing.wake != wake {
             return Err(Error::ConcurrentWrite(
                 "a turn program wake differs from the one its turn already admitted",
             ));
         }
         WAKE.delete(vault, txn, &wake.key())?;
-        return Ok(existing.receipt(false));
+        return Ok(WakeAdmission::Decided(existing.receipt(false)));
     }
-    let judged = judge_in_txn(vault, &*txn, wake)?;
+    let judged = judge_in_txn(vault, &*txn, &wake)?;
     let refused = judged.as_ref().err().copied();
-    let receipt_id = gate_decision_in_txn(vault, txn, wake, &admission, refused, now)?;
+    let expires_at = held.as_ref().map_or_else(
+        || wake.turn.landed_at.saturating_add(LAPSED_WAKE_HOLD_SECS),
+        |held| held.expires_at,
+    );
+    if refused == Some(AUTHORITY_LAPSED)
+        && now < expires_at
+        && slip_lapsed_in_txn(vault, &*txn, &wake)
+    {
+        // The lapse is the owed row's status: no decision is recorded, and
+        // the drain passes the row by until its rebind or its expiry.
+        wake.held = Some(held.unwrap_or_else(|| OwedWakeHold {
+            reason: AUTHORITY_LAPSED.to_owned(),
+            held_at: now,
+            expires_at,
+        }));
+        WAKE.put(vault, txn, &wake.key(), &wake)?;
+        return Ok(WakeAdmission::Held);
+    }
+    let receipt_id = gate_decision_in_txn(vault, txn, &wake, &admission, refused, now)?;
     let mut record = TurnProgramAdmissionRecord {
         admission,
         wake: wake.clone(),
@@ -98,7 +142,17 @@ pub(super) fn admit_in_txn(
         ADMISSION.put(vault, txn, &admission, &record)?;
     }
     WAKE.delete(vault, txn, &wake.key())?;
-    Ok(record.receipt(true))
+    Ok(WakeAdmission::Decided(record.receipt(true)))
+}
+
+/// Whether `wake`'s sealed slip itself lapsed, the lapse its rebind reaches
+/// (FIX 12058): it keeps its signed instrument, and that no longer verifies,
+/// as the rebind proof asks of the slip it replaces. A wake an erase
+/// scrubbed keeps none.
+fn slip_lapsed_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, wake: &TurnProgramWake) -> bool {
+    wake.authority
+        .slip_instrument()
+        .is_some_and(|instrument| vault.invocation_slip_in_txn(txn, instrument).is_err())
 }
 
 /// `wake` as an erase of its waking actor leaves it (FIX 10668): without
