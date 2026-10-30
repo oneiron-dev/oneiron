@@ -8,6 +8,9 @@ pub const TAG_DOCUMENT: u8 = 11;
 /// Document batch: `[tag][len:4BE][document frame]...`. Nesting is forbidden.
 pub const TAG_BATCH: u8 = 12;
 
+/// The members one batch this node sends carries at most: a sender's
+/// processing quantum, never a receiver's refusal. A receiver takes every
+/// member a batch carries within the frame's byte bound (FIX 10163).
 const MAX_BATCH_DOCUMENTS: usize = 256;
 /// Maximum proposals carried by one node tick. Excess waits for its next tick.
 pub const MAX_NODE_BATCH_MEMBERS: usize = MAX_BATCH_DOCUMENTS;
@@ -103,14 +106,14 @@ pub fn encode_document_batch(frames: &[Vec<u8>]) -> EncodedFrame {
     EncodedFrame(result)
 }
 
-/// Decodes the entire batch before a caller can apply any member.
+/// Decodes the entire batch before a caller can apply any member. Every
+/// member the frame's byte bound holds is taken, however many (FIX 10163):
+/// each costs at least its length and its document header, so the bound on
+/// bytes bounds the members and their memory.
 pub fn decode_document_batch(mut data: &[u8]) -> Result<Vec<DocumentFrame<'_>>, TransportError> {
     checked_encoded_frame_len(1, data.len())?;
     let mut frames = Vec::new();
     while !data.is_empty() {
-        if frames.len() == MAX_BATCH_DOCUMENTS {
-            return Err(TransportError::InvalidPayload("too many batch documents"));
-        }
         if data.len() < 4 {
             return Err(TransportError::InvalidPayload("short batch length"));
         }
@@ -150,11 +153,13 @@ pub fn encode_node_batch(frames: &[Vec<u8>]) -> EncodedFrame {
 
 /// Validate the whole node batch before dispatching any member. Root writes,
 /// RPCs, subscription controls and nested batches cannot ride this lane.
+/// Every member within the frame's byte bound is taken, however many (FIX
+/// 10163); the receiver dispatches them in order.
 pub fn decode_node_batch(mut data: &[u8]) -> Result<Vec<&[u8]>, TransportError> {
     checked_encoded_frame_len(1, data.len())?;
     let mut frames = Vec::new();
     while !data.is_empty() {
-        if frames.len() == MAX_BATCH_DOCUMENTS || data.len() < 4 {
+        if data.len() < 4 {
             return Err(TransportError::InvalidPayload("invalid node batch length"));
         }
         let len = u32::from_be_bytes(data[..4].try_into().expect("length checked")) as usize;
