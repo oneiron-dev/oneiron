@@ -231,22 +231,34 @@ fn resolve_consent_basis_in_txn(
             .map_err(|err| ingest_reason(err.to_string())),
             None => Ok(0),
         },
-        || covering_invite_in_txn(vault, txn, actor, event_ref, recipient, false),
+        || {
+            covering_invite_in_txn(
+                vault,
+                txn,
+                actor,
+                event_ref,
+                recipient,
+                CalendarInviteMethod::Request,
+                false,
+            )
+        },
     )
 }
 
 /// The booking-page grant that covers one ADMITTED invite: live, held by the
-/// sending `actor`, and bound by the booking layer to the invite's own EVENT
-/// and recipient. The dispatch door names it to the gate, the only way a page
-/// grant ever matches there.
+/// sending `actor`, and bound by the booking layer to the invite's own EVENT,
+/// recipient and method (a cancelled booking's `CANCEL` stays covered, a new
+/// `REQUEST` to it does not). The dispatch door names it to the gate, the
+/// only way a page grant ever matches there.
 pub(super) fn booking_page_grant_for_invite_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     event_ref: EntityId,
     recipient: &str,
+    method: CalendarInviteMethod,
 ) -> Result<Option<EntityId>, CalendarError> {
-    covering_invite_in_txn(vault, txn, actor, event_ref, recipient, true)
+    covering_invite_in_txn(vault, txn, actor, event_ref, recipient, method, true)
 }
 
 /// The consent basis of one recipient: a prior thread when `touches` counts
@@ -450,6 +462,7 @@ fn covering_invite_in_txn(
     actor: EntityId,
     event_ref: EntityId,
     recipient: &str,
+    method: CalendarInviteMethod,
     pages_only: bool,
 ) -> Result<Option<EntityId>, CalendarError> {
     let principal = actor.to_hex();
@@ -468,7 +481,7 @@ fn covering_invite_in_txn(
         let covers = match &grant.scope {
             StandingOutboundGrantScope::BookingPageInvites { .. } => {
                 crate::booking::invite_grant::page_grant_covers_booking_in_txn(
-                    vault, txn, &grant_ref, &event_ref, recipient,
+                    vault, txn, &grant_ref, &event_ref, recipient, method,
                 )
                 .map_err(|err| ingest_reason(err.to_string()))?
             }
