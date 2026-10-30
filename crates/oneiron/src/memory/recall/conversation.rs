@@ -189,7 +189,7 @@ pub(crate) fn conversation_candidate_admits(
             return Ok(true);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM
-            && !crate::provenance::claim_conversation_sources_in(&vault.store, txn, &current)?
+            && !crate::provenance::claim_conversation_sources_in(store, txn, &current)?
                 .is_disjoint(selected)
         {
             return Ok(true);

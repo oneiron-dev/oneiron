@@ -24,14 +24,14 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
 };
-use crate::store::Store;
+use crate::store::StoreRead;
 
 /// The conversations `claim`'s words came from, read in `txn`: empty for a
 /// row that is absent, no CLAIM or undecodable, or a claim that names no
 /// conversation source. A source that is gone, malformed or of another kind
 /// adds nothing.
 pub(crate) fn claim_conversation_sources_in(
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     claim: &EntityId,
 ) -> Result<BTreeSet<EntityId>> {
@@ -88,7 +88,7 @@ fn consolidation_refs(claim: &crate::ClaimBody) -> Vec<EntityId> {
 /// The conversation `source` is in: itself for a CONVERSATION, a TURN's
 /// `ChildOf` target, a MESSAGE's `BelongsTo` target or else its TURN's.
 fn source_conversation_in(
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     source: &EntityId,
 ) -> Result<Option<EntityId>> {
@@ -116,7 +116,13 @@ fn source_conversation_in(
             else {
                 return Ok(None);
             };
-            first_target_of_type(store, txn, &turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
+            first_target_of_type(
+                store,
+                txn,
+                &turn,
+                EdgeKind::ChildOf,
+                ENTITY_TYPE_CONVERSATION,
+            )
         }
         _ => Ok(None),
     }
@@ -125,7 +131,7 @@ fn source_conversation_in(
 /// The first `kind` edge out of `source` whose target is of `entity_type`:
 /// one adjacency read that stops at its first match.
 fn first_target_of_type(
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     source: &EntityId,
     kind: EdgeKind,
@@ -141,7 +147,7 @@ fn first_target_of_type(
 }
 
 /// `id`'s stored entity type, from its row's first byte, read in place.
-fn entity_type_in(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
+fn entity_type_in(store: &StoreRead<'_>, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
     Ok(store
         .port_entity_with_raw(txn, id, |raw| Ok(raw.first().copied()))?
         .flatten())
