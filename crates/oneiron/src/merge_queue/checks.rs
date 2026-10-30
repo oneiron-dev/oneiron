@@ -23,7 +23,7 @@ impl MergeQueue<'_> {
         F: FnMut(&CheckInvocation) -> Result<CheckReport>,
     {
         let batch = self.batch(id)?;
-        let (path, prior) = self.check_path(&batch, mask, phase)?;
+        let (path, prior) = self.check_path(&batch, mask, phase, false)?;
         let oracle = ContractOracle::new(self.vault);
         if let Some(id) = prior {
             return oracle
