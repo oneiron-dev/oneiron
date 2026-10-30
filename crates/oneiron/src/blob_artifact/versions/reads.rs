@@ -6,11 +6,12 @@
 use heed::RoTxn;
 
 use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use crate::secret_custody::{SecretSight, sighted_bytes_in_txn};
 
 use super::super::body::decode_blob_artifact_body;
@@ -168,6 +169,49 @@ impl Vault {
             return Ok(None);
         }
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
+    }
+
+    /// The length of version `version`'s bytes as
+    /// [`Self::read_blob_artifact_version_in_txn`] reads them, measured
+    /// without reading them (FIX 12304), so a reader can admit their memory
+    /// first: a body kept in its ASSET's file by its manifest, any other by
+    /// its row's body, seen in place. A body an entity document holds (text,
+    /// never opaque bytes) is resolved to measure it. `None` where that read
+    /// finds no version, or the body reads as absent.
+    pub(crate) fn blob_artifact_version_len_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<u64>> {
+        let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
+            return Ok(None);
+        };
+        if !compaction_response_readable_in(self, rtxn, artifact_id)? {
+            return Ok(None);
+        }
+        let asset = super::blob_artifact_asset_entity_id(&record.content_hash)?;
+        let store = &self.store;
+        let len = store.port_entity_with_raw(rtxn, &asset, |raw| {
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_ASSET {
+                return Err(Error::CorruptedIndex("blob content hash"));
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !body_readable_in_txn(store, rtxn, &asset, body, BodyStale::Withdrawn)? {
+                return Ok(None);
+            }
+            if let Some(manifest) = crate::store::asset_file_in_txn(store, rtxn, &asset, body)? {
+                return Ok(Some(manifest.facts.len));
+            }
+            if crate::entity_doc::has_record_head(store, rtxn, &asset)? {
+                let resolved = crate::entity_doc::resolve_record_body(store, rtxn, &asset, body)?;
+                return Ok(Some(resolved.len() as u64));
+            }
+            Ok(Some(body.len() as u64))
+        })?;
+        Ok(len.flatten())
     }
 
     /// Whether `artifact_id`'s version bytes may leave
