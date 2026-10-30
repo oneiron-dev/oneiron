@@ -117,4 +117,10 @@ pub struct NapiEmailInboundEvent {
     pub payload_ref: Option<String>,
     /// Received-at timestamp (UNIX seconds).
     pub received_at: i64,
+    /// The message's `Message-ID` header, with or without its angle brackets.
+    pub message_id: Option<String>,
+    /// The message's `References` header ids, oldest first.
+    pub references: Option<Vec<String>>,
+    /// The message's `In-Reply-To` header id.
+    pub in_reply_to: Option<String>,
 }
