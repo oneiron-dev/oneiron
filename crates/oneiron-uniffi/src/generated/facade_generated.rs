@@ -3331,6 +3331,11 @@ export_facade! {
     let output = client.vault_code_origin_mirror_get(&input)?;
     crate::codec::lift_record("vault.code.origin.mirror.get", &output)
 };
+"vault.code.origin.mirror.plan" => fn vault_code_origin_mirror_plan(&self, input: OriginMirrorPlanRequest) -> OriginMirrorPlanView = |client| {
+    let input: oneiron::origin::publish::OriginMirrorPlanRequest = crate::codec::lower_record("vault.code.origin.mirror.plan", input)?;
+    let output = client.vault_code_origin_mirror_plan(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.plan", &output)
+};
 "vault.code.origin.mirror.set" => fn vault_code_origin_mirror_set(&self, input: OriginMirrorSetRequest) -> OriginMirrorTarget = |client| {
     let input: oneiron::memory::origin_doors::OriginMirrorSetRequest = crate::codec::lower_record("vault.code.origin.mirror.set", input)?;
     let output = client.vault_code_origin_mirror_set(&input)?;
