@@ -13449,6 +13449,16 @@
       "section": false
     },
     {
+      "name": "vault.skills.callable.amend",
+      "description": "The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing.",
+      "input": "crate::skill::helper::CallableAmendRequest",
+      "output": "crate::skill::helper::CallableAmendReceipt",
+      "call": "crate::skill::helper::amend_callable_case(memory.vault(), &crate::WriteActor::new(memory.actor(), memory.actor_class()), &input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.skills.pack_receipt",
       "description": "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner.",
       "input": "SkillPackReceiptRequest",

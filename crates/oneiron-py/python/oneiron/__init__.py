@@ -1920,6 +1920,9 @@ class Oneiron:
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs":
             return Oneiron._VaultSkillsGovernanceVerbs(self._client)
+        @property
+        def callable(self) -> "Oneiron._VaultSkillsCallableVerbs":
+            return Oneiron._VaultSkillsCallableVerbs(self._client)
         def pack_receipt(self, spec):
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
@@ -2016,6 +2019,12 @@ class Oneiron:
         def set(self, spec):
             """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
             return json.loads(_translate(lambda: self._client.vault_skills_governance_set(json.dumps(spec))))
+    class _VaultSkillsCallableVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def amend(self, spec):
+            """The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."""
+            return json.loads(_translate(lambda: self._client.vault_skills_callable_amend(json.dumps(spec))))
     class _VaultSkillsOutcomesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
