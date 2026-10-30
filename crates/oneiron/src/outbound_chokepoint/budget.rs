@@ -1,6 +1,7 @@
 //! The new-effect admission's budget steps, moved out of `admission.rs`
 //! whole: the co-actor's preflight and the one-shot charge. FIX 8788 adds
-//! the Linear mirror's Rate wait, and FIX 8686 the scoped connector call's:
+//! the Linear mirror's Rate wait, and FIX 8686 the scoped connector call's
+//! and the dispatch pipeline send's:
 //! a mutation whose only full budget rows are count-bound windows that
 //! refuse rather than suspend is not denied, records no decision and charges
 //! nothing, and comes back naming
@@ -25,8 +26,9 @@ use crate::outbound_intent_ledger::{
 /// paces, the instant (Unix seconds) its windows all open again: the
 /// primary's key, and the co-actor's when it is another key (`co`, its own
 /// rows alone unless `co_pool`), each read whole. A Linear mirror mutation
-/// (it has a co-actor) and a scoped connector call ask; any other send
-/// meets its budget as before.
+/// (it has a co-actor), a scoped connector call and a send whose transport's
+/// caller holds a paced result ask; any other send meets its budget as
+/// before.
 pub(super) fn rate_paced(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
