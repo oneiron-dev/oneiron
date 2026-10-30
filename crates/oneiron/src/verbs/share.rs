@@ -108,7 +108,8 @@ pub fn create_share_as_caller(
         mention: input.mention,
     };
     let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Brief);
-    let issuer = WriteActor::new(memory.actor(), memory.actor_class());
+    // FIX 11921: the issuer carries the run it writes for, if any.
+    let issuer = memory.write_actor();
     memory
         .vault()
         .create_share_travelling(&share_id, &issuer, &share, &travel)?;

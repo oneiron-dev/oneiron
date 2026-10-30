@@ -8,13 +8,16 @@
 //! its own bound would hold a fork of it, named
 //! [`GateReasonCode::PendingDelegationChainCeiling`] and citing that
 //! ancestor. A forked child keeps its row's clamp, and a child with no agent
-//! parent keeps today's Auto.
+//! parent keeps today's Auto. An external effect the run makes meets the
+//! chain the same way, on the effect door's own Pending (FIX 11921,
+//! [`effect_run_actor`]).
 
 use super::ceiling::PolicyApprovalCeiling;
 use super::decision::{GateDecision, GateOutcome, GateReasonCode};
 use super::definition_ceiling::{DelegationNarrowing, delegation_chain_narrowing};
-use super::input::GateEvaluatorInput;
+use super::input::{GateEvaluatorInput, GateProvenanceHandles};
 use super::resolution::PolicyManifestResolution;
+use crate::edge::EdgeActorClass;
 use crate::store::Store;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
@@ -35,6 +38,17 @@ pub(in crate::gate) fn evaluate_with_delegation_chain(
         }),
         None => decision,
     }
+}
+
+/// The run an external effect is made for, as the claim door reads its
+/// writes' (FIX 11921): the effect's audited identity bound to the attempt
+/// its provenance carries. The class the effect asserts is not read: the
+/// chain read itself proves the attempt dispatched that identity's own
+/// AGENT_DEF row, and narrows nothing otherwise.
+pub(in crate::gate) fn effect_run_actor(provenance: &GateProvenanceHandles) -> Option<WriteActor> {
+    let actor = provenance.actor_entity_ref?;
+    let attempt = provenance.run_attempt?;
+    Some(WriteActor::new(actor, EdgeActorClass::Agent).with_run_attempt(attempt))
 }
 
 /// `decision` held by the ancestor `narrowing` names, where that ancestor's

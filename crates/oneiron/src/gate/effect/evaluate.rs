@@ -283,7 +283,17 @@ pub(crate) fn evaluate_external_effect_policy(
         effect.counterparty_send_override = counterparty_send_override;
         effect.counterparty_contact_revoked = counterparty_contact_revoked;
     }
-    let mut decision = policy.evaluate_gate(&input);
+    // FIX 11921: an agent bound to its run meets each delegation ancestor's
+    // live bound here as at the claim door; an ancestor that narrowed holds
+    // the effect on this door's Pending.
+    let mut decision = crate::gate::delegation_chain::evaluate_with_delegation_chain(
+        store,
+        &*wtxn,
+        policy,
+        &input,
+        None,
+        crate::gate::delegation_chain::effect_run_actor(&input.provenance),
+    );
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
     let created_at = mutation_recorded_at;
