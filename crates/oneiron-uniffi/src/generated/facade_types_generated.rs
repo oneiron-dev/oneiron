@@ -19612,6 +19612,8 @@ pub struct PackSetupSecret {
     pub effector: String,
     #[serde(rename = "hint", default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    #[serde(rename = "optional", default, skip_serializing_if = "Option::is_none")]
+    pub optional: Option<bool>,
 }
 
 /// `oneiron::skill_hub::pack_catalog::setup::PackSetupRisk`.
