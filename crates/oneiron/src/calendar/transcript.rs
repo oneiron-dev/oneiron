@@ -13,7 +13,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod door;
+mod pending;
 pub use door::TranscriptFileDropInput;
+pub use pending::{
+    PendingTranscriptPass, TRANSCRIPT_OPEN_SESSION_WAIT_SECS, TRANSCRIPT_PENDING_ATTEMPT_KIND,
+    run_pending_transcript_ingests,
+};
 
 pub struct FileDropTranscriptSource;
 impl IngestSource for FileDropTranscriptSource {
