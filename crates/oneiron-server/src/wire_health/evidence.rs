@@ -163,16 +163,22 @@ fn tool_callers(window: &WireWindowReceipt, verbs: &[(String, u64)]) -> Vec<Valu
 }
 
 fn limit_crossing(key: String, question: &WireLimitQuestion) -> Crossing {
+    let mut summary = json!({
+        "row": question.row,
+        "bound": question.bound,
+        "observed": question.observed,
+        "crossings": question.crossings,
+    });
+    // The owners or co-owners whose own work crossed the row, when the host
+    // knew whose it was (FIX 5702).
+    if !question.owners.is_empty() {
+        summary["owners"] = json!(question.owners);
+    }
     Crossing {
         subject: format!("limit:{}", question.row),
         source: CrossingSource::Limit,
         raised_at: question.raised_at,
-        summary: json!({
-            "row": question.row,
-            "bound": question.bound,
-            "observed": question.observed,
-            "crossings": question.crossings,
-        }),
+        summary,
         read: Some((format!("{CURSOR_LIMIT}{}", question.row), key)),
         revises: None,
     }

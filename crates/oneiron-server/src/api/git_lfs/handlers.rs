@@ -129,10 +129,11 @@ fn batch_entry(
                 message: "object is not stored in this vault",
             });
         }
-        // An object this vault already holds needs no upload action: the
+        // An object this vault already offers needs no upload action: the
         // client is told it is done, which is what makes dedup visible on the
-        // wire instead of re-sending bytes.
-        LfsBatchOperation::Upload if stored => {}
+        // wire instead of re-sending bytes. A withheld one is asked for as an
+        // absent one is, so dedup never tells it is stored (FIX 8182).
+        LfsBatchOperation::Upload if offered => {}
         LfsBatchOperation::Upload => {
             entry.actions.insert(
                 "verify",
@@ -390,8 +391,17 @@ pub(crate) async fn lfs_verify(
     }
     let vault = Arc::clone(&server.vault);
     let size = request.size;
+    let peer = auth.peer();
+    let reads_marked = marked_read(&server, &auth, oid).is_some();
     let ok = crate::api::transfer::spawn_worker(move || {
         let _hold = (room, permit);
+        // A withheld object verifies as an absent one does, judged at the
+        // read itself (FIX 8182).
+        if oneiron::sync::chunks::lfs_object_withheld_as(&vault, oid, peer, reads_marked)
+            .unwrap_or(true)
+        {
+            return Ok(false);
+        }
         vault.verify_lfs_object(oid, size)
     })
     .await
