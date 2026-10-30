@@ -23,7 +23,7 @@ use crate::error::OffRecordError;
 /// A generation-stamped, structurally shared overlay read view.
 pub(crate) struct OverlaySnapshot {
     pub(super) state: Arc<OverlayState>,
-    pub(super) _lease: Lease,
+    pub(super) lease: Lease,
 }
 
 pub(crate) enum SnapshotLookup {
@@ -380,7 +380,7 @@ impl OverlaySnapshot {
             }
         }
 
-        Ok(PromotePlan {
+        let mut plan = PromotePlan {
             ops,
             replayed,
             temporary_short_ids,
@@ -390,7 +390,11 @@ impl OverlaySnapshot {
             turn,
             conversation,
             appends,
-        })
+            charge: None,
+        };
+        // The copies are the room's memory while the promotion runs.
+        plan.charge = Some(self.lease.charge_plan(&plan));
+        Ok(plan)
     }
 
     #[cfg(test)]

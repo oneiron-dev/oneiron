@@ -175,6 +175,7 @@ impl SessionOverlay {
         Ok(Lease {
             overlay: self.clone(),
             generation: lifecycle.generation,
+            snapshot_state: None,
         })
     }
 
