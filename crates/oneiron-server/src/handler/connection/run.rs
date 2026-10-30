@@ -12,7 +12,7 @@ use super::super::app_tier::{
 };
 use super::super::conn_state::ConnState;
 use super::super::ephemeral::late_join_presence;
-use super::super::leaf_keys::{LEAF_KEY_TICK, LeafKeySocket, offer_home_requests};
+use super::super::leaf_keys::{LEAF_KEY_TICK, LeafKeySocket, relay_tick};
 use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
@@ -195,7 +195,7 @@ pub(super) async fn handle_connection(
                 continue;
             }
             ConnEvent::LeafKeys => {
-                offer_home_requests(&server, conn_id, &conn_state);
+                relay_tick(&server, conn_id, &conn_state);
                 continue;
             }
             ConnEvent::AppDelivery => {

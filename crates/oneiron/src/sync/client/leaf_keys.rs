@@ -61,10 +61,11 @@ impl SyncClient {
                         }
                         Err(error) => LeafKeyFailureCause::HolderRefused(error.to_string()),
                     },
+                    // A fault, not a refusal: HolderOffline until L02's flip adds HolderFault.
                     Err(error) => LeafKeyFailureCause::of_refusal(&error)
-                        .unwrap_or_else(|| LeafKeyFailureCause::HolderRefused(error.to_string())),
+                        .unwrap_or(LeafKeyFailureCause::HolderOffline),
                 };
-                logged(tag, &id, holder, executor, "refused");
+                logged(tag, &id, holder, executor, "not_answered");
                 Ok(vec![encode_leaf_key_failure(&id, &cause).into_result()?])
             }
             TAG_LEAF_KEY_ANSWER => {
@@ -86,6 +87,16 @@ impl SyncClient {
             }
             TAG_LEAF_KEY_FAILURE => {
                 let (id, cause) = decode_leaf_key_failure(payload)?;
+                // Only a failure of an ask this client has out is recorded.
+                if self.sent_leaf_key_request(&id)?.is_none() {
+                    tracing::debug!(
+                        tag,
+                        request = %leaf_key_request_hex(&id),
+                        outcome = "no_request_out",
+                        "leaf key failure dropped"
+                    );
+                    return Ok(Vec::new());
+                }
                 let sends = &mut self.leaf_key_sends;
                 sends.sent.remove(&id);
                 sends.held.insert(id, Instant::now() + LEAF_KEY_RETRY);

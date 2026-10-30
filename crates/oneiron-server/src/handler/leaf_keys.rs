@@ -10,7 +10,7 @@
 //! holder has no live socket, or whose expiry passed, fails by name and its
 //! executor asks again; one answer goes per request id.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -29,9 +29,23 @@ use super::conn_state::ConnState;
 use crate::protocol::{self, ProtocolError};
 use crate::server::SyncServer;
 
-/// How often a holder's socket is offered the home's own pending requests
-/// (a call, FIX 11785).
+/// How often each socket runs the relay's upkeep: requests whose expiry
+/// passed in flight fail by name, and a holder's socket is offered the home's
+/// own pending requests (a call, FIX 11785).
 pub(super) const LEAF_KEY_TICK: Duration = Duration::from_secs(1);
+
+/// The most requests one executor machine has in flight at once (a call, FIX
+/// 11785). Past it a request fails `HolderOffline`, which its executor
+/// retries, and the relay keeps nothing of it.
+const LEAF_KEY_IN_FLIGHT_PER_EXECUTOR: usize = 256;
+
+/// The longest an answered id is kept to refuse its replay, whatever expiry
+/// it names (a call, FIX 11785): a far-future expiry pins no memory.
+const LEAF_KEY_COMPLETED_HORIZON_MS: u64 = 10 * 60 * 1000;
+
+/// The most answered ids kept at once (a call, FIX 11785); past it the
+/// oldest goes.
+const LEAF_KEY_COMPLETED_MAX: usize = 65_536;
 
 /// A socket's direct lane: what it is sent there leaves through its guarded
 /// door, as every reply does.
@@ -58,8 +72,11 @@ struct RelayState {
     sockets: HashMap<u32, LiveSocket>,
     /// Requests relayed or answered here and not yet ended, by request id.
     in_flight: HashMap<[u8; 32], InFlight>,
-    /// Ids answered, each until its expiry, so a replay is refused.
+    /// Ids answered, each until its expiry or [`LEAF_KEY_COMPLETED_HORIZON_MS`]
+    /// from its answer, whichever comes first, so a replay is refused.
     completed: HashMap<[u8; 32], u64>,
+    /// The keys of `completed`, oldest first.
+    completed_order: VecDeque<[u8; 32]>,
     /// The home's own requests that failed, each held until it may go again.
     home_retry: HashMap<[u8; 32], Instant>,
 }
@@ -98,6 +115,9 @@ enum Admission {
     Replayed,
     /// Its holder has no live socket.
     HolderOffline,
+    /// Its executor has [`LEAF_KEY_IN_FLIGHT_PER_EXECUTOR`] requests in
+    /// flight: it fails `HolderOffline` and is kept nowhere.
+    ExecutorFull,
     /// The home holds the key: answer it here.
     AnswerHere,
     /// Push it to the holder's newest live socket.
@@ -131,25 +151,58 @@ impl RelayState {
             .is_some_and(|(newest, _)| newest == conn_id)
     }
 
+    /// Drops every answered id past its keep, and takes out every request
+    /// whose expiry passed in flight: the caller fails each by name once the
+    /// lock is gone.
+    fn prune(&mut self, now_ms: u64) -> Vec<([u8; 32], InFlight)> {
+        let kept = self.completed.len();
+        self.completed.retain(|_, until_ms| *until_ms > now_ms);
+        if self.completed.len() != kept {
+            let completed = &self.completed;
+            self.completed_order.retain(|id| completed.contains_key(id));
+        }
+        self.in_flight
+            .extract_if(|_, entry| entry.expires_at_ms <= now_ms)
+            .collect()
+    }
+
+    /// Marks request `id`, which expires at `expires_at_ms`, answered: kept
+    /// until its expiry or the horizon, and past the cap the oldest goes.
+    fn complete(&mut self, id: [u8; 32], expires_at_ms: u64, now_ms: u64) {
+        let until_ms = expires_at_ms.min(now_ms.saturating_add(LEAF_KEY_COMPLETED_HORIZON_MS));
+        if self.completed.insert(id, until_ms).is_none() {
+            self.completed_order.push_back(id);
+        }
+        while self.completed.len() > LEAF_KEY_COMPLETED_MAX {
+            let Some(oldest) = self.completed_order.pop_front() else {
+                break;
+            };
+            self.completed.remove(&oldest);
+        }
+    }
+
     /// Takes request `id` into the relay, `home` being the home's own
-    /// machine, after dropping every entry past its expiry. The home's own
-    /// request is kept with its entry.
+    /// machine. The home's own request is kept with its entry.
     fn admit(
         &mut self,
         id: [u8; 32],
         request: &LeafKeyRequest,
         home: Option<EntityId>,
-        now_ms: u64,
     ) -> Admission {
-        self.in_flight
-            .retain(|_, entry| entry.expires_at_ms > now_ms);
-        self.completed
-            .retain(|_, expires_at_ms| *expires_at_ms > now_ms);
         if self.completed.contains_key(&id) {
             return Admission::Replayed;
         }
         if self.in_flight.contains_key(&id) {
             return Admission::InFlight;
+        }
+        let executor = request.executor_machine();
+        let in_flight = self
+            .in_flight
+            .values()
+            .filter(|entry| entry.executor == executor)
+            .count();
+        if in_flight >= LEAF_KEY_IN_FLIGHT_PER_EXECUTOR {
+            return Admission::ExecutorFull;
         }
         let holder = request.holder_machine();
         let (holder_conn, admission) = if Some(holder) == home {
@@ -163,11 +216,11 @@ impl RelayState {
         self.in_flight.insert(
             id,
             InFlight {
-                executor: request.executor_machine(),
+                executor,
                 holder,
                 holder_conn,
                 expires_at_ms: request.expires_at_ms(),
-                home_request: (Some(request.executor_machine()) == home).then(|| request.clone()),
+                home_request: (Some(executor) == home).then(|| request.clone()),
             },
         );
         admission
@@ -190,7 +243,7 @@ impl RelayState {
         if entry.expires_at_ms <= now_ms {
             return Some(Answered::Expired(entry));
         }
-        self.completed.insert(id, entry.expires_at_ms);
+        self.complete(id, entry.expires_at_ms, now_ms);
         Some(Answered::Delivered(entry))
     }
 
@@ -395,11 +448,21 @@ pub(super) fn handle(
     Ok(())
 }
 
+/// The relay's upkeep on one socket's tick: each request whose expiry passed
+/// in flight fails by name, then this socket is offered the home's own
+/// pending requests ([`offer_home_requests`]).
+pub(super) fn relay_tick(server: &SyncServer, conn_id: u32, state: &ConnState) {
+    let now_ms = crate::owner::stamp::now_unix_ms();
+    let expired = server.leaf_keys.state().prune(now_ms);
+    fail_expired(server, expired);
+    offer_home_requests(server, conn_id, state);
+}
+
 /// The home as executor: offers this socket the home's own pending requests
 /// whose key its machine holds and which are not on their way, when it is
 /// that machine's newest live socket. A failed read is logged and the socket
 /// stays up.
-pub(super) fn offer_home_requests(server: &SyncServer, conn_id: u32, state: &ConnState) {
+fn offer_home_requests(server: &SyncServer, conn_id: u32, state: &ConnState) {
     let PeerMachine::Proven { machine, .. } = state.peer_machine(server.vault()) else {
         return;
     };
@@ -469,10 +532,14 @@ fn route(
     let id = request.request_id();
     let (holder, executor) = (request.holder_machine(), request.executor_machine());
     let tag = TAG_LEAF_KEY_REQUEST;
-    let cause = if request.expires_at_ms() <= now_ms {
-        LeafKeyFailureCause::Expired
+    let (cause, outcome) = if request.expires_at_ms() <= now_ms {
+        (LeafKeyFailureCause::Expired, "expired")
     } else {
-        let admission = server.leaf_keys.state().admit(id, request, home, now_ms);
+        let (expired, admission) = {
+            let mut relay = server.leaf_keys.state();
+            (relay.prune(now_ms), relay.admit(id, request, home))
+        };
+        fail_expired(server, expired);
         match admission {
             // The home asks again each tick while its request is on its way.
             Admission::InFlight => {
@@ -481,8 +548,12 @@ fn route(
                 }
                 return;
             }
-            Admission::Replayed => LeafKeyFailureCause::Replayed,
-            Admission::HolderOffline => LeafKeyFailureCause::HolderOffline,
+            Admission::Replayed => (LeafKeyFailureCause::Replayed, "replayed"),
+            Admission::HolderOffline => (LeafKeyFailureCause::HolderOffline, "holder_offline"),
+            Admission::ExecutorFull => (
+                LeafKeyFailureCause::HolderOffline,
+                "executor_in_flight_full",
+            ),
             Admission::AnswerHere => match asker {
                 Asker::Socket { peer, lane } => {
                     return answer_here(server, request, *peer, lane);
@@ -497,14 +568,14 @@ fn route(
                     return logged(tag, &id, holder, executor, "relayed");
                 }
                 server.leaf_keys.state().in_flight.remove(&id);
-                LeafKeyFailureCause::HolderOffline
+                (LeafKeyFailureCause::HolderOffline, "holder_offline")
             }
         }
     };
     match asker {
         Asker::Socket { lane, .. } => {
             reply_failure(lane, &id, &cause);
-            logged(tag, &id, holder, executor, cause_outcome(&cause));
+            logged(tag, &id, holder, executor, outcome);
         }
         Asker::Home => fail_home(server, id, holder, executor, &cause),
     }
@@ -515,19 +586,22 @@ fn route(
 fn answer_here(server: &SyncServer, request: &LeafKeyRequest, peer: PeerMachine, lane: &Lane) {
     let id = request.request_id();
     let (holder, executor) = (request.holder_machine(), request.executor_machine());
-    let answered = match server.vault().answer_leaf_key_request(request, peer) {
-        Ok(answer) => encode_leaf_key_answer(&answer)
-            .into_result()
-            .map_err(|error| LeafKeyFailureCause::HolderRefused(error.to_string())),
-        Err(error) => Err(LeafKeyFailureCause::of_refusal(&error)
-            .unwrap_or_else(|| LeafKeyFailureCause::HolderRefused(error.to_string()))),
-    };
+    let answered =
+        match server.vault().answer_leaf_key_request(request, peer) {
+            Ok(answer) => encode_leaf_key_answer(&answer)
+                .into_result()
+                .map_err(|error| LeafKeyFailureCause::HolderRefused(error.to_string())),
+            // A fault, not a refusal: HolderOffline until L02's flip adds HolderFault.
+            Err(error) => Err(LeafKeyFailureCause::of_refusal(&error)
+                .unwrap_or(LeafKeyFailureCause::HolderOffline)),
+        };
+    let now_ms = crate::owner::stamp::now_unix_ms();
     let mut state = server.leaf_keys.state();
     let entry = state.in_flight.remove(&id);
     match answered {
         Ok(frame) => {
             if let Some(entry) = entry {
-                state.completed.insert(id, entry.expires_at_ms);
+                state.complete(id, entry.expires_at_ms, now_ms);
             }
             drop(state);
             let _ = lane.send(frame);
@@ -544,6 +618,18 @@ fn answer_here(server: &SyncServer, request: &LeafKeyRequest, peer: PeerMachine,
                 cause_outcome(&cause),
             );
         }
+    }
+}
+
+/// Fails `Expired`, at its executor, each request whose expiry passed in
+/// flight ([`RelayState::prune`]).
+fn fail_expired(server: &SyncServer, expired: Vec<([u8; 32], InFlight)>) {
+    if expired.is_empty() {
+        return;
+    }
+    let home = home_machine(server);
+    for (id, entry) in expired {
+        fail_executor(server, home, id, &entry, &LeafKeyFailureCause::Expired);
     }
 }
 
