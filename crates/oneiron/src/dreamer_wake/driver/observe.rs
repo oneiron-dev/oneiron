@@ -43,6 +43,21 @@ impl WakePassClock {
             "dreamer wake pass"
         );
     }
+
+    /// The same line for a pass that returned Err: its wall ms and the error
+    /// kind in place of the tally (FIX 12152).
+    pub(super) fn log_err(&self, error: &crate::Error) {
+        tracing::warn!(
+            target: "oneiron::dreamer::stages",
+            trigger = ?self.trigger,
+            scope = self.scope.as_str(),
+            elapsed_ms = ms_since(self.started),
+            error_kind = ?error.kind(),
+            snapshot_at_exports =
+                loro::snapshot_at_exports().saturating_sub(self.exports_at_start),
+            "dreamer wake pass"
+        );
+    }
 }
 
 impl DreamerWakeDriver<'_> {
