@@ -5,7 +5,7 @@ use rmpv::Value;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
-use crate::commitment::CommitmentRecord;
+use crate::commitment::{CommitmentObligorKind, CommitmentRecord};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, DreamerAdmittedAttempt};
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::edge::EdgeActorClass;
@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
+use super::reminder::dispatch_obligor_agent_turn;
 use super::wake_approval::claim_provenance;
 use super::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_CLAIM_ID_DOMAIN, COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION,
@@ -245,6 +246,22 @@ impl<E> CommitmentWakeExecutor<'_, E> {
                 event,
                 attempt_id,
             ));
+        }
+        // A promise an agent owes is kept in that agent's own turn, not sent
+        // as a message: the wake dispatches the turn and proposes nothing.
+        if record.obligor.kind == CommitmentObligorKind::Agent {
+            let turn =
+                dispatch_obligor_agent_turn(ctx.vault, event, &record, crate::unix_seconds_now())?;
+            tracing::info!(
+                attempt = %bytes_to_hex_lower(attempt_id.as_bytes()),
+                run = %event.idempotency_key(),
+                turn = ?turn.map(|turn| bytes_to_hex_lower(turn.as_bytes())),
+                "commitment wake handed to the obligor agent's turn"
+            );
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         // Step 4: no planner is a typed COMPLETION, never a partition decode.
         let agent_actor = self.agent_actor;

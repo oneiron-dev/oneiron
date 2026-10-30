@@ -358,8 +358,9 @@ pub fn schedule_approved_commitment_wake(
         )));
     }
     // The owner's civil clock, when set, rides the send so its delivery
-    // window can read local time (OF-187).
-    let context = super::reminder::reminder_schedule_context(facade.vault());
+    // window can read local time (OF-187): the offset in force now.
+    let context =
+        super::reminder::reminder_schedule_context(facade.vault(), crate::unix_seconds_now());
     let draft = OutboundDraftInput {
         verb: approved.verb,
         channel: approved.channel,

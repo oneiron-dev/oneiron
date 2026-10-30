@@ -30,7 +30,8 @@
 //! Nothing here delivers. [`fire_due_commitment_wake`] enqueues; the executor
 //! proposes; only [`schedule_approved_commitment_wake`], behind an inbox
 //! approval and an actor binding, reaches
-//! [`crate::memory::Memory::schedule_outbound`].
+//! [`crate::memory::Memory::schedule_outbound`]. A promise an agent owes
+//! proposes no message: the executor dispatches the agent's own run instead.
 
 mod reminder;
 mod wake_approval;
