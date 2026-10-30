@@ -12,8 +12,9 @@
 //! Only an owner or the world anchors a settlement (ARCH-0056 §5). The
 //! settled receipt names its anchor two ways: the reporter that settled it,
 //! an anchor when that reporter is a live owner of the vault, or the anchor
-//! fields beside it, an anchor when they name an owner-answered ask or an
-//! accepted review (FIX 12195). A worker's own Done, a default `Proceed`
+//! fields beside it, an anchor when they name an owner-answered ask, an
+//! accepted review (FIX 12195) or a typed world proof (FIX 12213). A
+//! worker's own Done, a default `Proceed`
 //! and a bare `criteria_verdict = met` name none, so their outcome stays
 //! absent.
 
@@ -25,7 +26,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::task_verb::settlement_anchor::{
     SETTLEMENT_ANCHOR_ASK, SETTLEMENT_ANCHOR_KIND_FIELD, SETTLEMENT_ANCHOR_REF_FIELD,
-    SETTLEMENT_ANCHOR_REVIEW,
+    SETTLEMENT_ANCHOR_REVIEW, SETTLEMENT_ANCHOR_WORLD_PROOF,
 };
 
 /// The settled disposition of the TASK the run behind `judgment` worked, read
@@ -59,13 +60,14 @@ pub(super) fn run_outcome_in_txn(
     Ok(anchored.then_some(settled.outcome))
 }
 
-/// Whether `fields`, a settled row's, name an owner anchor (FIX 12195): an
-/// owner-answered ask or an accepted review, as the settlement anchor writes
-/// them. An empty anchor never counts.
+/// Whether `fields`, a settled row's, name an owner or world anchor: an
+/// owner-answered ask or an accepted review (FIX 12195), or a typed world
+/// proof (FIX 12213), as the settlement anchor writes them. An empty anchor
+/// never counts.
 fn owner_anchored(fields: &BTreeMap<String, String>) -> bool {
     let owner_kind = matches!(
         fields.get(SETTLEMENT_ANCHOR_KIND_FIELD).map(String::as_str),
-        Some(SETTLEMENT_ANCHOR_ASK | SETTLEMENT_ANCHOR_REVIEW)
+        Some(SETTLEMENT_ANCHOR_ASK | SETTLEMENT_ANCHOR_REVIEW | SETTLEMENT_ANCHOR_WORLD_PROOF)
     );
     owner_kind
         && fields
