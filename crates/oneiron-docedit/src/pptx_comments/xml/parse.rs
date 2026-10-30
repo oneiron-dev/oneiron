@@ -8,7 +8,7 @@
 //! they grow, and only the machine's floor or a deadline stops the parse.
 
 use super::*;
-use crate::resource::{bytes_of, wide};
+use crate::resource::{CapacityHit, Dimension, bytes_of, wide};
 
 /// What a copy of an inherited namespace map allocates.
 fn map_bytes(map: &BTreeMap<String, String>) -> u64 {
@@ -23,7 +23,16 @@ impl<'a> Xml<'a> {
         text: &'a str,
         limits: &Codec<'_>,
     ) -> PatchResult<Self> {
-        if text.len() > limits.max_xml_bytes || text.chars().any(|c| !valid_char(c)) {
+        // Past the caller's byte ceiling, a part is a capacity hit named
+        // with its dimension, never invalid XML (FIX 10654).
+        if text.len() > limits.max_xml_bytes {
+            return Err(PptxError::Capacity(CapacityHit::new(
+                Dimension::XmlBytes,
+                wide(text.len()),
+                wide(limits.max_xml_bytes),
+            )));
+        }
+        if text.chars().any(|c| !valid_char(c)) {
             return Err(PptxError::InvalidXml);
         }
         let bytes = text.as_bytes();

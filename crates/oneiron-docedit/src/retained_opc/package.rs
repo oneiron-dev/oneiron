@@ -178,16 +178,20 @@ impl Package {
                     .ok_or(Error::Edit("edited package size overflow"))
             },
         )?;
-        let budget =
-            self.limits
-                .part_bytes
-                .min(self.limits.expanded_bytes.checked_sub(other_size).ok_or(
-                    Error::capacity_hit(
-                        Dimension::ExpandedBytes,
-                        other_size,
-                        self.limits.expanded_bytes,
-                    ),
-                )?);
+        if other_size > self.limits.expanded_bytes {
+            return Err(Error::capacity_hit(
+                Dimension::ExpandedBytes,
+                other_size,
+                self.limits.expanded_bytes,
+            ));
+        }
+        // The edited part's budget keeps both ceilings, so its hit names the
+        // one that binds (FIX 10654).
+        let budget = xml::PartBudget {
+            part_bytes: self.limits.part_bytes,
+            expanded_bytes: self.limits.expanded_bytes,
+            others: other_size,
+        };
         let part = xml::ValidatedXmlPart::parse(&old, &self.resources)?;
         let new = part.replace_text(path, expected, value, budget)?.0;
         self.commit_replacement(index, old, new)

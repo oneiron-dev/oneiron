@@ -58,8 +58,9 @@ pub enum PptxError {
     /// deadline ran out (FIX 8596): never invalid XML.
     #[error(transparent)]
     Resource(#[from] ResourceRefusal),
-    /// The package passed a ceiling its caller set, or classic ZIP's widths
-    /// (FIX 5354): never an invalid package.
+    /// The package or one of its XML parts passed a ceiling its caller set,
+    /// or classic ZIP's widths (FIX 5354, 10654): never an invalid package
+    /// or invalid XML.
     #[error("package ceiling: {0}")]
     Capacity(crate::resource::CapacityHit),
 }
@@ -70,6 +71,15 @@ impl PptxError {
     pub const fn resource(&self) -> Option<ResourceRefusal> {
         match self {
             Self::Resource(refusal) => Some(*refusal),
+            _ => None,
+        }
+    }
+
+    /// The ceiling, when the package or one of its XML parts passed one.
+    #[must_use]
+    pub const fn capacity(&self) -> Option<crate::resource::CapacityHit> {
+        match self {
+            Self::Capacity(hit) => Some(*hit),
             _ => None,
         }
     }

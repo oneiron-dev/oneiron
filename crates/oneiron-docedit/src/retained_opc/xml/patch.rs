@@ -1,5 +1,6 @@
 //! Private checked edit authority. A selected range is never exposed to callers.
 use super::retained::ValidatedXmlPart;
+use crate::resource::Dimension;
 use crate::retained_opc::{Error, Result};
 use std::ops::Range;
 
@@ -11,6 +12,40 @@ struct LeafTextTarget {
 /// Bytes parsed again through the same port; semantics and unchanged regions
 /// are checked before a package can install them.
 pub(in crate::retained_opc) struct CheckedPartEdit(pub Vec<u8>);
+
+/// The bytes an edited part may take: the caller's ceiling on one part, and
+/// what its ceiling on every part together leaves past the others. A part
+/// past them is a hit on the ceiling that binds (FIX 10654).
+#[derive(Debug, Clone, Copy)]
+pub(in crate::retained_opc) struct PartBudget {
+    /// The caller's ceiling on one part's inflated bytes.
+    pub part_bytes: usize,
+    /// The caller's ceiling on every part's inflated bytes together.
+    pub expanded_bytes: usize,
+    /// Every other part's bytes, which the expanded ceiling counts too.
+    pub others: usize,
+}
+
+impl PartBudget {
+    /// A part of `length` bytes within both ceilings, or the hit on the one
+    /// that binds: the expanded ceiling, over the package's whole expanded
+    /// bytes, when what it leaves this part is the smaller; else the part's.
+    fn admit(self, length: usize) -> Result<()> {
+        let left = self.expanded_bytes.saturating_sub(self.others);
+        if length <= self.part_bytes.min(left) {
+            return Ok(());
+        }
+        Err(if left < self.part_bytes {
+            Error::capacity_hit(
+                Dimension::ExpandedBytes,
+                self.others.saturating_add(length),
+                self.expanded_bytes,
+            )
+        } else {
+            Error::capacity_hit(Dimension::PartBytes, length, self.part_bytes)
+        })
+    }
+}
 
 impl ValidatedXmlPart<'_> {
     fn target(&self, path: &[&str], expected: &str) -> Result<LeafTextTarget> {
@@ -60,7 +95,7 @@ impl ValidatedXmlPart<'_> {
         path: &[&str],
         expected: &str,
         value: &str,
-        max_part_bytes: usize,
+        budget: PartBudget,
     ) -> Result<CheckedPartEdit> {
         if value.chars().any(|c| !is_xml_char(c)) {
             return Err(Error::Edit("invalid XML character"));
@@ -83,13 +118,7 @@ impl ValidatedXmlPart<'_> {
             .checked_add(escaped_bytes)
             .and_then(|n| n.checked_add(suffix.len()))
             .ok_or(Error::Edit("edited XML size overflow"))?;
-        if length > max_part_bytes {
-            return Err(Error::capacity_hit(
-                crate::resource::Dimension::PartBytes,
-                length,
-                max_part_bytes,
-            ));
-        }
+        budget.admit(length)?;
         let escaped = escape_text(value, escaped_bytes);
         let mut candidate = Vec::with_capacity(length);
         candidate.extend_from_slice(prefix);

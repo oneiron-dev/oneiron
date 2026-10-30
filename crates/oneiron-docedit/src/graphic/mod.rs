@@ -18,7 +18,7 @@ mod svg;
 mod tests;
 
 use crate::design_plan::{AssetBinding, AssetKind, MediaType, Rect};
-use crate::resource::{ResourceRefusal, Resources};
+use crate::resource::{CapacityHit, ResourceRefusal, Resources};
 use std::collections::BTreeSet;
 
 /// 96 px per inch.
@@ -98,10 +98,11 @@ pub struct GenerationReceipt {
     pub seed: Option<u64>,
 }
 
-/// Payload ceilings. Past a byte or pixel one, the asset is refused, not
-/// truncated. The SVG node, depth, segment and fill-edge counts are
-/// observations (FIX 8574): the compiler reserves their memory through the
-/// operation's port and checkpoints the quadratic fill-rule proof.
+/// Payload ceilings. Past a byte or pixel one, the asset is refused as a
+/// capacity hit naming it ([`GraphicError::Capacity`]), not truncated. The
+/// SVG node, depth, segment and fill-edge counts are observations (FIX
+/// 8574): the compiler reserves their memory through the operation's port
+/// and checkpoints the quadratic fill-rule proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GraphicLimits {
     pub svg_bytes: usize,
@@ -306,8 +307,10 @@ pub enum GraphicError {
     HashMismatch,
     #[error("the payload is not a supported image of its declared type")]
     UnsupportedPayload,
-    #[error("the payload exceeds the graphic limits")]
-    ResourceLimit,
+    /// The payload passed a byte or pixel ceiling its caller set, named
+    /// with its dimension (FIX 10654): never an unsupported graphic.
+    #[error("graphic ceiling: {0}")]
+    Capacity(CapacityHit),
     #[error("the destination is empty")]
     EmptyBounds,
     #[error("SVG refused at node {at} <{element}>: {refused:?}")]
@@ -328,6 +331,15 @@ impl GraphicError {
     pub const fn resource(&self) -> Option<ResourceRefusal> {
         match self {
             Self::Resource(refusal) => Some(*refusal),
+            _ => None,
+        }
+    }
+
+    /// The ceiling, when the payload passed one.
+    #[must_use]
+    pub const fn capacity(&self) -> Option<CapacityHit> {
+        match self {
+            Self::Capacity(hit) => Some(*hit),
             _ => None,
         }
     }
