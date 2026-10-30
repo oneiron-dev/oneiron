@@ -139,6 +139,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         body: &ClaimBody,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
@@ -146,6 +147,18 @@ impl<'v> ScopedRead<'v> {
         let read = RelationshipRead::claim(body);
         if self.support_disclosure_admits_in(txn, id, &read)? {
             return Ok(true);
+        }
+        // L15 try held_claim_ctx: the serving txn's held context, as the raw
+        // gate below reads it (FIX 7462), instead of one load per CLAIM row.
+        if crate::stage_timing::try_on("held_claim_ctx") {
+            let mut held = authority.0.borrow_mut();
+            let context = match held.take() {
+                Some(context) => context,
+                None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
+            };
+            let allowed = read.allowed_by(&context);
+            *held = Some(context);
+            return Ok(allowed);
         }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
         Ok(read.allowed_by(&context))
