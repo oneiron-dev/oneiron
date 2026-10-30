@@ -43,11 +43,6 @@ pub const EPOCH_SUMMARY_BODY_VERSION: u64 = 1;
 /// for grains are display-layer property owned elsewhere.
 pub const EPOCH_SUMMARY_LEVEL: u64 = 0;
 
-/// The width at which a conversation window's `DerivedFrom` set was once
-/// cut. Nothing cuts it now (OF-013): every TURN and MESSAGE the window was
-/// read from is a source, as erasure and disclosure need.
-pub const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
-
 /// Hard cap on the sources a host-numbered log's summary derives from.
 ///
 /// For an executor run the `DerivedFrom` set IS the erasure and disclosure
