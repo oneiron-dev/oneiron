@@ -8,9 +8,13 @@
 //! `not_before` and the nonce row) on the detached door. Every writer that
 //! spends a nonce reads this set as well, and stages its own spend here until
 //! its transaction is decided, so one nonce is spent once at whichever door
-//! it comes to. An entry an admission spent stays until its slip's replay
-//! window ends: the slip's expiry on the authority clock, plus the window a
-//! proof's signed time may stand off the proof clock.
+//! it comes to. An entry an admission spent leaves once its rows land, after
+//! their group's commit is visible (L02 10-31): a replay then finds the
+//! committed row, which [`SpentNonces::admit`] reads under this set's lock,
+//! and the writer's path refuses it. An entry whose rows have not landed,
+//! failed or queued for another try, stays until its slip's replay window
+//! ends: the slip's expiry on the authority clock, plus the window a proof's
+//! signed time may stand off the proof clock.
 //!
 //! Only a slip issued and first seen after this handle opened is spent here,
 //! so no earlier process spent its nonces in a set that ended with it. A
@@ -96,8 +100,9 @@ struct Nonces {
     /// A restore's swap passed its fence: from then on every admission takes
     /// the writer, which the swap seals.
     fenced: bool,
-    /// Spent by an admission here, each with the authority second its slip's
-    /// replay window ends.
+    /// Spent by an admission here and not yet landed, each with the authority
+    /// second its slip's replay window ends: it leaves once its rows land, or
+    /// past that second when they have not.
     admitted: HashMap<SpentKey, u64>,
     /// `admitted` in the order its entries leave.
     leaving: BTreeSet<(u64, SpentKey)>,
@@ -108,12 +113,20 @@ struct Nonces {
 
 impl Nonces {
     /// Lets go of every admitted entry whose slip's replay window ended
-    /// before authority second `now`, never one sooner.
+    /// before authority second `now`, never one sooner: those whose rows did
+    /// not land, as one whose rows landed left then ([`Self::leave`]).
     fn leave_before(&mut self, now: u64) {
         while self.leaving.first().is_some_and(|(until, _)| *until < now) {
             if let Some((_, key)) = self.leaving.pop_first() {
                 self.admitted.remove(&key);
             }
+        }
+    }
+
+    /// Lets go of `key`'s admitted entry, whose rows landed.
+    fn leave(&mut self, key: &SpentKey) {
+        if let Some(until) = self.admitted.remove(key) {
+            self.leaving.remove(&(until, *key));
         }
     }
 }
@@ -172,8 +185,10 @@ impl SpentNonces {
     /// slip expires at `expires_at`, in one step under this set's lock: the
     /// entries past their slip's replay window leave, then `key` is spent
     /// unless this set holds it, a writer's spend of it may still commit, or
-    /// a committed row holds it, read in a snapshot taken under the lock.
-    /// `false` when it is not spent here: the writer's path judges it.
+    /// a committed row holds it, read in a snapshot taken under the lock. An
+    /// entry leaves this set under the lock only once its row is visible to
+    /// that snapshot ([`Self::landed`]), so between the two one of them holds
+    /// it. `false` when it is not spent here: the writer's path judges it.
     fn admit(&self, vault: &Vault, key: SpentKey, now: u64, expires_at: u64) -> bool {
         let mut nonces = self.lock();
         if nonces.fenced {
@@ -221,9 +236,20 @@ impl SpentNonces {
         true
     }
 
-    /// Whether an admission spent `key` here.
+    /// Whether an admission spent `key` here and its rows have not landed.
+    /// Its entry leaves once they land, so a reader that reads the committed
+    /// row as well reads it in a writer, or in a snapshot opened after this
+    /// call, never in one opened before.
     pub(super) fn admitted(&self, key: &SpentKey) -> bool {
         self.lock().admitted.contains_key(key)
+    }
+
+    /// Lets go of `key`'s entry, from its spend's after-commit callback once
+    /// its rows landed, after their group's commit is visible (FIX 12023 W0,
+    /// L02 10-31): a replay of it then finds the committed row, read under
+    /// this lock ([`Self::admit`]), and takes the writer's path.
+    fn landed(&self, key: &SpentKey) {
+        self.lock().leave(key);
     }
 
     /// A restore swap's fence over `vault`'s proof freshness, run in the
@@ -340,23 +366,39 @@ impl NonceSpend {
         served.store.group_write_detached(write);
     }
 
-    /// Its after-commit callback: nothing when its rows landed, else another
-    /// try. The door tells it `false` when its closure failed, its group's
+    /// Its after-commit callback: when its rows landed its entry leaves the
+    /// set, else another try. The door runs it once its group's commit
+    /// returned, and tells it `false` when its closure failed, its group's
     /// commit failed, or it was lost before any group ran it.
     fn after_commit(self) -> AfterCommit {
         Box::new(move |landed| {
-            if !landed {
+            if landed {
+                self.leave();
+            } else {
                 self.retry();
             }
         })
     }
 
+    /// Lets go of its entry in its vault's set ([`SpentNonces::landed`]),
+    /// its rows committed and visible. A vault already closing takes its set
+    /// with it. This runs on the store's leader, so it lets go of the handle
+    /// it took as the door lets go of its own, since it may be the last.
+    fn leave(&self) {
+        let Some(vault) = self.vault.upgrade() else {
+            return;
+        };
+        vault.spent_nonces.landed(&self.key);
+        release_vault_handle(vault);
+    }
+
     /// Queues its rows again after a try whose rows did not land, or, once
     /// [`NONCE_SPEND_ATTEMPTS`] tries have not, its healer item. Its nonce
-    /// stays spent in memory either way. This runs in the after-commit
-    /// callback, on the store's leader, which drains the queue: it queues
-    /// without waiting for the drain, and lets go of the handle it took as
-    /// the door lets go of its own, since it may be the last.
+    /// stays spent in memory either way, until its slip's replay window
+    /// ends. This runs in the after-commit callback, on the store's leader,
+    /// which drains the queue: it queues without waiting for the drain, and
+    /// lets go of the handle it took as the door lets go of its own, since it
+    /// may be the last.
     fn retry(mut self) {
         self.failures += 1;
         let Some(vault) = self.vault.upgrade() else {
