@@ -283,7 +283,10 @@ pub(super) fn verify_swarm_evidence_bytes(
         Some(claim)
             if claim == entry.source_id
                 && entry.byte_range.is_none()
-                && kind == crate::registry::ENTITY_TYPE_CLAIM => {}
+                && matches!(
+                    kind,
+                    crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
+                ) => {}
         None if kind == crate::registry::ENTITY_TYPE_TURN => {}
         _ => {
             return Err(invalid_consolidation(

@@ -12,7 +12,7 @@ use crate::claim::{ClaimSource, claim_evidence_taint};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 
@@ -670,6 +670,31 @@ pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<C
         ClaimSource::Generated,
         evidence_source_from_claim(&body),
     ))
+}
+
+/// The one-row trust answer with NOTE import lookup: a folder-imported NOTE
+/// carries its import MACHINE's source; any other row falls back to
+/// [`evidence_source_from_row`].
+pub(crate) fn evidence_source_from_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity_id: &EntityId,
+    entity_type: u8,
+    data: &[u8],
+) -> Result<ClaimSource> {
+    let _ = entity_id;
+    if entity_type == ENTITY_TYPE_NOTE {
+        if let Ok(body) = crate::note::decode_note_body_in_txn(&vault.store, txn, data) {
+            if let Some(author) = body.author_ref.id() {
+                if let Some(source) =
+                    crate::note::imported_note_source_in_txn(&vault.store, txn, &author)?
+                {
+                    return Ok(source);
+                }
+            }
+        }
+    }
+    evidence_source_from_row(entity_type, data)
 }
 
 pub(super) fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {

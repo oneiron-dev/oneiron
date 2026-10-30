@@ -8,12 +8,12 @@ use crate::claim::{
     ScopedReadActorKey, claim_evidence_taint,
 };
 use crate::dreamer_consolidation::{
-    ConsolidationEvidenceEnvelope, encode_consolidation_evidence, evidence_source_from_row,
+    ConsolidationEvidenceEnvelope, encode_consolidation_evidence, evidence_source_from_row_in_txn,
 };
 use crate::dreamer_runner::{
     DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, DreamerAdmittedAttempt, WeaveRecipePin,
 };
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{ClaimCandidate, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault};
@@ -234,13 +234,15 @@ fn read_evidence(
         .entity_raw_live_in(txn, &id)?
         .ok_or_else(invalid)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-    if !matches!(header.entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_CLAIM)
-        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    if !matches!(
+        header.entity_type,
+        ENTITY_TYPE_TURN | ENTITY_TYPE_CLAIM | ENTITY_TYPE_NOTE
+    ) || raw.len() == ENTITY_METADATA_HEADER_LEN
     {
         return Err(invalid());
     }
     let bytes = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-    let source = evidence_source_from_row(header.entity_type, &bytes)?;
+    let source = evidence_source_from_row_in_txn(vault, txn, &id, header.entity_type, &bytes)?;
     let project = crate::dreamer_consolidation::resources::stored_project(
         &vault.store,
         txn,

@@ -580,6 +580,7 @@ pub use folder_source::{
     FolderSourceFile, OriginalBytes,
 };
 mod import;
+pub(crate) use import::imported_note_source_in_txn;
 pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,
