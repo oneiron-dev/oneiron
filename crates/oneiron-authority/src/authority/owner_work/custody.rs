@@ -31,6 +31,7 @@ const CUSTODY_WORK_KEYS: [&str; 7] = [
     "authority",
 ];
 const PERMIT_KEYS: [&str; 3] = ["machine", "profile", "encryption_key"];
+const PERMIT_PIECES_KEYS: [&str; 3] = ["set", "count", "pieces"];
 
 /// The domain of a custody change's complete-set commitment
 /// ([`custody_recipient_set`]): every piece of the transition that enacts it
@@ -47,7 +48,10 @@ pub const CUSTODY_WORK_REVISION_CONTEXT: &[u8] = b"oneiron/custody-work-revision
 enum CustodyBodyShape {
     /// Inline in the request's own work map, bounded before allocation. The
     /// shared [`OwnerWorkBody`] and [`OwnerWorkRequest`] are `Clone`, no
-    /// longer `Copy`; no permit store, digest or second transport exists.
+    /// longer `Copy`. A set past one row rides as its commitment
+    /// ([`CustodyPermitPieces`]) in that map and its permits in numbered
+    /// main-log piece rows ([`CustodyPermitPiece`], FIX 11866); no permit
+    /// store of its own exists.
     CloneNotCopy,
 }
 
@@ -157,24 +161,88 @@ pub fn custody_recipient_set(recipients: &[CustodyRecipientPermit]) -> [u8; 32] 
     *hasher.finalize().as_bytes()
 }
 
+/// What a custody request carries in place of its permits when they
+/// outgrow one row (FIX 11866): the commitment to its complete set
+/// ([`custody_recipient_set`]), how many permits the set holds and how many
+/// numbered piece rows ([`CustodyPermitPiece`]) carry them, each signed by
+/// the request's own signer and in its causal past. The fold reads the
+/// request's permits only from those pieces, joined, once they hash to the
+/// commitment.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct CustodyPermitPieces {
+    /// [`custody_recipient_set`] over the whole set, in its order.
+    pub set: [u8; 32],
+    /// How many permits the set holds.
+    pub count: u32,
+    /// How many piece rows carry them.
+    pub pieces: u32,
+}
+
+impl CustodyPermitPieces {
+    /// The commitment to `recipients` carried in `pieces` rows; `None` when
+    /// either count is past its wire width.
+    #[must_use]
+    pub fn of(recipients: &[CustodyRecipientPermit], pieces: usize) -> Option<Self> {
+        Some(Self {
+            set: custody_recipient_set(recipients),
+            count: u32::try_from(recipients.len()).ok()?,
+            pieces: u32::try_from(pieces).ok()?,
+        })
+    }
+
+    /// One permit at least, one piece at least and never more pieces than
+    /// permits, and a set that is not zero.
+    pub(super) fn validate(self) -> Result<()> {
+        if self.count == 0 || self.pieces == 0 || self.pieces > self.count || self.set == [0; 32] {
+            return Err(invalid_authority());
+        }
+        Ok(())
+    }
+
+    /// Whether `recipients` is the whole set this commits to, in its order.
+    #[must_use]
+    pub fn commits_to(self, recipients: &[CustodyRecipientPermit]) -> bool {
+        usize::try_from(self.count).is_ok_and(|count| count == recipients.len())
+            && custody_recipient_set(recipients) == self.set
+    }
+}
+
+/// Whether `recipients` ascend by machine, one each.
+fn ascending(recipients: &[CustodyRecipientPermit]) -> bool {
+    recipients
+        .windows(2)
+        .all(|pair| pair[0].machine < pair[1].machine)
+}
+
 /// A custody request's shape. A register or rotate states its input and its
 /// holder, a rewrap its holder and an input only for a bind, each permitting
 /// one or more recipients, ascending by machine, one each, never refused for
 /// how many (Phase2 A, FIX 7906): its writer measures them, and its
 /// transition carries them in pieces. The holder executes it. A revoke states none of them, and its
 /// carrier executes it: a revoke needs no byte. No digest is zero.
+///
+/// Permits past one row ride in pieces (FIX 11866): the entry carries
+/// their commitment and no permit inline, and the request as the fold keeps
+/// it carries exactly the set it commits to.
 pub(super) fn validate_custody(
     request: &OwnerWorkRequest,
     change: CustodyChange,
     input: Option<[u8; 32]>,
     holder: Option<EntityId>,
     recipients: &[CustodyRecipientPermit],
+    pieces: Option<CustodyPermitPieces>,
     authority: CustodyRequestAuthority,
 ) -> Result<()> {
-    let permitted = !recipients.is_empty()
-        && recipients
-            .windows(2)
-            .all(|pair| pair[0].machine < pair[1].machine);
+    let permitted = match pieces {
+        None => !recipients.is_empty() && ascending(recipients),
+        Some(pieces) => {
+            pieces.validate().is_ok()
+                && (recipients.is_empty()
+                    || (ascending(recipients) && pieces.commits_to(recipients)))
+        }
+    };
     // A kit request: a rewrap with no input and no holder, to its permits;
     // no machine carries or executes it (FIX 6053).
     let shaped = if authority.kit_root().is_some() {
@@ -190,6 +258,7 @@ pub(super) fn validate_custody(
                 input.is_none()
                     && holder.is_none()
                     && recipients.is_empty()
+                    && pieces.is_none()
                     && request.executor == request.carrier
             }
             CustodyChange::Register | CustodyChange::Rotate | CustodyChange::Rewrap => {
@@ -213,17 +282,21 @@ pub(super) fn validate_custody(
 /// recipients, then authority, each field the change does not state nil
 /// (recipients empty); a permit map is machine, profile, then encryption
 /// key; the authority is nil for an install's, the pinned root's id for the
-/// kit's.
+/// kit's. Permits in pieces (FIX 11866) state, in recipients' place, their
+/// commitment's map: set, count, then pieces.
 pub(super) fn custody_work_value(
     change: CustodyChange,
     generation: u32,
     input: Option<[u8; 32]>,
     holder: Option<EntityId>,
-    recipients: &[CustodyRecipientPermit],
+    (recipients, pieces): (&[CustodyRecipientPermit], Option<CustodyPermitPieces>),
     authority: CustodyRequestAuthority,
 ) -> Value {
-    let recipients = match CUSTODY_SHARED_BODY {
-        CustodyBodyShape::CloneNotCopy => recipients.iter().map(permit_value).collect(),
+    let recipients = match (CUSTODY_SHARED_BODY, pieces) {
+        (CustodyBodyShape::CloneNotCopy, None) => {
+            Value::Array(recipients.iter().map(permit_value).collect())
+        }
+        (CustodyBodyShape::CloneNotCopy, Some(pieces)) => permit_pieces_value(pieces),
     };
     Value::Map(vec![
         (
@@ -237,7 +310,7 @@ pub(super) fn custody_work_value(
             Value::from("holder"),
             holder.map_or(Value::Nil, |holder| Value::from(holder.to_hex())),
         ),
-        (Value::from("recipients"), Value::Array(recipients)),
+        (Value::from("recipients"), recipients),
         (
             Value::from("authority"),
             authority
@@ -268,20 +341,55 @@ pub(super) fn permit_value(permit: &CustodyRecipientPermit) -> Value {
     ])
 }
 
-/// Strict keys; every permitted recipient is decoded, however many. The
-/// shape is the request's ([`validate_custody`]).
+/// A permit set's commitment map: set, count, then pieces (FIX 11866).
+pub(super) fn permit_pieces_value(pieces: CustodyPermitPieces) -> Value {
+    Value::Map(vec![
+        (Value::from("set"), binary_value(pieces.set)),
+        (Value::from("count"), Value::from(pieces.count)),
+        (Value::from("pieces"), Value::from(pieces.pieces)),
+    ])
+}
+
+/// A u32 field of `entries`, strictly.
+pub(super) fn decode_u32(entries: &[(Value, Value)], key: &str) -> Result<u32> {
+    required(entries, key)?
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(invalid_authority)
+}
+
+/// Strict keys and a commitment of its own shape
+/// ([`CustodyPermitPieces::validate`]).
+pub(super) fn decode_permit_pieces(value: &Value) -> Result<CustodyPermitPieces> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &PERMIT_PIECES_KEYS)?;
+    let pieces = CustodyPermitPieces {
+        set: decode_hash(required(entries, "set")?)?,
+        count: decode_u32(entries, "count")?,
+        pieces: decode_u32(entries, "pieces")?,
+    };
+    pieces.validate()?;
+    Ok(pieces)
+}
+
+/// Strict keys; every permitted recipient is decoded, however many, or the
+/// commitment of a set in pieces, whose permits the entry does not carry
+/// (FIX 11866). The shape is the request's ([`validate_custody`]).
 pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBody> {
     validate_keys(work, &CUSTODY_WORK_KEYS)?;
-    let recipients = match CUSTODY_SHARED_BODY {
-        CustodyBodyShape::CloneNotCopy => {
-            let Value::Array(permits) = required(work, "recipients")? else {
-                return Err(invalid_authority());
-            };
+    let listed = required(work, "recipients")?;
+    let (recipients, pieces) = match (CUSTODY_SHARED_BODY, listed) {
+        (CustodyBodyShape::CloneNotCopy, Value::Array(permits)) => (
             permits
                 .iter()
                 .map(decode_permit)
-                .collect::<Result<Vec<_>>>()?
+                .collect::<Result<Vec<_>>>()?,
+            None,
+        ),
+        (CustodyBodyShape::CloneNotCopy, Value::Map(_)) => {
+            (Vec::new(), Some(decode_permit_pieces(listed)?))
         }
+        _ => return Err(invalid_authority()),
     };
     Ok(OwnerWorkBody::Custody {
         change: required(work, "change")?
@@ -298,6 +406,7 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
             value => Some(decode_canonical_id(value)?),
         },
         recipients,
+        pieces,
         authority: match required(work, "authority")? {
             Value::Nil => CustodyRequestAuthority::Install,
             value => CustodyRequestAuthority::PinnedKit {

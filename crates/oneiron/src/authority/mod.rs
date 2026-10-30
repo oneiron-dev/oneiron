@@ -225,7 +225,7 @@ pub use federation_activation::federation_grant_activation;
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
 pub(crate) use admission::{
-    AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_authority_work, measure_custody_permits,
+    AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, custody_permit_piece_len, measure_authority_work,
 };
 pub use admission::{
     AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
