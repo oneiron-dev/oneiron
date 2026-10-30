@@ -164,6 +164,7 @@ impl StalwartClient {
     pub fn submit_served_text(
         &self,
         identity: crate::EntityId,
+        address: &str,
         message: &NativeMailMessage,
         send_key: &str,
         headers: &BTreeMap<String, String>,
@@ -172,7 +173,7 @@ impl StalwartClient {
         if send_key.trim().is_empty() || message.validate().is_err() {
             return OutboundExecutionOutcome::failed("native_mail_fields_or_binding");
         }
-        let mailbox = match self.mailbox(identity) {
+        let mailbox = match self.mailbox(identity, address) {
             Ok(mailbox) => mailbox,
             Err(_) => return OutboundExecutionOutcome::failed("native_mail_fields_or_binding"),
         };
