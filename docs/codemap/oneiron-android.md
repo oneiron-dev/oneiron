@@ -13,4 +13,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/engine.rs` | src | m | 11 fn | — | The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in… |
 | `src/lib.rs` | src | m | 10 fn · 2 mod | — | Minimal JNI/Kotlin ownership adapter |
-| `src/reads.rs` | src | s | 6 fn · 1 crate-vis | — | The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C… |
+| `src/reads.rs` | src | m | 6 fn · 1 crate-vis | — | The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C… |

@@ -19,6 +19,9 @@ struct Enrolled {
     /// Whether the link pinned an authority checkpoint, which the first
     /// connection adopts.
     checkpoint_pinned: bool,
+    /// Whether the home paired again a machine it already held, credential
+    /// only (FIX 8636): its identity and class stand as they were.
+    re_paired: bool,
     record: String,
     credential_file: String,
     /// The code this machine shows the owner, 26 characters: he types it
@@ -53,12 +56,13 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
     // Read before the enrolment, as it reads it: nothing that can fail runs
     // after the link is spent.
     let (request_code, enrolment) = shown_request(&vault)?;
-    let record = crate::device_sync::enrol(&vault, &files, &link)?;
+    let (record, re_paired) = crate::device_sync::enrol(&vault, &files, &link)?;
     super::owner::emit(&Enrolled {
         home_machine: record.home_machine,
         home_node_id: record.home_node_id,
         home_url: record.home_url,
         checkpoint_pinned: record.authority_checkpoint_pin.is_some(),
+        re_paired,
         record: files.record.display().to_string(),
         credential_file: files.credential.display().to_string(),
         request_code,

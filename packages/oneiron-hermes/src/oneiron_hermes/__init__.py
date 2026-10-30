@@ -14,7 +14,8 @@ starts on the cohabitation default:
 The vault a session binds comes from ``oneiron hook --host hermes bind``, the
 same order every Oneiron plugin uses (PLUGIN-FIRSTRUN = D): a pin, a running
 local vault, else a local server it starts. Reads and writes go through the
-Python SDK with the agent credential ``oneiron token agent --out`` wrote.
+Python SDK with the agent credential ``oneiron token agent --out`` wrote,
+or the hosted selection's credential when one is selected in slip mode.
 """
 from __future__ import annotations
 
@@ -107,6 +108,9 @@ class OneironMemoryProvider(MemoryProvider):
         self._client: Any = None
         self._mode = "memory"
         self._vault_line = ""
+        # The hosted vault `bind` bound, when one is selected: bind's
+        # `hosted` object (origin, vault_id, auth_mode, credential_file).
+        self._hosted: Optional[dict[str, Any]] = None
         self._session_id = ""
         self._conversation = ""
         # The credential's bound actor and the person it acts for (`self.actor`),
@@ -149,7 +153,11 @@ class OneironMemoryProvider(MemoryProvider):
         return config
 
     def _key(self) -> str:
-        """The agent credential: ``ONEIRON_KEY``, else the credential file."""
+        """The agent credential: the hosted selection's when one is selected
+        in slip mode, else ``ONEIRON_KEY``, else the credential file."""
+        hosted = self._hosted_key()
+        if hosted:
+            return hosted
         key = os.environ.get("ONEIRON_KEY", "").strip()
         if key:
             return key
@@ -159,6 +167,24 @@ class OneironMemoryProvider(MemoryProvider):
         try:
             return Path(path).expanduser().read_text(encoding="utf-8").strip()
         except OSError:
+            return ""
+
+    def _hosted_key(self) -> str:
+        """The hosted selection's credential, when one is selected in slip
+        mode; '' otherwise, or when its file cannot be read."""
+        hosted = self._hosted or {}
+        if hosted.get("auth_mode") != "slip":
+            return ""
+        path = str(hosted.get("credential_file") or "").strip()
+        if not path:
+            return ""
+        try:
+            return Path(path).expanduser().read_text(encoding="utf-8").strip()
+        except OSError:
+            logger.warning(
+                "Oneiron: the hosted vault's credential file is unreadable; "
+                "using your configured credential"
+            )
             return ""
 
     def is_available(self) -> bool:
@@ -181,6 +207,7 @@ class OneironMemoryProvider(MemoryProvider):
     def _bind(self) -> str:
         """The vault's origin, in the plugins' one order; '' when none answers."""
         url = str(self._config.get("url") or "")
+        self._hosted = None
         binary = shutil.which(str(self._config.get("oneiron") or "oneiron"))
         if binary is None:
             self._vault_line = f"Oneiron: this session uses the vault at {url}." if url else ""
@@ -201,8 +228,15 @@ class OneironMemoryProvider(MemoryProvider):
         except (OSError, subprocess.SubprocessError, ValueError, IndexError):
             logger.warning("Oneiron: `oneiron hook --host hermes bind` gave no answer", exc_info=True)
             return url
+        hosted = bound.get("hosted")
+        self._hosted = hosted if isinstance(hosted, dict) else None
         lines = [line for line in bound.get("lines") or [] if isinstance(line, str)]
         self._vault_line = lines[0] if lines else ""
+        if self._hosted is not None and self._hosted.get("auth_mode") == "owner":
+            # No SDK owner-mode path: reads keep the configured credential.
+            note = ("It reads as your configured credential: the hosted owner "
+                    "sign-in carries no SDK credential.")
+            self._vault_line = f"{self._vault_line} {note}".strip()
         for line in lines[1:]:
             logger.info("%s", line)
         return bound.get("url") or ""
@@ -219,7 +253,8 @@ class OneironMemoryProvider(MemoryProvider):
             mode = "beside" if _builtin_memory_on() else "memory"
         self._mode = mode
         Oneiron = _sdk()
-        url, key = self._bind(), self._key()
+        url = self._bind()
+        key = self._key()
         if Oneiron is None or not url or not key:
             logger.warning("Oneiron: no vault or credential; this session runs without Oneiron")
             return

@@ -42,7 +42,7 @@ pub(crate) async fn vault_shape_apply(
         return (Err(refusal), Some(Vec::new()));
     }
     if let Ok(owner) = crate::api::owner_routes::owner(auth, &server) {
-        return tokio::task::spawn_blocking(move || -> MaybeListed<ShapeApplyReceipt> {
+        return super::clock_ingress::run_blocking(move || -> MaybeListed<ShapeApplyReceipt> {
             // Each attempt lists into a set of its own.
             let apply = |slips: Option<&HostSlipIssuer>| -> MaybeListed<ShapeApplyReceipt> {
                 let (receipt, rows) = server.vault().apply_shape_listing(
@@ -74,7 +74,7 @@ pub(crate) async fn vault_shape_apply(
         return (Err(refusal), Some(Vec::new()));
     };
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
             .at(auth.locality())
             .shape_apply_as_principal_listing(&input)

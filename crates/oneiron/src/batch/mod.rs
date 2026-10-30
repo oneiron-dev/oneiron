@@ -71,7 +71,7 @@ pub(crate) use self::claim_materialization::{
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{
     deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,
-    delete_door_protected, drop_seeded_actor_row,
+    delete_door_protected, drop_seeded_actor_row, stage_cascade_tombstone_in_txn,
 };
 pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replayed_facet_of_edge};
 #[cfg(test)]

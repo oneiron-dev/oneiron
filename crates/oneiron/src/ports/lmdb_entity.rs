@@ -4,6 +4,7 @@ use super::*;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::registry::*;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{ManifestDbs, Store};
 use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
@@ -93,10 +94,9 @@ impl EntityStore for Vault {
     ) -> Result<Vec<EntityId>> {
         let mut result = Vec::new();
         let prefix = [b"session_turns:v1:".as_slice(), session.as_bytes()].concat();
-        for (scanned, row) in self.store.vault_meta.prefix_iter(txn, &prefix)?.enumerate() {
-            if scanned >= 100_000 {
-                return Err(Error::IndexOverflow("session turns index"));
-            }
+        let mut count = ScanCount::start(&self.store, txn, EngineScan::TypeIndexRows, &prefix)?;
+        for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+            count.row();
             let (key, value) = row?;
             let id = key
                 .get(prefix.len()..)
@@ -119,6 +119,7 @@ impl EntityStore for Vault {
             }
             result.push(id);
         }
+        count.defer(&self.store);
         Ok(result)
     }
     fn port_list_sessions_by_relationship(
@@ -140,14 +141,14 @@ impl EntityStore for Vault {
     }
 }
 pub(super) fn type_ids(vault: &Vault, txn: &RoTxn<'_>, kind: u8) -> Result<Vec<EntityId>> {
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::TypeIndexRows, &[kind])?;
     let mut ids = Vec::new();
     for row in vault.store.type_index.prefix_iter(txn, &[kind])? {
-        if ids.len() >= 100_000 {
-            return Err(Error::IndexOverflow("port type index"));
-        }
+        count.row();
         let (key, _) = row?;
         ids.push(crate::vault::entity_id_from_type_index_key(&key)?);
     }
+    count.defer(&vault.store);
     Ok(ids)
 }
 pub(super) fn field<'a>(body: &'a rmpv::Value, name: &str) -> Option<&'a rmpv::Value> {
@@ -220,16 +221,10 @@ fn indexed_entities(
     selector: &[u8],
 ) -> Result<Vec<EntityId>> {
     let prefix = query_prefix(kind, selector);
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::TypeIndexRows, &prefix)?;
     let mut ids = Vec::new();
-    for (scanned, row) in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, &prefix)?
-        .enumerate()
-    {
-        if scanned >= 100_000 {
-            return Err(Error::IndexOverflow("named entity query index"));
-        }
+    for row in vault.store.vault_meta.prefix_iter(txn, &prefix)? {
+        count.row();
         let (key, value) = row?;
         let bytes = key
             .get(prefix.len()..)
@@ -247,6 +242,7 @@ fn indexed_entities(
         }
         ids.push(id);
     }
+    count.defer(&vault.store);
     Ok(ids)
 }
 impl EdgeStore for Vault {
@@ -297,16 +293,22 @@ impl EdgeStore for Vault {
         if limit == 0 {
             return Ok(Vec::new());
         }
+        let mut scope = Vec::with_capacity(18);
+        scope.push(direction as u8);
+        scope.extend_from_slice(id.as_bytes());
+        if let Some(kind) = kind {
+            scope.push(kind as u8);
+        }
+        let mut count = ScanCount::start(&self.store, txn, EngineScan::EdgePeerRows, &scope)?;
         let mut result = Vec::new();
-        for (scanned, row) in self.port_edges(txn, id, direction, kind, None)?.enumerate() {
-            if scanned >= 100_000 {
-                return Err(Error::IndexOverflow("edge neighbors"));
-            }
+        for row in self.port_edges(txn, id, direction, kind, None)? {
             if result.len() >= limit {
                 break;
             }
+            count.row();
             result.push(row?);
         }
+        count.defer(&self.store);
         Ok(result)
     }
     fn port_edge_list_by_dst(
@@ -320,24 +322,27 @@ impl EdgeStore for Vault {
         if limit == 0 {
             return Ok(Vec::new());
         }
+        let mut scope = Vec::with_capacity(18);
+        scope.push(EdgeDirection::In as u8);
+        scope.extend_from_slice(id.as_bytes());
+        if let Some(kind) = kind {
+            scope.push(kind as u8);
+        }
+        let mut count = ScanCount::start(&self.store, txn, EngineScan::EdgePeerRows, &scope)?;
         let mut result = Vec::new();
         // With a kind the adapter seeks straight to the exclusive peer cursor.
         if kind.is_some() {
             for row in self
                 .port_edges(txn, id, EdgeDirection::In, kind, after.copied())?
-                .take(limit.min(100_000))
+                .take(limit)
             {
+                count.row();
                 result.push(row?.target);
             }
         } else {
             let mut peers = std::collections::BTreeSet::new();
-            for (scanned, row) in self
-                .port_edges(txn, id, EdgeDirection::In, None, None)?
-                .enumerate()
-            {
-                if scanned >= 100_000 {
-                    return Err(Error::IndexOverflow("edge neighbors"));
-                }
+            for row in self.port_edges(txn, id, EdgeDirection::In, None, None)? {
+                count.row();
                 let peer = row?.target;
                 if after.is_none_or(|after| peer > *after) {
                     peers.insert(peer);
@@ -345,6 +350,7 @@ impl EdgeStore for Vault {
             }
             result.extend(peers.into_iter().take(limit));
         }
+        count.defer(&self.store);
         Ok(result)
     }
 }
@@ -390,9 +396,14 @@ impl PlaceStore for Vault {
         provider: &str,
         provider_id: &str,
     ) -> Result<Vec<EntityId>> {
+        let qualified = format!("{provider}:{provider_id}");
         matching_bodies(self, txn, ENTITY_TYPE_PLACE, |body| {
-            field(body, "provider").and_then(rmpv::Value::as_str) == Some(provider)
-                && field(body, "providerId").and_then(rmpv::Value::as_str) == Some(provider_id)
+            let stored = field(body, "providerId").and_then(rmpv::Value::as_str);
+            // The working separate-provider shape beside the canon's
+            // provider-qualified providerId (`"google:ChIJ…"`).
+            (field(body, "provider").and_then(rmpv::Value::as_str) == Some(provider)
+                && stored == Some(provider_id))
+                || stored == Some(qualified.as_str())
         })
     }
     fn port_place_find_by_name(&self, txn: &RoTxn<'_>, name: &str) -> Result<Vec<EntityId>> {
@@ -401,8 +412,13 @@ impl PlaceStore for Vault {
         })
     }
     fn port_place_list_children(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+        // The canon's PartOf hierarchy beside the working ChildOf layout.
+        let mut peers = BTreeSet::new();
+        for kind in [EdgeKind::PartOf, EdgeKind::ChildOf] {
+            peers.extend(self.port_edge_list_by_dst(txn, id, Some(kind), None, usize::MAX)?);
+        }
         let mut result = Vec::new();
-        for peer in self.port_edge_list_by_dst(txn, id, Some(EdgeKind::ChildOf), None, 100_000)? {
+        for peer in peers {
             if self
                 .port_entity_get(txn, &peer)?
                 .is_some_and(|r| r.entity_type == ENTITY_TYPE_PLACE)

@@ -126,6 +126,9 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// FIX 9598: an approved Dreamer claim whose VAD consolidation is still owed, written in the
+    /// approval's commit and cleared in the consolidation's own. Key: id16 (claim).
+    CLAIM_VAD_OWED: VaultMeta b"claim:vad_owed:v1:" Named Engine;
     /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
     /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
     /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).

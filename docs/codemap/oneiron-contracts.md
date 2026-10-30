@@ -52,6 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 10 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
 | `src/memory/error.rs` | src | m | 4 struct · 7 fn · 1 type · 22 const · 1 re-export | MemoryError, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory/error/engine.rs` | src | m | — | — | — |
 | `src/memory/error/gate_denial.rs` | src | s | 1 struct | MemoryGateDenial | The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |

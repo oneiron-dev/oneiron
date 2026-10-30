@@ -95,6 +95,11 @@ pub struct Memory<'v> {
     /// The ask guest's grant a host admitted for this surface's actor
     /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
     pub(super) task_grant: Option<crate::authority::AdmittedTaskGrant>,
+    /// The requester a held request was admitted under, which a host binds
+    /// when it releases that request on a surface of its own
+    /// (`with_kept_requester`, FIX 11691): an agent dispatch the release
+    /// queues keeps it. A record, not authority.
+    pub(super) kept_requester: Option<crate::agent_dispatch::QueuedRequester>,
     /// The conversation whose request this surface's work answers, when a
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.

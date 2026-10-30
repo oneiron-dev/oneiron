@@ -27,10 +27,11 @@ async fn as_owner(
         return refused(error);
     }
     let mut bands = server.decision_host().bands();
-    let answer = tokio::task::spawn_blocking(move || act(&mut bands).map_err(MemoryError::from))
-        .await
-        .map_err(|_| internal(verb))
-        .and_then(|answer| answer);
+    let answer =
+        super::clock_ingress::run_blocking(move || act(&mut bands).map_err(MemoryError::from))
+            .await
+            .map_err(|_| internal(verb))
+            .and_then(|answer| answer);
     (answer, Vec::new())
 }
 

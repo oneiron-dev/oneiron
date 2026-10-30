@@ -1,15 +1,16 @@
 //! The Kotlin `EmbeddedVault`'s context pack, text search and graph reads,
 //! lowered to the same core reads the C ABI's `oneiron_vault_context_pack`,
 //! `_search_text`, `_targets`, `_sources`, `_subtree` and `_ancestors` run.
-//! Reads are the same on every vault, bound or not, except `peers`, which
-//! reads a session-bound vault's room over base (FIX 11586).
+//! A vault bound to an off-record session reads its room over base while
+//! the room is live, as the N-API and C bindings do (FIX 10759, FIX 11586);
+//! every other vault reads base.
 
 use std::sync::MutexGuard;
 
 use jni::JNIEnv;
 use jni::objects::{JFloatArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jobjectArray, jsize, jstring};
-use oneiron::{EdgeKind, EntityId, PackFormat, ScoredEntity};
+use oneiron::{ContextPackBuilder, EdgeKind, EntityId, PackFormat, ScoredEntity};
 
 use super::{NativeVault, display, float_values, run, scored_array};
 
@@ -25,25 +26,40 @@ impl NativeVault {
     ) -> Result<String, String> {
         let limit = search_limit(limit)?;
         // The limit caps the pack itself, as the C ABI's does.
-        let mut builder = self
-            .vault
-            .context_pack()
-            .format(pack_format(format))
-            .limit(limit);
-        if let Some(text) = text {
-            builder = builder.search_text(text, limit);
-        }
-        if let Some(vector) = vector {
-            builder = builder.search_vector(vector, limit);
-        }
-        let pack = builder.run_serialized().map_err(display)?;
+        let format = pack_format(format);
+        let pack = self.pack_bytes(|builder| {
+            let mut builder = builder.format(format).limit(limit);
+            if let Some(text) = text {
+                builder = builder.search_text(text, limit);
+            }
+            if let Some(vector) = vector {
+                builder = builder.search_vector(vector, limit);
+            }
+            builder
+        })?;
         String::from_utf8(pack).map_err(display)
+    }
+
+    /// The serialized context pack `configure` builds.
+    fn pack_bytes(
+        &self,
+        configure: impl for<'b> Fn(ContextPackBuilder<'b>) -> ContextPackBuilder<'b>,
+    ) -> Result<Vec<u8>, String> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_context_pack(configure).map_err(display),
+            None => configure(self.vault.context_pack())
+                .run_serialized()
+                .map_err(display),
+        }
     }
 
     /// The `limit` best BM25 text matches for `query`.
     fn search_text(&self, query: &str, limit: jint) -> Result<Vec<ScoredEntity>, String> {
         let limit = search_limit(limit)?;
-        self.vault.search_text(query, limit).map_err(display)
+        match self.session_memory() {
+            Some(memory) => memory.raw_search_text(query, limit).map_err(display),
+            None => self.vault.search_text(query, limit).map_err(display),
+        }
     }
 
     /// The peers of `id` over `kind` edges, filtered to `peer_type` when
@@ -75,13 +91,19 @@ impl NativeVault {
     fn subtree(&self, root: &str, max_depth: jint) -> Result<Vec<(EntityId, u32)>, String> {
         let root = EntityId::from_hex(root).map_err(display)?;
         let max_depth = u32::try_from(max_depth).map_err(display)?;
-        self.vault.subtree(&root, max_depth).map_err(display)
+        match self.session_memory() {
+            Some(memory) => memory.raw_subtree(&root, max_depth).map_err(display),
+            None => self.vault.subtree(&root, max_depth).map_err(display),
+        }
     }
 
     /// The `ChildOf` ancestors of `node`, nearest first.
     fn ancestors(&self, node: &str) -> Result<Vec<EntityId>, String> {
         let node = EntityId::from_hex(node).map_err(display)?;
-        self.vault.ancestors(&node).map_err(display)
+        match self.session_memory() {
+            Some(memory) => memory.raw_ancestors(&node).map_err(display),
+            None => self.vault.ancestors(&node).map_err(display),
+        }
     }
 }
 

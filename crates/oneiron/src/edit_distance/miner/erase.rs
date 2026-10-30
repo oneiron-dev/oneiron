@@ -129,6 +129,7 @@ fn erase_teaching_copies_in_txn(
         // A mined claim is MACHINE-signed: its history controls go with it.
         let (_, vector, graph, neighbors) =
             crate::batch::deindex_entity_with_machine_history(store, txn, &copy)?;
+        crate::batch::stage_cascade_tombstone_in_txn(store, txn, &copy)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &copy, &neighbors)?;
         if graph {
             crate::ppr::increment_graph_version(store, txn)?;

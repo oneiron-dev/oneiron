@@ -30,8 +30,9 @@ use std::sync::Arc;
 use std::sync::PoisonError;
 
 use oneiron::llm::{
-    CacheDigest, CacheEpoch, CacheIdentity, INFERENCE_CALLS_KEY, WorkerBuildEvidence,
-    WorkerDescriptor, WorkerFailure, WorkerKind, WorkerReadiness, parse_llama_alias,
+    CacheDigest, CacheEpoch, CacheIdentity, INFERENCE_CALLS_KEY, SCHEDULING_CAPABILITY,
+    SchedulingCapability, WorkerBuildEvidence, WorkerDescriptor, WorkerFailure, WorkerKind,
+    WorkerReadiness, parse_llama_alias,
 };
 use oneiron_driver::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
 use serde::Deserialize;
@@ -185,7 +186,21 @@ impl HouseProbe {
         {
             return failed(WorkerFailure::BuildMismatch, Some(observed));
         }
-        judge(observed, &expected.expected, launch.as_ref())
+        let readiness = judge(observed, &expected.expected, launch.as_ref());
+        if matches!(&readiness, WorkerReadiness::Ready { .. }) {
+            if let (Some(slot), Some(hello)) = (&self.slot, &hello) {
+                let scheduling = hello
+                    .get("capabilities")
+                    .and_then(|capabilities| capabilities.get(SCHEDULING_CAPABILITY))
+                    .and_then(|capability| {
+                        serde_json::from_value::<SchedulingCapability>(capability.clone()).ok()
+                    });
+                if let Some(record) = slot.lock().unwrap_or_else(PoisonError::into_inner).as_mut() {
+                    record.scheduling = scheduling;
+                }
+            }
+        }
+        readiness
     }
 
     async fn llama(&self, http: &ProviderHttp, expected: &WorkerSpec) -> WorkerReadiness {

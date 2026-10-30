@@ -5,10 +5,10 @@
 //! (`EmbeddedVault.bound`) holds its own caller, its principal and session,
 //! and writes as that caller (OF-063): its puts, deletes, edges and vectors
 //! run the core's raw caller doors (`Memory::raw_*`). Every other vault
-//! writes as the host. Reads are the same on every vault: the context pack,
-//! text search and graph reads (`reads`) lower to the core reads the C ABI
-//! runs. A bound vault's `get`, `edges` and `peers` read its session's room
-//! over base while its session is live (FIX 8119, FIX 11586).
+//! writes as the host. The context pack, text and vector search and graph
+//! reads (`reads`, `search_vector`) lower to the core reads the C ABI runs:
+//! a vault bound to a session reads its room over base while the room is
+//! live, every other vault reads base (FIX 8119, FIX 10759, FIX 11586).
 use jni::{
     JNIEnv,
     objects::{JByteArray, JFloatArray, JObject, JString, JValue},
@@ -178,7 +178,10 @@ impl NativeVault {
     /// The `limit` nearest entities to `query`, however many it asks for.
     fn search_vector(&self, query: &[f32], limit: jint) -> Result<Vec<ScoredEntity>, String> {
         let limit = reads::search_limit(limit)?;
-        self.vault.search_vector(query, limit).map_err(display)
+        match self.session_memory() {
+            Some(memory) => memory.raw_search_vector(query, limit).map_err(display),
+            None => self.vault.search_vector(query, limit).map_err(display),
+        }
     }
 }
 fn display(error: impl std::fmt::Display) -> String {
