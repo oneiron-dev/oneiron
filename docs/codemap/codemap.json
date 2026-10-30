@@ -24644,7 +24644,7 @@
      "path": "src/dispatch_byoa/record.rs",
      "purpose": "The small records the runner seat route keeps beside its attempts (OF-137): a bound work's hops…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -24815,7 +24815,7 @@
      "path": "src/dispatch_byoa/work_binding.rs",
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 5,
       "fn": 6,
       "struct": 4
@@ -53246,7 +53246,7 @@
      "purpose": "Tier-A clamp, row build, fingerprint, and Vault compile pass",
      "surface": {
       "crate-vis": 6,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -67135,6 +67135,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "IdempotencyIntent"
+     ],
+     "path": "src/store/idempotency_intent.rs",
+     "purpose": "The intent a keyed HTTP request's route writes under (FIX 10379)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/inference_snapshot_custody.rs",
      "purpose": "The inference snapshot custody client: one erasable wrapped data key per snapshot, on the one typed custody…",
@@ -67710,7 +67725,7 @@
      "surface": {
       "crate-vis": 42,
       "mod": 1,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -77748,7 +77763,7 @@
      "purpose": "Typed owner doors for profile request answers and accepted persona copies",
      "surface": {
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 9
      }
     },
@@ -84070,7 +84085,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84310,7 +84325,7 @@
    },
    "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5662,
+   "source_files": 5663,
    "test_files": 902
   },
   "oneiron-android": {
@@ -105141,7 +105156,7 @@
      "path": "src/api/openapi/mod.rs",
      "purpose": "OpenAPI document assembly for the HTTP API",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -105161,37 +105176,7 @@
      "path": "src/api/openapi/owner_paths.rs",
      "purpose": "The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input…",
      "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/openapi/owner_paths/routes_a_to_e.rs",
-     "purpose": "The `/v1/owner` routes from `/agent-grants` through `/embedding-spaces`, in path order: one table of…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/openapi/owner_paths/routes_f_to_packs.rs",
-     "purpose": "The `/v1/owner` routes from `/federation` through `/packs`, in path order: one table of…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/openapi/owner_paths/routes_pads_to_w.rs",
-     "purpose": "The `/v1/owner` routes from `/pads` through `/worlds`, in path order: one table of…",
-     "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -105331,7 +105316,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 61
+      "crate-vis": 63
      }
     },
     {
@@ -105425,7 +105410,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/concern_routes.rs",
@@ -105462,6 +105447,16 @@
      "purpose": "The OpenAPI schemas of the connector admission writes (FIX 11611): `POST /v1/owner/connectors/register`…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/connector_admission_routes/table.rs",
+     "purpose": "The `/v1/owner` routes [`super`] serves, one row per method and path: the router and the OpenAPI document…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -105575,7 +105570,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/dreamer_routes.rs",
@@ -105675,6 +105670,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/hub_table.rs",
+     "purpose": "The hub's own `/v1/owner` routes and the off-record ones, one row per method and path: the router and the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -105715,7 +105720,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/machine_routes.rs",
@@ -105745,7 +105750,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/owner_key_enrollment_routes.rs",
@@ -105828,6 +105833,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/pack_routes/table.rs",
+     "purpose": "The `/v1/owner` routes [`super`] serves, one row per method and path: the router and the OpenAPI document…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/pad_routes.rs",
      "purpose": "`/v1/owner/pads/read`: the owner reads an agent's sealed scratchpads, stating a reason the agent sees in its…",
      "surface": {
@@ -105862,6 +105877,16 @@
      "purpose": "The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611), `POST…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/proactivity_routes/table.rs",
+     "purpose": "The `/v1/owner` routes [`super`] serves, one row per method and path: the router and the OpenAPI document…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -110688,7 +110713,7 @@
      "path": "src/idempotency/intent.rs",
      "purpose": "The intent a keyed mutation keeps before its route runs (FIX 9527, 6056)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -116319,7 +116344,7 @@
      "path": "src/voice_host/speech.rs",
      "purpose": "The brain's reply in the host's own voice (OF-410)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -116931,7 +116956,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 636,
+     "files": 637,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -117430,7 +117455,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1461,
+   "source_files": 1462,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -1,7 +1,6 @@
 //! The owner's cross-identity inbox lens, shared with the typed facade.
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -10,14 +9,22 @@ use oneiron::EdgeActorClass;
 use oneiron::agent_inbox_lens::{InboxLensPage, InboxLensRequest};
 use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/inbox", get(read))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "get",
+            path: "/inbox",
+            summary: "One page of the lens, filtered to an identity or to one agent's slice when asked.",
+            row: None,
+        },
+        get(read),
+    )]
 }
 
 async fn read(

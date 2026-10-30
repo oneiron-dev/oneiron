@@ -7,7 +7,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -16,14 +15,22 @@ use oneiron::skill_hub::pack_catalog::PackImportPreview;
 use oneiron::task_verb::sdk::{PackFileInput, decode_pack_files};
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/packs/preview", post(preview))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/packs/preview",
+            summary: "What installing a pack folder would land, and each world it would land in that this machine's setting does not cover; stages and writes nothing (FIX 5493).",
+            row: None,
+        },
+        post(preview),
+    )]
 }
 
 /// The folder `POST /v1/owner/packs` would take, and the world the owner

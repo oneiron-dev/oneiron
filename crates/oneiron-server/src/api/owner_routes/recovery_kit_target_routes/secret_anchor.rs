@@ -24,7 +24,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -35,7 +34,7 @@ use oneiron::EntityId;
 use serde::Deserialize;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::super::{OwnerReply, blocking, owner, owner_error};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
 use super::{KIT_TARGET_ELSEWHERE, Kit, OwnerDevice, kit_target_refused};
 use crate::api::has_json_content_type;
 use crate::auth::CoreAuth;
@@ -49,8 +48,16 @@ use crate::server::SyncServer;
 /// few KiB), held in memory in one wiped buffer and never spooled.
 const ANCHOR_SIGN_BODY_BYTES: usize = 64 * 1024;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/secrets/anchor-sign", post(anchor_sign))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/secrets/anchor-sign",
+            summary: "The owner's recovery kit, in this one call, pushes a portable secret's current custody transition signed with his owner anchor to the installs he names; the engine takes it only from an install with no live machine profile.",
+            row: None,
+        },
+        post(anchor_sign),
+    )]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/anchor-sign`'s body (FIX 11611): [`AnchorSign`].
