@@ -20,7 +20,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
+use crate::vault::SUPERSEDES_DEFAULT_WEIGHT;
 
 mod materialization;
 
@@ -287,22 +287,19 @@ impl Vault {
     /// The CLAIM entities that supersede `id`, resolved through the inbound
     /// `Supersedes` index. Every candidate is grounded — a dangling edge, a
     /// non-CLAIM node, or an undecodable body is corruption, never a skip.
+    /// Every inbound edge is read (FIX 11033): the count only feeds the
+    /// advisory EdgePeerRows check.
     fn supersession_successors_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
+        let (direction, kind) = (EdgeDirection::In, EdgeKind::Supersedes);
+        let scope = [&[direction as u8][..], id.as_bytes(), &[kind as u8][..]].concat();
+        let mut count = ScanCount::start(&self.store, rtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut successors = Vec::new();
-        for entry in self.port_edges(
-            rtxn,
-            id,
-            EdgeDirection::In,
-            Some(EdgeKind::Supersedes),
-            None,
-        )? {
-            if successors.len() >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("supersedes successors"));
-            }
+        for entry in self.port_edges(rtxn, id, direction, Some(kind), None)? {
+            count.row();
             let successor = entry?.target;
             let raw = self
                 .port_entity_record(rtxn, &successor)?
@@ -318,6 +315,7 @@ impl Vault {
             decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
             successors.push(successor);
         }
+        count.defer(&self.store);
         Ok(successors)
     }
 
