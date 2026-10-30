@@ -1,5 +1,6 @@
 //! A STOP written as a message (FIX 12101). A Slack or LINE counterparty
-//! opts out by writing a stop keyword as their whole message. The connector
+//! opts out by writing a stop keyword as their whole message; a Slack
+//! message may lead with user mentions (`<@U123> stop`). The connector
 //! bridge reads the message's words before it wakes anyone, and a STOP
 //! becomes the typed OptOut interaction an adapter or `/v1/core` admits,
 //! through the same admission: it holds sends to the sender on the channel
@@ -10,7 +11,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::Vault;
 use crate::channel_identity_provider::{
-    LINE_CHANNEL, is_line_chat_audience_key, line_source_audience_key,
+    LINE_CHANNEL, SLACK_CHANNEL, is_line_chat_audience_key, line_source_audience_key,
 };
 use crate::error::Result;
 
@@ -38,6 +39,9 @@ const STOP_REPLY_CORRELATION_SUFFIX: &str = ":stop_reply";
 /// Where an archived LINE event names the member who wrote it.
 const LINE_SOURCE_USER_POINTER: &str = "/event/source/userId";
 
+/// Where a Slack user mention token starts: `<@U123>` or `<@U123|name>`.
+const SLACK_USER_MENTION_OPEN: &str = "<@";
+
 /// Whether `text` is one of [`STOP_REPLY_KEYWORDS`] and nothing else.
 #[must_use]
 pub fn is_stop_reply(text: &str) -> bool {
@@ -46,6 +50,24 @@ pub fn is_stop_reply(text: &str) -> bool {
     STOP_REPLY_KEYWORDS
         .iter()
         .any(|keyword| folded.eq_ignore_ascii_case(keyword))
+}
+
+/// A Slack message's text without the user mentions and whitespace that
+/// lead it, so `<@U123> stop` and `<@U123|name> stop` read as `stop`. The
+/// text from the first word that is not a mention on is kept as written.
+fn slack_text_for_stop(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    while let Some(mention) = rest.strip_prefix(SLACK_USER_MENTION_OPEN) {
+        let Some((user, after)) = mention.split_once('>') else {
+            break;
+        };
+        let id = user.split_once('|').map_or(user, |(id, _)| id);
+        if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+            break;
+        }
+        rest = after.trim_start();
+    }
+    rest
 }
 
 /// Admits the OptOut interaction a STOP message becomes, for `event`'s
@@ -67,7 +89,12 @@ pub(super) fn admit_stop_reply_opt_out(
     let Some(text) = vault.read_provider_event_text(&event.channel, payload_ref)? else {
         return Ok(false);
     };
-    if !is_stop_reply(&text) {
+    let text = if event.channel == SLACK_CHANNEL {
+        slack_text_for_stop(&text)
+    } else {
+        &text
+    };
+    if !is_stop_reply(text) {
         return Ok(false);
     }
     let Some(sender) = stop_reply_sender(vault, event, payload_ref)? else {
