@@ -51,8 +51,9 @@ pub struct SyncClient {
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
     pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
-    /// Unacknowledged cross-month deltas. Lost on process death, re-fetched by VV.
-    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>)>,
+    /// Unacknowledged cross-month deltas, each with the machine its connection
+    /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
+    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
     pub(crate) root_bootstrapped: bool,
     /// Durable home ACKs of opened-item queue updates, keyed by queue sequence:
     /// the BLAKE3 of each acknowledged row's own bytes, set once its window
@@ -73,6 +74,13 @@ pub struct SyncClient {
     /// When each owed artifact publication, by digest, may be sent again on
     /// this connection. Cleared at every connect.
     pub(crate) artifact_publication_resend: HashMap<[u8; 32], std::time::Instant>,
+    /// This connection's by-reference ASSET body transfers (FIX 5489).
+    /// Started again at every connect. Only the client's own `&mut` takes
+    /// it; the mutex keeps the client `Sync`.
+    pub(crate) asset_bodies: Mutex<crate::sync::AssetBodySession>,
+    /// This connection's custody carrier leaf-key requests (FIX 11785).
+    /// Started again at every connect.
+    pub(super) leaf_key_sends: super::leaf_keys::LeafKeySends,
     /// The machine the home proved on this connection's upgrade (OF-534
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
@@ -183,6 +191,8 @@ impl SyncClient {
             lfs_last_id: 0,
             last_lfs_download: None,
             artifact_publication_resend: HashMap::new(),
+            asset_bodies: Default::default(),
+            leaf_key_sends: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
             status: SyncStatus::Disconnected,
             event_tx,

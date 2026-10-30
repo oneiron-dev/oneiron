@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::authority::InvocationSlipBinding;
 use crate::consent::CodeWaitReceiptLinks;
 use crate::entity_id::EntityId;
-use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument};
+use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnapshot};
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
@@ -208,6 +208,10 @@ pub struct CodeConsentBrowserAction {
     /// The call's answer as the held act found it, as JSON text: a batch's
     /// answer at its stop, or the page a lone act began on.
     pub stopped: Option<String>,
+    /// The outer call's verb-hook pre state, kept at hold time (FIX
+    /// 11497), so the answered pass runs the post hooks the first pass
+    /// never reached; none for a call no hook chain ran for.
+    pub hook_pre: Option<VerbHookPreSnapshot>,
 }
 
 /// The pending effect a wait binds. Each effect kind is its own typed

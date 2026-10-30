@@ -27,9 +27,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract.rs` | src | m | 1 trait · 1 fn | BrowserDriver | — |
 | `src/demonstration.rs` | src | m | 6 struct · 4 enum · 1 type · 15 crate-vis | DemonstrationOutput, DemonstrationSource, DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput, LocatorGap, RecordedStep +2 | A demonstration (CUA E9; DESIGN-2 "The owner, by demonstration"): one opted-in span of a browser session… |
 | `src/desktop.rs` | src | m | 1 struct · 1 re-export | DesktopSession | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
-| `src/desktop/acts.rs` | src | s | 9 crate-vis | — | — |
+| `src/desktop/acts.rs` | src | s | 8 crate-vis | — | — |
 | `src/desktop/images.rs` | src | s | 2 crate-vis | — | — |
 | `src/desktop/point.rs` | src | s | 1 crate-vis | — | A click at a point of a held screenshot (OF-523; FIX 5740, FIX 5741) |
+| `src/desktop/press_holds.rs` | src | s | 5 fn · 2 crate-vis | — | The act a desktop press held, kept for the host to bind (FIX 11499), and the one press an owner's answer… |
 | `src/desktop/reads.rs` | src | m | 12 crate-vis | — | — |
 | `src/desktop/session.rs` | src | m | 2 struct · 2 enum · 18 fn | AbandonedTakeover, DesktopGuest, PersonInput, Takeover | — |
 | `src/desktop/tree.rs` | src | m | 1 crate-vis | — | — |

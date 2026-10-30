@@ -8,7 +8,7 @@
 
 use super::store::Version;
 use oneiron_vault_contract::vm_outbox::{VmOutboxKind, vm_outbox_member};
-use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags, RenameFlags};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -22,6 +22,10 @@ const MAX_DEPTH: usize = 5;
 /// A training outbox's lock, which its producer and its shipper each take
 /// for a coherent local snapshot or commit.
 const TRAINING_LOCK: &str = ".lock";
+/// What a kept diverged copy's side name ends with, before the copy's digest.
+const ASIDE_MARK: &str = ".diverged-";
+/// The longest name one directory entry takes.
+const NAME_MAX: usize = 255;
 
 /// A local file's identity and size, as a scan compares it to skip a digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -411,4 +415,40 @@ pub(super) fn remove(root: &File, kind: VmOutboxKind, member: &str) -> std::io::
         }
     }
     Ok(())
+}
+
+/// Moves `member` under `root` to its side name, a hidden sibling naming the
+/// copy's digest `held` (`.<leaf>.diverged-<held>`, the leaf cut to fit one
+/// name), and syncs its directory: the copy stays whole under its own name,
+/// out of the member's way, and no list, walk or producer takes it for a
+/// member (FIX 11736). A side name already there is never replaced. Returns
+/// the side name, or `None` when no file is at the member's name.
+pub(super) fn move_aside(
+    root: &File,
+    member: &str,
+    held: &str,
+) -> std::io::Result<Option<String>> {
+    let (dir, leaf) = match parent_of(root, member, None) {
+        Ok(found) => found,
+        Err(error) if is_gone(&error) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let room = NAME_MAX.saturating_sub(1 + ASIDE_MARK.len() + held.len());
+    let kept = leaf.get(..leaf.len().min(room)).unwrap_or(leaf.as_str());
+    let aside = format!(".{kept}{ASIDE_MARK}{held}");
+    match rustix::fs::renameat_with(
+        &dir,
+        leaf.as_str(),
+        &dir,
+        aside.as_str(),
+        RenameFlags::NOREPLACE,
+    ) {
+        Ok(()) => dir.sync_all()?,
+        Err(Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+    Ok(Some(match member.rsplit_once('/') {
+        Some((parent, _)) => format!("{parent}/{aside}"),
+        None => aside,
+    }))
 }

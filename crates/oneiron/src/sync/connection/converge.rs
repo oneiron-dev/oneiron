@@ -10,6 +10,7 @@ use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::queue::QueuedUpdate;
 
 use super::SyncConnection;
+use super::server_close::ServerClose;
 use super::session::{
     ConvergenceSession, FullResyncMarker, ITEM11_REBOOTSTRAP_UNREADABLE, MAX_CONVERGENCE_ROUNDS,
     PumpBudget, WsSink, WsSource,
@@ -193,9 +194,9 @@ impl SyncConnection {
     }
 
     /// Local half of the re-bootstrap, shared by the convergence and
-    /// queue-overflow paths: clear the queue FIRST (`q:`/`e:` rows only —
-    /// the `h:`/`m:`/`x:` families and delete-bearing rows + `d:` markers
-    /// survive per ARCH-0038/ONE-1135), then drop the
+    /// queue-overflow paths: clear the queue FIRST (`q:` rows only — the
+    /// `h:`/`m:`/`x:`/`e:` families and delete-bearing rows + `d:` markers
+    /// survive per ARCH-0038/ONE-1135, FIX 8884), then drop the
     /// in-memory Docs and produce fresh Phase 1-2 sync frames. If the queue
     /// clear fails, the docs are left intact and the error propagates —
     /// nothing is half-dropped.
@@ -287,8 +288,9 @@ impl SyncConnection {
                         .map_err(|e| format!("Pong failed: {e}"))?;
                 }
                 Some(Ok(Message::Pong(_) | Message::Text(_) | Message::Frame(_))) => {}
+                // The close code tells a server fault from a refusal (FIX 5927).
                 Some(Ok(Message::Close(frame))) => {
-                    return Err(format!("Server closed connection: {frame:?}"));
+                    return Err(ServerClose::read(frame.as_ref()).to_string());
                 }
                 Some(Err(e)) => return Err(format!("WS error: {e}")),
                 None => return Err("WS stream ended".to_string()),
