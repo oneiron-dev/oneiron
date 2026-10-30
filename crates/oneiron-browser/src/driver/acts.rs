@@ -1,16 +1,21 @@
 use super::*;
 
 /// Whether an act's input whose call failed, after the browser was sent
-/// one of its calls, has an unknown outcome (`unknown_outcome_policy`,
+/// `calls` of its calls, has an unknown outcome (`unknown_outcome_policy`,
 /// CALLS row, FIX 10426): its call ran out of time, the guest went, or the
-/// browser answered an error, so the input may have taken effect, wholly
-/// or in part. The driver's own refusals (a cover, a missing option) are
+/// browser answered an error past its first call, so the input may have
+/// taken effect, wholly or in part. An answered error on the input's
+/// first call is the browser refusing it: nothing took effect (FIX
+/// 11582). The driver's own refusals (a cover, a missing option) are
 /// answers about the page, and land no receipt.
-fn unknown_outcome_policy(error: &BrowserError) -> bool {
-    matches!(
-        error,
-        BrowserError::CallTimeout(_) | BrowserError::GuestLost | BrowserError::Protocol(_)
-    )
+fn unknown_outcome_policy(error: &BrowserError, calls: u64) -> bool {
+    match error {
+        BrowserError::Answered(_) => calls > 1,
+        BrowserError::CallTimeout(_) | BrowserError::GuestLost | BrowserError::Protocol(_) => {
+            calls > 0
+        }
+        _ => false,
+    }
 }
 
 impl CdpDriver {
@@ -27,15 +32,29 @@ impl CdpDriver {
         let (at, rebound) = match_target(target, &capture.rows, &capture.scope, known.as_ref())
             .ok_or_else(stale)?;
         let node = capture.nodes[at].ok_or_else(stale)?;
-        let resolved = self.page("DOM.resolveNode", json!({"backendNodeId": node}))?;
+        // On the row's own frame session (FIX 11576): an OOPIF row's node
+        // id is its frame's process's, and must never resolve on the
+        // page's session. One the read names on no session, or on two, is
+        // stale, as a row with no node is.
+        let session = self.row_session(&capture.ax, node).ok_or_else(stale)?;
+        let resolved = self.pipe.call(
+            Some(&session),
+            "DOM.resolveNode",
+            json!({"backendNodeId": node}),
+            Instant::now() + CALL,
+        )?;
         let object = resolved
             .pointer("/object/objectId")
             .cloned()
             .ok_or_else(stale)?;
         let node = json!({"backendNodeId": node, "objectId": object});
         // Read in its document now, and still in it when resolved.
-        let connected =
-            self.call_on(&node, "function() { return this.isConnected; }", json!([]))?;
+        let connected = self.call_on_in(
+            &session,
+            &node,
+            "function() { return this.isConnected; }",
+            json!([]),
+        )?;
         if connected != Value::Bool(true) {
             return Err(stale());
         }
@@ -44,6 +63,51 @@ impl CdpDriver {
             node,
             rebound,
         })
+    }
+
+    /// The session the row whose backend node is `node` resolves and reads
+    /// on (FIX 11576): its frame's own where the read names it there, else
+    /// the front tab's. None where no node of the read carries it, or
+    /// nodes on two sessions do: a foreign id is never resolved on the
+    /// page's session.
+    fn row_session(&self, ax: &[Value], node: u64) -> Option<String> {
+        let mut session = None;
+        let frames = ax
+            .iter()
+            .filter(|read| read.get("backendDOMNodeId").and_then(Value::as_u64) == Some(node))
+            .map(|read| read.get("frameId").and_then(Value::as_str));
+        for frame in frames {
+            let found = self.frame_session(frame);
+            if session.as_ref().is_some_and(|held| *held != found) {
+                return None;
+            }
+            session = Some(found);
+        }
+        session
+    }
+
+    /// `node`'s `function` on `session` (FIX 11576), as `call_on` calls it
+    /// on the front tab's session.
+    fn call_on_in(
+        &self,
+        session: &str,
+        node: &Value,
+        function: &str,
+        args: Value,
+    ) -> Result<Value, BrowserError> {
+        let result = self.pipe.call(
+            Some(session),
+            "Runtime.callFunctionOn",
+            json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
+            Instant::now() + CALL,
+        )?;
+        if let Some(error) = result.get("exceptionDetails") {
+            return Err(BrowserError::Protocol(self.thrown_text(error)));
+        }
+        Ok(result
+            .pointer("/result/value")
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     /// The viewport point, in CSS pixels, at fractions `x`, `y` of a held
@@ -289,9 +353,10 @@ impl CdpDriver {
         self.sent = acted.is_ok();
         // A call of the input failed once the browser was sent part of it:
         // the effect may stand, its outcome unknown (FIX 10426).
-        self.unknown = acted.as_ref().is_err_and(|error| {
-            unknown_outcome_policy(error) && crate::cdp::written_here() > written
-        });
+        let calls = crate::cdp::written_here().saturating_sub(written);
+        self.unknown = acted
+            .as_ref()
+            .is_err_and(|error| unknown_outcome_policy(error, calls));
         let fact = match (&acted, mark) {
             (Ok(()), Some(mark)) => self.no_effect(&mark, watch, Instant::now()),
             _ => None,

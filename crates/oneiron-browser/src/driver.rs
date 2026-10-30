@@ -175,12 +175,15 @@ pub(crate) struct Target {
 }
 
 /// An image the driver holds: its content ref, its PNG bytes, what of the
-/// page it shows, and, for a screenshot, its capture.
+/// page it shows, and, for a screenshot, its capture. The charge for the
+/// bytes where they prove a past-threshold reply, given back once the
+/// image ages out (FIX 11578).
 struct Held {
     image: String,
     png: Vec<u8>,
     frame: Frame,
     capture: Option<Capture>,
+    held: Option<crate::cdp::Held>,
 }
 
 /// What a held image shows: a viewport rectangle in CSS pixels, on the page
@@ -441,11 +444,13 @@ impl CdpDriver {
             .ok_or_else(|| BrowserError::Protocol("image is not a PNG".to_owned()))?;
         let image = format!("blake3:{}", blake3::hash(&png).to_hex());
         let bytes = png.len() as u64;
+        let held = self.pipe.charge_media(png.len());
         self.media.push_back(Held {
             image: image.clone(),
             png,
             frame,
             capture,
+            held,
         });
         if self.media.len() > MEDIA {
             self.media.pop_front();

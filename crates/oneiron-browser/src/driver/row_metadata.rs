@@ -27,6 +27,7 @@
 //! bindings; the pipe drops the events.
 
 use super::CdpDriver;
+use crate::cdp::Held;
 use crate::outline::{self, Line};
 use crate::{BrowserEngine, RowFieldGap, RowGapField, RowGapReason};
 use serde_json::{Value, json};
@@ -37,9 +38,11 @@ use url::Url;
 /// 10,000 UTF-8 bytes and marks no cut: a destination this long may be cut.
 const AX_TEXT_CUT: usize = 10_000;
 
-/// What one capture's DOM read gave.
+/// What one capture's DOM read gave: the read, with the charge for what
+/// of a past-threshold reply it keeps, given back as it drops (FIX
+/// 11578); or a read that failed, which keeps nothing.
 pub(super) enum DomRead {
-    Read(Dom),
+    Read(Dom, Option<Held>),
     Failed,
 }
 
@@ -119,6 +122,10 @@ impl CdpDriver {
             crate::cdp::deep::dismantle(read);
             dom
         };
+        // The read's charge rides it until it drops (FIX 11578): its
+        // reply's went back as its call took it. The OOPIF frames and the
+        // base read after keep no charge of their own.
+        let held = self.pipe.charge_retained(dom.footprint());
         dom.shadows_read = self.engine == BrowserEngine::Chromium;
         dom.oopifs = self
             .pipe
@@ -129,7 +136,7 @@ impl CdpDriver {
         if dom.needs_main_base(lines) {
             dom.bases[0] = self.main_base();
         }
-        DomRead::Read(dom)
+        DomRead::Read(dom, held)
     }
 
     /// The front tab's document base, where its DOM read names none
@@ -217,6 +224,49 @@ impl Dom {
                 steps.push(Step::Open(child, Some(at)));
             }
         }
+    }
+
+    /// The bytes the read keeps: its nodes' room and the strings they
+    /// keep, and its indexes' room, each map's table by its slot.
+    fn footprint(&self) -> usize {
+        let text = |text: &Option<String>| text.as_ref().map_or(0, String::capacity);
+        let kept = self
+            .nodes
+            .iter()
+            .map(|node| {
+                text(&node.href)
+                    .saturating_add(text(&node.datetime))
+                    .saturating_add(text(&node.input_type))
+                    .saturating_add(text(&node.autocomplete))
+            })
+            .fold(0, usize::saturating_add);
+        let frames = self
+            .frames
+            .iter()
+            .map(|frame| frame.capacity())
+            .fold(0, usize::saturating_add);
+        let bases = self
+            .bases
+            .iter()
+            .map(|base| match base {
+                Base::Url(url) => url.as_str().len(),
+                Base::Absent | Base::Failed => 0,
+            })
+            .fold(0, usize::saturating_add);
+        let entry = std::mem::size_of::<String>() + 1;
+        self.nodes
+            .len()
+            .saturating_mul(std::mem::size_of::<DomNode>())
+            .saturating_add(kept)
+            .saturating_add(
+                self.by_backend
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(u64, usize)>() + 1),
+            )
+            .saturating_add(self.bases.len().saturating_mul(std::mem::size_of::<Base>()))
+            .saturating_add(bases)
+            .saturating_add(self.frames.len().saturating_mul(entry))
+            .saturating_add(frames)
     }
 
     /// The node `line` joins by its own backend node, or why it joins none.
@@ -319,7 +369,7 @@ impl DomRead {
     /// The input type and autocomplete tokens of the element `line` joins
     /// by its own backend node: none where the read failed or joins none.
     pub(super) fn field_attributes(&self, line: &Line) -> (Option<&str>, Option<&str>) {
-        let Self::Read(dom) = self else {
+        let Self::Read(dom, _) = self else {
             return (None, None);
         };
         match dom.join(line) {
@@ -353,7 +403,7 @@ fn whole_destination(url: &str) -> bool {
 pub(super) fn fill(lines: &mut [Line], read: &DomRead) {
     for line in lines {
         let joined = match read {
-            DomRead::Read(dom) => dom.join(line).map(|at| (dom, at)),
+            DomRead::Read(dom, _) => dom.join(line).map(|at| (dom, at)),
             DomRead::Failed => Err(RowGapReason::ReadFailed),
         };
         let (ax_url, ax_level) = (line.ax_url.take(), line.ax_level.take());
