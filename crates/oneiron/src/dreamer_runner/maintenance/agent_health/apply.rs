@@ -10,8 +10,9 @@
 //!
 //! The approval is stored on the ask, so applying it again returns the same
 //! candidate. A gate that has not ruled, or deferred, leaves the application
-//! pending, and applying again carries it on. A rejection or a refusal leaves
-//! the skill as it was.
+//! pending, and applying again carries it on; so does the Dreamer's scoring
+//! pass that puts the candidate to the gate later (FIX 3725). A rejection or
+//! a refusal leaves the skill as it was.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,11 +21,12 @@ use super::loaded::RunPack;
 use super::{AgentHealthCard, CARDS, card_ref, parse_card_ref};
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::ArtifactError;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_optimize::{
-    SkillRepairStamp, propose_skill_repair_in_txn, proven_cycle, score_gate_skill_edit,
-    skill_edit_verdict_in_txn, skill_repair_brief, validate_skill_draft,
+    PROVENANCE_OPTIMIZE_ATTEMPT_KEY, SkillRepairStamp, propose_skill_repair_in_txn, proven_cycle,
+    score_gate_skill_edit, skill_edit_verdict_in_txn, skill_repair_brief, validate_skill_draft,
 };
 use crate::temporal::TimeRange;
 use crate::{EntityId, Error, Result, Vault};
@@ -309,16 +311,12 @@ impl Vault {
     ) -> Result<ConcernApplyOutcome> {
         let gated = score_gate_skill_edit(self, candidate);
         let now = self.store.clock.now_recorded_at();
-        let occurred = TimeRange {
-            start: now,
-            end: now,
-        };
         let settled = self.with_write_txn_grouped(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let mut card = CARDS
+            let card = CARDS
                 .get(&self.store, txn, key)?
                 .ok_or(Error::EntityNotFound)?;
-            let Some(mut settled) = approved_ask(&card, ask)?
+            let Some(standing) = approved_ask(&card, ask)?
                 .application
                 .clone()
                 .filter(|standing| standing.candidate == *candidate)
@@ -327,59 +325,7 @@ impl Vault {
                     "the approval on this card moved since you applied it",
                 ));
             };
-            if settled.state != AgentHealthApplicationState::Pending {
-                return Ok(settled);
-            }
-            let verdict = skill_edit_verdict_in_txn(self, txn, candidate)?;
-            if let Some(verdict) = &verdict {
-                settled.verdict = Some(verdict.id);
-                settled.disposition = Some(verdict.disposition.as_str().to_owned());
-            }
-            match verdict {
-                Some(verdict)
-                    if verdict.disposition.admits() && verdict.displaced_by_revision.is_none() =>
-                {
-                    // The bytes the gate admits are the bytes the owner
-                    // approved, or the old permission is refused.
-                    let staged = self.read_skill_record_in_txn(txn, candidate)?;
-                    if digest(&staged.desc) != settled.instructions {
-                        return Err(refused(
-                            "the candidate's instructions are not the ones you approved",
-                        ));
-                    }
-                    match self.admit_optimized_skill_in_txn(txn, candidate, occurred, now)? {
-                        Some(refusal) => {
-                            settled.state = AgentHealthApplicationState::Rejected;
-                            settled.verdict = skill_edit_verdict_in_txn(self, txn, candidate)?
-                                .map(|verdict| verdict.id);
-                            settled.disposition = Some(refusal.as_str().to_owned());
-                        }
-                        None => {
-                            self.supersede_skill_record_in_txn(
-                                txn,
-                                &settled.skill,
-                                candidate,
-                                occurred,
-                                now,
-                            )?;
-                            settled.state = AgentHealthApplicationState::Admitted;
-                        }
-                    }
-                }
-                Some(verdict) if verdict.disposition.closes_proposal() => {
-                    settled.state = AgentHealthApplicationState::Rejected;
-                }
-                _ => {}
-            }
-            settled.updated_at = now;
-            if let Some(ask) = card.coach.as_mut() {
-                ask.application = Some(settled.clone());
-            }
-            card.updated_at = now;
-            CARDS.put(&self.store, txn, key, &card)?;
-            // A touched card can arm the digest on its own (FIX 1979).
-            crate::batch::queue_proactivity_change(self, txn);
-            Ok(settled)
+            self.settle_standing_in_txn(txn, key, card, standing, now)
         })?;
         // A gate that failed without ruling (no judge registered, a failed
         // judgment) is the owner's answer; a raced snapshot or missing
@@ -394,6 +340,158 @@ impl Vault {
             card: card_ref(key),
             application: settled,
         })
+    }
+
+    /// Settles the owner's approved application whose candidate a Dreamer
+    /// scoring pass has just put to the gate (FIX 3725): the optimize pass
+    /// and the type-tree pass score an open candidate too, and its ruling
+    /// settles the application as the owner's own re-apply would: the
+    /// approved bytes are checked, an acceptance admits the candidate and
+    /// supersedes the skill, a rejection or refusal closes it, anything else
+    /// leaves it pending. The approval was the owner's act when it landed;
+    /// this carries it out. `None` when no standing application names
+    /// `candidate`: another proposal, or a card or ask that moved on.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the candidate's instructions are not
+    /// the approved ones; storage errors.
+    pub(crate) fn settle_approved_skill_edit_by_candidate(
+        &self,
+        candidate: &EntityId,
+    ) -> Result<Option<AgentHealthCoachApplication>> {
+        let Some((key, ask)) = self.approval_card_of(candidate)? else {
+            return Ok(None);
+        };
+        let now = self.store.clock.now_recorded_at();
+        self.with_write_txn_grouped(|txn| {
+            let Some(card) = CARDS.get(&self.store, txn, &key)? else {
+                return Ok(None);
+            };
+            let Some(standing) = card
+                .coach
+                .as_ref()
+                .filter(|standing| standing.attempt == ask)
+                .and_then(|standing| standing.application.clone())
+                .filter(|standing| standing.candidate == *candidate)
+            else {
+                return Ok(None);
+            };
+            self.settle_standing_in_txn(txn, &key, card, standing, now)
+                .map(Some)
+        })
+    }
+
+    /// The card and Coach ask a candidate landed under, from its provenance:
+    /// the ask's facet and attempt, and that attempt's input, the card's
+    /// handle. `None` for a candidate no Coach ask landed.
+    fn approval_card_of(&self, candidate: &EntityId) -> Result<Option<(CardKey, String)>> {
+        let Some(record) = self.get_skill_record(candidate)? else {
+            return Ok(None);
+        };
+        let rmpv::Value::Map(fields) = &record.provenance else {
+            return Ok(None);
+        };
+        let field = |name: &str| {
+            fields.iter().find_map(|(key, value)| {
+                (key.as_str() == Some(name))
+                    .then(|| value.as_str())
+                    .flatten()
+            })
+        };
+        if field("facet") != Some(COACH_AGENT_HEALTH_ASK_FACET) {
+            return Ok(None);
+        }
+        let Some(ask) = field(PROVENANCE_OPTIMIZE_ATTEMPT_KEY) else {
+            return Ok(None);
+        };
+        let Ok(id) = EntityId::from_hex(ask) else {
+            return Ok(None);
+        };
+        let attempt = AttemptId::from_bytes(id.as_bytes())?;
+        let Some(status) = DreamerRunnerStore::new(self).status(attempt)? else {
+            return Ok(None);
+        };
+        if status.payload.attempt_type != COACH_AGENT_HEALTH_ASK_FACET {
+            return Ok(None);
+        }
+        Ok(status
+            .payload
+            .input
+            .as_str()
+            .and_then(parse_card_ref)
+            .map(|key| (key, ask.to_owned())))
+    }
+
+    /// Settles `settled`, the application standing on `card` at `key`, on
+    /// the gate's standing ruling, in `txn`; one that is no longer pending
+    /// stands as it is. The bytes the gate admits must be the approved ones.
+    fn settle_standing_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        key: &CardKey,
+        mut card: AgentHealthCard,
+        mut settled: AgentHealthCoachApplication,
+        now: u64,
+    ) -> Result<AgentHealthCoachApplication> {
+        if settled.state != AgentHealthApplicationState::Pending {
+            return Ok(settled);
+        }
+        let candidate = settled.candidate;
+        let occurred = TimeRange {
+            start: now,
+            end: now,
+        };
+        let verdict = skill_edit_verdict_in_txn(self, txn, &candidate)?;
+        if let Some(verdict) = &verdict {
+            settled.verdict = Some(verdict.id);
+            settled.disposition = Some(verdict.disposition.as_str().to_owned());
+        }
+        match verdict {
+            Some(verdict)
+                if verdict.disposition.admits() && verdict.displaced_by_revision.is_none() =>
+            {
+                // The bytes the gate admits are the bytes the owner
+                // approved, or the old permission is refused.
+                let staged = self.read_skill_record_in_txn(txn, &candidate)?;
+                if digest(&staged.desc) != settled.instructions {
+                    return Err(refused(
+                        "the candidate's instructions are not the ones you approved",
+                    ));
+                }
+                match self.admit_optimized_skill_in_txn(txn, &candidate, occurred, now)? {
+                    Some(refusal) => {
+                        settled.state = AgentHealthApplicationState::Rejected;
+                        settled.verdict = skill_edit_verdict_in_txn(self, txn, &candidate)?
+                            .map(|verdict| verdict.id);
+                        settled.disposition = Some(refusal.as_str().to_owned());
+                    }
+                    None => {
+                        self.supersede_skill_record_in_txn(
+                            txn,
+                            &settled.skill,
+                            &candidate,
+                            occurred,
+                            now,
+                        )?;
+                        settled.state = AgentHealthApplicationState::Admitted;
+                    }
+                }
+            }
+            Some(verdict) if verdict.disposition.closes_proposal() => {
+                settled.state = AgentHealthApplicationState::Rejected;
+            }
+            _ => {}
+        }
+        settled.updated_at = now;
+        if let Some(ask) = card.coach.as_mut() {
+            ask.application = Some(settled.clone());
+        }
+        card.updated_at = now;
+        CARDS.put(&self.store, txn, key, &card)?;
+        // A touched card can arm the digest on its own (FIX 1979).
+        crate::batch::queue_proactivity_change(self, txn);
+        Ok(settled)
     }
 }
 

@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
+use super::agent_health::AgentHealthApplicationState;
 use super::type_tree_prior::{
     DonorTree, PROJECT_TREE_DONOR_WEIGHT, donor_path, donor_prior_winner,
 };
@@ -29,7 +30,7 @@ use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_optimize::{
     GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay,
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeDecisions,
-    SkillReplayResponses, receipt_is_held_out, score_gate_skill_edit_in_cycle,
+    SkillReplayResponses, receipt_is_held_out, score_gate_skill_edit_in_cycle, skill_edit_verdict,
 };
 use crate::task_type::{DecisionAxis, TaskTypeRef, TaskTypeTree, TreeScope};
 use crate::team::TeamReceipt;
@@ -466,7 +467,9 @@ fn head_reads(vault: &Vault, head: &EntityId) -> Result<bool> {
 /// snapshot is [`TreeGateOutcome::Retry`]. A scored verdict is a held-out
 /// outcome for the Coach's own edit record; an admitting one, when
 /// [`TEAM_SHAPE_GATE_ADMITS`], admits the revision and supersedes the head
-/// in one transaction. `None` when no revision is open.
+/// in one transaction. A revision the owner approved on an agent-health
+/// card settles through that approval instead (FIX 3725). `None` when no
+/// revision is open.
 ///
 /// # Errors
 ///
@@ -518,6 +521,21 @@ pub(super) fn drive(
             verdict.after > verdict.before,
             now,
         )?;
+    }
+    // A revision the owner approved on an agent-health card settles on that
+    // card, through its approval's checks, in place of this pass's own
+    // admission (FIX 3725).
+    if let Some(settled) = vault.settle_approved_skill_edit_by_candidate(&proposal)? {
+        return Ok(Some(match settled.state {
+            AgentHealthApplicationState::Admitted => TreeGateOutcome::Admitted(proposal),
+            AgentHealthApplicationState::Rejected if verdict.disposition.admits() => {
+                TreeGateOutcome::Refused(
+                    skill_edit_verdict(vault, &proposal)?
+                        .map_or(verdict.disposition, |standing| standing.disposition),
+                )
+            }
+            _ => TreeGateOutcome::Ruled(verdict.disposition),
+        }));
     }
     if !(verdict.disposition.admits() && TEAM_SHAPE_GATE_ADMITS) {
         return Ok(Some(TreeGateOutcome::Ruled(verdict.disposition)));
