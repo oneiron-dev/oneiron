@@ -220,6 +220,7 @@ pub(crate) use admission::{AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_aut
 pub use admission::{
     AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
+    set_authority_work_wait_ms,
 };
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,

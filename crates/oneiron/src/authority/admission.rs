@@ -74,6 +74,17 @@ pub fn set_authority_work_policy(policy: AuthorityWorkPolicy) {
     *POLICY.write().unwrap_or_else(PoisonError::into_inner) = Some(policy);
 }
 
+/// Sets the longest a turn waits from a host's own wait, in milliseconds
+/// (FIX 8091): whether a crossing only measures stays as it stands, so the
+/// default measure-only policy still takes no turn and refuses nothing.
+pub fn set_authority_work_wait_ms(wait_ms: u64) {
+    let mut policy = POLICY.write().unwrap_or_else(PoisonError::into_inner);
+    *policy = Some(AuthorityWorkPolicy {
+        wait: Duration::from_millis(wait_ms),
+        ..policy.unwrap_or_default()
+    });
+}
+
 /// A turn that waited past its policy's wait or its caller's deadline:
 /// nothing was started, and the reason names the row and the wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +140,15 @@ pub(crate) fn measure_authority_work(watch: &LimitWatch, items: usize) -> Option
 }
 
 impl Vault {
+    /// Measures a set of `items` a host door carries (a mesh dial's direct
+    /// addresses) against the `authority_record_items` row (FIX 8091), as
+    /// the engine's own doors measure theirs: past it the installed port is
+    /// asked and the bound returned. It only measures: it never waits, takes
+    /// no turn and never refuses.
+    pub fn measure_authority_items(&self, items: usize) -> Option<u64> {
+        measure_authority_work(self.limit_watch(), items)
+    }
+
     /// The turn for authority work carrying `items`, before its writer
     /// opens: measured first, and at once when under the row or measure-only
     /// (today's path never waits, and `key` is not read). Otherwise a turn
