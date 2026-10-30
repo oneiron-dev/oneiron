@@ -462,6 +462,47 @@ fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, AppEr
     Ok(limit)
 }
 
+/// A count a receipt or pending-consent subscription asks for, or `default`
+/// (FIX 8859): read in scoped pages ([`scoped_pages`]), so no count past the
+/// list page is refused.
+fn facade_count(requested: Option<usize>, default: usize) -> Result<usize, AppError> {
+    let limit = requested.unwrap_or(default);
+    if limit == 0 {
+        return Err(AppError::new(
+            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+            "limit must be at least 1",
+            ["Request at least one row."],
+        ));
+    }
+    Ok(limit)
+}
+
+/// The first `limit` rows of a scoped subscription read, read a page of at
+/// most the list page ([`crate::api::CORE_MAX_LIST_LIMIT`]) at a time, each
+/// page continuing where the one before it stopped (FIX 8859).
+fn scoped_pages<T>(
+    limit: usize,
+    mut read: impl FnMut(
+        usize,
+        Option<oneiron::sync::bridge::ScopedContinuation>,
+    ) -> oneiron::Result<oneiron::sync::bridge::ScopedPage<T>>,
+) -> oneiron::Result<Vec<T>> {
+    let mut rows = Vec::new();
+    let mut after = None;
+    while rows.len() < limit {
+        let page = read(
+            (limit - rows.len()).min(crate::api::CORE_MAX_LIST_LIMIT),
+            after,
+        )?;
+        rows.extend(page.rows);
+        let Some(next) = page.next else {
+            break;
+        };
+        after = Some(next);
+    }
+    Ok(rows)
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Channel {

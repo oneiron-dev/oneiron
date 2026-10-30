@@ -155,10 +155,11 @@ pub(crate) fn settle_epoch_birth(
 /// Settles a confirmed provisional entity's birth position in its birth
 /// transaction (FIX 10168): born under `facet`, the facet of the turn its
 /// name was read from (ARCH-0022), never its own substrate facet. Only the
-/// default stamp `stamp_put` just wrote for a PERSON, ORG or PLACE may be
-/// settled; its structural anchor and every other axis stay, a settled
-/// birth is never moved again, and a later content put keeps the settled
-/// facet (`settled_at_birth`).
+/// default stamp `stamp_put` just wrote for a kind with a declared identity
+/// key (a PERSON, ORG or PLACE today; FIX 11382) may be settled; its
+/// structural anchor and every other axis stay, a settled birth is never
+/// moved again, and a later content put keeps the settled facet
+/// (`settled_at_birth`).
 pub(crate) fn settle_source_birth(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -166,12 +167,7 @@ pub(crate) fn settle_source_birth(
     kind: u8,
     facet: EntityId,
 ) -> Result<()> {
-    let named = matches!(
-        kind,
-        crate::registry::ENTITY_TYPE_PERSON
-            | crate::registry::ENTITY_TYPE_ORG
-            | crate::registry::ENTITY_TYPE_PLACE
-    );
+    let named = !crate::ingest::identity_fields_for_kind(kind).is_empty();
     let anchor = crate::claim::substrate_facet_id(id)?;
     let birth = default_stamp(kind, anchor);
     let prior = SCOPE_RECORD

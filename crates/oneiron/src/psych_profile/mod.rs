@@ -8,6 +8,7 @@
 mod codec;
 mod keys;
 mod mirror;
+mod placement;
 mod record;
 mod store;
 

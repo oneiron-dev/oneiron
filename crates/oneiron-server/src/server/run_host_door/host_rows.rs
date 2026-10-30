@@ -275,7 +275,7 @@ fn granted_media_row(
     let line = line.ok_or_else(|| internal(verb))?;
     let runtime = tokio::runtime::Handle::current();
     match verb {
-        AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_for_run(
+        AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_for_agent_run(
             server,
             line,
             attempt,

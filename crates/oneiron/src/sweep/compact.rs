@@ -251,6 +251,8 @@ pub(super) fn compact_all_windows(
             }
         }
     }
+    let scrub_sends = !withdrawn.due.is_empty() || full_carriers;
+    super::corrupt::settle_unlabelled_sends(vault, scrub_sends, &mut state)?;
     Ok(state)
 }
 
@@ -578,7 +580,7 @@ fn drops_withdrawn_document(
     if !withdrawn.due.contains(id) {
         return Ok(false);
     }
-    let Some(&cutoff) = withdrawn.cutoffs.get(id) else {
+    let Some(cutoff) = withdrawn.cutoffs.get(id).map(|cutoff| cutoff.generation) else {
         return Ok(false);
     };
     let rtxn = vault.store.env.read_txn()?;

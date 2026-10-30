@@ -24,7 +24,6 @@ use super::{
 use crate::claim::{ScopedRead, ScopedReadReceipt};
 use crate::{Error, Result};
 
-const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
 /// The largest single atom message one `emit-atom` call carries: a frame
 /// bound of the codec, not a total.
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -32,20 +31,25 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// The linear memory one guest instance may grow to. It isolates untrusted
 /// lens code from the host; the owner raises it through [`LensGuestPolicy`].
 pub const LENS_GUEST_MEMORY_BYTES: usize = 32 * 1024 * 1024;
+/// The largest lens component compiled by default (FIX 11257): a default the
+/// owner raises through [`LensGuestPolicy`], never a fixed refusal.
+pub const LENS_GUEST_COMPONENT_BYTES: usize = 1024 * 1024;
 /// The fuel one step of guest work gets: what a run may spend between two
 /// host calls, refilled at each (FIX 9898). It paces a run; it never ends one
 /// that keeps yielding to the host.
 pub const LENS_GUEST_STEP_FUEL: u64 = 2_000_000;
 
-/// How a lens guest runs: the one hook a ruling on its memory or its step
-/// changes. The defaults are [`LENS_GUEST_MEMORY_BYTES`] and
-/// [`LENS_GUEST_STEP_FUEL`].
+/// How a lens guest runs: the one hook a ruling on its memory, its step or
+/// its component size changes. The defaults are [`LENS_GUEST_MEMORY_BYTES`],
+/// [`LENS_GUEST_STEP_FUEL`] and [`LENS_GUEST_COMPONENT_BYTES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LensGuestPolicy {
     /// The linear memory one guest instance may grow to, in bytes.
     pub memory_bytes: usize,
     /// The fuel each step between two host calls gets.
     pub step_fuel: u64,
+    /// The largest component compiled, in bytes (FIX 11257).
+    pub component_bytes: usize,
 }
 
 impl Default for LensGuestPolicy {
@@ -53,6 +57,7 @@ impl Default for LensGuestPolicy {
         Self {
             memory_bytes: LENS_GUEST_MEMORY_BYTES,
             step_fuel: LENS_GUEST_STEP_FUEL,
+            component_bytes: LENS_GUEST_COMPONENT_BYTES,
         }
     }
 }
@@ -77,9 +82,16 @@ pub struct LensExecutionRuntime {
 }
 
 impl LensExecutionRuntime {
+    /// [`Self::from_component_with`] under [`LensGuestPolicy::default`].
     pub fn from_component(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > MAX_COMPONENT_BYTES {
-            return Err(failure("lens component exceeds byte limit"));
+        Self::from_component_with(bytes, LensGuestPolicy::default())
+    }
+
+    /// Compiles `bytes` under `policy`: a component past its
+    /// `component_bytes` is refused until the owner raises it (FIX 11257).
+    pub fn from_component_with(bytes: &[u8], policy: LensGuestPolicy) -> Result<Self> {
+        if bytes.len() > policy.component_bytes {
+            return Err(failure("lens component exceeds its policy's byte limit"));
         }
         let boundary = LensExecutionBoundary::read_only(vec![
             LensHostImport::ScopedRead,
@@ -138,11 +150,12 @@ impl LensExecutionRuntime {
             engine,
             instance,
             boundary,
-            policy: LensGuestPolicy::default(),
+            policy,
         })
     }
 
-    /// This runtime under `policy` instead of [`LensGuestPolicy::default`].
+    /// This runtime under `policy` instead of the one it was compiled under;
+    /// its component size was judged at compile time.
     #[must_use]
     pub fn with_policy(mut self, policy: LensGuestPolicy) -> Self {
         self.policy = policy;

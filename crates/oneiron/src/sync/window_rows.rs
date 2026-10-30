@@ -35,13 +35,13 @@ pub(crate) const WINDOW_FULL_RESYNC_MARKER: SideTable<String, [u8; 1], Raw> =
 /// its BulkTransferDone (`bulk:w:{key}`). Marker byte `[1]`.
 pub(crate) const BULK_TRANSFER_MARKER: SideTable<String, [u8; 1], Raw> =
     SideTable::new(&side_table::SYNC_BULK_TRANSFER_MARKER);
-/// One durable pending CRDT update for a window (`u:w:{key}:{seq:08x}`), key
-/// [`WindowUpdateKey`].
+/// One durable pending CRDT update for a window (`u:w:{key}:{seq:016x}`),
+/// key [`WindowUpdateKey`].
 pub(crate) const WINDOW_UPDATE: SideTable<WindowUpdateKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_U_W);
 /// Crash-safe monotonic counter allocating the next [`WINDOW_UPDATE`]
 /// sequence number for one window (`m:u_seq:w:{key}`), value
-/// [`WindowUpdateSeq`] (little-endian `u32`).
+/// [`WindowUpdateSeq`] (little-endian `u64`).
 pub(crate) const WINDOW_UPDATE_SEQ: SideTable<String, WindowUpdateSeq, Raw> =
     SideTable::new(&side_table::SYNC_M_U_SEQ_W);
 /// The root document's full CRDT snapshot (`d:root`, server-write-only
@@ -175,28 +175,29 @@ impl SideKey for WindowEntityKey {
 }
 
 /// [`WINDOW_UPDATE`]'s key: a window key (never itself containing `:` — the
-/// `YYYY-MM` format is fixed 7 bytes) then `:` then the update's 8-hex-digit
-/// sequence number, exactly the pre-typed `u:w:{key}:{seq:08x}` spelling.
+/// `YYYY-MM` format is fixed 7 bytes) then `:` then the update's 16-hex-digit
+/// sequence number (`u:w:{key}:{seq:016x}`). The fixed width keeps the byte
+/// order of the keys the sequence order (FIX 8883).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WindowUpdateKey {
     pub(crate) window: String,
-    pub(crate) seq: u32,
+    pub(crate) seq: u64,
 }
 
 impl SideKey for WindowUpdateKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.window.as_bytes());
         out.push(b':');
-        out.extend_from_slice(format!("{:08x}", self.seq).as_bytes());
+        out.extend_from_slice(format!("{:016x}", self.seq).as_bytes());
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
         let (window, seq_hex) = text.rsplit_once(':')?;
-        if seq_hex.len() != 8 {
+        if seq_hex.len() != 16 {
             return None;
         }
-        let seq = u32::from_str_radix(seq_hex, 16).ok()?;
+        let seq = u64::from_str_radix(seq_hex, 16).ok()?;
         Some(Self {
             window: window.to_owned(),
             seq,
@@ -207,12 +208,13 @@ impl SideKey for WindowUpdateKey {
 /// Verdict text carried by the corrupt-`m:u_seq:w:` row [`Error::CorruptedIndex`].
 pub(crate) const ERR_WINDOW_UPDATE_SEQ_ROW: &str = "observer a u_seq row";
 
-/// [`WINDOW_UPDATE_SEQ`]'s value: little-endian `u32`, unchanged from the
-/// pre-typed layout (a present-but-malformed row is corruption, never
-/// silently reset — resetting would let the next allocated seq collide with
-/// an update already persisted under the pre-corruption counter).
+/// [`WINDOW_UPDATE_SEQ`]'s value: little-endian `u64`, so a window never
+/// runs out of sequence numbers (FIX 8883). A present-but-malformed row is
+/// corruption, never silently reset — resetting would let the next allocated
+/// seq collide with an update already persisted under the pre-corruption
+/// counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WindowUpdateSeq(pub(crate) u32);
+pub(crate) struct WindowUpdateSeq(pub(crate) u64);
 
 impl RawValue for WindowUpdateSeq {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -220,9 +222,9 @@ impl RawValue for WindowUpdateSeq {
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let bytes: [u8; 4] = bytes
+        let bytes: [u8; 8] = bytes
             .try_into()
             .map_err(|_| Error::CorruptedIndex(ERR_WINDOW_UPDATE_SEQ_ROW))?;
-        Ok(Self(u32::from_le_bytes(bytes)))
+        Ok(Self(u64::from_le_bytes(bytes)))
     }
 }

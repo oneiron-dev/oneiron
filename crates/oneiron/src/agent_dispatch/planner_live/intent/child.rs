@@ -63,6 +63,9 @@ const NOT_THE_PACK: &str = "this exposure is not the planned leader's frozen pat
      the pack its launch froze, under that skill and revision";
 const LEASE_UNHELD: &str = "a planned leader's pack is recorded under its run's live lease; run \
      the leader under the lease its claim took";
+/// What an erased pack's span in a continued leader run's task starts
+/// with: the phase the erase leaves its intent in.
+const ERASED_PACK_TAG: &str = "[erased]";
 
 /// The original leased request as its digest reads it: the key, the planner
 /// ask and the context as the agent asked for it, on its parent's run.
@@ -238,7 +241,9 @@ impl AgentDispatcher<'_> {
     /// team records nothing, and no write brings the pack back. Answers
     /// whether the exposure was recorded (FIX 9184): `false` when an erase
     /// took the intent's pack, before this writer or at its fence, so the
-    /// caller takes back what it just put in the run's task.
+    /// caller takes back what it just put in a fresh run's task, and lays
+    /// [`Self::tombstone_erased_leader_pack`] over the span a continued
+    /// run's task holds.
     ///
     /// # Errors
     ///
@@ -283,6 +288,26 @@ impl AgentDispatcher<'_> {
         txn.commit()?;
         // The fence writes an erased intent back with no exposure at all.
         Ok(row.leader_exposures.contains_key(&run))
+    }
+
+    /// Lays a tombstone over the frozen pack's span `exposure` names in
+    /// `task`, a continued leader run's task, which its source's fork holds,
+    /// once an erase took the intent between the run's read of its launch
+    /// and [`Self::record_planned_leader_run`] (FIX 11093). The span is
+    /// never removed: the tombstone has its byte length, the erased tag and
+    /// then spaces, so every later exposure in the task keeps its offsets.
+    /// Only while the span still hashes as the exposure says; every other
+    /// byte of the task stays.
+    pub fn tombstone_erased_leader_pack(task: &mut String, exposure: &TaskExposure) {
+        let Some(length) = task
+            .get(exposure.start..exposure.end)
+            .filter(|span| *blake3::hash(span.as_bytes()).as_bytes() == exposure.content_hash)
+            .map(str::len)
+        else {
+            return;
+        };
+        let tag = ERASED_PACK_TAG.get(..length).unwrap_or(ERASED_PACK_TAG);
+        task.replace_range(exposure.start..exposure.end, &format!("{tag:<length$}"));
     }
 
     /// The planned team `leader` leads and its intent's row key, read on
