@@ -354,8 +354,8 @@ pub(crate) fn document_copy_in_txn(
 /// A peer's update `bytes` of the copy lineage of `source`'s document,
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
-/// text through the visible diff and the canonical writer. A ruled hold
-/// persists nothing.
+/// text through the visible diff and the canonical writer, its keys marked
+/// beside it (FIX 10732). A ruled hold persists nothing.
 ///
 /// # Errors
 /// `admit`'s refusal, an update that does not import whole on the lineage,
@@ -441,6 +441,9 @@ where
                 &update,
                 Some(&submitted),
             )?;
+            // FIX 10732: the landed text's keys are marked as the receive door
+            // marks a blob, in this writer.
+            super::remark::remark_landed_in_txn(vault, txn, source, text.as_bytes())?;
         }
         save_lineage(vault, txn, id, &lineage)?;
         Ok(())
