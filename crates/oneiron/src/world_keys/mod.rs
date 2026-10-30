@@ -24,6 +24,7 @@ mod content_landed;
 mod content_window;
 mod doors;
 mod kit;
+mod kit_piece;
 mod machine;
 mod owner_work;
 mod pad_custody;
