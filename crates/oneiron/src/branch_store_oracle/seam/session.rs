@@ -287,7 +287,6 @@ impl<'vault> SessionVault<'vault> {
                     occurred_at,
                 },
                 summary,
-                None,
             )
             .unwrap_or_else(|error| panic!("oracle session witness failed: {error:?}"));
         let turn_id = EntityId::from_hex(
