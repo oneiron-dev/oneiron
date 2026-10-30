@@ -14,7 +14,7 @@ use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus
 use super::input::drop_inputs_for_in_txn;
 use super::pending_revoke::{can_carry_in_txn, defer_revoke_in_txn};
 use super::{CustodyKeptHere, SecretCustodyWork, enacted};
-use crate::authority::{ActSurface, CustodyChange, OwnerWorkBody};
+use crate::authority::{ActSurface, CustodyChange, CustodyRecipientPermits, OwnerWorkBody};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
@@ -89,7 +89,7 @@ impl Vault {
             generation: record.rotation_generation,
             input: None,
             holder: None,
-            recipients: Vec::new(),
+            recipients: CustodyRecipientPermits::default(),
             pieces: None,
             authority: crate::authority::CustodyRequestAuthority::Install,
         };

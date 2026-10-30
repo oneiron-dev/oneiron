@@ -24,9 +24,9 @@ use super::CustodyTransition;
 use crate::Vault;
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, CustodyChange,
-    CustodyRecipientPermit, CustodyRequestAuthority, FrontierSigner, MAX_PARENTS, OwnerAct,
-    OwnerActKind, OwnerWorkBody, OwnerWorkRequest, RecoveryRootId, authority_entry_hash,
-    next_sequence, sign_side_entry,
+    CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority, FrontierSigner,
+    MAX_PARENTS, OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkRequest, RecoveryRootId,
+    authority_entry_hash, next_sequence, sign_side_entry,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -107,7 +107,7 @@ fn record_in_txn(
         generation,
         input: None,
         holder: None,
-        recipients: permits.to_vec(),
+        recipients: CustodyRecipientPermits::from(permits),
         pieces: None,
         authority: CustodyRequestAuthority::PinnedKit { root },
     };

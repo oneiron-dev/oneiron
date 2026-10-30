@@ -139,8 +139,8 @@ pub(super) enum KeptRequest<'r> {
 }
 
 impl KeptRequest<'_> {
-    /// The body the fold keeps: a copy of an inline request, the joined one
-    /// itself.
+    /// The body the fold keeps: a copy of an inline request, its permits
+    /// shared (FIX 12281), the joined one itself.
     pub(super) fn into_shared(self) -> Arc<OwnerWorkRequest> {
         match self {
             Self::Signed(request) => Arc::new(request.clone()),
@@ -222,8 +222,10 @@ fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
 ///
 /// A set a kept request already joined here ([`keep_joined`]) hands that
 /// request's `Arc` out to a join of the same request, copying no permit
-/// (FIX 12139); a join of another request on the set copies its permits and
-/// skips their hash (FIX 12014). The first join still verifies.
+/// (FIX 12139); a join of another request on the set whose pieces name its
+/// carrier shares that request's permits, copying and hashing none (FIX
+/// 12014, 12281). The first join still verifies, and joins its pieces into
+/// one list sized to them, which the set then keeps without a copy.
 pub(super) fn joined_request<'r>(
     work: &OwnerWorkState,
     signer: &[u8; 32],
@@ -236,27 +238,56 @@ pub(super) fn joined_request<'r>(
     else {
         return Some(KeptRequest::Signed(request));
     };
+    let carrier = piece_carrier(request);
     let verified = work.verified_permit_sets.get(&(*signer, *commitment));
-    if let Some(joined) = verified.filter(|joined| joins_as(request, &joined.body)) {
-        return Some(KeptRequest::Joined(Arc::clone(&joined.body)));
+    if let Some(joined) = verified {
+        if joins_as(request, &joined.body) {
+            return Some(KeptRequest::Joined(Arc::clone(&joined.body)));
+        }
+        // The pieces it joined named this carrier, and no piece of the set
+        // changed since (`apply_permit_piece`, `merge_owner_work`).
+        if piece_carrier(&joined.body) == carrier
+            && let OwnerWorkBody::Custody { recipients, .. } = &joined.body.work
+        {
+            let shared = with_permits(request, recipients.clone());
+            return Some(KeptRequest::Joined(Arc::new(shared)));
+        }
     }
-    let carrier = request.kit_root().is_none().then_some(request.carrier);
-    let mut permits = Vec::new();
+    let mut runs = Vec::new();
+    let mut joined_len = 0_usize;
     for index in 0..commitment.pieces {
         let piece = work.permit_pieces.get(&(*signer, *commitment, index))?;
-        if piece.carrier != carrier || usize::try_from(piece.first).ok()? != permits.len() {
+        if piece.carrier != carrier || usize::try_from(piece.first).ok()? != joined_len {
             return None;
         }
+        joined_len = joined_len.checked_add(piece.permits.len())?;
+        runs.push(piece);
+    }
+    let mut permits = Vec::with_capacity(joined_len);
+    for piece in runs {
         permits.extend_from_slice(&piece.permits);
     }
-    let mut joined = request.clone();
-    if let OwnerWorkBody::Custody { recipients, .. } = &mut joined.work {
-        *recipients = permits;
-    }
+    let joined = with_permits(request, CustodyRecipientPermits::from(permits));
     if verified.is_none() {
         joined.validate().ok()?;
     }
     Some(KeptRequest::Joined(Arc::new(joined)))
+}
+
+/// The carrier every piece of `request`'s permits names: its own, none for
+/// a kit request.
+fn piece_carrier(request: &OwnerWorkRequest) -> Option<EntityId> {
+    request.kit_root().is_none().then_some(request.carrier)
+}
+
+/// `request`, signed with its permits in pieces, carrying `permits` joined:
+/// the set itself, shared, never a copy of it.
+fn with_permits(request: &OwnerWorkRequest, permits: CustodyRecipientPermits) -> OwnerWorkRequest {
+    let mut joined = request.clone();
+    if let OwnerWorkBody::Custody { recipients, .. } = &mut joined.work {
+        *recipients = permits;
+    }
+    joined
 }
 
 /// Keeps `body`, the request signed as entry `request` by `signer` and kept
@@ -381,7 +412,7 @@ impl Vault {
         {
             return Err(authority_refused(PIECE_NOT_FOLDED));
         }
-        recipients.clear();
+        *recipients = CustodyRecipientPermits::default();
         *pieces = Some(commitment);
         Ok(Some(staged))
     }
