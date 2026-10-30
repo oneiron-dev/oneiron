@@ -3,6 +3,7 @@
 //! Entry: `Vault::connector_consent_view`. The consent transaction stays in `tool_grant`.
 
 use super::*;
+use crate::connector_key::credential_binding::open_issuer_halt_for_connector_in_txn;
 
 impl Vault {
     /// The owner consents to `consent.rows` of one catalog connector for one
@@ -35,6 +36,7 @@ impl Vault {
         let Some((_, record)) = catalog_key_in_txn(&self.store, &txn, connector)? else {
             return Ok(None);
         };
+        let issuer_halt = open_issuer_halt_for_connector_in_txn(&self.store, &txn, connector)?;
         let ready = admitted_catalog_in_txn(self, &txn, connector).is_ok();
         let slate = match record.slate_ref {
             Some(id) => read_connector_slate_in_txn(self, &txn, id)?,
@@ -84,6 +86,7 @@ impl Vault {
             connector: record.connector,
             actor: principal_ref,
             status: record.status.as_str().to_owned(),
+            issuer_halt,
             protocol_revision: record.protocol_revision,
             ready,
             rows,

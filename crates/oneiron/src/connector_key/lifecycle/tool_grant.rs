@@ -32,6 +32,7 @@ use crate::outbound_grant::{
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
+use super::super::credential_binding::ConnectorIssuerHaltView;
 use super::super::manifest_drift::{
     ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };
@@ -122,6 +123,8 @@ pub struct ConnectorConsentView {
     pub connector: String,
     pub actor: String,
     pub status: String,
+    /// The connector's open issuer transition, if one halts its rows.
+    pub issuer_halt: Option<ConnectorIssuerHaltView>,
     pub protocol_revision: Option<String>,
     /// Active, qualified and owner-stamped: a consent can be written now.
     pub ready: bool,
