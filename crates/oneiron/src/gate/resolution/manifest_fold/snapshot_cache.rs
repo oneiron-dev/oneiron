@@ -28,6 +28,11 @@ pub(crate) fn resolve_policy_manifest_shared(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Arc<PolicyManifestResolution>> {
     let fold = || super::fold::fold_policy_manifest(store, txn);
+    crate::stage_timing::record("count.policy_resolve", 1);
+    // L15 try no_fold_cache: every resolve folds, as before the cache.
+    if crate::stage_timing::try_on("no_fold_cache") {
+        return fold().map(Arc::new);
+    }
     match store.policy_fold_cache() {
         Some((cache, env)) => cache.per_snapshot(env, txn, fold),
         None => fold().map(Arc::new),
