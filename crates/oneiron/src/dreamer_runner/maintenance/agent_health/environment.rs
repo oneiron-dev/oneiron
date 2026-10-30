@@ -34,7 +34,7 @@ use super::{
     add_recipients,
 };
 use crate::attempt_queue::AttemptId;
-use crate::edit_distance::attribution::{AmendmentCauseRecord, amendment_causes_in_txn};
+use crate::edit_distance::attribution::{AmendmentCauseRecord, amendment_causes_for_attempt_in_txn};
 use crate::receipt::attempt_pack_receipt_id;
 use crate::skill_attribution::{
     AttributionCauseRecord, AttributionVerdict, attempt_attribution_causes,
@@ -392,7 +392,7 @@ fn amendment_sources(
         return Ok(Vec::new());
     };
     let mut sources = Vec::new();
-    for record in amendment_causes_in_txn(vault, txn, &actor, None, 0..=u64::MAX)? {
+    for record in amendment_causes_for_attempt_in_txn(vault, txn, &actor, receipt)? {
         if record.attempt_receipt.as_deref() == Some(receipt) {
             sources.extend(HealthCauseSource::of_amendment(&record, receipt)?);
         }
