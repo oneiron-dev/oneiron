@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use oneiron::agent_def::{birth_under_inherited_list, ensure_inherited_model_list};
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, LAUNCH_COST_PRIOR_UNITS, SpendScopeId};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
@@ -151,9 +151,12 @@ impl ReaderSeats {
         SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(scope),
             deadline: reader_parent_deadline(clock, now),
-            // A child holds nothing at its claim: it tops up from its
-            // parent's chain as it spends, the cap enforced at each spend.
-            hold_units: 0,
+            // A child holds one model call's prior at its claim, or what its
+            // parent's chain has left below it, so a sibling's spend cannot
+            // take its first call; it tops up from that chain as it spends,
+            // the cap enforced at each spend, and gives back the rest at its
+            // settle (FIX 1836).
+            hold_units: LAUNCH_COST_PRIOR_UNITS,
             window_tokens: window_tokens.unwrap_or(DEFAULT_READER_WINDOW_TOKENS),
             memory_bytes: self.child_memory_bytes,
             // Any eligible model: an agent's run lends its own list
