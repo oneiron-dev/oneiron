@@ -52,9 +52,17 @@ pub(crate) fn execute(
         }
         WakeRecipe::Nightly => nightly(ctx.vault, attempt, &trigger, now)?,
         WakeRecipe::Weave => {
+            // The unflagged-window draw reads whole turn texts, so it runs on
+            // its own read before the weave's write opens (FIX 7902); a
+            // receipt whose input is already taken draws nothing.
+            let windows = if wake_policy_input_covers(ctx.vault, &trigger)? {
+                Some(super::recipes::weave_window_sample(ctx.vault, attempt)?)
+            } else {
+                None
+            };
             ctx.vault.with_write_txn_grouped(|txn| {
                 if take_wake_recipe_input_in_txn(ctx.vault, txn, &trigger)?.is_some() {
-                    super::recipes::weave_in_txn(ctx.vault, txn, attempt, now)?;
+                    super::recipes::weave_in_txn(ctx.vault, txn, attempt, windows, now)?;
                 }
                 Ok(())
             })?;

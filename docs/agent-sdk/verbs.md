@@ -106,6 +106,7 @@ both bindings and their export-census tests in one change.
 - `vault.finalize_stream`
 - `vault.cancel_stream`
 - `vault.message_stream_partial`
+- `vault.message_streams.refused`
 - `vault.messages.durability`
 - `vault.witness`
 - `vault.claims.upsert`

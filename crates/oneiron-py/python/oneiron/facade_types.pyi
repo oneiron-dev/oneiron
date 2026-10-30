@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1216 facade rows, 4408 declarations.
-Inputs: 1144 of 1216 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1050 of 1216 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1217 facade rows, 4410 declarations.
+Inputs: 1145 of 1217 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1051 of 1217 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -2738,6 +2738,14 @@ class MessageStreamPartial(TypedDict):
     text: str
     sequence: int
     mode: MessageWriteMode
+class StreamRecoveryRefusal(TypedDict):
+    message_id: EntityId
+    generation: EntityId
+    conversation: EntityId
+    actor: EntityId
+    code: str
+    message: str
+    reason_codes: NotRequired[list[str]]
 class MessageDurabilityRequest(TypedDict):
     message_id: str
     after_generation: NotRequired[str | None]
@@ -3835,6 +3843,7 @@ class VaultReceiptsPage(TypedDict):
     next_after: NotRequired[str | None]
     effective_limit: int
     limit_clamped: NotRequired[bool]
+    undecodable: int
 class AssetIngestRequest(TypedDict):
     asset_ref: NotRequired[str | None]
     embedding_kind: InputKind
@@ -6737,8 +6746,19 @@ class OutboxMemberStatusSourceDigestMismatch(TypedDict):
     member: str
     recorded: str
     read: str
-OutboxMemberStatus = OutboxMemberStatusDivergedUnagreed | OutboxMemberStatusSourceDigestMismatch
-OutboxCardKind = Literal["outbox_diverged", "outbox_source_damaged"]
+class OutboxMemberStatusKeptAside(TypedDict):
+    status: Literal["kept_aside"]
+    kind: VmOutboxKind
+    member: str
+    held_by: VmOutboxSide
+    held: str
+    length: int
+    aside: str
+    kept_at_ms: int
+    removing: bool
+    failed: NotRequired[str | None]
+OutboxMemberStatus = OutboxMemberStatusDivergedUnagreed | OutboxMemberStatusSourceDigestMismatch | OutboxMemberStatusKeptAside
+OutboxCardKind = Literal["outbox_diverged", "outbox_source_damaged", "outbox_kept_aside"]
 class OutboxCardAction(TypedDict):
     label: str
     answer: OutboxDivergedAnswer
@@ -14286,11 +14306,13 @@ class PptxCommentPatch(TypedDict):
 class SlideAbstention(TypedDict):
     target: PptxCommentTarget
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage", "RunDeadline"]
 class SlideUnitRefused(TypedDict):
     target: PptxCommentTarget
     reason: SlideUnitRefusalReason
     offer: NotRequired[PptxCommentTarget | None]
+    judged_live: NotRequired[LivePin | None]
 class SlideReviewOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     judgments: list[SlideJudgment]
@@ -14332,9 +14354,11 @@ class ArtifactAskSubmit(TypedDict):
 class UnitAbstention(TypedDict):
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class UnitRefusal(TypedDict):
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
@@ -17421,10 +17445,12 @@ class ArtifactUnitReceiptAbstained(TypedDict):
     status: Literal["abstained"]
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptRefused(TypedDict):
     status: Literal["refused"]
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptOmitted(TypedDict):
     status: Literal["omitted"]
 ArtifactUnitReceipt = ArtifactUnitReceiptAbstained | ArtifactUnitReceiptRefused | ArtifactUnitReceiptOmitted
@@ -18112,7 +18138,7 @@ class ClaimDemoteView(TypedDict):
     stale: bool
     receipt_ref: str
 class ReadFilterInput(TypedDict):
-    entity_types: NotRequired[list[int] | None]
+    entity_types: NotRequired[list[str] | None]
     max_sensitivity_band: NotRequired[int | None]
     include_stale: NotRequired[bool | None]
     min_confidence: NotRequired[float | None]
@@ -19707,6 +19733,9 @@ class OfficeBodyExportVerbRequest(TypedDict):
     made_by: NotRequired[Any | None]
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+class OfficeRecalcZone(TypedDict):
+    utc_offset_minutes: int
+    iana_timezone: NotRequired[str | None]
 class OfficeBodyExportRecord(TypedDict):
     artifact: EntityId
     version: int
@@ -19718,6 +19747,7 @@ class OfficeBodyExportRecord(TypedDict):
     at: int
     changes: int
     recalc: NotRequired[str | None]
+    recalc_zone: NotRequired[OfficeRecalcZone | None]
     effects: list[str]
 class OfficeBodyExportView(TypedDict):
     frontier: list[int]

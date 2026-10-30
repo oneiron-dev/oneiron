@@ -11,11 +11,18 @@
 //! lands like the merge: a same-as verdict writes a proposed SameAs status
 //! claim between the two proposals with the merge's approval (Auto), and
 //! every verdict, no-link and unresolved too, is kept in its result. No
-//! graph edge is applied, no exposure widens and no approval hold is added.
+//! exposure widens and no approval hold is added.
+//!
+//! While the owner's own standing grant lets the Dreamer apply its nightly
+//! links (FIX 8363, L02 02:15; `resources::require_nightly_link_write`,
+//! read in the landing commit), each same-as also gets its SameAs edge in
+//! that commit, through the federation writer, and its result names the
+//! grant and [`NIGHTLY_LINK_APPLIED`]. A same-as whose edge does not apply,
+//! or any with no such grant, stays proposed, as before.
 
 mod pairs;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -45,6 +52,7 @@ use crate::llm::{
 };
 use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
 
+use pairs::AppliedSameAs;
 use pairs::{Anchored, NightlyLinkQuestion, NightlyLinkVerdict, anchored, link_calls};
 pub(super) use pairs::{NightlyLinkProposal, anchors};
 
@@ -56,6 +64,8 @@ const LINK_IDS: &[u8] = b"oneiron:nightly:links:v1";
 const LINKS_REFUSED: &str = "nightly link reading schema refused";
 /// Why a continuation parks on a pack that came back short.
 const LINKS_UNREAD: &str = "nightly link reading unread";
+/// The reason an applied same-as's record names (FIX 8363).
+const NIGHTLY_LINK_APPLIED: &str = "dreamer.nightly_link.applied_under_owner_grant";
 
 /// One continuation's work: the merge whose snapshot it pairs, and the
 /// proposal whose pairs it judges.
@@ -193,6 +203,7 @@ impl ConsolidationExecutor<'_> {
                     verdict,
                     claim: None,
                     decision,
+                    applied: None,
                 });
             }
             // The verdicts read these bodies: each is read again at the commit.
@@ -201,9 +212,21 @@ impl ConsolidationExecutor<'_> {
                 read_back.extend(partners);
             }
         }
+        // The SameAs writer's own checks, run before its write as it runs
+        // them (FIX 8363): a pair that fails them stays proposed.
+        let actor = self.actor;
+        let checked: BTreeSet<(EntityId, EntityId)> = links
+            .iter()
+            .filter(|link| link.verdict == NightlyLinkVerdict::SameAs)
+            .map(|link| (link.source, link.target))
+            .filter(|(source, target)| {
+                crate::federation::check_consolidated_same_as(ctx.vault, &actor, *source, *target)
+                    .is_ok()
+            })
+            .collect();
         let writer = NightlyWrite {
             vault: ctx.vault,
-            actor: self.actor,
+            actor,
             attempt: &attempt.status,
             ids: LINK_IDS,
             now: ctx.now_ms / 1_000,
@@ -218,6 +241,28 @@ impl ConsolidationExecutor<'_> {
                 .filter(|link| link.verdict == NightlyLinkVerdict::SameAs)
             {
                 link.claim = written.next();
+            }
+            // The owner's standing grant, read in this commit, applies each
+            // same-as's edge here too (FIX 8363); without one, none is.
+            if let Some(grant_ref) =
+                super::resources::require_nightly_link_write(ctx.vault, txn, actor)?
+            {
+                for link in links.iter_mut() {
+                    let Some(status_claim) = link.claim else {
+                        continue;
+                    };
+                    if !checked.contains(&(link.source, link.target)) {
+                        continue;
+                    }
+                    let same_as = crate::federation::ConsolidatedSameAs {
+                        actor,
+                        source: link.source,
+                        target: link.target,
+                        status_claim,
+                        grant_ref: &grant_ref,
+                    };
+                    link.applied = apply_same_as_in_txn(ctx.vault, txn, &same_as)?;
+                }
             }
             writer.result_in_txn(
                 txn,
@@ -440,6 +485,35 @@ fn same_as_draft(anchor: &Proposal, partner: &Proposal) -> Draft {
         1.0,
     );
     scoped_draft(candidate, &anchor.body, &[anchor, partner])
+}
+
+/// Applies `link`'s SameAs edge in its own savepoint of `txn`: an edge the
+/// writer refuses rolls back alone, is logged, and its link stays proposed;
+/// a storage failure fails the commit.
+fn apply_same_as_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    link: &crate::federation::ConsolidatedSameAs<'_>,
+) -> Result<Option<AppliedSameAs>> {
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match crate::federation::put_consolidated_same_as_in_txn(vault, &mut savepoint, link) {
+        Ok(()) => {
+            savepoint.commit()?;
+            Ok(Some(AppliedSameAs {
+                grant_ref: link.grant_ref.to_owned(),
+                reason: NIGHTLY_LINK_APPLIED.to_owned(),
+            }))
+        }
+        Err(error @ (Error::Storage(_) | Error::Io(_) | Error::MapFull)) => Err(error),
+        Err(error) => {
+            tracing::info!(
+                target: "oneiron::dreamer",
+                kind = ?error.kind(),
+                "a nightly same-as stays proposed: its edge did not apply"
+            );
+            Ok(None)
+        }
+    }
 }
 
 fn invalid() -> Error {

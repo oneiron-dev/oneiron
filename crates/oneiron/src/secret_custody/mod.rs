@@ -143,7 +143,7 @@ pub(crate) use self::found_keys::{
     raise_found_key_notices_page, ruled_no_secret_in_txn, settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
-pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};
+pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
 // FIX 7402: live carrier key delivery, the L02 halves of L03's sync frame.
 pub(crate) use self::leaf_delivery::CustodyLeafSession;
 pub use self::leaf_delivery::{

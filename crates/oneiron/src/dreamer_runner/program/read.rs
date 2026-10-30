@@ -58,8 +58,8 @@ pub use self::views::{
 /// carries.
 const PAGE_LIMIT: u32 = 64;
 /// Decoded admissions one page of [`turn_program_admission`] examines at
-/// most. An admission is keyed by its identity, not its turn, so a turn's
-/// admissions are found by a bounded scan that goes on from its cursor.
+/// most. A turn's admissions are read by their turn index (FIX 5838), in
+/// admission order from the page's cursor.
 const ADMISSION_SCAN_ROWS: usize = 256;
 
 /// Reads the admissions the wakes of one landed turn decided, one page at a
@@ -431,17 +431,22 @@ fn admissions_of_turn_in_txn(
     page: &TurnPage,
     caller: &Caller,
 ) -> Result<(Vec<TurnProgramAdmissionRecord>, Option<[u8; 32]>, u64)> {
-    let start = page
-        .cursor
-        .as_ref()
-        .map_or(Bound::Unbounded, Bound::Excluded);
+    let from = (page.turn, page.cursor.unwrap_or([0; 32]));
+    let to = (page.turn, [0xFF; 32]);
+    let start = match page.cursor {
+        Some(_) => Bound::Excluded(&from),
+        None => Bound::Included(&from),
+    };
     let mut matched = Vec::new();
     let mut examined = 0_usize;
     let mut last = None;
     let (mut undecodable, mut pending) = (0_u64, 0_u64);
-    for row in ADMISSION.iter_range(vault, txn, start, Bound::Unbounded)? {
-        let (key, record) = match row {
-            Ok(row) => row,
+    let rows = super::index::TURN_ADMISSION.iter_range(vault, txn, start, Bound::Included(&to))?;
+    for row in rows {
+        let ((_, key), ()) = row?;
+        let record = match ADMISSION.get(vault, txn, &key) {
+            Ok(Some(record)) => record,
+            Ok(None) => continue,
             Err(error) if error.kind() == ErrorKind::SideTableRow => {
                 pending = pending.saturating_add(1);
                 continue;

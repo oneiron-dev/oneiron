@@ -134,6 +134,7 @@ vaultFlushStream(input: unknown): unknown
 vaultFinalizeStream(input: unknown): unknown
 vaultCancelStream(input: unknown): unknown
 vaultMessageStreamPartial(input: unknown): unknown
+vaultMessageStreamsRefused(input: unknown): unknown
 vaultMessagesDurability(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
