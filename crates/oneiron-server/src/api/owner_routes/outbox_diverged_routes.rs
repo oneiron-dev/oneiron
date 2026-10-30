@@ -11,23 +11,41 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{
     OutboxDivergedAnswerReceipt, OutboxDivergedAnswerRequest, OutboxDivergedPage,
 };
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::facade::outbox_diverged_doors::{answer_diverged_copy, diverged_page};
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/outbox/diverged", get(members).post(answer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/outbox/diverged",
+                summary: "A vault VM's outbox carrier members the owner should see (FIX 11074): each copy kept that the carrier never agreed on, after its origin retired the agreed version (`diverged_unagreed`: kind, member, the end that holds it, both digests, his answer), and each file held back as damaged at its source (`source_digest_mismatch`), each with a card. `carrier` is false where no companion answers.",
+                row: None,
+            },
+            get(members),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/outbox/diverged",
+                summary: "With {\"kind\", \"member\", \"held\", \"answer\": \"remove\" | \"keep\"}: passes the owner's answer to the diverged copy the page lists with that digest to the companion, which carries it out at its next turn; nothing removes the copy without it.",
+                row: None,
+            },
+            post(answer),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/outbox/diverged`'s body:
