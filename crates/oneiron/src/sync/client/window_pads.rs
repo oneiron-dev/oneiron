@@ -391,6 +391,12 @@ impl SyncClient {
                             .remove(key)
                             .filter(|(made, _)| Some(*made) == id)
                         else {
+                            if id.is_some() {
+                                tracing::warn!(
+                                    window = key,
+                                    "window update past one frame withheld: payload not held"
+                                );
+                            }
                             return true;
                         };
                         drop(ledger);
