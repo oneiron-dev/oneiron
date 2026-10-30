@@ -141,9 +141,7 @@ pub(super) fn write_companion(
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(relationship) = body.rel {
-        candidate = candidate.with_relationship(relationship);
-    }
+    candidate = candidate.with_relationships(body.rel.clone());
     write(
         vault,
         txn,
@@ -211,9 +209,7 @@ pub(crate) fn conflict_marker(
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(relationship) = body.rel {
-        candidate = candidate.with_relationship(relationship);
-    }
+    candidate = candidate.with_relationships(body.rel.clone());
     Ok(ConflictMarker {
         id: companion_id(new, old, super::PREDICATE_CONFLICT_OPEN)?,
         candidate,

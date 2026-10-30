@@ -234,8 +234,11 @@ pub(crate) fn setup_models(
 /// config asks for the maximum tier (OF-570). A new sealed vault's key is
 /// wrapped to this device's keystore and to the password `--secret-file`
 /// names, and init fails unless its mirror then opens it. A page-seal mirror
-/// whose vault's data is missing is refused, never adopted.
+/// whose vault's data is missing is refused, never adopted. A sealed creation
+/// a crash or a failed wrap left unfinished is removed and created again (FIX
+/// 1942).
 fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiron::Vault> {
+    oneiron::world_keys::remove_unfinished_sealed_creation(&config.vault_path)?;
     super::owner::refuse_orphaned_page_seal(&config.vault_path)?;
     let fresh = !config.vault_path.join("data.mdb").exists();
     anyhow::ensure!(
@@ -254,15 +257,7 @@ fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiro
         vault_config.page_seal = super::owner::prepare_page_seal(config, password.as_ref())?;
     }
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)?;
-    if vault.vault_pages_sealed() {
-        config
-            .keystore
-            .install_on_boot(&vault, &config.vault_path)?;
-        if let Some(super::owner::HostUnlock::Password(password)) = &password {
-            vault.set_vault_key_password(password, None)?;
-        }
-        super::owner::ensure_page_seal_wrapped(&vault, &config.vault_path)?;
-    }
+    let vault = super::owner::wrap_sealed_vault(vault, config, password.as_ref())?;
     // This install's own machine profile (FIX 4648), only on a vault the
     // configured host root already roots: a new vault's first serving start
     // roots it and profiles this install then. Init never mints a root.

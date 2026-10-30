@@ -21,7 +21,7 @@ use super::storage::{read_secret_lease_in_txn, read_value_for_ref_in_txn};
 use super::types::{SecretLeaseStatus, VaultInstant};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor};
+use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor, run_secret_effector};
 use crate::vault::Vault;
 
 /// Why a leased or local grant does not redeem at a door: its value went to
@@ -48,7 +48,10 @@ impl Vault {
     /// writer is released before `apply` runs. A redemption counts one send.
     ///
     /// A connector call made under a grant redeems here at every real send,
-    /// a held send resumed later included.
+    /// a held send resumed later included. A secret the presenting run
+    /// found is admitted through its seat's binding instead, under the
+    /// grant effector's door policy (FIX 8334), exactly as the use
+    /// admitted it (FIX 11879).
     ///
     /// # Errors
     /// [`SecretError::SecretLeaseNotFound`] for a grant the presenter does
@@ -69,15 +72,18 @@ impl Vault {
         }
         let mut wtxn = self.store.env.write_txn()?;
         let now = self.instant_in_write_txn(&mut wtxn)?;
-        let row = match self.admit_grant_in_txn(&mut wtxn, grant, target, now, true) {
-            Ok(row) => row,
+        let (row, seat) = match self.admit_grant_in_txn(&mut wtxn, grant, target, now, true) {
+            Ok(admitted) => admitted,
             Err(error) => {
                 // A lazy expiry lands even though the redemption refuses.
                 wtxn.commit()?;
                 return Err(error);
             }
         };
-        let value = read_value_for_ref_in_txn(self, &wtxn, &row.custody, &row.effector)?;
+        // The value leaves through the binding that admitted it: the
+        // presenting run's seat for a secret that run found (FIX 11879).
+        let bound = seat.as_deref().unwrap_or(&row.effector);
+        let value = read_value_for_ref_in_txn(self, &wtxn, &row.custody, bound)?;
         wtxn.commit()?;
         apply(&value)?;
         Ok(SecretGrantRedemption {
@@ -155,7 +161,7 @@ impl Vault {
         let now = self.instant_in_write_txn(&mut wtxn)?;
         let admitted = self.admit_grant_in_txn(&mut wtxn, grant, target, now, false);
         wtxn.commit()?;
-        admitted
+        admitted.map(|(row, _)| row)
     }
 
     /// The grant `caller` holds, as it stands now (a past-due active grant
@@ -231,7 +237,8 @@ impl Vault {
 
     /// Every check of one redemption, in `wtxn` at `now`. A lazy expiry is
     /// written into `wtxn` before it refuses; a counted send is written once
-    /// every check passed.
+    /// every check passed. Answers the admitted grant row and the seat whose
+    /// binding admitted it, when the presenting run's seat did.
     fn admit_grant_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -239,7 +246,7 @@ impl Vault {
         target: &SecretGrantTarget,
         now: VaultInstant,
         count: bool,
-    ) -> Result<SecretLeaseGrant> {
+    ) -> Result<(SecretLeaseGrant, Option<String>)> {
         let mut row = live_held_grant_in_txn(
             &self.store,
             wtxn,
@@ -268,17 +275,26 @@ impl Vault {
                 current_generation: rec.rotation_generation,
             }));
         }
+        // A secret the presenting run found goes through its seat's
+        // binding instead, under the grant effector's door policy (FIX
+        // 8334), exactly as the use admitted it (FIX 11879).
+        let seat = grant
+            .holder()
+            .run()
+            .and_then(|run| EntityId::from_bytes(*run.as_bytes()).ok())
+            .and_then(|run| run_secret_effector(&rec.name, &run));
+        let bound = seat.as_deref().unwrap_or(&row.effector);
         if !rec
-            .binding_for(&row.effector)
+            .binding_for(bound)
             .is_some_and(SecretBinding::grants_read)
         {
             return Err(Error::Secret(SecretError::SecretBindingDenied {
-                effector: row.effector,
+                effector: bound.to_owned(),
                 secret_ref: rec.name,
             }));
         }
         let floor = SecretCustodyFloor::resolve(&self.store, wtxn)?;
-        admit_record_use(&rec, &row.effector, row.tier, &floor)?;
+        admit_record_use(&rec, bound, row.tier, &floor)?;
         crate::credential_door::admit_materialization_in_txn(
             &self.store,
             wtxn,
@@ -308,6 +324,6 @@ impl Vault {
             row.sends = row.sends.saturating_add(1);
             write_grant_in_txn(&self.store, wtxn, &row)?;
         }
-        Ok(row)
+        Ok((row, seat))
     }
 }

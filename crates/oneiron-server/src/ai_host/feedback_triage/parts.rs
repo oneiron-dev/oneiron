@@ -43,16 +43,21 @@ const UNMEASURED_COUNT_FACTOR: u64 = 2;
 /// The reply frame that margin leaves, as compaction's.
 const REPLY_FRAME_TOKENS: u64 = 64;
 
-/// The smallest window any rung of the Coach seat may serve a call on
-/// (FIX 10303): each rung's catalog window less the output it reserves, in
-/// the engine's own count (FIX 10305), less the prompt the rung prepends;
-/// the seat model's own row when no rung's reads. `None` while no window is
-/// known, and the item then goes whole, as it always has.
+/// The smallest window any rung of the Coach seat or an owner-named fallback
+/// may serve a call on (FIX 10303, FIX 10916): each rung's catalog window
+/// less the output it reserves, in the engine's own count (FIX 10305), less
+/// the prompt the rung prepends; the seat model's own row when no rung's
+/// reads. `None` while no window is known, and the item then goes whole, as
+/// it always has.
 pub(super) fn window(server: &SyncServer, models: &HostModels<'_>) -> Option<Window> {
     let seat = server.ai.model_runtime().seat(models.coach())?;
     let vault = server.vault();
     let mut smallest: Option<Window> = None;
-    for (model, prompt) in seat.rung_models() {
+    for (model, prompt) in seat
+        .rung_models()
+        .into_iter()
+        .chain(seat.fallback_rung_models())
+    {
         let Some(input) = model_window(vault, &model) else {
             continue;
         };

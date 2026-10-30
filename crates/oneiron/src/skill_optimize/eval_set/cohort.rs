@@ -27,6 +27,8 @@ use crate::error::{Error, Result};
 
 mod space_probe;
 
+pub(crate) use space_probe::is_space_probe_seat;
+
 pub(in crate::skill_optimize) const COHORT_PREFIX: &[u8] = b"skill_optimize:eval_cohort:v1:";
 pub(in crate::skill_optimize) const EXPOSURE_PREFIX: &[u8] = b"skill_optimize:eval_exposure:v1:";
 const MEMBERSHIP_DOMAIN: &[u8] = b"skill_optimize:eval_cohort_membership:v1\0";

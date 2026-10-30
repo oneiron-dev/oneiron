@@ -164,6 +164,8 @@ impl Store {
             prefixes.push(GATE_DECISION_KEY_PREFIX);
             prefixes.extend(body_prefixes());
             prefixes.extend(known_history_prefixes());
+            // Its erasable keys' refs, planned with the rest (FIX 11205).
+            prefixes.push(side_table::KEY_CUSTODY_ERASABLE_REF.prefix);
             let rows = vault_meta_rows(&self.env, &txn, &prefixes)?;
             (rows, self.credential_fences_in_txn(&txn))
         };

@@ -44,7 +44,7 @@ use turns::{Selection, Turn};
 const USAGE: &str = "usage: oneiron-bench load dream --server <oneiron-server> --work <dir>\n\
   --corpus <turns.jsonl> --out <file.json> --model-base-url <url> --model <slug>\n\
   --model-key-file <path> [--worlds w1,w2] [--days 1-6] [--notes] [--recall-every-ms 1000]\n\
-  [--cycle-timeout-s 1200] [--model-context-tokens N] [--label TEXT]\n\
+  [--cycle-timeout-s 1200] [--model-context-tokens N] [--label TEXT] [--log-extra DIRECTIVES]\n\
   (--model-base-url ends where /chat/completions follows, usually in /v1)";
 
 /// The server's log level: the Dreamer's stage and pass lines are info.
@@ -76,6 +76,8 @@ struct Plan {
     recall_every: Duration,
     cycle_timeout: Duration,
     label: Option<String>,
+    /// More `RUST_LOG` directives for the server, after the stage lines'.
+    log_extra: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<Plan, String> {
@@ -93,6 +95,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         recall_every: Duration::from_millis(1000),
         cycle_timeout: Duration::from_secs(1200),
         label: None,
+        log_extra: None,
     };
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -122,6 +125,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
             "--recall-every-ms" => plan.recall_every = Duration::from_millis(num(value)?.max(1)),
             "--cycle-timeout-s" => plan.cycle_timeout = Duration::from_secs(num(value)?),
             "--label" => plan.label = Some(value.clone()),
+            "--log-extra" => plan.log_extra = Some(value.clone()),
             _ => return Err(format!("unknown flag {flag}\n{USAGE}")),
         }
     }
@@ -185,7 +189,13 @@ fn execute(plan: &Plan) -> Result<(), String> {
     // The key goes to the child's environment and nowhere else.
     let env = vec![
         (setup::MODEL_KEY_ENV.to_owned(), key),
-        ("RUST_LOG".to_owned(), RUST_LOG.to_owned()),
+        (
+            "RUST_LOG".to_owned(),
+            plan.log_extra.as_ref().map_or_else(
+                || RUST_LOG.to_owned(),
+                |extra| format!("{RUST_LOG},{extra}"),
+            ),
+        ),
     ];
     let server = Running::start_on(&plan.server, &vault, &env, LOG_NAME, "warn", free_port()?)?;
     drop(env);

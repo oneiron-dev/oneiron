@@ -356,6 +356,9 @@ side_tables! {
     /// One compiled acting revision (a charter or brief revision compiled from one principal's
     /// approved preferences) and its answer. Key: string (revision id, 64 hex).
     EDIT_DISTANCE_ACTING_REVISION: VaultMeta b"edit_distance/acting_revision/v1\0" Named;
+    /// Amendment cause rows by the attempt receipt they name, so the nightly agent-health pass
+    /// looks them up instead of scanning (FIX 11639). Key: id32 + id32 + string.
+    EDIT_DISTANCE_AMENDMENT_ATTEMPT: VaultMeta b"edit_distance/amendment_attempt/v1\0" Raw;
     /// One amendment judgment's labels kept write-once per receipt and judge revision (FIX 11638);
     /// a project's erase re-keys the project it names. Key: id32 + string.
     EDIT_DISTANCE_AMENDMENT_CAUSE: VaultMeta b"edit_distance/amendment_cause/v1\0" Raw
@@ -408,6 +411,10 @@ side_tables! {
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
     EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored
+        => crate::edit_distance::erase_proposal_texts_in_txn;
+    /// Raw proposal document whose served texts were custody-marked before it was kept, outside
+    /// the side-row wall as an entity document is (FIX 11539), keyed by artifact ref. Key: id16.
+    EDIT_DISTANCE_PROPOSAL_DOCUMENT: VaultMeta b"edit_distance/proposal_document/v1\0" Raw
         => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Rebuildable training-reservoir candidate index row, keyed by the proposal artifact's entity
     /// id. Key: id16.

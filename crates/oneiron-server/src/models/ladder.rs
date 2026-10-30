@@ -81,6 +81,20 @@ pub(super) struct LadderRung {
 }
 
 impl LadderRung {
+    /// The full `model@place` route id of this rung (FIX 11768 seam for
+    /// L05): its model and the place [`offer_place`] names for its
+    /// binding's locality and its route's origin, minted through
+    /// [`offer_id`] — the one producer, the same resolution the ladder's
+    /// doors judge.
+    #[must_use]
+    pub(super) fn offer_id(&self) -> String {
+        let place = offer_place(
+            self.offer.binding.locality,
+            self.offer.binding.route.origin(),
+        );
+        offer_id(&self.model, &place)
+    }
+
     /// The call as this rung sends it: its model at its route, its
     /// instruction first.
     fn bind(&self, mut request: LlmRequest) -> LlmRequest {
@@ -282,12 +296,76 @@ impl OfferLadder {
         self
     }
 
+    /// This ladder with its rungs in the order `routes` names them (FIX
+    /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
+    /// [`LadderRung::offer_id`], the same route id the ladder's doors
+    /// judge. Name, pick, rests, scope and prefix pass through untouched;
+    /// an order that names no rung yields a ladder with no rungs, which
+    /// reaches the existing no-rung error downstream. Under inherit the
+    /// rungs keep their own order, so a vault with no per-world routes
+    /// behaves as before; routes that name no rung add nothing, and
+    /// duplicates repeat, exactly as `order` reads them.
+    #[must_use]
+    pub(crate) fn for_world_routes(&self, routes: &WorldModelRoutes) -> Self {
+        let keys: Vec<(String, usize)> = self
+            .rungs
+            .iter()
+            .enumerate()
+            .map(|(index, rung)| (rung.offer_id(), index))
+            .collect();
+        let ordered = routes.order(&keys, |key| key.0.as_str());
+        let rungs = ordered
+            .iter()
+            .map(|key| self.rungs[key.1].clone())
+            .collect();
+        Self {
+            name: self.name.clone(),
+            rungs,
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: self.scope,
+            prefix: self.prefix.clone(),
+        }
+    }
+
     /// Each rung's engine model id and the prompt it prepends, in ladder
     /// order.
     pub(super) fn rung_models(&self) -> impl Iterator<Item = (&ModelId, Option<&str>)> {
         self.rungs
             .iter()
             .map(|rung| (&rung.model, rung.prompt.as_deref()))
+    }
+
+    /// The rung models and prompts of each live fallback the owner named for
+    /// this seat's offers, limited to targets that are not resting and keep
+    /// the seat's wire and on-device rule (FIX 10916).
+    pub(super) fn fallback_rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        let mut models = Vec::new();
+        for rung in &self.rungs {
+            let Some(target) = self
+                .rests
+                .fallback_for(&rung.offer.binding, &rung.wire_model)
+            else {
+                continue;
+            };
+            if target.rests_now() || target.scope.wire != self.scope.wire {
+                continue;
+            }
+            if self.scope.stays_on_device
+                && target
+                    .rungs
+                    .iter()
+                    .any(|rung| leaves_device(&rung.offer.binding))
+            {
+                continue;
+            }
+            models.extend(
+                target
+                    .rung_models()
+                    .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned))),
+            );
+        }
+        models
     }
 
     /// The offers of the rungs that could serve `request` (FIX 3194): each

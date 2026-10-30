@@ -192,17 +192,14 @@ pub(crate) async fn finish_door_claim(claim: InvocationClaim, response: Response
     Response::from_parts(head, Body::from(bytes))
 }
 
-/// The first call's reply, sent again to a request that waited on it.
-pub(crate) fn door_replay(outcome: InvocationOutcome) -> Response {
-    let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (status, Json(outcome.body)).into_response()
-}
-
-/// [`door_replay`] for a facade waiter `auth` on verb `verb` (FIX 8212): an
-/// answer its route kept is released again for this waiter's credential and
-/// destination ([`replayed_value`]), never run again; a reply kept with
-/// nothing beside it, a refusal among them, is sent as it was.
-fn door_replay_for(
+/// The first call's reply, sent again to a request that waited on it:
+/// for a facade waiter `auth` on verb `verb` (FIX 8212), an answer its route
+/// kept is released again for this waiter's credential and destination
+/// ([`replayed_value`]), never run again; a reply kept with nothing beside
+/// it, a refusal among them, has its words released again for this waiter
+/// ([`rereleased_refusal`], FIX 10497). A chat waiter meets the same replay
+/// through this (FIX 10499).
+pub(crate) fn door_replay_for(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
@@ -211,7 +208,49 @@ fn door_replay_for(
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = match outcome.release {
         Some(release) => replayed_value(vault, auth, verb, release),
-        None => outcome.body,
+        None => rereleased_refusal(vault, auth, outcome.body),
     };
     (status, Json(body)).into_response()
+}
+
+/// A refusal the first call kept with nothing beside it, released again for
+/// the waiter `auth` (FIX 10497): words naming a row this waiter's
+/// destination withholds leave as their code alone, never the first caller's
+/// release of them. Anything else, and any reply that is no refusal, goes as
+/// it was.
+fn rereleased_refusal(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    body: serde_json::Value,
+) -> serde_json::Value {
+    let mut body = body;
+    let denied = body
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .is_some_and(serde_json::Value::is_string)
+        && crate::device_local::replay_withheld(
+            vault,
+            auth.destination(),
+            &serde_json::to_vec(&body).unwrap_or_default(),
+            &[],
+        );
+    if !denied {
+        return body;
+    }
+    if let Some(error) = body
+        .get_mut("error")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        let words = "the call failed; its detail stays on this device";
+        error.insert(
+            "message".to_owned(),
+            serde_json::Value::String(words.to_owned()),
+        );
+        error.insert(
+            "suggestions".to_owned(),
+            serde_json::Value::Array(Vec::new()),
+        );
+        error.remove("legal_hold");
+    }
+    body
 }

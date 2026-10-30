@@ -137,6 +137,28 @@ pub struct TeamOutcome {
     pub anchor: Anchor,
     pub success: bool,
     pub at: u64,
+    /// The critics whose persisted reviews of the team's deliverable the
+    /// outcome settled (OF-420), as the settler read them. `None` is unknown
+    /// (a settler that read none); empty, no critic reviewed it. Always on
+    /// the wire: no old-format reader (Engine 00:35, L09 00:36).
+    pub critics: Option<Vec<TeamCritic>>,
+}
+
+/// One critique of a team's deliverable that the team's outcome settled
+/// (OF-420): the review holding it and the critic that gave it, named as
+/// the critique's reliability cell names that critic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamCritic {
+    /// The review's verdict claim.
+    pub review: EntityId,
+    pub artifact_id: String,
+    /// The lens's stored skill.
+    pub lens: EntityId,
+    /// The critic's executor at revision: `model@revision`, or a person's
+    /// own id.
+    pub executor: String,
+    /// What the critique said of the deliverable.
+    pub verdict: crate::critic::CritiqueVerdict,
 }
 
 /// One team run.
@@ -237,6 +259,34 @@ impl TeamReceipt {
     pub fn executor_mix(&self) -> String {
         model_mix(&self.models)
     }
+
+    /// The one critic the settled outcome names (OF-420), the value the
+    /// TrustedCritic decision reads: `<lens skill hex>@<model>`, the
+    /// executor's final `@revision` stripped as the winning model's is. None
+    /// when the outcome names no critic or more than one: a panel is not one
+    /// critic's win.
+    #[must_use]
+    pub fn trusted_critic(&self) -> Option<String> {
+        let critics: std::collections::BTreeSet<String> = self
+            .outcome
+            .as_ref()?
+            .critics
+            .as_ref()?
+            .iter()
+            .map(|critic| {
+                let executor = critic.executor.as_str();
+                let model = executor
+                    .rsplit_once('@')
+                    .map_or(executor, |(model, _)| model);
+                format!("{}@{model}", critic.lens.to_hex())
+            })
+            .collect();
+        let mut critics = critics.into_iter();
+        match (critics.next(), critics.next()) {
+            (Some(critic), None) => Some(critic),
+            _ => None,
+        }
+    }
 }
 
 /// Records one team receipt. A receipt is written once; settling its outcome
@@ -287,7 +337,9 @@ pub fn record_team_receipt_sourced(
 }
 
 /// Settles a team run's anchored outcome and feeds its pattern skill's
-/// payoff. Settling again with the same receipt replaces the outcome.
+/// payoff. Settling again with the same receipt replaces the outcome. The
+/// outcome names and scores the critics of the team's bound deliverables
+/// (FIX 12106).
 ///
 /// # Errors
 ///
@@ -298,11 +350,61 @@ pub fn settle_team_outcome(
     team_ref: &str,
     outcome: &TeamOutcome,
 ) -> Result<TeamReceipt> {
-    vault.with_write_txn_grouped(|wtxn| settle_team_outcome_in_txn(vault, wtxn, team_ref, outcome))
+    settle_team_work_outcome(vault, team_ref, outcome, &[])
+}
+
+/// [`settle_team_outcome`] for an outcome that judged `work`, the claims the
+/// settler names as the team's result, beside its bound deliverables (FIX
+/// 12106). The stored outcome names the critics whose persisted reviews
+/// judged that work, read from the store in place of the caller's, and each
+/// critique's outcome is recorded on its critic's cell as the owner path
+/// records it, written as the review's own principal. Capture only: critics
+/// that do not read leave the outcome's critics unknown, and a critique's
+/// outcome that does not land never fails the settlement.
+///
+/// # Errors
+///
+/// As [`settle_team_outcome`].
+pub(crate) fn settle_team_work_outcome(
+    vault: &Vault,
+    team_ref: &str,
+    outcome: &TeamOutcome,
+    work: &[EntityId],
+) -> Result<TeamReceipt> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let mut outcome = outcome.clone();
+        let reviews = match super::owner_outcome::team_deliverables_in_txn(vault, wtxn, team_ref) {
+            Ok(mut deliverables) => {
+                deliverables.extend_from_slice(work);
+                crate::critic::review::name_deliverable_critics_in_txn(
+                    vault,
+                    wtxn,
+                    &deliverables,
+                    &mut outcome,
+                )
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a team's deliverables did not read; its outcome names no critic"
+                );
+                outcome.critics = None;
+                None
+            }
+        };
+        let settled = settle_team_outcome_in_txn(vault, wtxn, team_ref, &outcome)?;
+        if let Some(reviews) = &reviews {
+            crate::critic::review::record_deliverable_outcomes_in_txn(
+                vault, wtxn, reviews, &outcome, None,
+            );
+        }
+        Ok(settled)
+    })
 }
 
 /// [`settle_team_outcome`] in the caller's transaction, so the source of the
-/// anchor, the outcome and its learning evidence land together.
+/// anchor, the outcome and its learning evidence land together. The outcome
+/// is stored as given: the caller names its critics.
 ///
 /// # Errors
 ///

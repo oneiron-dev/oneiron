@@ -10,7 +10,7 @@ use crate::gate::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
 
 /// One policy limit a goal's tradeoff rules have crossed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TradeoffCapacityCrossing {
+pub enum TradeoffCapacityCrossing {
     /// More authored rules than `max_authored_rules`.
     AuthoredRules { held: u64, limit: u64 },
     /// More learned picks than a finite `max_learned_rules`.
@@ -36,7 +36,7 @@ impl TradeoffCapacityCrossing {
 
 /// The crossings `preferences` makes against the limits resolved for its
 /// holder in this snapshot.
-fn crossings_in_txn(
+pub fn crossings_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     preferences: &SkillTradeoffPreferences,

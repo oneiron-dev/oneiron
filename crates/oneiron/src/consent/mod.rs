@@ -50,6 +50,7 @@
 mod adapters;
 mod ask_holders;
 mod bound;
+mod browser;
 pub mod bypass_lifecycle;
 mod codec;
 mod contact_clearance;
@@ -76,6 +77,7 @@ pub use self::bound::{
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
     MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
 };
+pub use self::browser::{BrowserConsentFacts, BrowserSendScope, browser_approve_once_digest};
 pub use self::bypass::{BypassActive, BypassExtent, BypassGrantWarning, BypassScope};
 pub use self::codec::{
     CONSENT_GRANT_BODY_KEYS, CONSENT_GRANT_SCHEMA_VERSION, decode_consent_grant_row,

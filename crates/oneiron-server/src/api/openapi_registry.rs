@@ -214,6 +214,7 @@ use utoipa::OpenApi;
         super::courtesy_delete::take_succession,
         super::recovery_bundle::part,
         super::recovery_bundle::index,
+        super::recovery_bundle::custody::custody_page,
 
         lease_revoke
     ),
@@ -433,6 +434,9 @@ use utoipa::OpenApi;
         super::recovery_bundle::KitPadIndexRequest,
         super::recovery_bundle::KitPadIndexResponse,
         super::recovery_bundle::KitPadIndexEntry,
+        super::recovery_bundle::custody::KitCustodyPageRequest,
+        super::recovery_bundle::custody::KitCustodyPageResponse,
+        super::recovery_bundle::custody::KitCustodyFrame,
 
         UsageEvent,
         UsageRecordResult,

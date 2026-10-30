@@ -23,11 +23,17 @@ use crate::temporal::TimeRange;
 
 mod codec;
 mod evidence_refs;
+mod relationship_scope;
 
 pub use codec::decode_claim_body;
 pub(crate) use codec::encode_claim_body;
 pub use evidence_refs::{CursorSpan, EvidenceKind, EvidenceRef};
 pub(crate) use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
+pub use relationship_scope::{
+    RelationshipScope, meet_relationship_scopes, relationship_scope_includes,
+    relationship_scope_of, relationship_scope_transcript,
+};
+pub(crate) use relationship_scope::{decode_relationship_scope, encode_relationship_scope};
 
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///
@@ -252,14 +258,14 @@ pub struct ClaimBody {
     /// extraction may create claims before their world; the read side groups
     /// by id regardless.
     pub world: Option<EntityId>,
-    /// `scopeRelationshipId` uses `all` or a singleton set of 16-byte ids.
-    /// The in-memory `None` convenience encodes `all`. A present id is one 16-byte
-    /// MessagePack Binary RELATIONSHIP [`EntityId`]; absent means core/all
-    /// relationships. The claim codec validates this on-disk shape only and
-    /// does not require the referenced relationship to exist at write time,
+    /// `scopeRelationshipId` holds `all` or a set of 16-byte ids.
+    /// The in-memory `None` convenience encodes `all`; `Some(empty)` is the
+    /// explicit empty set; `Some(ids)` is every RELATIONSHIP [`EntityId`] the
+    /// writer named. The claim codec validates this on-disk shape only and
+    /// does not require the referenced relationships to exist at write time,
     /// matching `world`. Retrieval validates the active relationship's
     /// existence and type when relationship filtering executes.
-    pub rel: Option<EntityId>,
+    pub rel: RelationshipScope,
     /// `scope` — optional relationship/facet scope (opaque MessagePack).
     pub scope: Option<Value>,
     /// Required provenance mask id. A mask does not grant authority.

@@ -385,12 +385,18 @@ impl Vault {
                 header.entity_type,
                 &pointer,
             )?;
+            // A row its writing door already stamped keeps that birth on its
+            // document's birth commit (FIX 10929).
+            let born = crate::provenance::birth::row_birth_in_txn(&self.store, txn, entity)?;
+            // The birth commit names the birth actor's stamp token (FIX 10930).
+            let stamp = crate::provenance::actor_stamp_in_txn(self, txn, birth_actor)?;
             let doc = EntityDoc::open_with_metadata(
                 *entity,
                 &initial,
                 &metadata,
-                birth_actor,
+                (birth_actor, stamp),
                 header.occurred_start,
+                born.as_ref().map(|birth| &birth.made_by),
             )?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
             // The immutable envelope, type/time indexes and other body fields do
