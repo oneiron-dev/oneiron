@@ -51,7 +51,7 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{
-    DoorInput, InputBinding, LeafSource, RelayedInput, SealedFrame, SurfaceLeaf,
+    DoorInput, InputBinding, LeafSource, RelayedInput, SealedFrame, SurfaceLeaf, SurfaceRetry,
     keep_witnessed_input_in_txn, request_witness_in_txn, seal_leaf_input_in_txn,
     seal_leaf_parts_in_txn, surface_leaf_input, surface_retry_in_txn,
 };
@@ -479,25 +479,15 @@ impl Vault {
         };
         // CALLS CUSTODY_RETRY under the carrier wire: a surface's same input
         // again is the request whose kept input sealed it, never a second
-        // change. Its own digest is taken only while a surface's input is
-        // kept here for the secret: one past a row is then read for it before
-        // its key is minted, so a retry mints none (FIX 12177).
-        if let (Some(surface), Some(frame)) = (&surface_input, &sealed) {
-            let mut own = None;
-            for (hash, live) in fold.custody_heads(change.id) {
-                let OwnerWorkBody::Custody {
-                    input: Some(named), ..
-                } = &live.work
-                else {
-                    continue;
-                };
-                let Some(kept) = surface_retry_in_txn(&self.store, txn, named)? else {
-                    continue;
-                };
-                if own.is_none() {
-                    own = Some(surface.retry(frame)?);
-                }
-                if own == Some(kept) {
+        // change. It is read for that only while a surface's input is kept
+        // here for the secret, before its key is minted, so a retry mints
+        // none (FIX 12177); another one past a row is told apart by its first
+        // part, which its seal reads on from (FIX 12297).
+        let mut first_part = None;
+        if let (Some(surface), Some(frame)) = (&surface_input, sealed) {
+            let heads = fold.custody_heads(change.id);
+            match surface_retry_in_txn(&self.store, txn, heads, surface, frame)? {
+                SurfaceRetry::Kept(hash) => {
                     let receipt =
                         OwnerWorkReceipt::of(&fold, hash).ok_or_else(invalid_authority)?;
                     return Ok(Recorded {
@@ -505,6 +495,7 @@ impl Vault {
                         rotation: None,
                     });
                 }
+                SurfaceRetry::Fresh(read) => first_part = read,
             }
         }
         // One the owner's surface sealed is read where it lies, its digest
@@ -524,7 +515,9 @@ impl Vault {
                     )?;
                     DoorInput::read(SealedFrame::whole(&sealed_here))?
                 }
-                Some(SurfaceLeaf::Parts) => seal_leaf_parts_in_txn(self, txn, &binding, sealed)?,
+                Some(SurfaceLeaf::Parts) => {
+                    seal_leaf_parts_in_txn(self, txn, &binding, sealed, first_part)?
+                }
                 None => DoorInput::read(sealed)?,
             }),
             (true, None) => {

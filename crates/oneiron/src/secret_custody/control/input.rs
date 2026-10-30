@@ -86,8 +86,8 @@ pub(crate) use self::attached::{
     attach_published_manifests, attach_unread,
 };
 pub(crate) use self::carrier_seal::{
-    LeafSource, SurfaceLeaf, input_carrier_binds, input_carrier_in_txn, open_leaf_input,
-    retire_input_carriers_in_txn, seal_leaf_input_in_txn, seal_leaf_parts_in_txn,
+    LeafSource, SurfaceLeaf, SurfaceRetry, input_carrier_binds, input_carrier_in_txn,
+    open_leaf_input, retire_input_carriers_in_txn, seal_leaf_input_in_txn, seal_leaf_parts_in_txn,
     surface_leaf_input, surface_retry_in_txn,
 };
 pub(crate) use self::door_rows::DoorInput;

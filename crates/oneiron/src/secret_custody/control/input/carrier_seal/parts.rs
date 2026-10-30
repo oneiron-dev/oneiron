@@ -18,8 +18,10 @@
 //! The door reads the input once (FIX 12177, [`read_leaf_rows_in_txn`]): it
 //! stages each row of the parts as it seals them, digests each row as it is
 //! staged, and digests the input's own bytes, which the same input sent
-//! again is found by, as they go by. The head row, which carries that
-//! digest, is held until the input is read through.
+//! again is found by, as they go by, its first part's digest with them (FIX
+//! 12297). The head row, which carries those digests, is held until the
+//! input is read through. A read the retry check began goes on from where
+//! it stopped.
 //!
 //! The holder reads the parts in order, opens each whole before any of its
 //! bytes go on, and opens the surface's input from them as one kept as it
@@ -36,8 +38,8 @@ use super::super::super::super::carrier_custody::{
 };
 use super::super::door_rows::{DoorInput, RowStage, StreamedDigest};
 use super::super::stream::{open_framed, read_part};
-use super::super::{Attached, InputBinding, PART_BYTES, SealedFrame, refused};
-use super::{LEAF_HEAD_BYTES, LEAF_RETRY_AT};
+use super::super::{Attached, InputBinding, PART_BYTES, refused};
+use super::{LEAF_HEAD_BYTES, LEAF_RETRY_AT, RetryDigests};
 use crate::Vault;
 use crate::error::Result;
 use crate::store::CredentialLeaf;
@@ -62,10 +64,10 @@ pub(crate) struct LeafParts {
     count: u32,
     /// The surface's input's length.
     plain: u64,
-    /// The surface's input's own digest, taken as its last read went
+    /// The surface's input's own digests, taken as its last read went
     /// through it: what the same input sent again is found by (CALLS
-    /// CUSTODY_RETRY, FIX 12177).
-    retry: Cell<Option<[u8; 32]>>,
+    /// CUSTODY_RETRY, FIX 12177, 12297).
+    retry: Cell<Option<RetryDigests>>,
 }
 
 /// The part count a surface's input of `len` bytes seals into.
@@ -157,7 +159,7 @@ impl<R: Read> Read for SealingParts<'_, R> {
             if self.left == 0
                 && let Some(retry) = self.retry.take()
             {
-                self.parts.retry.set(Some(retry.finish()));
+                self.parts.retry.set(Some(RetryDigests::of_read(retry)));
             }
             let part = CarrierPart {
                 index: self.next,
@@ -178,11 +180,12 @@ impl<R: Read> Read for SealingParts<'_, R> {
     }
 }
 
-/// Reads the surface's input `frame` once, as the door keeps it under
-/// `parts` (FIX 12177): each row of its numbered carrier parts is staged in
-/// `wtxn` as it is sealed and digested as it is staged, while the input's
-/// own digest is taken as it goes by. The head row is held until the input
-/// is read through, the input's own digest set in it, then staged last.
+/// Reads the surface's input once, as the door keeps it under `parts` (FIX
+/// 12177), from `reader`, its bytes as kept ([`LeafParts::reader`]): each
+/// row of its numbered carrier parts is staged in `wtxn` as it is sealed
+/// and digested as it is staged, while the input's own digests are taken as
+/// it goes by. The head row is held until the input is read through, the
+/// input's own digests set in it, then staged last.
 ///
 /// # Errors
 /// A fault reading the input from its file; one past the part list's
@@ -190,12 +193,11 @@ impl<R: Read> Read for SealingParts<'_, R> {
 pub(super) fn read_leaf_rows_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    frame: SealedFrame<'_>,
+    mut reader: impl Read,
     parts: &LeafParts,
 ) -> Result<DoorInput<'static>> {
     let mut left = parts.sealed_len();
     let mut stage = RowStage::new(&parts.carrier.encode(), left)?;
-    let mut reader = frame.under_leaf_parts(parts).reader()?;
     let mut head = Vec::new();
     read_part(&mut reader, &mut head, &mut left)?;
     let mut index = 0_u32;
@@ -211,7 +213,7 @@ pub(super) fn read_leaf_rows_in_txn(
         .ok_or_else(|| refused("the custody input was not read through"))?;
     head.get_mut(LEAF_RETRY_AT..LEAF_HEAD_BYTES)
         .ok_or_else(|| refused("the custody input's head outgrows its first row"))?
-        .copy_from_slice(&retry);
+        .copy_from_slice(&retry.encode());
     stage.stage_in_txn(vault, wtxn, 0, head)?;
     Ok(DoorInput::Staged(stage.finish()))
 }
