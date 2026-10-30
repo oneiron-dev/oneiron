@@ -35,17 +35,18 @@ pub(super) fn erase_review_claims_in_txn(
         }
         Ok(())
     })?;
-    let mut torn = Vec::new();
+    // Each claim to tear, with the calibration receipt its evidence is
+    // filed under when it is a critique's outcome.
+    let mut torn: Vec<(EntityId, Option<String>)> = Vec::new();
     vault.for_each_claim_with_predicate_in_txn(wtxn, "review.automatic_outcome", |id, body| {
         let ClaimSubject::Entity(of) = body.subject else {
             return Ok(());
         };
         if of == *entity || verdicts.contains(&of) {
-            torn.push(id);
+            torn.push((id, None));
         }
         Ok(())
     })?;
-    let mut receipts = BTreeSet::new();
     vault.for_each_claim_with_predicate_in_txn(wtxn, "review.outcome", |id, body| {
         let key = candidate_evidence(&body)
             .and_then(Value::as_str)
@@ -57,27 +58,44 @@ pub(super) fn erase_review_claims_in_txn(
             || body.subject == about
             || key.is_some_and(|(verdict, _)| verdicts.contains(&verdict))
         {
-            if let Some((verdict, artifact)) = key {
-                receipts.insert(super::super::outcomes::calibration_receipt(
-                    &verdict, artifact,
-                ));
-            }
-            torn.push(id);
+            let receipt = key.map(|(verdict, artifact)| {
+                super::super::outcomes::calibration_receipt(&verdict, artifact)
+            });
+            torn.push((id, receipt));
         }
         Ok(())
     })?;
+    // A legal hold keeps the erased entity's own row whole: its stored
+    // review and its trust stamp stay with it.
+    let entity_held =
+        crate::store::legal_hold::held_in_txn(&vault.store, wtxn, entity.as_bytes())?;
     let mut torn_verdicts = Vec::new();
     let mut dissent = Vec::new();
     for verdict in verdicts {
-        if verdict == *entity || tear_review_claim_in_txn(vault, wtxn, &verdict)? {
+        let gone = if verdict == *entity {
+            !entity_held
+        } else {
+            tear_review_claim_in_txn(vault, wtxn, &verdict)?
+        };
+        if gone {
             dissent.extend(drop_stored_review_in_txn(vault, wtxn, &verdict)?);
             torn_verdicts.push(verdict);
         }
     }
-    withdraw_outcome_evidence_in_txn(vault, wtxn, &receipts, &torn_verdicts)?;
-    for id in torn.iter().filter(|id| *id != entity) {
-        tear_review_claim_in_txn(vault, wtxn, id)?;
+    // Only a torn outcome withdraws its evidence: a held one stands, and
+    // its evidence with it. The entity's own row goes with its erase.
+    let mut receipts = BTreeSet::new();
+    for (id, receipt) in torn {
+        let gone = if id == *entity {
+            !entity_held
+        } else {
+            tear_review_claim_in_txn(vault, wtxn, &id)?
+        };
+        if gone && let Some(receipt) = receipt {
+            receipts.insert(receipt);
+        }
     }
+    withdraw_outcome_evidence_in_txn(vault, wtxn, &receipts, &torn_verdicts)?;
     for dissent in &dissent {
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         match erase_dissent_in_txn(vault, &mut savepoint, dissent) {
@@ -88,7 +106,9 @@ pub(super) fn erase_review_claims_in_txn(
             ),
         }
     }
-    CLAIM_TRUST.delete(&vault.store, wtxn, entity)?;
+    if !entity_held {
+        CLAIM_TRUST.delete(&vault.store, wtxn, entity)?;
+    }
     Ok(())
 }
 
@@ -96,11 +116,13 @@ pub(super) fn erase_review_claims_in_txn(
 /// critique's outcome gave, and every row under a receipt of a critique of
 /// one of `torn_verdicts`, and projects each cell it leaves again. A
 /// world-outcome row is the settled fact's: it stays while its verdict
-/// stays, and goes with a torn verdict (FIX 12218).
+/// stays, and goes with a torn verdict (FIX 12218). A row under one of
+/// `kept`, the receipt of an outcome a legal hold keeps, stays.
 fn withdraw_outcome_evidence_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     receipts: &BTreeSet<String>,
+    kept: &BTreeSet<String>,
     torn_verdicts: &[EntityId],
 ) -> Result<()> {
     if receipts.is_empty() && torn_verdicts.is_empty() {
