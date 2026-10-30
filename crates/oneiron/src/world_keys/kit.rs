@@ -6,7 +6,9 @@
 //! back, or one and the passphrase, rebuilds the seed, checks it grows into
 //! the root the row names, and activates that root. The root, the pin, the
 //! re-wraps, the row and the vault key's `world-kit` escrow wrap commit in one
-//! transaction. No seed, piece, point or passphrase is ever stored.
+//! transaction. No seed, point or passphrase is ever stored, and no piece but
+//! this machine's own, in its device-only key slots (FIX 2063); a restore
+//! here reads that piece back, and a confirm never does.
 //!
 //! The escrow wrap runs one way: the kit's root opens the vault key, so a kit
 //! restore on a new host opens a sealed backup. Nothing wraps the root under
@@ -29,6 +31,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::doors::world_recovery_state_in;
+use super::kit_piece::keep_this_machine_piece;
 use super::page_seal::WrapTransition;
 use super::state::world_pad_availability_in;
 use super::{
@@ -41,7 +44,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::recovery::{
     CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase,
-    KitPiece, KitSecretKind, PieceHome, issue_recovery_root_kit, restore_kit,
+    KitPiece, KitSecretKind, PieceHome, RestoredKitSecret, issue_recovery_root_kit, restore_kit,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -109,7 +112,8 @@ pub struct IssuedWorldKit {
     /// The fingerprint of the root the kit carries.
     pub root: RecoveryRootId,
     pub manifest: KitManifest,
-    /// The stored pieces in x order. A passphrase home has none.
+    /// The pieces to hand out, in x order. A passphrase home has none, and a
+    /// `ThisMachine` home's piece is in this install's key slots (FIX 2063).
     pub pieces: Vec<KitPiece>,
 }
 
@@ -210,6 +214,24 @@ pub(super) fn kit_refused(error: KitError) -> Error {
         KitError::MixedKits => "pieces come from different kits",
         KitError::NeedTwoPieces => "two distinct kit pieces are required",
         KitError::NoMatch => "the pieces do not open this kit",
+        KitError::KeptPieceUnreadable => {
+            "this machine's kit piece could not be read; give two pieces"
+        }
+    })
+}
+
+/// The seed a restored kit secret carries, the kit it came from and the root
+/// the seed grows into for `vault_id`.
+fn kit_seed_of(vault_id: &[u8; 32], secret: RestoredKitSecret) -> Result<KitSeed> {
+    let kit = secret.kit_id();
+    let reissue_advised = secret.reissue_advised();
+    let seed = RecoveryRootSeed::from_restored_kit(secret)?;
+    let root = seed.public(vault_id)?;
+    Ok(KitSeed {
+        kit,
+        seed,
+        root,
+        reissue_advised,
     })
 }
 
@@ -279,12 +301,15 @@ impl Vault {
     }
 
     /// Kit issue's draw: a fresh root's seed split over the homes, held in
-    /// memory only. Nothing is written.
+    /// memory only. Nothing is written to the vault; a `ThisMachine` home's
+    /// piece goes to this install's key slots, replacing an earlier world
+    /// kit's piece there, and the other homes' pieces are returned (FIX 2063).
     pub(super) fn draw_world_kit(
         &self,
         owner: &AuthenticatedOwner,
         issue: &KitIssue<'_>,
     ) -> Result<IssuedWorldKit> {
+        let store = self.this_machine_piece_store(&issue.homes)?;
         let prepared = self.prepare_owner_root(owner)?;
         let (vault_id, only_machine, me) = {
             let txn = self.store.env.read_txn()?;
@@ -320,7 +345,7 @@ impl Vault {
             vault_id,
             root,
             manifest: kit.manifest().clone(),
-            pieces: kit.into_pieces(),
+            pieces: keep_this_machine_piece(store.as_ref(), kit.into_pieces())?,
         })
     }
 
@@ -481,6 +506,8 @@ impl Vault {
     /// inventory is never written. The root door reads it only to refuse a
     /// kit it lists as pending, which [`Self::confirm_world_kit`] finishes
     /// instead; a fresh host with no row for the kit restores without it.
+    /// This machine's own piece of the kit, when it keeps one, joins `pieces`
+    /// (FIX 2063).
     pub fn restore_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -493,7 +520,7 @@ impl Vault {
             seed,
             root,
             reissue_advised,
-        } = self.kit_seed(pieces, passphrase)?;
+        } = self.kit_seed_here(pieces, passphrase)?;
         let keys = self.restore_world_keys(owner, &seed, confirm)?;
         Ok(WorldKitRestore {
             kit,
@@ -511,22 +538,25 @@ impl Vault {
         pieces: &[&KitPiece],
         passphrase: Option<&KitPassphrase>,
     ) -> Result<KitSeed> {
-        let kit = pieces
-            .first()
-            .map(|piece| piece.kit_id())
-            .ok_or_else(|| kit_refused(KitError::NeedTwoPieces))?;
         let vault_id = self.kit_vault_id()?;
         let secret = restore_kit(vault_id, KitSecretKind::RecoveryRoot, pieces, passphrase)
             .map_err(kit_refused)?;
-        let reissue_advised = secret.reissue_advised();
-        let seed = RecoveryRootSeed::from_restored_kit(secret)?;
-        let root = seed.public(&vault_id)?;
-        Ok(KitSeed {
-            kit,
-            seed,
-            root,
-            reissue_advised,
-        })
+        kit_seed_of(&vault_id, secret)
+    }
+
+    /// [`Self::kit_seed`] for a restore on this machine: its own piece of the
+    /// kit joins `pieces` ([`Self::restore_kit_here`], FIX 2063). A confirm
+    /// never takes it: a confirm reads back what the owner saved.
+    pub(super) fn kit_seed_here(
+        &self,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+    ) -> Result<KitSeed> {
+        let vault_id = self.kit_vault_id()?;
+        let secret = self
+            .restore_kit_here(vault_id, KitSecretKind::RecoveryRoot, pieces, passphrase)
+            .map_err(kit_refused)?;
+        kit_seed_of(&vault_id, secret)
     }
 
     /// Whether a kit this install issued for `root` still waits for its

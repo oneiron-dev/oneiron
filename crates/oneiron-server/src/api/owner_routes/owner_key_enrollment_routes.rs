@@ -15,6 +15,9 @@
 //!   server's install carries the owner's act under its own live profile
 //!   and cosigns it; this host's own root signs it as the predecessor. Only
 //!   a counted enrollment answers its receipt.
+//! - `POST .../enroll-this-install` enrols this server's own install's key,
+//!   made in its keystore on first use, by the same act, and the server then
+//!   holds it as a checkpoint root signer (FIX 4921).
 //!
 //! The wire form is CALLS "FIX 4920 enrollment HTTP representation": a
 //! machine as 32 hex, a key as 64 hex, a proof and a challenge as hex. The
@@ -48,6 +51,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/owner-signing-keys", get(list))
         .route("/owner-signing-keys/challenge", post(challenge))
         .route("/owner-signing-keys/enroll", post(enroll))
+        .route(
+            "/owner-signing-keys/enroll-this-install",
+            post(enroll_this_install),
+        )
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -281,6 +288,36 @@ async fn enroll(
         };
         let authority = ActAuthority::Owner(owner, surface);
         let receipt = enrol_as_host(&server, &authority, input)?;
+        Ok(ReceiptReply {
+            entry: revision_hex(&receipt.entry),
+            machine: receipt.machine.to_hex(),
+            public_key: revision_hex(&receipt.public_key),
+        })
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/owner-signing-keys/enroll-this-install`: the owner enrols
+/// this install's own owner signing key, made in its keystore on first use,
+/// carried by this install, with this host's root as its predecessor; the
+/// server then holds it as a checkpoint root signer (FIX 4921). A key
+/// already enrolled and live answers its receipt.
+async fn enroll_this_install(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<ReceiptReply> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let reply = blocking(move || -> OwnerResult<ReceiptReply> {
+        let authority = ActAuthority::Owner(owner, surface);
+        let issuer = server.host_issuer().ok_or_else(no_root_signer)?;
+        let receipt = server
+            .vault()
+            .enrol_device_owner_signing_key(&authority, issuer)
+            .map_err(refusal)?;
         Ok(ReceiptReply {
             entry: revision_hex(&receipt.entry),
             machine: receipt.machine.to_hex(),

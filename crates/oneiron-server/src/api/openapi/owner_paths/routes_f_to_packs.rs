@@ -479,6 +479,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/owner-signing-keys/enroll-this-install",
+        summary: "The owner enrols this install's own Ed25519 owner signing key, made in its keystore on first use (FIX 4921): the same act as `/enroll`, and the server then holds the key as a checkpoint root signer. A key already enrolled and live answers its receipt; one the roster revoked is replaced by a fresh key, which is enrolled.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/owner-work/{request}",
         summary: "Where one owner work request stands, from this install's fold: the receipt (ids only), recorded and awaiting a holder until its executor's result arrives, then enacted or refused, with the engine's words.",

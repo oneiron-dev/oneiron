@@ -5,8 +5,9 @@
 //! Issue writes each stored piece's recovery code to an owner-only file, and
 //! nothing goes live until confirm reads two of them back, or one and the
 //! passphrase. A piece, a code or the passphrase never reaches the command
-//! line, a log or the JSON printed. The `this-machine` home waits for
-//! device-piece custody: no keystore slot holds a piece yet.
+//! line, a log or the JSON printed. A `this-machine` home's piece stays in
+//! this install's keystore, and a restore here counts it as one of the two
+//! (FIX 2063).
 
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -105,16 +106,18 @@ fn read_passphrase(secret_file: Option<&Path>) -> anyhow::Result<KitPassphrase> 
 }
 
 /// The pieces in `files`, and the passphrase: from `secret_file` when one is
-/// named, else from stdin when only one piece is given.
+/// named, else from stdin when only one piece is given, counting this
+/// machine's own when it keeps one (`kept`, FIX 2063).
 fn read_kit(
     files: &[PathBuf],
     secret_file: Option<&Path>,
+    kept: bool,
 ) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
     let pieces = files
         .iter()
         .map(|file| read_piece(file))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let passphrase = if secret_file.is_some() || pieces.len() == 1 {
+    let passphrase = if secret_file.is_some() || pieces.len() + usize::from(kept) == 1 {
         Some(read_passphrase(secret_file)?)
     } else {
         None
@@ -123,7 +126,7 @@ fn read_kit(
 }
 
 fn read_kit_args(args: &KitPieceArgs) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
-    read_kit(&args.pieces, args.secret_file.as_deref())
+    read_kit(&args.pieces, args.secret_file.as_deref(), false)
 }
 
 /// One piece from an owner-only file: a piece export, or a recovery code as
@@ -300,8 +303,9 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
     if args.sealed_bundle.is_some() || args.sealed_home.is_some() {
         return restore_from_bundle(&args, confirm);
     }
-    let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let vault = open(&args.serve)?;
+    let kept = vault.keeps_kit_piece(KitSecretKind::RecoveryRoot);
+    let (pieces, passphrase) = read_kit(&args.kit.pieces, args.kit.secret_file.as_deref(), kept)?;
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let restored = vault
@@ -605,7 +609,7 @@ pub(super) fn kit_unlock_with(
         !files.is_empty(),
         "--unlock kit reads the kit's pieces: --piece"
     );
-    let (pieces, passphrase) = read_kit(files, secret_file)?;
+    let (pieces, passphrase) = read_kit(files, secret_file, false)?;
     if pieces
         .first()
         .is_some_and(|piece| piece.kind() == KitSecretKind::VaultKey)

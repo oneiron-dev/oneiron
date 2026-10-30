@@ -76,6 +76,16 @@ pub enum SlotKind {
     /// is the vault's live root, and a filled slot is never replaced by it
     /// (FIX-LIST 10770). The slot itself stays this device's.
     HostIssuerSeed,
+    /// The seed of this install's own Ed25519 owner signing key for one vault
+    /// (FIX 4921): made on first use, put on the roster only by the owner's
+    /// enrollment act, and used only to sign checkpoint statements as that
+    /// owner root.
+    OwnerSigning,
+    /// One of the slots that keep this machine's own piece of a vault's
+    /// recovery kit (FIX 2063). A piece is longer than one slot, so it spans
+    /// a head and a tail slot, and each kit kind has its own pair: issuing
+    /// one kind of kit replaces only that kind's piece.
+    KitPiece(KitPieceSlot),
 }
 
 impl SlotKind {
@@ -89,6 +99,35 @@ impl SlotKind {
             Self::CheckpointSigning => "checkpoint-signing",
             Self::HostRoot => "host-root",
             Self::HostIssuerSeed => "host-issuer-seed",
+            Self::OwnerSigning => "owner-signing",
+            Self::KitPiece(slot) => slot.label(),
+        }
+    }
+}
+
+/// Which slot of this machine's kit pieces: the kit kind, then the piece's
+/// first 32 bytes (head) or the rest (tail).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum KitPieceSlot {
+    /// The data-key kit's piece, its first 32 bytes.
+    VaultKeyHead,
+    /// The data-key kit's piece, its remaining bytes.
+    VaultKeyTail,
+    /// The recovery-root kit's piece, its first 32 bytes.
+    RecoveryRootHead,
+    /// The recovery-root kit's piece, its remaining bytes.
+    RecoveryRootTail,
+}
+
+impl KitPieceSlot {
+    /// Stable name in the backend, as [`SlotKind::label`].
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::VaultKeyHead => "kit-piece-vault-key-head",
+            Self::VaultKeyTail => "kit-piece-vault-key-tail",
+            Self::RecoveryRootHead => "kit-piece-recovery-root-head",
+            Self::RecoveryRootTail => "kit-piece-recovery-root-tail",
         }
     }
 }

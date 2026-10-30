@@ -20,15 +20,21 @@
 //! a sealed vault's pages open on it with no wrap carried. The commitment is
 //! what authenticates a key one piece and the passphrase rebuilt. No
 //! inventory row is read for it: a fresh host lists nothing.
+//!
+//! A `ThisMachine` home's piece stays in this install's key slots, replacing
+//! the piece an earlier data-key kit kept there, and the unlock here reads it
+//! back as one of the pieces (FIX 2063).
 
 use super::{STATE, VaultDataKey};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::recovery::{
-    KitIssue, KitManifest, KitPassphrase, KitPiece, KitSecretKind, issue_vault_key_kit, restore_kit,
+    KitIssue, KitManifest, KitPassphrase, KitPiece, KitSecretKind, RestoredKitSecret,
+    issue_vault_key_kit, restore_kit,
 };
 use crate::world_keys::kit::{kit_refused, resolve_homes};
+use crate::world_keys::kit_piece::keep_this_machine_piece;
 use crate::world_keys::refused;
 
 /// A data-key kit just issued: its pieces for the owner to place, and its
@@ -39,7 +45,8 @@ pub struct IssuedVaultKeyKit {
     /// ([`Vault::vault_key_vault_id`]): a restore names it.
     pub vault_id: [u8; 32],
     pub manifest: KitManifest,
-    /// The stored pieces in x order. A passphrase home has none.
+    /// The pieces to hand out, in x order. A passphrase home has none, and a
+    /// `ThisMachine` home's piece is in this install's key slots (FIX 2063).
     pub pieces: Vec<KitPiece>,
     /// Whether the kit's public facts went into the kit inventory. The
     /// pieces open the key either way; a vault that took no write keeps no
@@ -64,6 +71,16 @@ pub(super) fn open_kit(
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let secret = restore_kit(*vault_id, KitSecretKind::VaultKey, &pieces, passphrase)
         .map_err(kit_refused)?;
+    committed_key(vault_id, commitment, secret)
+}
+
+/// The data key a kit rebuilt for the vault `vault_id`, held only when it is
+/// the key `commitment` names.
+fn committed_key(
+    vault_id: &[u8; 32],
+    commitment: &[u8; 32],
+    secret: RestoredKitSecret,
+) -> Result<VaultDataKey> {
     let key = VaultDataKey(secret.into_bytes());
     if key.commitment(vault_id) != *commitment {
         return Err(refused(
@@ -81,7 +98,9 @@ impl Vault {
     /// the one the key is bound to. `only_machine` comes from the roster,
     /// never the caller, and a home naming this machine's own id is read as
     /// this machine, as a world kit's homes are. The homes and the cost are
-    /// the owner's as `issue` names them. The kit's public facts are then
+    /// the owner's as `issue` names them. A `ThisMachine` home's piece goes
+    /// to this install's key slots before the listing, and the other homes'
+    /// pieces are returned (FIX 2063). The kit's public facts are then
     /// listed in the inventory, the owner rechecked in that write; a write
     /// that does not go through leaves the kit issued and unlisted.
     ///
@@ -100,6 +119,7 @@ impl Vault {
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
         let vault_id = self.vault_key_vault_id();
+        let store = self.this_machine_piece_store(&issue.homes)?;
         let (only_machine, me) = {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -136,6 +156,7 @@ impl Vault {
         )
         .map_err(kit_refused)?;
         let manifest = kit.manifest().clone();
+        let pieces = keep_this_machine_piece(store.as_ref(), kit.into_pieces())?;
         // The pieces never depend on the row: a write refused here (a vault
         // that takes none, a proof gone since the snapshot) is said, and the
         // kit is handed over all the same.
@@ -154,7 +175,7 @@ impl Vault {
         Ok(IssuedVaultKeyKit {
             vault_id,
             manifest,
-            pieces: kit.into_pieces(),
+            pieces,
             listed,
         })
     }
@@ -164,7 +185,8 @@ impl Vault {
     /// The key they rebuild is held only when `vault_id` is this vault's and
     /// the key is the one the vault's commitment names. No wrap opens and
     /// none is needed: a vault restored from an artifact opens on the kit as
-    /// on a wrap it carries.
+    /// on a wrap it carries. This machine's own piece of the kit, when it
+    /// keeps one, joins `pieces` (FIX 2063).
     ///
     /// # Errors
     ///
@@ -184,13 +206,15 @@ impl Vault {
                 .ok_or_else(|| refused("the vault has no data key"))?
                 .commitment
         };
-        let key = open_kit(
-            &self.vault_key_vault_id(),
-            &commitment,
-            vault_id,
-            pieces,
-            passphrase,
-        )?;
+        let own = self.vault_key_vault_id();
+        if *vault_id != own {
+            return Err(refused("the kit names another vault"));
+        }
+        let pieces: Vec<&KitPiece> = pieces.iter().collect();
+        let secret = self
+            .restore_kit_here(own, KitSecretKind::VaultKey, &pieces, passphrase)
+            .map_err(kit_refused)?;
+        let key = committed_key(&own, &commitment, secret)?;
         self.hold_vault_key(key);
         Ok(())
     }

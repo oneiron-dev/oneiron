@@ -24,7 +24,9 @@ mod content_landed;
 mod content_window;
 mod doors;
 mod kit;
+mod kit_piece;
 mod machine;
+mod owner_signing;
 mod owner_work;
 mod pad_custody;
 mod pad_erase;
@@ -68,6 +70,7 @@ pub use self::kit::{
 };
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
+pub use self::owner_signing::OwnerRootSigner;
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead,
     OwnerWorkCancelNote, OwnerWorkCancelState, OwnerWorkDiagnostics, OwnerWorkDrain,

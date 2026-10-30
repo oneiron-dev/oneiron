@@ -200,10 +200,10 @@ pub use self::types::{
 };
 pub use self::use_handle::{
     KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
-    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SecretBindRequest,
-    SecretBound, SecretClearValueSource, SecretReleasePolicy, SecretUseDecision,
-    SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
-    SentValue,
+    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SECRET_USE_SEAL_EFFECTOR,
+    SECRET_USE_SEAL_SIGN, SecretBindRequest, SecretBound, SecretClearValueSource,
+    SecretReleasePolicy, SecretUseDecision, SecretUseOperation, SecretUseOutcome, SecretUseReceipt,
+    SecretUseSend, SentPresentation, SentValue,
 };
 pub(crate) use self::use_handle::{
     SecretUseConsumed, SecretUseContext, SecretUser, handle_record_in_txn,
