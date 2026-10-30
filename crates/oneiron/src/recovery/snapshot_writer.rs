@@ -26,6 +26,9 @@ pub fn write_canonical_window_snapshot(
     doc: &LoroDoc,
     path: impl AsRef<Path>,
 ) -> Result<[u8; 32]> {
+    // Every pad a row holds goes into current custody first, and is read
+    // back, so the artifact names it by reference (KS-5, FIX 7313).
+    super::canonical::prepare_artifact_pads(vault);
     let snapshot = capture_canonical_window(vault, window, doc)?;
     publish(&snapshot, path.as_ref())
 }

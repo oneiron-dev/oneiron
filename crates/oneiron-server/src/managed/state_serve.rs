@@ -289,6 +289,21 @@ impl ManagedOwnerSession {
     }
 }
 
+/// The member a held MCP socket serves (FIX 1302 stage 2): the person his
+/// supervisor signed the socket's upgrade for (`ManagedPersonAction`). Not
+/// [`ManagedPersonHolder`], which signs one request and its exact body: this
+/// signs no later body. It names whose socket a call came on, and each call
+/// reaches the member doors alone, where the engine judges him again.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedPersonSession(pub(crate) oneiron::EntityId);
+
+impl ManagedPersonSession {
+    /// The member whose socket this is.
+    pub(crate) fn holder(&self) -> oneiron::EntityId {
+        self.0
+    }
+}
+
 /// The listener a request reached: the API's, or the artifact origin's,
 /// which serves artifact reads alone.
 #[derive(Clone, Copy)]

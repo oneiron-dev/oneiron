@@ -126,6 +126,7 @@ struct ForkAt {
     index: u64,
     len: u64,
     settled: bool,
+    opener_lineage: Vec<[u8; 32]>,
 }
 
 /// The causal rows of `entity`, by value; None when it has none, so that
@@ -225,6 +226,7 @@ fn history(
             len: u64::try_from(bundle.forks.len())
                 .map_err(|_| invalid("entity document proposal size"))?,
             settled: bundle.settled,
+            opener_lineage: super::proposal_lineage::frozen(&bundle)?,
         });
     }
     let mut purge_rows = Vec::with_capacity(purges.len());
@@ -330,6 +332,7 @@ fn history(
                 proposal_index: fork.index,
                 proposal_len: fork.len,
                 proposal_settled: fork.settled,
+                proposal_opener_lineage: fork.opener_lineage,
                 read_refs: fork
                     .record
                     .read_refs
@@ -729,7 +732,8 @@ pub(crate) fn restore_proposals(
     rows: &[CanonicalEntityDocument],
 ) -> Result<()> {
     let store = &vault.store;
-    let mut bundles: BTreeMap<[u8; 16], (bool, Vec<(u64, [u8; 16])>)> = BTreeMap::new();
+    let mut bundles: BTreeMap<[u8; 16], (&CanonicalDocumentFork, Vec<(u64, [u8; 16])>)> =
+        BTreeMap::new();
     for fork in rows
         .iter()
         .filter_map(|row| row.history.as_ref())
@@ -737,11 +741,11 @@ pub(crate) fn restore_proposals(
     {
         bundles
             .entry(fork.proposal)
-            .or_insert((fork.proposal_settled, Vec::new()))
+            .or_insert((fork, Vec::new()))
             .1
             .push((fork.proposal_index, fork.fork));
     }
-    for (proposal, (settled, mut members)) in bundles {
+    for (proposal, (first, mut members)) in bundles {
         members.sort_unstable();
         let mut forks = Vec::with_capacity(members.len());
         for (_, fork) in members {
@@ -764,7 +768,12 @@ pub(crate) fn restore_proposals(
                 proposal: proposal.clone(),
                 author,
                 forks,
-                settled,
+                settled: first.proposal_settled,
+                opener_lineage: first
+                    .proposal_opener_lineage
+                    .iter()
+                    .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
+                    .collect(),
             },
         )?;
     }

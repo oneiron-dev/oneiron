@@ -142,7 +142,7 @@ impl Vault {
     /// evidence comes back unstored once it passed every check a stored
     /// batch passes (FIX 2989, [`super::history_admission`]): the owner rolls
     /// the act back and keeps the evidence.
-    fn put_authority_log_rows_in_txn(
+    pub(super) fn put_authority_log_rows_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         entries: &[(AuthorityLogEntry, TimeRange, u64)],

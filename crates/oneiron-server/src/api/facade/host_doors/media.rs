@@ -253,6 +253,25 @@ fn step_replay(attempt: Option<&str>, request: &MediaRequest) -> Option<MediaRep
     attempt.and_then(|a| MediaReplayKey::step(a.to_owned(), request).ok())
 }
 
+/// The spend scope a pumped entry's metered attempt spends under, which its
+/// entry's meter is opened from (FIX 11496, L06-A 07:17): `attempt` is the
+/// value the pump bound to the entry's door, decoded to its id, and the
+/// scope is the attempt's own (`spend_scope_for_attempt`; a retry's is the
+/// try it retries), never one built again from its hex. `None` for no
+/// attempt or an unmetered one, whose entry spends on the provider's meter,
+/// or a scope that cannot be read: its job runs on its line, as before.
+fn attempt_scope(
+    server: &SyncServer,
+    attempt: Option<&str>,
+) -> Option<oneiron::agent_dispatch::SpendScopeId> {
+    let id = EntityId::from_hex(attempt?).ok()?;
+    let attempt = oneiron::attempt_queue::AttemptId::from_bytes(id.as_bytes()).ok()?;
+    oneiron::agent_dispatch::AgentDispatcher::new(server.vault())
+        .spend_scope_for_attempt(attempt)
+        .ok()
+        .flatten()
+}
+
 /// One media call of a program's run (FIX 3194, FIX 780, FIX 6083):
 /// prepared as the owner's call is, and spent on `run`, the run's own line,
 /// as its other model calls are. The run's door admitted it; no owner
@@ -376,7 +395,9 @@ pub(super) async fn ai_video_answer(
 /// [`ai_video`] for a program's run (FIX 780, FIX 6083): its job is
 /// submitted on `run`, the run's own line, which holds it until it ends and
 /// settles its end, its cancel and its take-up after a restart. Its row is
-/// stamped with `actor`, who asked, when the caller names one (KS-2B2).
+/// stamped with `actor`, who asked, when the caller names one (KS-2B2). A
+/// code-mode run and an owner's own program spend on code mode's meter: no
+/// spend scope funds their jobs, and they are booked as before.
 pub(crate) async fn ai_video_for_run(
     server: &SyncServer,
     run: &RunAdmission,
@@ -384,21 +405,57 @@ pub(crate) async fn ai_video_for_run(
     input: AiCallRequest,
     actor: Option<EntityId>,
 ) -> MemoryResult<AiVideoTicket> {
+    submit_run_video(server, run, attempt, None, input, actor).await
+}
+
+/// [`ai_video_for_run`] for an agent's run the owner's `ai.video` Grant
+/// admits (FIX 3208). When its pumped entry's attempt is metered, `run` is
+/// that attempt's spend scope's meter, so its job is submitted on a guard
+/// of the scope's own instead and booked on the scope (FIX 11496, L06-A
+/// 07:17).
+pub(crate) async fn ai_video_for_agent_run(
+    server: &SyncServer,
+    run: &RunAdmission,
+    attempt: Option<&str>,
+    input: AiCallRequest,
+    actor: Option<EntityId>,
+) -> MemoryResult<AiVideoTicket> {
+    let scope = attempt_scope(server, attempt);
+    submit_run_video(server, run, attempt, scope, input, actor).await
+}
+
+/// A run's video job on `run`, or on a guard of `scope`'s own when a spend
+/// scope funds it (FIX 11496); its step key comes from `attempt` alone.
+async fn submit_run_video(
+    server: &SyncServer,
+    run: &RunAdmission,
+    attempt: Option<&str>,
+    scope: Option<oneiron::agent_dispatch::SpendScopeId>,
+    input: AiCallRequest,
+    actor: Option<EntityId>,
+) -> MemoryResult<AiVideoTicket> {
     let (request, _) = prepare(server, AiOperation::Video, input)?;
     let replay = step_replay(attempt, &request);
-    let ticket = server
-        .ai
-        .model_runtime()
-        .media()
-        .submit_run_admitted(run, request, actor, replay)
-        .await
-        .map_err(|error| {
-            let mut refusal = failure(AiOperation::Video, &error);
-            if matches!(error, oneiron::LlmError::BudgetDenied(_)) {
-                refusal.suggestions = vec![RUN_LINE_SPENT.to_owned()];
-            }
-            refusal
-        })?;
+    let media = server.ai.model_runtime().media();
+    let submitted = match scope {
+        Some(scope) => {
+            media
+                .submit_scoped(run, scope, request, actor, replay)
+                .await
+        }
+        None => {
+            media
+                .submit_run_admitted(run, None, request, actor, replay)
+                .await
+        }
+    };
+    let ticket = submitted.map_err(|error| {
+        let mut refusal = failure(AiOperation::Video, &error);
+        if matches!(error, oneiron::LlmError::BudgetDenied(_)) {
+            refusal.suggestions = vec![RUN_LINE_SPENT.to_owned()];
+        }
+        refusal
+    })?;
     Ok(AiVideoTicket {
         job: ticket.job,
         model: ticket.model,

@@ -7,8 +7,10 @@
 //! against each parent, so a file added and later deleted or reverted is
 //! still named. The remote tip is subtracted only when this store holds it;
 //! otherwise, and when the branch is absent, the review covers the commit's
-//! whole history. Nothing is skipped for its size, and Git-LFS bytes are
-//! stated as not sent. This module is the one place a later history policy
+//! whole history. Nothing is skipped for its size, and no read bound ends
+//! the walk (Rule 5): a commit page or tree level too large for one captured
+//! read is read whole through a retained spool. Git-LFS bytes are stated as
+//! not sent. This module is the one place a later history policy
 //! (the pending secrets-in-history rule) plugs into:
 //! [`admit_review_policy`] sees every review before a request records it.
 
@@ -74,7 +76,9 @@ impl Vault {
         let mut paths = BTreeSet::new();
         let (mut commits, mut entries) = (0_u64, 0_u64);
         let exclude: Vec<GitOid> = base.into_iter().chain(reviewed).cloned().collect();
-        wire.for_each_review_item(handle, commit, &exclude, &mut |item| {
+        // Retained reads: a page or one tree level past the wire's output
+        // bound is read whole, so no review fails for a level's width.
+        wire.for_each_review_item_retained(handle, commit, &exclude, &mut |item| {
             hash_item(&mut hasher, &item);
             page.push(match item {
                 GitReviewItem::Commit { commit, parents } => {

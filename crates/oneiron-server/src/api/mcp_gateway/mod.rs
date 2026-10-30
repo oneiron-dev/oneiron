@@ -18,6 +18,8 @@ mod exec_board_verbs;
 mod facade_refusals;
 mod memory_response;
 mod owner_call;
+mod person_call;
+pub(crate) use self::person_call::person_socket_admits;
 mod question_answers_result;
 mod served_rows;
 pub(crate) mod skill_execution;
