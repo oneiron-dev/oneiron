@@ -1,6 +1,7 @@
-//! The registry's stored rows. Each is written as itself; a row that does not
-//! decode as stored is read once more under the installed model pack's
-//! currency contract, when it is a copy of that pack's row (FIX 9534).
+//! The registry's stored rows. Each is written as itself; a legacy pre-9534
+//! stored copy of the installed model pack's row whose catalog cost names
+//! no `currency` key is read under that pack's currency contract (FIX 9534,
+//! narrowed by FIX 11778). Any other row reads as it is stored.
 
 use std::collections::BTreeSet;
 
@@ -88,11 +89,13 @@ impl StoredRows {
         ROWS.delete(dbs, txn, &key.to_owned())
     }
 
-    /// Stores again, as it reads, each row that decodes only under the
-    /// currency contract of the pack installed from one of `packs`
+    /// Stores again, as it reads, each row that reads under the currency
+    /// contract of the pack installed from one of `packs`
     /// ([`stored_pack_row`]): an install that replaces that pack's receipt
-    /// first writes the pack's currency into its rows, so they still read as
-    /// stored (FIX 9534). Every other row stays as it is.
+    /// first writes the pack's currency into a stored pack-copy whose cost
+    /// names no `currency` key, so it still reads as stored (FIX 9534,
+    /// narrowed by FIX 11778 to legacy pre-9534 copies). Every other row
+    /// stays as it is.
     pub(super) fn keep_pack_rows(
         &self,
         dbs: &impl SideTableDbs,
@@ -103,9 +106,6 @@ impl StoredRows {
             let Some(bytes) = ROWS.get_bytes(dbs, txn, &key)? else {
                 continue;
             };
-            if ROWS.decode_value(&bytes).is_ok() {
-                continue;
-            }
             let copied = packs.iter().find_map(|pack| stored_pack_row(&bytes, *pack));
             if let Some(row) = copied.and_then(|copied| ROWS.decode_value(&copied).ok()) {
                 ROWS.put(dbs, txn, &key, &row)?;
@@ -115,14 +115,13 @@ impl StoredRows {
     }
 }
 
-/// `bytes`, one stored row, decoded. A row that does not decode as stored
-/// and copies a row of the installed pack is read with that pack's currency
-/// contract ([`stored_pack_row`]); any other keeps its decode error.
+/// `bytes`, one stored row, decoded. A stored copy of the installed
+/// pack's row whose catalog cost names no `currency` key is read with that
+/// pack's currency contract ([`stored_pack_row`]); any other row, explicit
+/// `null` or any code included, reads as it is stored.
 fn decoded(dbs: &impl SideTableDbs, txn: &RoTxn<'_>, bytes: &[u8]) -> Result<ModelRegistryRow> {
-    ROWS.decode_value(bytes).or_else(|error| {
-        match installed_pack_source(dbs, txn)?.and_then(|pack| stored_pack_row(bytes, pack)) {
-            Some(copied) => ROWS.decode_value(&copied),
-            None => Err(error),
-        }
-    })
+    match installed_pack_source(dbs, txn)?.and_then(|pack| stored_pack_row(bytes, pack)) {
+        Some(copied) => ROWS.decode_value(&copied),
+        None => ROWS.decode_value(bytes),
+    }
 }
