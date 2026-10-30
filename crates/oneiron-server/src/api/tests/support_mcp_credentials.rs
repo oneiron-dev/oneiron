@@ -167,7 +167,7 @@ pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, cla
     let Some(op) = crate::test_credentials::binding_op(&fold, &host_key, actor, class) else {
         return;
     };
-    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<_> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0;
     for row in server
         .vault

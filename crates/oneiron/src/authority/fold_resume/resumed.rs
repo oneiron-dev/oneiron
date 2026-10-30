@@ -35,7 +35,7 @@ impl RowStates for Resumed<'_> {
     fn accepted_roster_marks(
         &self,
         merged: &FoldState,
-        _valid: &BTreeSet<AuthorityEntryHash>,
+        _valid: &ValidEntries,
     ) -> BTreeSet<AuthorityEntryHash> {
         // No chain row is a machine profile.
         self.marks

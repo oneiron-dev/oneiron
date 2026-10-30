@@ -559,7 +559,7 @@ pub(super) fn side_branch_violations(
 /// takes an anchor's door off its own rows.
 pub(super) fn main_log_heads(
     rows: &[super::fold_resume::RowMeta<'_>],
-    valid: &BTreeSet<AuthorityEntryHash>,
+    valid: &ValidEntries,
     anchored: &BTreeSet<AuthorityEntryHash>,
     pinned_anchor: Option<[u8; 32]>,
 ) -> (

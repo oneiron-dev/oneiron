@@ -1252,7 +1252,7 @@ fn bind_owner(vault: &oneiron::Vault, host: &SigningKey, owner: oneiron::EntityI
     assert_eq!(host.verifying_key().to_bytes(), issuer.binding_key());
     let host_key = issuer.public_key();
     let fold = vault.authority_fold().unwrap();
-    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<_> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0;
     for row in vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)

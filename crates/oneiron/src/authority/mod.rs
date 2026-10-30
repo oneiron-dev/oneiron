@@ -144,6 +144,7 @@ mod support_grant;
 mod support_receipt;
 mod support_repair;
 mod task_actor;
+mod valid_entries;
 mod vault_api;
 mod weave_admin;
 mod withdrawn_grant;
@@ -358,6 +359,7 @@ pub use support_grant::{
 };
 pub use task_actor::AdmittedTaskGrant;
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
     AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
