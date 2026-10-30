@@ -125,7 +125,11 @@ impl Vault {
     /// the `local` pack, as a live writer, and its claims name the vault
     /// owner whose ask it carries; it stops only bindings of its own. Only
     /// the owner marks a hook blocking (ARCH-0080 §10), so an agent's own
-    /// binding is not blocking.
+    /// binding is not blocking; a hook that asks wider than the agent's
+    /// ceiling also records the owner's proposal
+    /// ([`Self::approve_pack_hook_proposal`]), and a binding the owner
+    /// approved as asked stays standing. The owner's bind of a hook approves
+    /// an open proposal that asked exactly that.
     pub(in crate::skill_hub::pack_catalog) fn bind_hooks_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -197,11 +201,22 @@ impl Vault {
             // binding an agent stamped stays the agent's on the owner's put.
             match (binder, standing) {
                 (HookBinder::Agent(_), Some(kept)) if !binder.writes(kept) => continue,
+                // The owner bound this hook as the agent asked: the agent's
+                // put leaves the owner's binding standing.
+                (HookBinder::Agent(_), Some(_))
+                    if self.hook_proposal_approved_in_txn(txn, &id, &hook.selector)? =>
+                {
+                    bound.push(id);
+                    continue;
+                }
                 (HookBinder::Agent(agent), _) => {
                     row.author = HookAuthor::Agent {
                         agent: agent.entity_ref(),
                     };
                     row.selector.blocking = false;
+                    // A wider ask goes to the owner as a proposal (ARCH-0080
+                    // §10); the binding runs at the agent's ceiling meanwhile.
+                    self.propose_wider_hook_in_txn(txn, id, &row, &hook.selector, at)?;
                 }
                 (HookBinder::Owner(_), Some(kept))
                     if matches!(kept.author, HookAuthor::Agent { .. }) =>
@@ -209,6 +224,9 @@ impl Vault {
                     row.author = kept.author.clone();
                 }
                 (HookBinder::Owner(_), _) => {}
+            }
+            if let HookBinder::Owner(_) = binder {
+                self.settle_hook_proposal_in_txn(txn, id, &row.selector, owner_id, at)?;
             }
             // A moved body keeps its hook's dial: on while any of its
             // bindings runs, off once the owner stopped every one.
@@ -287,6 +305,9 @@ impl Vault {
                 transitions.push((id, Some(previous), row.clone()));
                 batch =
                     batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
+                if let HookBinder::Agent(_) = binder {
+                    self.withdraw_hook_proposal_in_txn(txn, id, at)?;
+                }
             }
         }
         batch.apply(txn)?;

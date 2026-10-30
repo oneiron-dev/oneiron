@@ -1,5 +1,6 @@
 //! Connector packs use the engine's real wire probes, never a publisher's grade.
-//! A built-in rides its checked setup connection instead.
+//! A built-in rides the host's isolated probes of its checked setup
+//! connection, or that checked connection alone.
 use super::{
     PackAdapter, PackFitPolicy, PackFitVerdict, PackInstallReceipt, PackInstallStatus, PackKind,
     PackObservedTool, PackPermissions, PackQualification, PackQualifier, PackRuntimeRecipe,
@@ -7,7 +8,8 @@ use super::{
 };
 use crate::Vault;
 use crate::connector_key::qualification::{
-    CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt, SETUP_CHECK_QUALIFICATION_SUITE,
+    BUILTIN_PROBE_QUALIFICATION_SUITE, CONNECTOR_QUALIFICATION_SUITE,
+    ConnectorQualificationReceipt, SETUP_CHECK_QUALIFICATION_SUITE,
 };
 use crate::connector_key::{
     ConnectorManifestQualifier, ProbeManifestQualifier, ResolvedConnectorManifest,
@@ -15,6 +17,9 @@ use crate::connector_key::{
 use crate::error::Result;
 use crate::skill::SkillContentHash;
 use serde::{Deserialize, Serialize};
+
+mod builtin_probe;
+pub use builtin_probe::BuiltinProbeQualifier;
 
 /// Source identity and the contract evidence retained in the installed receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -598,6 +603,13 @@ fn validate_connector_evidence(
             ));
         }
         receipt.qualification.validate_setup_check()?;
+    } else if receipt.qualification.suite == BUILTIN_PROBE_QUALIFICATION_SUITE {
+        if !matches!(source.manifest().adapter, Some(PackAdapter::Builtin(_))) {
+            return Err(invalid(
+                "only a built-in connector qualifies on its isolated probe",
+            ));
+        }
+        receipt.qualification.validate_builtin_probe()?;
     } else {
         receipt.qualification.validate()?;
     }

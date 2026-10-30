@@ -208,7 +208,7 @@ impl Vault {
         };
         let view =
             self.record_pack_connection_check(actor, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(actor, pack, view)
+        self.qualify_checked_builtin(actor, pack, view, Some(verifier))
     }
 
     /// Checks a connection whose bound connector key is Pending through the
@@ -277,19 +277,24 @@ impl Vault {
         };
         let view =
             self.record_pack_connection_check(actor, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(actor, pack, view)
+        self.qualify_checked_builtin(actor, pack, view, None)
     }
 
     /// A built-in pack qualifies on its checked setup (Engine ruling 10-17):
     /// once every connection is ready, its Candidate turns Active in the same
-    /// flow and the view shows it. Any other pack's view returns unchanged.
+    /// flow and the view shows it, on the host's isolated probes when
+    /// `verifier` runs them (FIX 710). Any other pack's view returns
+    /// unchanged.
     fn qualify_checked_builtin(
         &self,
         actor: PackSetupActor<'_>,
         pack: &str,
         view: PackSetupView,
+        verifier: Option<&dyn PackConnectionVerifier>,
     ) -> Result<PackSetupView> {
-        if !view.ready || !self.qualify_builtin_on_checked_setup(pack, &view.content_hash)? {
+        if !view.ready
+            || !self.qualify_builtin_on_checked_setup(pack, &view.content_hash, verifier)?
+        {
             return Ok(view);
         }
         self.pack_setup_as(actor, pack, Some(&view.content_hash))

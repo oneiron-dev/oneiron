@@ -37,6 +37,8 @@ use crate::{EntityId, Vault};
 // An agent's `allow`, put to the owner as a decision ask.
 mod allow_ask;
 mod grants;
+// A built-in channel's isolated probe replies (FIX 710).
+mod probe;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
 mod sent_check;
 
@@ -103,6 +105,20 @@ pub trait PackConnectionVerifier {
         vault: &Vault,
         check: &PackConnectionCheck<'_>,
     ) -> std::result::Result<PackConnectionEvidence, String>;
+
+    /// The host's isolated probe of `check`, a built-in channel's connection
+    /// (FIX 710): the channel's own read-only identity call, each read on a
+    /// transport of its own, never a send and never a vault write. `None`
+    /// when this host has no client for the channel; the built-in then
+    /// qualifies on its checked setup.
+    fn builtin_probe<'a>(
+        &'a self,
+        vault: &'a Vault,
+        check: PackConnectionCheck<'a>,
+    ) -> Option<Box<dyn QualificationConnector + 'a>> {
+        let _ = (vault, check);
+        None
+    }
 }
 
 /// The read-only provider checks the engine ships for its built-in packs.
