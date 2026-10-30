@@ -183,8 +183,6 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
         Ok(entries)
     }
 }
-/// The most skill folders one discovery reads.
-const MAX_DISCOVERED_SKILLS: usize = 256;
 /// Folders holding a `SKILL.md`, in path order; a folder inside another skill's
 /// folder is part of that skill. Repository metadata folders are skipped.
 fn skill_folders(listing: &[u8]) -> Result<Vec<String>> {
@@ -218,11 +216,6 @@ fn skill_folders(listing: &[u8]) -> Result<Vec<String>> {
             .any(|outer| outer == "." || folder.starts_with(&format!("{outer}/")))
         {
             continue;
-        }
-        if kept.len() == MAX_DISCOVERED_SKILLS {
-            return Err(invalid(
-                "the repository holds more skill folders than one discovery reads; name a subtree",
-            ));
         }
         kept.push(folder);
     }
