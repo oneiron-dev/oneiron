@@ -168,7 +168,15 @@ impl Vault {
             connection,
             permissions,
         } = frozen;
-        self.prepare_pack_setup(owner, &pack, Some(&content_hash))?;
+        let view = self.prepare_pack_setup(owner, &pack, Some(&content_hash))?;
+        // A press retried after the allow landed but its answer was not
+        // recorded lands nothing twice.
+        let mut held = permissions.clone();
+        held.sort();
+        held.dedup();
+        if holds_exactly(&view, &connection, &held) {
+            return Ok(());
+        }
         self.answer_pack_setup(
             owner,
             &pack,
