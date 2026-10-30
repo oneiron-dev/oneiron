@@ -31,6 +31,10 @@ use crate::office_body::OfficeBodyUnits;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
+/// Live bodies one sweep run settles at most; a run that reaches the cap
+/// leaves a cursor, and the next pass goes on from it.
+const BODY_ANCHOR_ARTIFACTS_PER_RUN: usize = 64;
+
 /// Units by id and text: Word blocks, or worksheets by key and name.
 type Units = [(String, String)];
 
@@ -58,10 +62,12 @@ enum Effect {
 }
 
 impl Vault {
-    /// The housekeeping pass's body-anchor sweep: every DOCX or XLSX body's
-    /// comments, from the artifact `after` an unfinished run stopped at, until
-    /// `stop`. Returns the heads written, the artifacts that failed (each is
-    /// tried again on the next pass) and where an unfinished run goes on.
+    /// The housekeeping pass's body-anchor sweep: the DOCX and XLSX bodies'
+    /// comments, from the artifact `after` an unfinished run stopped at, for
+    /// at most [`BODY_ANCHOR_ARTIFACTS_PER_RUN`] bodies or until `stop`.
+    /// Returns the heads written, the artifacts that failed (each keeps its
+    /// heads and is tried again on the next pass) and where an unfinished run
+    /// goes on.
     pub(crate) fn sweep_annotation_body_anchors(
         &self,
         after: Option<&[u8]>,
@@ -78,11 +84,12 @@ impl Vault {
             EdgeActorClass::Human,
         );
         let (mut moved, mut failed) = (0_u64, 0_u64);
-        for artifact in artifacts
+        for (settled, artifact) in artifacts
             .iter()
             .filter(|artifact| after.is_none_or(|after| artifact.as_bytes().as_slice() >= after))
+            .enumerate()
         {
-            if stop() {
+            if settled == BODY_ANCHOR_ARTIFACTS_PER_RUN || stop() {
                 return Ok((moved, failed, Some(artifact.as_bytes().to_vec())));
             }
             match self.settle_body_anchors(artifact, actor) {
