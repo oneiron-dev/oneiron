@@ -54,7 +54,15 @@ impl AttemptQueue<'_> {
             }
             parent = crate::run_tree::effective_parent(&ancestor);
         }
+        let from = crate::run_tree::effective_parent(&record);
         record.placement = Some(placement);
+        crate::attempt_queue::index::move_parent_child_in_txn(
+            self.store,
+            txn,
+            record.id,
+            from,
+            crate::run_tree::effective_parent(&record),
+        )?;
         let encoded = self.encode_in_txn(txn, &mut record)?;
         self.store
             .attempt_records

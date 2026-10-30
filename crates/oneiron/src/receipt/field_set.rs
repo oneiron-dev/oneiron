@@ -416,15 +416,40 @@ impl ReceiptRecord {
 
     /// Re-keys a frozen project stamp naming erased `project` to the opaque
     /// `erased` scope (FIX 6038): the run stays apart from the vault's and no
-    /// longer names the project. `true` when the stamp named it.
+    /// longer names the project. The frozen attribution's project is
+    /// re-keyed the same way (FIX 11364), so neither copy names it. `true`
+    /// when either named it.
     pub(crate) fn rescope_task_project(&mut self, project: EntityId, erased: EntityId) -> bool {
-        match self.fields.get_mut(FIELD_TYPE_REF_PROJECT) {
+        let stamped = match self.fields.get_mut(FIELD_TYPE_REF_PROJECT) {
             Some(stamp) if *stamp == project.to_hex() => {
                 *stamp = erased.to_hex();
                 true
             }
             _ => false,
+        };
+        self.rescope_attribution_project(project, erased) || stamped
+    }
+
+    /// Re-keys the frozen `manifest.attribution`'s project naming `project`
+    /// to `erased`; `true` when it named it. An attribution that does not
+    /// decode is left as it is: its reader refuses it as before.
+    fn rescope_attribution_project(&mut self, project: EntityId, erased: EntityId) -> bool {
+        let Some(encoded) = self.fields.get_mut(FIELD_MANIFEST_ATTRIBUTION) else {
+            return false;
+        };
+        let decoded = serde_json::from_str::<super::PackAttributionFields>(encoded.as_str());
+        let Ok(mut attribution) = decoded else {
+            return false;
+        };
+        if attribution.project != Some(project) {
+            return false;
         }
+        attribution.project = Some(erased);
+        let Ok(rekeyed) = serde_json::to_string(&attribution) else {
+            return false;
+        };
+        *encoded = rekeyed;
+        true
     }
 
     /// The executor model the attempt behind this receipt was stamped with,
