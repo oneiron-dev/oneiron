@@ -1482,7 +1482,7 @@ export type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] | n
 /** `oneiron::memory::claims::MemoryReceipt` */
 export type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; claim?: RecordRef | null; fields?: Record<string, string> }
 /** `oneiron::verbs::receipts_page::VaultReceiptsPage` */
-export type VaultReceiptsPage = { receipts: MemoryReceipt[]; next_after?: string | null; effective_limit: number; limit_clamped?: boolean }
+export type VaultReceiptsPage = { receipts: MemoryReceipt[]; next_after?: string | null; effective_limit: number; limit_clamped?: boolean; undecodable: number }
 /** `oneiron::memory::asset_doors::AssetIngestRequest` */
 export type AssetIngestRequest = { asset_ref?: string | null; embedding_kind: InputKind; mime_type: string; bytes_b64: string; text?: string | null; occurred_at: number }
 /** `oneiron::memory::asset_doors::AssetIngestReceipt` */
