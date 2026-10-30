@@ -192,6 +192,9 @@ pub enum RebuildReason {
     ReadBack,
     /// A series' categories changed how many levels they hold.
     LevelsChanged,
+    /// The host's memory or deadline refused the workbook the edit reads
+    /// or writes (FIX 10587): never the editor's refusal.
+    Resource(crate::resource::ResourceRefusal),
 }
 
 impl RebuildReason {
@@ -207,6 +210,7 @@ impl RebuildReason {
             Self::Projection => "the workbook editor refused the edit",
             Self::ReadBack => "the edited workbook did not read back as the live data",
             Self::LevelsChanged => "a series' categories changed how many levels they hold",
+            Self::Resource(_) => "the host's memory or deadline refused the edit",
         }
     }
 }

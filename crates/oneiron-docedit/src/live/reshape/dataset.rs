@@ -156,17 +156,33 @@ pub(super) fn workbook_dataset(wanted: &Wanted) -> Dataset {
 
 /// An embedded workbook's main part and its sheets, in workbook order:
 /// each one's name and part (`None` for one its relationships do not
-/// reach).
-fn sheets(package: &Package) -> Option<(String, Vec<(String, Option<String>)>)> {
-    let book = package
-        .relationships("")
-        .ok()?
+/// reach). A resource refusal is `Err` (FIX 10587); any other failure is
+/// `Ok(None)`, as before.
+fn sheets(
+    package: &Package,
+) -> Result<Option<(String, Vec<(String, Option<String>)>)>, crate::resource::ResourceRefusal> {
+    let relations = match package.relationships("") {
+        Ok(relations) => relations,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
+    let Some(book) = relations
         .into_iter()
-        .find(|rel| !rel.external && rel.kind.ends_with("/officeDocument"))?
-        .target;
-    let links = package.relationships(&book).ok()?;
-    let (_, tree) = xml::read(package, &book).ok()?;
-    let list = xml::child(&tree, 0, SML, "sheets")?;
+        .find(|rel| !rel.external && rel.kind.ends_with("/officeDocument"))
+        .map(|rel| rel.target)
+    else {
+        return Ok(None);
+    };
+    let links = match package.relationships(&book) {
+        Ok(links) => links,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
+    let (_, tree) = match xml::read(package, &book) {
+        Ok(read) => read,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
+    let Some(list) = xml::child(&tree, 0, SML, "sheets") else {
+        return Ok(None);
+    };
     let sheets = tree.nodes[list]
         .children
         .iter()
@@ -182,7 +198,7 @@ fn sheets(package: &Package) -> Option<(String, Vec<(String, Option<String>)>)> 
             Some((name, part))
         })
         .collect();
-    Some((book, sheets))
+    Ok(Some((book, sheets)))
 }
 
 /// The sheet and the far corner of the cells every reference of the chart
@@ -219,35 +235,50 @@ fn referenced(chart: &XmlTree) -> Option<(String, (u32, u32))> {
 /// where it holds nothing but the chart's data (no formula, table or locked
 /// range, and no cell past the cells those references reach), rewritten in
 /// place (FIX 9169); else a new one, the first of `Sheet1`, `Sheet2`, … no
-/// sheet of it holds, in any case. `None` when the workbook does not read:
-/// the rebuild starts afresh.
+/// sheet of it holds, in any case. `Ok(None)` when the workbook does not
+/// read: the rebuild starts afresh. A resource refusal is `Err` (FIX 10587).
 pub(super) fn data_sheet(
     bytes: &[u8],
     chart: &XmlTree,
     limits: Limits,
     resources: &crate::resource::Resources,
-) -> Option<String> {
-    let package = Package::open(bytes, limits, resources).ok()?;
-    let (_, sheets) = sheets(&package)?;
-    if let Some((name, (cols, rows))) = referenced(chart)
-        && let Ok(book) = read_xlsx_cells(bytes, limits, resources)
-        && let Some(held) = book
-            .sheets
-            .iter()
-            .find(|held| held.name.eq_ignore_ascii_case(&name))
-        && held.visibility == XlsxSheetVisibility::Visible
-        && held.tables.is_empty()
-        && held.locked.is_empty()
-        && held.cells.iter().all(|cell| {
-            cell.formula.is_none() && cell.locked.is_none() && cell.col <= cols && cell.row <= rows
-        })
-    {
-        return Some(held.name.clone());
+) -> Result<Option<String>, crate::resource::ResourceRefusal> {
+    let package = match Package::open(bytes, limits, resources) {
+        Ok(package) => package,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
+    let Some((_, sheets)) = sheets(&package)? else {
+        return Ok(None);
+    };
+    if let Some((name, (cols, rows))) = referenced(chart) {
+        let book = match read_xlsx_cells(bytes, limits, resources) {
+            Ok(book) => Some(book),
+            Err(error) => match error.resource() {
+                Some(refusal) => return Err(refusal),
+                None => None,
+            },
+        };
+        if let Some(held) = book.as_ref().and_then(|book| {
+            book.sheets
+                .iter()
+                .find(|held| held.name.eq_ignore_ascii_case(&name))
+        }) && held.visibility == XlsxSheetVisibility::Visible
+            && held.tables.is_empty()
+            && held.locked.is_empty()
+            && held.cells.iter().all(|cell| {
+                cell.formula.is_none()
+                    && cell.locked.is_none()
+                    && cell.col <= cols
+                    && cell.row <= rows
+            })
+        {
+            return Ok(Some(held.name.clone()));
+        }
     }
     let taken: BTreeSet<String> = sheets.iter().map(|(name, _)| name.to_lowercase()).collect();
-    (1_u64..)
+    Ok((1_u64..)
         .map(|n| format!("Sheet{n}"))
-        .find(|name| !taken.contains(&name.to_lowercase()))
+        .find(|name| !taken.contains(&name.to_lowercase())))
 }
 
 /// The chart's own workbook `source` with the rebuilt `dataset` on sheet
@@ -256,15 +287,19 @@ pub(super) fn data_sheet(
 /// cleared (FIX 9169), which it shows first (the workbook's active tab, the
 /// one selected tab): every other sheet, name, table, style and formula
 /// keeps its bytes, but for the selection moved off the sheet that held
-/// it. `None` when the workbook editor refuses it.
+/// it. `Ok(None)` when the workbook editor refuses it; a resource refusal
+/// is `Err` (FIX 10587).
 pub(super) fn beside(
     source: &[u8],
     dataset: &Dataset,
     sheet: &str,
     limits: Limits,
     resources: &crate::resource::Resources,
-) -> Option<Vec<u8>> {
-    let book = read_xlsx_cells(source, limits, resources).ok()?;
+) -> Result<Option<Vec<u8>>, crate::resource::ResourceRefusal> {
+    let book = match read_xlsx_cells(source, limits, resources) {
+        Ok(book) => book,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
     let own = book.sheets.iter().find(|held| held.name == sheet);
     let mut changes = Vec::new();
     if own.is_none() {
@@ -297,7 +332,12 @@ pub(super) fn beside(
                 Cell::Number(value) => XlsxValue::Number(value),
                 Cell::Text(text) | Cell::Date(text) => XlsxValue::Text(text),
             };
-            let (col, row) = (u32::try_from(col + 1).ok()?, u32::try_from(row + 1).ok()?);
+            let Ok(col) = u32::try_from(col + 1) else {
+                return Ok(None);
+            };
+            let Ok(row) = u32::try_from(row + 1) else {
+                return Ok(None);
+            };
             filled.insert((col, row));
             changes.push(XlsxChange::Cell {
                 sheet: sheet.to_owned(),
@@ -321,24 +361,36 @@ pub(super) fn beside(
             });
         }
     }
-    let projected = project_xlsx(source, &changes, limits, resources, None)
-        .ok()?
-        .bytes;
+    let projected = match project_xlsx(source, &changes, limits, resources, None) {
+        Ok(projected) => projected.bytes,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
     shown_first(&projected, sheet, limits, resources)
 }
 
 /// `bytes` with `sheet` the workbook's active tab and its only selected
-/// one, as Edit Data then opens it.
+/// one, as Edit Data then opens it. A resource refusal is `Err`
+/// (FIX 10587); any other failure is `Ok(None)`, as before.
 fn shown_first(
     bytes: &[u8],
     sheet: &str,
     limits: Limits,
     resources: &crate::resource::Resources,
-) -> Option<Vec<u8>> {
-    let mut package = Package::open(bytes, limits, resources).ok()?;
-    let (book, sheets) = sheets(&package)?;
-    let tab = sheets.iter().position(|(name, _)| name == sheet)?;
-    let (book_bytes, tree) = xml::read(&package, &book).ok()?;
+) -> Result<Option<Vec<u8>>, crate::resource::ResourceRefusal> {
+    let mut package = match Package::open(bytes, limits, resources) {
+        Ok(package) => package,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
+    let Some((book, sheets)) = sheets(&package)? else {
+        return Ok(None);
+    };
+    let Some(tab) = sheets.iter().position(|(name, _)| name == sheet) else {
+        return Ok(None);
+    };
+    let (book_bytes, tree) = match xml::read(&package, &book) {
+        Ok(read) => read,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
     let edit = match xml::child(&tree, 0, SML, "bookViews")
         .and_then(|views| xml::child(&tree, views, SML, "workbookView"))
     {
@@ -351,7 +403,9 @@ fn shown_first(
         None => {
             // CT_Workbook: fileVersion?, fileSharing?, workbookPr?,
             // workbookProtection?, bookViews?, sheets.
-            let list = xml::child(&tree, 0, SML, "sheets")?;
+            let Some(list) = xml::child(&tree, 0, SML, "sheets") else {
+                return Ok(None);
+            };
             let at = tree.nodes[list].span.start;
             let p = match xml::prefix(&tree.nodes[list]) {
                 "" => String::new(),
@@ -364,15 +418,25 @@ fn shown_first(
             )
         }
     };
-    package
-        .replace_xml_part(&book, xml::splice(&book_bytes, vec![edit]).ok()?)
-        .ok()?;
+    let spliced = match xml::splice(&book_bytes, vec![edit]) {
+        Ok(spliced) => spliced,
+        Err(error) => return error.resource().map_or(Ok(None), Err),
+    };
+    if let Err(error) = package.replace_xml_part(&book, spliced) {
+        return error.resource().map_or(Ok(None), Err);
+    }
     for (name, part) in &sheets {
         let Some(part) = part else {
             continue;
         };
-        let Ok((sheet_bytes, tree)) = xml::read(&package, part) else {
-            continue;
+        let (sheet_bytes, tree) = match xml::read(&package, part) {
+            Ok(read) => read,
+            Err(error) => {
+                if let Some(refusal) = error.resource() {
+                    return Err(refusal);
+                }
+                continue;
+            }
         };
         let selected = name == sheet;
         let views: Vec<usize> = xml::child(&tree, 0, SML, "sheetViews")
@@ -389,7 +453,9 @@ fn shown_first(
         if selected && views.is_empty() {
             // CT_Worksheet: sheetPr?, dimension?, sheetViews?, ...,
             // sheetData.
-            let data = xml::child(&tree, 0, SML, "sheetData")?;
+            let Some(data) = xml::child(&tree, 0, SML, "sheetData") else {
+                return Ok(None);
+            };
             let at = tree.nodes[data].span.start;
             let p = match xml::prefix(&tree.nodes[data]) {
                 "" => String::new(),
@@ -418,10 +484,17 @@ fn shown_first(
             }
         }
         if !edits.is_empty() {
-            package
-                .replace_xml_part(part, xml::splice(&sheet_bytes, edits).ok()?)
-                .ok()?;
+            let spliced = match xml::splice(&sheet_bytes, edits) {
+                Ok(spliced) => spliced,
+                Err(error) => return error.resource().map_or(Ok(None), Err),
+            };
+            if let Err(error) = package.replace_xml_part(part, spliced) {
+                return error.resource().map_or(Ok(None), Err);
+            }
         }
     }
-    package.export().ok()
+    match package.export() {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) => error.resource().map_or(Ok(None), Err),
+    }
 }

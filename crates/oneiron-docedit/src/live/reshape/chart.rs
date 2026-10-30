@@ -140,25 +140,38 @@ enum Mode {
     Seed,
 }
 
+/// A workbook rebuild's resource refusal as the live error (FIX 10587).
+fn resource(refusal: crate::resource::ResourceRefusal) -> LiveError {
+    LiveError::Package(crate::retained_opc::Error::Resource(refusal))
+}
+
 /// The sheet the rebuilt data goes on in the chart's own workbook `book`,
 /// as the chart part `first` references it ([`dataset::data_sheet`]): its
 /// own data sheet, or a new one beside its sheets, or, `None`, none (the
-/// rebuild is afresh).
+/// rebuild is afresh). A resource refusal is the live error (FIX 10587),
+/// never afresh.
 fn rebuilt_sheet(
     package: &Package,
     book: &str,
     first: &crate::ooxml::XmlTree,
     mode: &Mode,
-) -> Option<String> {
+) -> Result<Option<String>, LiveError> {
     if !matches!(mode, Mode::Rebuild(Some(_))) {
-        return None;
+        return Ok(None);
     }
-    dataset::data_sheet(
-        &package.part(book).ok()??,
-        first,
-        package.limits(),
-        package.resources(),
-    )
+    match package.part(book) {
+        Ok(Some(source)) => {
+            dataset::data_sheet(&source, first, package.limits(), package.resources())
+                .map_err(resource)
+        }
+        Ok(None) => Ok(None),
+        Err(error) => {
+            if error.resource().is_some() {
+                return Err(error.into());
+            }
+            Ok(None)
+        }
+    }
 }
 
 /// [`chart`]'s rewrite: into the chart's own workbook as `in_place` edits
@@ -195,7 +208,7 @@ fn rewrite(
             let wanted = wanted(&first, *family, categories, series, &bound.series);
             let book = match own_workbook(package, chart, &first)? {
                 Some(book) => {
-                    beside = rebuilt_sheet(package, &book, &first, &mode);
+                    beside = rebuilt_sheet(package, &book, &first, &mode)?;
                     Some(book)
                 }
                 None if *source == ChartSource::Literal => None,
@@ -658,16 +671,24 @@ fn rewrite(
                 let limits = package.limits();
                 let resources = package.resources().clone();
                 // The chart's own workbook keeps every other sheet, name and
-                // table; where its editor refuses, the rebuild is afresh.
-                let kept = beside.as_deref().and_then(|name| {
-                    dataset::beside(
-                        &package.part(book).ok()??,
-                        &dataset,
-                        name,
-                        limits,
-                        &resources,
-                    )
-                });
+                // table; where its editor refuses, the rebuild is afresh. A
+                // resource refusal is the live error (FIX 10587), never afresh.
+                let kept = match beside.as_deref() {
+                    Some(name) => match package.part(book) {
+                        Ok(Some(source)) => {
+                            dataset::beside(&source, &dataset, name, limits, &resources)
+                                .map_err(resource)?
+                        }
+                        Ok(None) => None,
+                        Err(error) => {
+                            if error.resource().is_some() {
+                                return Err(error.into());
+                            }
+                            None
+                        }
+                    },
+                    None => None,
+                };
                 if kept.is_none() {
                     beside = None;
                 }

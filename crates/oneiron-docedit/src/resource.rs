@@ -71,6 +71,17 @@ pub enum Dimension {
     PartBytes,
     /// The caller's ceiling on every part's inflated bytes together.
     ExpandedBytes,
+    /// The caller's ceiling on one comment XML part's bytes as it is parsed
+    /// (FIX 10654).
+    XmlBytes,
+    /// The caller's ceiling on one SVG asset's stored bytes (FIX 10654).
+    SvgBytes,
+    /// The caller's ceiling on one PNG or JPEG asset's stored bytes
+    /// (FIX 10654).
+    RasterBytes,
+    /// The caller's ceiling on the pixels a PNG or JPEG asset declares
+    /// (FIX 10654).
+    RasterPixels,
     /// Classic ZIP's entry count: 65,535 is its ZIP64 sentinel.
     ZipEntries,
     /// Classic ZIP's 4 GiB sizes and offsets.
@@ -85,6 +96,10 @@ impl Dimension {
             Self::ArchiveBytes => "archive_bytes",
             Self::PartBytes => "part_bytes",
             Self::ExpandedBytes => "expanded_bytes",
+            Self::XmlBytes => "xml_bytes",
+            Self::SvgBytes => "svg_bytes",
+            Self::RasterBytes => "raster_bytes",
+            Self::RasterPixels => "raster_pixels",
             Self::ZipEntries => "zip_entries",
             Self::ZipBytes => "zip_bytes",
         }
@@ -385,7 +400,9 @@ pub fn wide(bytes: usize) -> u64 {
 
 // Where each error of this crate carries a refusal, so a mapper names it as
 // itself (the contract's memory_floor and resource_deadline), never as an
-// invalid document or a refused edit.
+// invalid document or a refused edit; and where it carries the ceiling a
+// well-formed package or picture passed, so a mapper names it with its
+// dimension (the contract's capacity_exceeded; FIX 10654).
 
 impl crate::deck::DeckError {
     /// The refusal, when memory or a deadline stopped the read.
@@ -395,6 +412,15 @@ impl crate::deck::DeckError {
             Self::Package(error) => error.resource(),
             Self::Xml(error) => error.resource(),
             Self::Invalid(_) => None,
+        }
+    }
+
+    /// The ceiling, when the package passed one.
+    #[must_use]
+    pub fn capacity(&self) -> Option<CapacityHit> {
+        match self {
+            Self::Package(error) => error.capacity(),
+            Self::Xml(_) | Self::Invalid(_) => None,
         }
     }
 }
@@ -408,6 +434,17 @@ impl crate::edit::EditRefusal {
             Self::Package(error) => error.resource(),
             Self::Xml(error) => error.resource(),
             Self::Deck(error) => error.resource(),
+            _ => None,
+        }
+    }
+
+    /// The ceiling, when the picture, the package or its deck passed one.
+    #[must_use]
+    pub fn capacity(&self) -> Option<CapacityHit> {
+        match self {
+            Self::Picture(error) => error.capacity(),
+            Self::Package(error) => error.capacity(),
+            Self::Deck(error) => error.capacity(),
             _ => None,
         }
     }
@@ -429,6 +466,15 @@ impl crate::native_patch::NativeRefusal {
             _ => None,
         }
     }
+
+    /// The ceiling, when the workbook or the package passed one.
+    #[must_use]
+    pub fn capacity(&self) -> Option<CapacityHit> {
+        match self {
+            Self::Workbook(error) | Self::Package(error) => error.capacity(),
+            _ => None,
+        }
+    }
 }
 
 impl crate::edit::transaction::TransactionError {
@@ -447,6 +493,23 @@ impl crate::edit::transaction::TransactionError {
             _ => None,
         }
     }
+
+    /// The ceiling, when a step's picture or package, the package or its
+    /// deck passed one.
+    #[must_use]
+    pub fn capacity(&self) -> Option<CapacityHit> {
+        use crate::edit::transaction::StepRefusal;
+        match self {
+            Self::Step { refusal, .. } => match refusal {
+                StepRefusal::Edit(error) => error.capacity(),
+                StepRefusal::Native(error) => error.capacity(),
+                StepRefusal::Asset(_) => None,
+            },
+            Self::Package(error) => error.capacity(),
+            Self::Deck(error) => error.capacity(),
+            _ => None,
+        }
+    }
 }
 
 impl crate::emit::EmitError {
@@ -459,6 +522,19 @@ impl crate::emit::EmitError {
             Self::Package(error) => error.resource(),
             Self::Xml(error) => error.resource(),
             Self::Deck(error) => error.resource(),
+            _ => None,
+        }
+    }
+
+    /// The ceiling, when an asset, native content, the package or its deck
+    /// passed one.
+    #[must_use]
+    pub fn capacity(&self) -> Option<CapacityHit> {
+        match self {
+            Self::Graphic { error, .. } => error.capacity(),
+            Self::Native { refusal, .. } => refusal.capacity(),
+            Self::Package(error) => error.capacity(),
+            Self::Deck(error) => error.capacity(),
             _ => None,
         }
     }
