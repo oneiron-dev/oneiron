@@ -545,6 +545,9 @@ pub(super) fn continue_blocked_task_in(
         // A review the owner accepted before the TASK settled anchors the
         // settlement, on that row when the ask kept one.
         anchor_kept_review_in_txn(vault, txn, task_ref, continuation.attempt)?;
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11807).
+        crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, task_ref);
     }
     Ok(())
 }
