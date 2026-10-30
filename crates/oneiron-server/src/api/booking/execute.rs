@@ -95,6 +95,9 @@ async fn execute(
         public_availability::validate_public_request(&authority.publication, &request)?;
     }
     validate_operation_shape(&request)?;
+    if transport.credential.is_none() {
+        validate::validate_anonymous_intake_count(&request)?;
+    }
     check_action_token_page(&server.vault, page_ref, &request)?;
 
     // ── 2. the one admission call ───────────────────────────────────────
