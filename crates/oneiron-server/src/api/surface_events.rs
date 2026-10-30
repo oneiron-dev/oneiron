@@ -88,6 +88,9 @@ pub(crate) enum SurfaceInteractionKindPayload {
     CardCompletion,
     Dwell,
     Tap,
+    /// The counterparty asked for no more messages on this channel (a STOP
+    /// reply, or the provider's own opt-out signal).
+    OptOut,
 }
 
 impl SurfaceInteractionKindPayload {
@@ -97,6 +100,7 @@ impl SurfaceInteractionKindPayload {
             Self::CardCompletion => oneiron::SurfaceInteractionKind::CardCompletion,
             Self::Dwell => oneiron::SurfaceInteractionKind::Dwell,
             Self::Tap => oneiron::SurfaceInteractionKind::Tap,
+            Self::OptOut => oneiron::SurfaceInteractionKind::OptOut,
         }
     }
 }
