@@ -37,6 +37,14 @@ pub(super) struct BuiltReview {
     pub(super) paths: BTreeSet<String>,
 }
 
+impl BuiltReview {
+    /// The paths a Grant's bounds judge: `None` when a path's Git bytes are
+    /// not UTF-8 and its text is lossy (FIX 10003).
+    pub(super) fn grant_paths(&self) -> Option<BTreeSet<String>> {
+        (!self.review.lossy_paths).then(|| self.paths.clone())
+    }
+}
+
 impl Vault {
     /// Walks what pushing `commit` over `base` (`None`: an absent or unheld
     /// tip) would expose, and binds it in one digest.
@@ -74,6 +82,7 @@ impl Vault {
         let mut pages = Vec::new();
         let mut page = Vec::new();
         let mut paths = BTreeSet::new();
+        let mut lossy_paths = false;
         let (mut commits, mut entries) = (0_u64, 0_u64);
         let exclude: Vec<GitOid> = base.into_iter().chain(reviewed).cloned().collect();
         // Retained reads: a page or one tree level past the wire's output
@@ -95,6 +104,7 @@ impl Vault {
                     path,
                 } => {
                     entries = entries.saturating_add(1);
+                    lossy_paths |= std::str::from_utf8(&path).is_err();
                     let path = String::from_utf8_lossy(&path).into_owned();
                     paths.insert(path.clone());
                     OriginPublishReviewItem::Path {
@@ -125,6 +135,7 @@ impl Vault {
                 paths: count(paths.len()),
                 pages: count(pages.len()),
                 lfs_bytes: OriginPublishLfsBytes::NotSent,
+                lossy_paths,
             },
             pages,
             paths,

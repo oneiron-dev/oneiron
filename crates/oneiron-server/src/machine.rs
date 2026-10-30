@@ -629,6 +629,15 @@ impl MemoryLease {
         Ok(())
     }
 
+    /// Takes `other`'s bytes into this lease, named allocated (FIX 10589):
+    /// the line keeps counting them as leased until this lease drops, and
+    /// `other` gives back nothing as it drops. Never waits or refuses.
+    pub(crate) fn absorb_allocated(&mut self, mut other: MemoryLease) {
+        other.materialized(other.pending, other.pending);
+        self.bytes = self.bytes.saturating_add(other.bytes);
+        other.bytes = 0;
+    }
+
     /// Names `reserved` of this lease's pending bytes allocated, as `actual`
     /// bytes now held (FIX 8240): the lease then holds `actual` in their
     /// place, and the live reading, which shows them as used, is no longer

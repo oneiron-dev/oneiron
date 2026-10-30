@@ -22,9 +22,7 @@ use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::repo_mutation::mount::RepoMountRef;
 use crate::repo_mutation::proposal::RepoProposalStatus;
-
-/// The most files one side of a repo diff may hold.
-const MAX_REPO_DIFF_FILES: usize = 1024;
+use crate::scan_check::{EngineScan, ScanCount};
 
 /// One repo proposal, by ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -435,9 +433,14 @@ impl Memory<'_> {
                 ));
             }
         };
-        if files.len() > MAX_REPO_DIFF_FILES {
-            return Err(invalid("a repo diff compares at most 1024 files a side"));
-        }
+        // A side is compared whole, however many files it holds: past its
+        // row it raises one check and reads on (FIX 9688).
+        let mut count = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            ScanCount::start(&vault.store, &txn, EngineScan::RepoDiffFiles, &[])?
+        };
+        count.rows(files.len());
+        count.defer(&vault.store);
         Ok(Some(files))
     }
 

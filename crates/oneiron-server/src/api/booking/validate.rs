@@ -143,13 +143,24 @@ fn validate_booker_email(email: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn validate_intake(intake: &[BookingIntakeAnswer]) -> Result<(), ApiError> {
-    if intake.len() > MAX_INTAKE_ANSWERS {
+/// An anonymous visitor's confirm carries at most [`MAX_INTAKE_ANSWERS`]
+/// answers: pre-auth work stays sheddable. An authenticated caller's intake
+/// is served whatever its count (FIX 9633).
+pub(super) fn validate_anonymous_intake_count(
+    request: &BookingOperationRequest,
+) -> Result<(), ApiError> {
+    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = request
+        && input.intake.len() > MAX_INTAKE_ANSWERS
+    {
         return Err(ApiError::bad_request(
             format!("intake carries at most {MAX_INTAKE_ANSWERS} answers"),
             Some("intake"),
         ));
     }
+    Ok(())
+}
+
+fn validate_intake(intake: &[BookingIntakeAnswer]) -> Result<(), ApiError> {
     for answer in intake {
         if answer.field_key.trim().is_empty() || answer.field_key.len() > MAX_INTAKE_FIELD_KEY_BYTES
         {

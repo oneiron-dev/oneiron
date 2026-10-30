@@ -255,6 +255,7 @@ pub enum AgentVerb {
     VaultSkillsOptimizePreferencesSet,
     VaultSkillsOptimizeTradeoffAsks,
     VaultSkillsOptimizeTradeoffAsksPick,
+    VaultSkillsOptimizeTradeoffAsksResolve,
     VaultSkillsGovernanceGet,
     VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
@@ -1092,6 +1093,7 @@ pub enum AgentVerb {
     VaultConsolidationHomeGet,
     VaultConsolidationHomePick,
     VaultConsolidationLineage,
+    VaultConsolidationCandidateDecisions,
     VaultConsolidationPromote,
     VaultConsolidationPin,
     VaultConsolidationFrontier,
@@ -1491,6 +1493,7 @@ impl AgentVerb {
         Self::VaultSkillsOptimizePreferencesSet,
         Self::VaultSkillsOptimizeTradeoffAsks,
         Self::VaultSkillsOptimizeTradeoffAsksPick,
+        Self::VaultSkillsOptimizeTradeoffAsksResolve,
         Self::VaultSkillsGovernanceGet,
         Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
@@ -2328,6 +2331,7 @@ impl AgentVerb {
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
+        Self::VaultConsolidationCandidateDecisions,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationPin,
         Self::VaultConsolidationFrontier,
@@ -2730,6 +2734,9 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => "vault.skills.optimize.preferences.set",
             Self::VaultSkillsOptimizeTradeoffAsks => "vault.skills.optimize.tradeoff_asks",
             Self::VaultSkillsOptimizeTradeoffAsksPick => "vault.skills.optimize.tradeoff_asks.pick",
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => {
+                "vault.skills.optimize.tradeoff_asks.resolve"
+            }
             Self::VaultSkillsGovernanceGet => "vault.skills.governance.get",
             Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
@@ -3591,6 +3598,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
+            Self::VaultConsolidationCandidateDecisions => "vault.consolidation.candidate_decisions",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationPin => "vault.consolidation.pin",
             Self::VaultConsolidationFrontier => "vault.consolidation.frontier",
@@ -3996,6 +4004,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -4811,6 +4820,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -5261,6 +5271,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -6076,6 +6087,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -6328,6 +6340,7 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultClaimsSeed
                 | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultTasksLinearProvenance
@@ -6669,6 +6682,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -7437,6 +7451,7 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
+                | Self::VaultConsolidationCandidateDecisions
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -7716,6 +7731,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizeGoalBind
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksGrantSet
@@ -8602,6 +8618,7 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -9439,6 +9456,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
+            Self::VaultConsolidationCandidateDecisions => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
             Self::VaultConsolidationFrontier => &["spec"],
@@ -9839,6 +9857,7 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -10676,6 +10695,7 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
+            Self::VaultConsolidationCandidateDecisions => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
             Self::VaultConsolidationFrontier => &["spec"],
@@ -11570,6 +11590,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsOptimizeTradeoffAsksPick => {
                 "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."
+            }
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => {
+                "The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."
             }
             Self::VaultSkillsGovernanceGet => {
                 "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."
@@ -12909,7 +12932,7 @@ impl AgentVerb {
                 "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."
             }
             Self::VaultCodeMergeQueueEnqueue => {
-                "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
+                "Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
             }
             Self::VaultCodeMergeQueueStage => {
                 "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."
@@ -14005,6 +14028,9 @@ impl AgentVerb {
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."
+            }
+            Self::VaultConsolidationCandidateDecisions => {
+                "The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

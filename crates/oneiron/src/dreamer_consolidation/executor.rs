@@ -222,6 +222,12 @@ impl ConsolidationExecutor<'_> {
             .map(|(index, mut candidate)| {
                 if let Some(decisions) = kept_by.get(&index) {
                     join_decisions(&mut candidate.proposal.decisions, decisions);
+                    // FIX 12084: an accumulated member resolved its conflict;
+                    // the tournament gate reads it as contested. Single-pass
+                    // never sets it.
+                    if matches!(self.strategy, DreamerClaimAuthoringStrategy::Tournament) {
+                        candidate.contested = true;
+                    }
                 }
                 if let Some(bound) = answered.remove(&index) {
                     candidate.answers.extend(bound);
@@ -367,7 +373,7 @@ fn merged_candidate(
         &value,
         conflict.identity.world,
         conflict.identity.facet,
-        conflict.identity.rel,
+        conflict.identity.rel.as_ref(),
         conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )?;
@@ -377,9 +383,7 @@ fn merged_candidate(
         value,
         confidence,
     );
-    if let Some(rel) = conflict.identity.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(conflict.identity.rel.clone());
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
@@ -410,6 +414,8 @@ fn merged_candidate(
         evidence: combined,
         answers: Vec::new(),
         sources,
+        // Set by the caller on the tournament strategy (FIX 12084).
+        contested: false,
     })
 }
 

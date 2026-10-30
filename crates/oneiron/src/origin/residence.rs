@@ -3,6 +3,7 @@ use super::publication::{
     OriginPublicationReceipt, OriginPublicationRequest, origin_publication_id,
 };
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
@@ -71,11 +72,14 @@ pub enum OriginHostAuthority {
     WriterErased(OriginAuthority),
 }
 /// The owner's cutover: the epoch it expects and the authority it installs.
-struct Cutover {
+struct Cutover<'a> {
     expected_epoch: Option<u64>,
     residence: OriginResidence,
     writer: EntityId,
     mirror: bool,
+    /// The owner proof the installing transaction revalidates, when the
+    /// owner's door carried one (FIX 8214).
+    owner: Option<&'a AuthenticatedOwner>,
 }
 /// Persisted host authorization. This is deliberately not a public deserializer
 /// for `OriginAuthorityLease`: only local admission evidence can restore it.
@@ -237,6 +241,7 @@ impl Vault {
             residence,
             writer,
             mirror,
+            owner: None,
         };
         self.cut_origin_authority(repo.common_dir(), repo.repo_root(), id, cutover)
     }
@@ -251,15 +256,43 @@ impl Vault {
         writer: EntityId,
         mirror: bool,
     ) -> Result<OriginAuthority> {
-        let repo_root = super::smart_http::origin_repo_dir(self, repo_name)?;
-        let common_dir = super::smart_http::push_queue_key(self, repo_name)?;
-        let id = self.served_repo_id(&repo_root)?;
         let cutover = Cutover {
             expected_epoch,
             residence,
             writer,
             mirror,
+            owner: None,
         };
+        self.cut_served_origin_authority(repo_name, cutover)
+    }
+    /// [`Vault::set_served_origin_authority`] as the caller's owner proof,
+    /// revalidated in the transaction that installs the row (FIX 8214).
+    pub fn set_served_origin_authority_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        repo_name: &str,
+        expected_epoch: Option<u64>,
+        residence: OriginResidence,
+        writer: EntityId,
+        mirror: bool,
+    ) -> Result<OriginAuthority> {
+        let cutover = Cutover {
+            expected_epoch,
+            residence,
+            writer,
+            mirror,
+            owner: Some(owner),
+        };
+        self.cut_served_origin_authority(repo_name, cutover)
+    }
+    fn cut_served_origin_authority(
+        &self,
+        repo_name: &str,
+        cutover: Cutover<'_>,
+    ) -> Result<OriginAuthority> {
+        let repo_root = super::smart_http::origin_repo_dir(self, repo_name)?;
+        let common_dir = super::smart_http::push_queue_key(self, repo_name)?;
+        let id = self.served_repo_id(&repo_root)?;
         self.cut_origin_authority(&common_dir, &repo_root, id, cutover)
     }
     /// The authority row of a repository this vault serves, by its served name.
@@ -330,13 +363,14 @@ impl Vault {
         common_dir: &Path,
         repo_root: &Path,
         id: EntityId,
-        cutover: Cutover,
+        cutover: Cutover<'_>,
     ) -> Result<OriginAuthority> {
         let Cutover {
             expected_epoch,
             residence,
             writer,
             mirror,
+            owner,
         } = cutover;
         let _guard = lock_repository(common_dir)?;
         self.reconcile_receive_pack_operations(repo_root)?;
@@ -354,6 +388,9 @@ impl Vault {
             ));
         }
         let mut txn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &txn)?;
+        }
         let current = AUTHORITY.get(&self.store, &txn, &id)?;
         if current.as_ref().map(|row| row.epoch) != expected_epoch {
             return Err(Error::ConcurrentWrite("origin authority epoch moved"));
@@ -449,6 +486,13 @@ impl Vault {
         if row.mirror {
             return Ok(Some(Error::InvariantViolation(
                 "mirror is read-only; import through the authoritative origin",
+            )));
+        }
+        // An erased writer's saved permits stop with it; an effect already
+        // applied settles before this rule is asked (FIX 10000).
+        if row.writer == ORIGIN_ERASED_WRITER {
+            return Ok(Some(Error::Refused(
+                ORIGIN_WRITER_ERASED_REFUSAL.to_owned(),
             )));
         }
         let txn = self.store.env.read_txn()?;

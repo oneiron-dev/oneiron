@@ -140,6 +140,15 @@
 //! the same way — never a defaulted class. See
 //! `resolve_persisted_actor_class`.
 
+mod actor_stamp;
+// Opaque actor stamp tokens: a commit names one in its writer's place (FIX
+// 10930).
+pub use actor_stamp::ActorStamp;
+pub(crate) use actor_stamp::{
+    actor_stamp, actor_stamp_in_txn, actor_stamp_tokens_remain_in_txn,
+    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn,
+    release_held_actor_stamps_in_txn, resolve_actor_stamp, resolve_actor_stamp_in_txn,
+};
 mod actor_substrate;
 mod archive;
 pub mod birth;

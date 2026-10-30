@@ -20,6 +20,8 @@ pub(in crate::skill_optimize::gate) enum TradeoffPlan {
     Ask {
         question: SkillTradeoffQuestion,
         jev: Option<JevTradeoffVerdict>,
+        /// The judge rubric pin `jev` was asked under (FIX 12083).
+        judge_rubric_digest: Option<String>,
     },
     /// A person's approval of this exact question, kept on the row a spent
     /// cycle or the judge's cadence deferred, answers it again (FIX 8848).
@@ -98,12 +100,19 @@ pub(in crate::skill_optimize::gate) fn plan(
             jev: None,
         });
     }
-    // Reuse a measurement only for this exact question. Every fresh answer
+    // Reuse a measurement only for this exact question under the rubric in
+    // force: a rubric edit asks Jev again (FIX 12083). Every fresh answer
     // comes from the shared typed-decision ladder, never a supplied scalar.
     let band = preferences
         .as_ref()
         .and_then(|preferences| preferences.jev_band);
-    let jev = match (prior.filter(|prior| prior.question == question), band) {
+    let judge_rubric_digest = scorer
+        .rubric()?
+        .map(|rubric| bytes_to_hex_lower(&rubric.digest));
+    let kept = prior.filter(|prior| {
+        prior.question == question && prior.judge_rubric_digest == judge_rubric_digest
+    });
+    let jev = match (kept, band) {
         (Some(prior), _) => prior.jev,
         // No band was authored, so no judgment can rule: ask the role.
         (None, None) => None,
@@ -146,7 +155,11 @@ pub(in crate::skill_optimize::gate) fn plan(
             None
         }
     };
-    Ok(TradeoffPlan::Ask { question, jev })
+    Ok(TradeoffPlan::Ask {
+        question,
+        jev,
+        judge_rubric_digest,
+    })
 }
 
 /// Settle or park a pending ruling inside the gate's committing transaction,
@@ -201,7 +214,11 @@ pub(in crate::skill_optimize::gate) fn apply_in_txn(
                 resolution,
             )
         }
-        TradeoffPlan::Ask { question, jev } => {
+        TradeoffPlan::Ask {
+            question,
+            jev,
+            judge_rubric_digest,
+        } => {
             verdict.tradeoff_jev.clone_from(jev);
             // Re-ruling the same question keeps the rung its ask climbed to.
             let rung = load::<SkillTradeoffAsk>(vault, txn, &key(ASK_PREFIX, &verdict.proposal))?
@@ -217,6 +234,7 @@ pub(in crate::skill_optimize::gate) fn apply_in_txn(
                     question: question.clone(),
                     jev: jev.clone(),
                     rung,
+                    judge_rubric_digest: judge_rubric_digest.clone(),
                 },
             )?;
             Ok(None)

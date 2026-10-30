@@ -32,9 +32,10 @@ impl Vault {
 }
 
 /// Whether a scrub a legal hold kept is still owed for one of an erase's
-/// `entity_ids`: a Gate decision's owed scrub, or a birth or window carrier
-/// one of them made. Births are read only while a hold row is kept, standing
-/// or released: with none, no birth outlived its actor's scrub.
+/// `entity_ids`: a Gate decision's owed scrub, a birth or window carrier
+/// one of them made, or a stamp token naming one of them. Births and tokens
+/// are read only while a hold row is kept, standing or released: with none,
+/// none outlived its actor's scrub.
 pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -58,6 +59,10 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
         return Ok(false);
     }
     if crate::provenance::birth::births_made_by_in_txn(&vault.store, txn, &ids)? {
+        return Ok(true);
+    }
+    // A stamp token a hold kept (FIX 10930, 11040).
+    if crate::provenance::actor_stamp_tokens_remain_in_txn(vault, txn, &ids)? {
         return Ok(true);
     }
     #[cfg(feature = "sync")]

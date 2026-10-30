@@ -225,11 +225,14 @@ impl Package {
                 return Err(Error::Invalid("local descriptor or ZIP64 extra"));
             }
             let raw = &source[data_start..data_end];
-            scratch.cover(uncompressed)?;
             let mut data = Vec::new();
             if method == 0 {
+                // A stored part's copy is its own bytes in the source, every
+                // one measured (FIX 10656).
+                scratch.cover(raw.len(), raw.len())?;
                 data.extend_from_slice(raw);
             } else {
+                scratch.cover(uncompressed, 0)?;
                 DeflateDecoder::new(raw)
                     .take(uncompressed as u64 + 1)
                     .read_to_end(&mut data)
@@ -362,11 +365,15 @@ impl Inflate {
     }
 
     /// Covers a buffer of `bytes`, reserving only what the largest so far
-    /// did not. The size is the entry header's word before the part is
-    /// inflated: an estimate, of which nothing is measured yet.
-    fn cover(&mut self, bytes: usize) -> Result<()> {
+    /// did not, of which `measured` the source holds already: a stored
+    /// part's own bytes. A deflated part's size is the entry header's word
+    /// before the part is inflated: an estimate, of which nothing is
+    /// measured yet.
+    fn cover(&mut self, bytes: usize, measured: usize) -> Result<()> {
         if bytes > self.covered {
-            self.hold.take_estimate(wide(bytes - self.covered), 0)?;
+            let more = bytes - self.covered;
+            let measured = measured.saturating_sub(self.covered).min(more);
+            self.hold.take_estimate(wide(more), wide(measured))?;
             self.covered = bytes;
         }
         Ok(())
@@ -376,11 +383,8 @@ impl Inflate {
 pub(super) fn check_limits(limits: Limits) -> Result<()> {
     if [
         limits.archive_bytes,
-        limits.entries,
         limits.part_bytes,
         limits.expanded_bytes,
-        limits.xml.max_depth,
-        limits.xml.max_nodes,
     ]
     .contains(&0)
     {

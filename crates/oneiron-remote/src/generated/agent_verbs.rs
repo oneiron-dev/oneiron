@@ -806,6 +806,11 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.skills.optimize.tradeoff_asks.resolve" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::SkillOptimizeResultView>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.skills.governance.get" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SkillGovernanceView,
                 >(client, verb, &input),
@@ -2132,7 +2137,9 @@ impl OneironClient {
                     oneiron::memory::checkout_doors::CheckoutLeaseView,
                 >(client, verb, &input),
                 "vault.code.checkout.get" => remote_agent_verb_output::<
-                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                    oneiron::claim::ScopedReadResult<
+                        Option<oneiron::memory::checkout_doors::CheckoutLeaseView>,
+                    >,
                 >(client, verb, &input),
                 "vault.code.checkout.renew" => remote_agent_verb_output::<
                     oneiron::memory::checkout_doors::CheckoutLeaseView,
@@ -3302,6 +3309,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.consolidation.lineage" => remote_agent_verb_output::<
                     Option<oneiron::dreamer_runner::ConsolidationLineageView>,
+                >(client, verb, &input),
+                "vault.consolidation.candidate_decisions" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::DreamerDecidedCandidateView>,
                 >(client, verb, &input),
                 "vault.consolidation.promote" => remote_agent_verb_output::<
                     oneiron::memory::consolidation::ConsolidationPromotion,
@@ -6935,6 +6945,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skills.optimize.tradeoff_asks.pick", value)
+    }
+    pub fn vault_skills_optimize_tradeoff_asks_resolve(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillOptimizeTradeoffResolveRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillOptimizeResultView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.optimize.tradeoff_asks.resolve", value)
     }
     pub fn vault_skills_governance_get(
         &self,
@@ -12186,7 +12208,12 @@ impl OneironClient {
     pub fn vault_code_checkout_get(
         &self,
         input: &oneiron::memory::checkout_doors::CheckoutGetInput,
-    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<
+            Option<oneiron::memory::checkout_doors::CheckoutLeaseView>,
+        >,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -16891,6 +16918,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.lineage", value)
+    }
+    pub fn vault_consolidation_candidate_decisions(
+        &self,
+        input: &oneiron::memory::DreamerCandidateDecisionsRequest,
+    ) -> Result<Vec<oneiron::memory::DreamerDecidedCandidateView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.candidate_decisions", value)
     }
     pub fn vault_consolidation_promote(
         &self,
