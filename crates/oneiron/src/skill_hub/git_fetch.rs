@@ -6,6 +6,14 @@ use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::package_codec::invalid;
 use super::{HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillHubAdapter, SkillHubKind};
 use crate::{entity_id::EntityId, error::Result};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, PoisonError};
+
+/// Each endpoint's last discovery, by the commit it read (FIX 951). A commit
+/// names its tree and every blob in it, so a second discovery of the same
+/// commit reads nothing; another commit reads afresh and takes the slot.
+static DISCOVERED: LazyLock<Mutex<HashMap<String, (String, Vec<HubIndexEntry>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// A configured repository plus an immutable expected commit. A tag is checked
 /// against that commit every fetch; a moved tag cannot silently update content.
@@ -128,8 +136,19 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
     /// bounds, never checked out. A collection (anthropics/skills, a Claude
     /// plugin marketplace's `plugins/*/skills/*`, Codex and openskills layouts)
     /// lists every skill; a folder whose tree or frontmatter does not import is
-    /// left out, and an import of it refuses with the reason.
+    /// left out, and an import of it refuses with the reason. A discovery in
+    /// which every folder read is kept for its commit; one in which a folder's
+    /// read failed is read again next time.
     fn discover(&self) -> Result<Vec<HubIndexEntry>> {
+        let kept = DISCOVERED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&self.endpoint)
+            .filter(|(commit, _)| *commit == self.commit)
+            .map(|(_, entries)| entries.clone());
+        if let Some(entries) = kept {
+            return Ok(entries);
+        }
         let (repo, resolved) = fetch_revision(&self.endpoint, &self.commit)?;
         if resolved != self.commit {
             return Err(invalid("Git tag or commit drift"));
@@ -147,6 +166,7 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
             16 * 1024 * 1024,
         )?;
         let mut entries = Vec::new();
+        let mut complete = true;
         for folder in skill_folders(&listing)? {
             let object = if folder == "." {
                 root.clone()
@@ -167,6 +187,7 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
                 )
                 .and_then(|listing| read_blobs(&repo, &listing))
             else {
+                complete = false;
                 continue;
             };
             let Ok(package) = super::folder::package_from_files(files) else {
@@ -179,6 +200,15 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
                 content_hash: package.content_hash()?,
                 ref_string: folder,
             });
+        }
+        if complete {
+            DISCOVERED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(
+                    self.endpoint.clone(),
+                    (self.commit.clone(), entries.clone()),
+                );
         }
         Ok(entries)
     }
