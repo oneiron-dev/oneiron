@@ -39893,6 +39893,8 @@ pub struct OriginPublishReview {
     pub pages: u64,
     #[serde(rename = "lfs_bytes")]
     pub lfs_bytes: OriginPublishLfsBytes,
+    #[serde(rename = "lossy_paths")]
+    pub lossy_paths: bool,
 }
 
 /// `oneiron::origin::publish::mirror_plan_types::MirrorRefOutcome`.
