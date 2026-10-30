@@ -16,6 +16,7 @@ use crate::edit_distance::escalation::{
 use crate::entity_id::EntityId;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryResult, verify_actor_binding,
+    verify_actor_binding_in_txn,
 };
 use crate::outbound_chokepoint::{
     FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow, FanoutPlan,
@@ -80,8 +81,8 @@ impl Memory<'_> {
         self.vault()
             .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
-                verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
+                verify_actor_binding_in_txn(self.vault(), txn, self.actor(), self.actor_class())?;
                 let mut run = load_run(self.vault(), txn, correlation)?;
                 if run.plan.actor_ref != self.actor().to_hex() {
                     return Err(consult_refusal(
@@ -307,4 +308,19 @@ fn stale_digest() -> crate::memory::MemoryError {
         "fan-out approval digest does not match the frozen plan",
         "Read the surfaced digest and rule on that exact plan.",
     )
+}
+
+impl Memory<'_> {
+    /// `reauthenticate_fanout_owner` inside a write's own `txn`, so
+    /// the check opens no second read txn on the writer's thread (FIX 11354,
+    /// 6992): the same checks, errors and order.
+    pub(super) fn reauthenticate_fanout_owner_in_txn(
+        &self,
+        owner: &AuthenticatedOwner,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<EntityId> {
+        let actor = owner.revalidate_in_txn(self.vault(), txn)?;
+        verify_actor_binding_in_txn(self.vault(), txn, actor, crate::EdgeActorClass::Human)?;
+        Ok(actor)
+    }
 }

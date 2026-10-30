@@ -416,6 +416,13 @@ impl AuthorityStructure {
             AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
+            // A custody request's permit piece (FIX 11866): its carrier's
+            // install key, as for the request it leads to; with no carrier, a
+            // stored root's anchor alone, as for the kit push it leads to.
+            AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
+                Some(carrier) => install_key(carrier),
+                None => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
+            },
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
             // An owner answer: its carrier's install key, alone (mesh PR1b).
             AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
@@ -486,6 +493,14 @@ impl AuthorityStructure {
             AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),
+            AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
+                Some(carrier) => machine_key(carrier),
+                None => {
+                    !self.is_own_anchor(signer)
+                        && !matches!(signer, AuthorityKey::Ed25519(anchor)
+                            if self.awaited_anchors.contains(anchor))
+                }
+            },
             _ => false,
         }
     }
