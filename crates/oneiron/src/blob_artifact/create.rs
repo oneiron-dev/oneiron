@@ -10,7 +10,6 @@ use crate::edge::EdgeActorClass;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeBy;
 use crate::temporal::TimeRange;
-use crate::write_envelope::WriteActor;
 
 /// A new artifact and the bytes of its first version.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -49,7 +48,7 @@ impl Memory<'_> {
             .map(serde_json::from_value::<MadeBy>)
             .transpose()
             .map_err(|_| MemoryError::bad_request("made_by is not a made_by envelope"))?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let provenance = match &input.run_ref {
             Some(run_ref) => BlobVersionProvenance::AgentRun {
                 run_ref: run_ref.clone(),

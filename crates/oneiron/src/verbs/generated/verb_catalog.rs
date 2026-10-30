@@ -6420,7 +6420,18 @@ impl AgentVerb {
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultProductivityTree
+                | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
                 | Self::VaultEsignNoticesDispatch
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
+                | Self::VaultEsignSigningAct
+                | Self::VaultEsignSigningPdf
+                | Self::VaultEsignSigningImage
+                | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSealGet
                 | Self::VaultClaimsSeed
                 | Self::VaultSummariesRead
                 | Self::VaultSummariesProposalsRead
@@ -7393,17 +7404,6 @@ impl AgentVerb {
                 | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
-                | Self::VaultEsignCreate
-                | Self::VaultEsignGet
-                | Self::VaultEsignLinksIssue
-                | Self::VaultEsignSendForSignature
-                | Self::VaultEsignRemind
-                | Self::VaultEsignVoid
-                | Self::VaultEsignSigningAct
-                | Self::VaultEsignSigningPdf
-                | Self::VaultEsignSigningImage
-                | Self::VaultEsignSigningSignature
-                | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend

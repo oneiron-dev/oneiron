@@ -186,7 +186,7 @@ impl PipelineBuilder<'_> {
             state
                 .blend_allowed_ids
                 .extend(ppr_results.iter().map(|scored| scored.id));
-            state.acc.admit_channel(
+            let ppr_channel_index = state.acc.admit_channel(
                 RetrievalSignal::Ppr,
                 ppr_results,
                 &self.read,
@@ -197,6 +197,7 @@ impl PipelineBuilder<'_> {
             if state.acc.capture {
                 *state.fused_trace_scores = Some(retrieval_trace_fused_scores(
                     &state.acc.trace_ranked_lists,
+                    inputs.channel_indexes.phonetic.as_slice(),
                     state.acc.trace_candidate_limit,
                 ));
             }
@@ -205,7 +206,10 @@ impl PipelineBuilder<'_> {
             // neutral preliminary order.
             let mut expanded_blend = blended_retrieval_scores(
                 &state.acc.ranked_lists,
-                inputs.channel_indexes,
+                RetrievalChannelIndexes {
+                    ppr: Some(ppr_channel_index),
+                    ..inputs.channel_indexes
+                },
                 &self.read,
                 rtxn,
                 metadata_cache,

@@ -94,7 +94,15 @@ impl AttemptQueue<'_> {
                 .attempt_ready
                 .put(&mut txn, &key, record.id.as_bytes())?;
         }
+        let from = crate::run_tree::effective_parent(&record);
         record.placement = Some(placement);
+        crate::attempt_queue::index::move_parent_child_in_txn(
+            self.store,
+            &mut txn,
+            record.id,
+            from,
+            crate::run_tree::effective_parent(&record),
+        )?;
         append_attempt_event(&mut record, input.kind, input.actor, input.note, input.now)?;
         let encoded = self.encode_in_txn(&mut txn, &mut record)?;
         self.store

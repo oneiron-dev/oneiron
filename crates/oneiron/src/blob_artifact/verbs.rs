@@ -438,7 +438,7 @@ fn json_field<T: serde::de::DeserializeOwned>(
 
 impl Memory<'_> {
     fn artifact_actor(&self) -> WriteActor {
-        WriteActor::new(self.actor(), self.actor_class())
+        self.write_actor()
     }
 
     fn artifact_moment(&self) -> (TimeRange, u64) {

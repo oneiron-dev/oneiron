@@ -68,25 +68,27 @@ impl Vault {
         signer: &OwnerProjectSigner<'_>,
         id: EntityId,
         next: &mut ProjectRecord,
-        over: Option<ProjectAnchor>,
+        over: Option<Vec<ProjectAnchorLink>>,
         signed_at: u64,
     ) -> Result<()> {
         owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let anchor = over.unwrap_or_else(|| ProjectAnchor {
-            authority: next.authority_at(ProjectProofVersion::V2),
-            proof: None,
+        let anchor = over.unwrap_or_else(|| {
+            vec![ProjectAnchorLink {
+                authority: next.authority_at(ProjectProofVersion::V2),
+                proof: None,
+            }]
         });
         let challenge = next.authority_at(ProjectProofVersion::V3).write_challenge(
             id,
             ProjectProofVersion::V3,
             signed_at,
-            Some(&anchor),
+            &anchor,
         )?;
         next.write_proof = Some(ProjectWriteProof {
             slip_wire: signer.wire().to_owned(),
             holder_signature: signer.sign(&challenge)?,
             signed_at,
-            anchor: Some(Box::new(anchor)),
+            anchor,
             version: ProjectProofVersion::V3,
         });
         Ok(())

@@ -81,7 +81,7 @@ pub struct PackStats {
     pub query_time_us: u64,
     pub entities_hydrated: usize,
     pub neighbors_hydrated: usize,
-    /// Candidates assigned the low gravity signal because they had vector
+    /// Candidates counted for lexical disagreement because they had vector
     /// similarity above the cosine-ghost threshold and no BM25 text channel
     /// presence.
     pub cosine_ghosts_dampened: usize,

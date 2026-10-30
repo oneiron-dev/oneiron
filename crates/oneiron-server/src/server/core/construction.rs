@@ -31,6 +31,9 @@ impl SyncServer {
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
         config.validate()?;
+        // Authority work past its row waits this server's own queue wait
+        // (FIX 8091, L14 s45 09:35); a crossing still only measures.
+        oneiron::authority::set_authority_work_wait_ms(config.limits.queue_wait_timeout_ms);
         vault.recover_admission_intents()?;
         // Genuine host authority must exist before any scoped-read fail-closed
         // policy applies. Dev/no-secret and blind-relay modes mint nothing.

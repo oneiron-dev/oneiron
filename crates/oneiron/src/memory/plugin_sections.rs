@@ -523,7 +523,7 @@ impl Memory<'_> {
                 observed_at: input.observed_at,
             },
         };
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let source = VaultPluginInstallSource { vault };
         let now = vault.now_recorded_at();
         let disposition =

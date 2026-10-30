@@ -4,12 +4,15 @@
 
 use super::*;
 
+/// A forwarded search's verified caller is written to `attribution`, for its
+/// receipt to name (FIX 3550), and taken back if the caller stops verifying.
 pub(super) fn search(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
     params: Value,
     budgets: ResidenceOperationBudgets,
+    attribution: &mut Option<ForwardedAttribution>,
 ) -> Result<Answer, AppError> {
     let input: SearchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
@@ -21,21 +24,18 @@ pub(super) fn search(
     }
     // More hits than one page carries are served in pages (FIX 8865).
     if input.limit > budgets.search_limit || input.page.is_some() {
-        return pages::search_pages(server, auth, peer, input, budgets);
+        return pages::search_pages(server, auth, peer, input, budgets, attribution);
     }
     let selector = bound_selector(server, auth, &input.selector)?;
-    // A forwarded caller reads under its own credential, and the device's
-    // selector stays the second ceiling every hit passes.
+    // A forwarded caller reads under its own credential, at the locality its
+    // device signed, and the device's selector stays the second ceiling
+    // every hit passes.
     let forwarded = input.forwarded_caller(server, peer, &selector)?;
+    *attribution = forwarded
+        .as_ref()
+        .map(|forwarded| ForwardedAttribution::of(&forwarded.caller));
     let admission = match &forwarded {
-        Some(caller) => ResidenceAdmission::load(
-            &server.vault,
-            caller.caller(),
-            peer,
-            crate::handler::selector_grant_scope(),
-            &selector,
-        )
-        .map_err(|_| AppError::not_found("item", None))?,
+        Some(caller) => caller.admission(server, peer, &selector)?,
         None => admitted(server, auth, peer, &selector)?,
     };
     let grant_before = server
@@ -43,13 +43,13 @@ pub(super) fn search(
         .get_raw(&selector.grant_id)
         .map_err(|_| AppError::internal_server_error("grant unavailable"))?
         .ok_or_else(|| AppError::not_found("grant", None))?;
-    let proof = match &forwarded {
-        Some(caller) => caller.caller(),
-        None => auth.verified_slip().ok_or_else(AppError::unauthorized)?,
+    let actor = match &forwarded {
+        Some(caller) => caller.read_key(),
+        None => device_search_read_key(server, auth)?,
     };
     let candidates = home_search_candidates(
         &server.vault,
-        proof,
+        actor,
         &input.query,
         input.limit,
         input.scope.as_ref(),
@@ -111,7 +111,9 @@ pub(super) fn search(
     // cached answer.
     let selector = bound_selector(server, auth, &input.selector)?;
     if forwarded.is_some() {
-        input.forwarded_caller(server, peer, &selector)?;
+        input
+            .forwarded_caller(server, peer, &selector)
+            .inspect_err(|_| *attribution = None)?;
     }
     if server
         .vault

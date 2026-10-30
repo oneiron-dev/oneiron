@@ -145,10 +145,19 @@ impl CustodyRecipients {
     /// Whether the head leaves the live entry `id` out: a world pad of a
     /// world [`Self::pad_worlds_kept_local`] names, or (world compartments
     /// on) of a world no admitted machine or root receives; or a
-    /// credential's value or carrier key unless a root is pinned and the
-    /// credential is one [`Self::credentials_eligible`] names (KS-6). A
-    /// connector call's resume (FIX 9157) is always left out.
+    /// credential's value key unless a root is pinned and the credential is
+    /// one [`Self::credentials_eligible`] names (KS-6). A carrier key is
+    /// always left out (FIX 7402): it opens a retained carrier only where it
+    /// is released live, so no head, which retains, carries it or a
+    /// permanent key's wrap of it. So is a connector call's resume (FIX
+    /// 9157).
     pub(crate) fn keeps_local(&self, id: &CustodyId) -> bool {
+        if matches!(
+            id.kind(),
+            CustodyKind::CustodyTransition | CustodyKind::CustodyRequestInput
+        ) {
+            return true;
+        }
         if crate::store::credential_kind(id.kind()) {
             return self.root.is_none()
                 || !id

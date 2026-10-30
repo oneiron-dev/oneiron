@@ -121,6 +121,19 @@ impl<'a> SealedFrame<'a> {
         Ok(self.head.chain(self.envelope.reader()?).chain(self.tail))
     }
 
+    /// The input's bytes joined, its head, envelope and tail, when they
+    /// take at most `bound`; `None` past it, read no further. For the
+    /// carrier seal on top of a surface's input (FIX 7402), which joins
+    /// none past one row.
+    pub(super) fn joined_within(&self, bound: usize) -> Result<Option<Vec<u8>>> {
+        let Some(len) = usize::try_from(self.len()).ok().filter(|len| *len <= bound) else {
+            return Ok(None);
+        };
+        let mut joined = vec![0; len];
+        self.reader()?.read_exact(&mut joined)?;
+        Ok(Some(joined))
+    }
+
     /// The digest the request names of this input, as [`input_digest`]
     /// takes it of the joined bytes, read part by part, with every part's
     /// digest when it travels in parts. Refused only past the part list's
@@ -286,6 +299,19 @@ impl KeptInput<'_, '_> {
         binding: &InputBinding<'_>,
         secret: &MachineSecret,
     ) -> Result<Option<(Zeroizing<Vec<u8>>, Option<Attached>)>> {
+        self.read_rows(|rows, len| open_framed(binding, rows, len, secret))
+    }
+
+    /// What `read` makes of this input's `len` bytes, its rows read in
+    /// order and let go: [`Self::open`]'s reading, and a leaf-sealed
+    /// input's (FIX 7402, `carrier_seal`).
+    ///
+    /// # Errors
+    /// Storage errors reading a row.
+    pub(super) fn read_rows<T>(
+        &self,
+        read: impl FnOnce(&mut dyn Read, u64) -> Option<T>,
+    ) -> Result<Option<T>> {
         let mut rows = KeptRows {
             store: self.store,
             txn: self.txn,
@@ -296,10 +322,10 @@ impl KeptInput<'_, '_> {
             at: 0,
             fault: None,
         };
-        let opened = open_framed(binding, &mut rows, self.len, secret);
+        let made = read(&mut rows, self.len);
         match rows.fault {
             Some(fault) => Err(fault),
-            None => Ok(opened),
+            None => Ok(made),
         }
     }
 }
@@ -308,7 +334,7 @@ impl KeptInput<'_, '_> {
 /// `binding`, and what its recorder attached: its head when it opens with
 /// one, then the envelope that head counts, or the whole input, then the
 /// tail after it.
-fn open_framed(
+pub(super) fn open_framed(
     binding: &InputBinding<'_>,
     mut reader: impl Read,
     len: u64,

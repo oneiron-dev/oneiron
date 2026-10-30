@@ -79,7 +79,9 @@ impl Vault {
     /// prompt sources the viewer reads in this view
     /// ([`SHARED_PROMPT_ADMISSION`]). The receipt folds every source read;
     /// it is `None` when no source was read. A choice without the prompt
-    /// reads no source.
+    /// reads no source. Also returns the readable sources whose text the
+    /// prompt carries, in the order the brief's birth names them, for the
+    /// view's producers (FIX 6310).
     pub(crate) fn shared_brief_born_with(
         &self,
         share_id: &EntityId,
@@ -88,7 +90,7 @@ impl Vault {
         brief: &EntityId,
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
-    ) -> Result<(BornWith, Option<ScopedReadReceipt>)> {
+    ) -> Result<(BornWith, Option<ScopedReadReceipt>, Vec<EntityId>)> {
         let travel = self.share_travel(share_id)?;
         let birth = if travel.born_with.contains(&BornWithField::Prompt) {
             self.row_birth(brief)?
@@ -97,7 +99,7 @@ impl Vault {
         };
         let Some(birth) = birth else {
             let text = self.born_with_text_for_another(brief, None)?;
-            return Ok((travel.project(text), None));
+            return Ok((travel.project(text), None, Vec::new()));
         };
         let reader = SharedViewer {
             share_id,
@@ -109,9 +111,17 @@ impl Vault {
         let mut receipt = None;
         let sources = prompt_sources(&birth.made_by);
         let readable = shared_sources_readable(self, &reader, &sources, &mut receipt)?;
+        let read_sources: Vec<EntityId> = sources
+            .into_iter()
+            .filter(|source| readable.as_ref().is_some_and(|ids| ids.contains(source)))
+            .collect();
         let (made_by, omitted) = readable_made_by(birth.made_by, readable.as_ref());
         let text = self.born_with_text_for_another(brief, Some(&made_by))?;
-        Ok((travel.project(with_marker(text, omitted)), receipt))
+        Ok((
+            travel.project(with_marker(text, omitted)),
+            receipt,
+            read_sources,
+        ))
     }
 }
 

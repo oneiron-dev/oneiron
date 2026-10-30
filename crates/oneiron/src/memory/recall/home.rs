@@ -231,6 +231,11 @@ pub struct HomeRecallCaller {
     /// A narrower caller's own holder proof, forwarded unchanged; `None`
     /// for an owner-grade caller.
     pub forwarded: Option<crate::authority::ForwardedCallerProof>,
+    /// Where that caller sits relative to this device, as its ingress
+    /// placed it: signed into the forwarded search, so the home reads for
+    /// a caller off this device as off it (FIX 3550). Unread when nothing
+    /// is forwarded.
+    pub locality: crate::claim::CallerLocality,
 }
 
 impl HomeRecallCaller {
@@ -240,6 +245,7 @@ impl HomeRecallCaller {
         Self {
             owner_grade: false,
             forwarded: None,
+            locality: crate::claim::CallerLocality::OffDevice,
         }
     }
 
@@ -249,20 +255,23 @@ impl HomeRecallCaller {
         Self {
             owner_grade: true,
             forwarded: None,
+            locality: crate::claim::CallerLocality::OffDevice,
         }
     }
 
-    /// A caller as its ingress admitted it: owner-grade, or narrower with
-    /// the holder proof it presented there, if any. An owner-grade caller
-    /// forwards no proof.
+    /// A caller as its ingress admitted it at `locality`: owner-grade, or
+    /// narrower with the holder proof it presented there, if any. An
+    /// owner-grade caller forwards no proof.
     #[must_use]
     pub fn admitted(
         owner_grade: bool,
         forwarded: Option<crate::authority::ForwardedCallerProof>,
+        locality: crate::claim::CallerLocality,
     ) -> Self {
         Self {
             owner_grade,
             forwarded: forwarded.filter(|_| !owner_grade),
+            locality,
         }
     }
 }
@@ -364,6 +373,7 @@ async fn ask_home(
     let bound =
         std::time::Instant::now() + std::time::Duration::from_millis(budgets.rpc_timeout_ms);
     let bound = due.map_or(bound, |due| due.min(bound));
+    let forwarded = forwarded.map(|proof| (proof, caller.locality));
     let asked = search.search_recall(&ask.query, limit, selection, forwarded);
     let found = tokio::time::timeout_at(bound.into(), asked)
         .await
