@@ -510,6 +510,9 @@ pub(super) fn failure(error: &LlmError) -> Response {
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
             (StatusCode::CONFLICT, "kept_on_device")
         }
+        LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
+            (StatusCode::CONFLICT, "world_route_not_admitted")
+        }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "provider_unavailable"),
     };
     (

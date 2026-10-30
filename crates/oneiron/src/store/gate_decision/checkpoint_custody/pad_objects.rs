@@ -94,11 +94,12 @@ pub(crate) enum UncapturedPadObjects {
     /// The vault and home its objects are named for did not read in that
     /// transaction.
     IdentityUnread,
-    /// A source read off its disk whose stored authority records fold to no
-    /// one vault (no valid genesis among them, more than one root, or a
-    /// genesis held only through an adopted checkpoint image), so which vault
-    /// its objects are for is not proven (CALLS: PAD-1 paired source
-    /// identity).
+    /// A source whose authority records fold to no one vault (no valid
+    /// genesis among them, more than one root, or a genesis held only
+    /// through an adopted checkpoint image), so which vault its objects are
+    /// for is not proven (CALLS: PAD-1 paired source identity): a vault read
+    /// off its disk, or one open in this process with no genesis yet
+    /// (FIX 11826).
     SourceVaultUnfolded,
 }
 
@@ -110,7 +111,7 @@ impl UncapturedPadObjects {
             Self::NoSync => "this build keeps no pad object",
             Self::RowsUnread => "the source's pad object rows did not read",
             Self::IdentityUnread => "the source's vault and home did not read",
-            Self::SourceVaultUnfolded => "the source read off its disk folds to no one vault",
+            Self::SourceVaultUnfolded => "the source folds to no one vault",
         }
     }
 }
@@ -123,8 +124,8 @@ pub(crate) enum PadSourceIdentity {
     /// them to its machines. A vault open in this process folds its own log
     /// there; a vault read off its disk folds the AUTHORITY_LOG records that
     /// read took, Store-free (`authority::folded_vault_id_of_records`).
-    /// A disk source whose records fold to no one vault keeps its objects
-    /// uncarried; one that keeps none is an empty capture.
+    /// A source whose records fold to no one vault keeps its objects
+    /// uncarried; a disk source that keeps none is an empty capture.
     FoldedInCustodyRead,
 }
 

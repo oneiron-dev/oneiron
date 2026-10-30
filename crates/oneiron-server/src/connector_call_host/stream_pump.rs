@@ -128,7 +128,7 @@ impl Pump {
                         Ok(StreamEvent::Request(request))
                             if stream_question(&request).is_none() =>
                         {
-                            session.refuse(&request);
+                            session.refuse(request);
                         }
                         event @ Ok(StreamEvent::Request(_) | StreamEvent::Answer(..)) => {
                             self.early = Some(Said {
@@ -170,9 +170,11 @@ impl Pump {
                     Some(question) => {
                         *request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));
                         *last_event_id = said.last_event_id;
+                        // Its question and id are read out (FIX 11861).
+                        zeroize_json(request);
                         return Next::Asked(vec![question]);
                     }
-                    None => session.refuse(&request),
+                    None => session.refuse(request),
                 },
                 Ok(StreamEvent::End) | Err(()) => {
                     return Next::Over(WorkerEvent::Failed {
