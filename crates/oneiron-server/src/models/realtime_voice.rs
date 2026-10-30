@@ -6,7 +6,8 @@
 //!
 //! Each response the model gives goes out on a permit of its own: the first
 //! is admitted before the socket opens, so a refused session opens none, and
-//! each next one as the response before it ends. A `response.done` settles
+//! each next one as the response before it ends, reserving what that response
+//! reported when past the base (FIX 11481). A `response.done` settles
 //! its permit on the tokens its usage reports. A session that ends between
 //! responses settles its open permit on none; one that ends while a response
 //! is under way, with its usage never reported, pays that permit's
@@ -131,6 +132,8 @@ pub struct RealtimeVoiceSession {
     permit: Option<RunPermit>,
     /// A response started and has not reported its usage yet.
     responding: bool,
+    /// The tokens the last response reported, for the next one's reservation.
+    last_tokens: u64,
     /// The socket closed: no event follows.
     closed: bool,
 }
@@ -145,7 +148,7 @@ impl RealtimeVoiceSession {
         run: RunAdmission,
         session: Option<JsonValue>,
     ) -> LlmResult<Self> {
-        let permit = admit_response(&run, &rung.connector)?;
+        let permit = admit_response(&run, &rung.connector, RESPONSE_RESERVED_TOKENS)?;
         let opened = connect(rung).await;
         let socket = match opened {
             Ok(socket) => socket,
@@ -160,6 +163,7 @@ impl RealtimeVoiceSession {
             connector: rung.connector.clone(),
             permit: Some(permit),
             responding: false,
+            last_tokens: 0,
             closed: false,
         };
         if let Some(session) = session {
@@ -229,17 +233,20 @@ impl RealtimeVoiceSession {
     }
 
     /// A response ended: its permit settles on the tokens it reports, and
-    /// the next response's is admitted.
+    /// the next response's is admitted, reserving at least what this one
+    /// reported (FIX 11481).
     fn answered(&mut self, event: &JsonValue) -> LlmResult<()> {
         self.responding = false;
         let tokens = event
             .pointer("/response/usage/total_tokens")
             .and_then(JsonValue::as_u64)
             .unwrap_or(0);
+        self.last_tokens = tokens;
         if let Some(permit) = self.permit.take() {
             settle(permit, CallOutcome::Used(tokens));
         }
-        match admit_response(&self.run, &self.connector) {
+        let reserve = self.last_tokens.max(RESPONSE_RESERVED_TOKENS);
+        match admit_response(&self.run, &self.connector, reserve) {
             Ok(permit) => {
                 self.permit = Some(permit);
                 Ok(())
@@ -272,10 +279,14 @@ impl Drop for RealtimeVoiceSession {
     }
 }
 
-/// One response's permit on `run`, reserved before its usage is known and
-/// checked for dispatch on `connector`'s credential.
-fn admit_response(run: &RunAdmission, connector: &PaidConnector) -> LlmResult<RunPermit> {
-    let permit = run.admit_paid(connector, RESPONSE_RESERVED_TOKENS)?;
+/// One response's permit on `run`, reserving `reserve` before its usage is
+/// known and checked for dispatch on `connector`'s credential.
+fn admit_response(
+    run: &RunAdmission,
+    connector: &PaidConnector,
+    reserve: u64,
+) -> LlmResult<RunPermit> {
+    let permit = run.admit_paid(connector, reserve)?;
     run.dispatch_paid(permit.lease(), connector)?;
     Ok(permit)
 }

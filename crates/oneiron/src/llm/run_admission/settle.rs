@@ -9,7 +9,7 @@ use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
 use super::host::{UnitRate, Unpriced, convert};
 use super::permit::RunPermit;
-use super::receipt::{RunEvent, RunStreamUsage, RunTokenUsage};
+use super::receipt::{RunEvent, RunOverageSource, RunStreamUsage, RunTokenUsage, RunUsageOverage};
 
 /// How a permitted call ended, for its settlement.
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +100,22 @@ impl RunInner {
             draw.settle(*units);
         }
         let charged = if permit.metered { units } else { 0 };
+        // A `Used` settlement past its reservation (FIX 11481): the provider
+        // reported more than the permit reserved, and the call settles at
+        // what was reported. The overage is marked on the settlement; the
+        // budget gate sees the true spend at the next admission, as for any
+        // call. Ordinary settlements carry no mark.
+        let overage = match outcome {
+            CallOutcome::Used(_) if charged > permit.facts.reserved_units => {
+                Some(RunUsageOverage {
+                    reported_units: charged,
+                    reserved_units: permit.facts.reserved_units,
+                    overage_units: charged - permit.facts.reserved_units,
+                    source: RunOverageSource::ProviderReported,
+                })
+            }
+            _ => None,
+        };
         if settled.is_ok()
             && let Some(facts) = self.lock_calls().get_mut(permit.lease.id())
         {
@@ -133,6 +149,7 @@ impl RunInner {
                 },
                 stream,
                 inference_calls,
+                overage,
                 units: charged,
                 unit: line_unit.clone(),
                 allocation_units: allocation.as_ref().map(|(units, _)| *units),
