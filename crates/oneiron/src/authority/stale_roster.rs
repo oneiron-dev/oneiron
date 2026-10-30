@@ -308,7 +308,7 @@ pub(super) fn accepted_roster_marks(
     merged: &FoldState,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    valid: &BTreeSet<AuthorityEntryHash>,
+    valid: &ValidEntries,
 ) -> BTreeSet<AuthorityEntryHash> {
     valid
         .iter()

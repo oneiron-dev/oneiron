@@ -571,9 +571,10 @@ impl FoldBase {
                 add_bound_keys(&mut bound_keys, state);
             }
         }
-        // The view's own valid entries: the one copy of the base's a fold
-        // past it makes (FIX 12308).
-        let valid_entries: BTreeSet<_> = once.valid.iter().chain(&tail.order).copied().collect();
+        // The view's valid entries: the base's set, shared, with the tail's
+        // rows inserted (FIX 12330). The next base keeps the same set.
+        let mut valid = once.valid.clone();
+        valid.extend(tail.order.iter().copied());
         // The projection reads each world-key envelope from the rows read
         // whole, the base's and the tail's.
         let tail_rows: Vec<_> = tail
@@ -604,7 +605,7 @@ impl FoldBase {
         let (mut fold, final_merged) = super::fold_project::project_once(
             Settled {
                 merged: Some(merged.clone()),
-                valid_entries,
+                valid_entries: valid.clone(),
                 by_hash: &projected,
                 revoke_facts: &settlement.revoke_facts,
                 retired_keys: settlement.retired_keys.clone(),
@@ -659,9 +660,8 @@ impl FoldBase {
         };
         // Each row-sized part of the next base is this one's, shared, with
         // the tail's rows added (FIX 12308).
-        let (mut judged, mut valid) = (once.judged.clone(), once.valid.clone());
+        let mut judged = once.judged.clone();
         judged.extend(tail.order.iter().copied());
-        valid.extend(tail.order.iter().copied());
         let mut rows = self.rows.clone();
         for (hash, entry) in &tail_rows {
             rows.insert(*hash, Arc::new(RowSummary::of(entry)));

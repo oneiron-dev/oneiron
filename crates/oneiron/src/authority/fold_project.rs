@@ -13,7 +13,7 @@ use crate::EntityId;
 /// states, before any restrictive fact, and what settlement decided.
 pub(super) struct Settled<'a> {
     pub(super) merged: Option<FoldState>,
-    pub(super) valid_entries: BTreeSet<AuthorityEntryHash>,
+    pub(super) valid_entries: ValidEntries,
     pub(super) by_hash: &'a dyn RowsReadWhole,
     /// Already filtered to the settled branches.
     pub(super) revoke_facts: &'a RevokeFacts,
@@ -43,7 +43,7 @@ pub(super) trait RowStates {
     fn accepted_roster_marks(
         &self,
         merged: &FoldState,
-        valid: &BTreeSet<AuthorityEntryHash>,
+        valid: &ValidEntries,
     ) -> BTreeSet<AuthorityEntryHash>;
     fn revocation_affected_writers(&self, merged: &FoldState) -> BTreeSet<(EntityId, String)>;
     fn actor_write_frontiers(
@@ -63,7 +63,7 @@ impl RowStates for AllStates<'_> {
     fn accepted_roster_marks(
         &self,
         merged: &FoldState,
-        valid: &BTreeSet<AuthorityEntryHash>,
+        valid: &ValidEntries,
     ) -> BTreeSet<AuthorityEntryHash> {
         super::stale_roster::accepted_roster_marks(merged, self.by_hash, self.states, valid)
     }

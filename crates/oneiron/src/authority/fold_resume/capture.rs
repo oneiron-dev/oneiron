@@ -93,7 +93,7 @@ pub(in crate::authority) struct OnceParts<'a> {
     /// The floors the fold was handed, before causal ancestry cleared any.
     pub(in crate::authority) original_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(in crate::authority) merged: FoldState,
-    pub(in crate::authority) valid_entries: BTreeSet<AuthorityEntryHash>,
+    pub(in crate::authority) valid_entries: ValidEntries,
     pub(in crate::authority) revoke_facts: RevokeFacts,
     pub(in crate::authority) retired_keys: BTreeSet<AuthorityKey>,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
@@ -145,7 +145,7 @@ pub(super) struct Once {
     pub(super) confirm_ids: BTreeSet<[u8; 32]>,
     pub(super) confirm_nonces: BTreeSet<[u8; 16]>,
     /// The projected once fold's valid entries.
-    pub(super) valid: im::OrdSet<AuthorityEntryHash>,
+    pub(super) valid: ValidEntries,
     /// The projected once fold, before this install's stale window, with no
     /// valid entries: [`Self::valid`] holds them.
     pub(super) fold: AuthorityFold,
@@ -271,7 +271,7 @@ impl Once {
             bound_keys,
             confirm_ids,
             confirm_nonces,
-            valid: valid_entries.into_iter().collect(),
+            valid: valid_entries,
             fold,
         })
     }
