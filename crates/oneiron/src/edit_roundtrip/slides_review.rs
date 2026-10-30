@@ -240,6 +240,10 @@ pub struct SlideJudgment {
     #[serde(default)]
     pub location: Option<SlideLocation>,
     pub band_mode: BandMode,
+    /// The ceiling rung of the dial the ladder ran under: an enforced in-band
+    /// answer from that rung stands with no reasoning step, since no stronger
+    /// rung is left to read it again (FIX 10745).
+    pub ceiling: DecisionRung,
     pub renderer: String,
     #[serde(with = "oneiron_docedit::hex_digest")]
     pub frontier: [u8; 32],

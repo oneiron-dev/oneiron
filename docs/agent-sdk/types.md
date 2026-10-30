@@ -252,6 +252,8 @@ export type ClaimInput = {
   /** One of `user_stated`, `observed`, `inferred`, `imported`, `tool_output`, `generated`. */
   source: string
   worldRef?: string
+  /** RELATIONSHIP refs: omitted means all relationships, `[]` the explicit empty set. */
+  relationshipRef?: string[]
   scope?: unknown
   /** Unix seconds. */
   validFrom?: number
@@ -631,6 +633,7 @@ class ClaimInput(TypedDict):
     confidence: float
     source: str
     world_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[list[str] | None]
     scope: NotRequired[dict[str, Any] | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]

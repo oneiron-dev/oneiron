@@ -21422,7 +21422,7 @@ pub struct ScopeScope {
     #[serde(rename = "facet", default)]
     pub facet: Option<String>,
     #[serde(rename = "relationship", default)]
-    pub relationship: Option<String>,
+    pub relationship: Option<Vec<String>>,
     #[serde(rename = "project", default)]
     pub project: Option<String>,
     #[serde(rename = "readable")]
@@ -38008,7 +38008,7 @@ pub struct WireClaimInput {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub relationship_ref: Option<String>,
+    pub relationship_ref: Option<Vec<String>>,
     #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<crate::WireJson>,
     #[serde(
@@ -45287,6 +45287,8 @@ pub struct SlideJudgment {
     pub location: Option<SlideLocation>,
     #[serde(rename = "band_mode")]
     pub band_mode: BandMode,
+    #[serde(rename = "ceiling")]
+    pub ceiling: DecisionRung,
     #[serde(rename = "renderer")]
     pub renderer: String,
     #[serde(rename = "frontier")]
@@ -63455,7 +63457,7 @@ pub struct ConsolidationRootBucket {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub relationship: Option<String>,
+    pub relationship: Option<Vec<String>>,
     #[serde(rename = "project")]
     pub project: String,
 }
