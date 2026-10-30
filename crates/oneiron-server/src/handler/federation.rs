@@ -120,7 +120,7 @@ pub(super) async fn handle_selector_fetch(
     // is served, while its selector stands (FIX 12118).
     state
         .admitted_windows
-        .insert(key.clone(), (prepared.selector.clone(), filtered));
+        .keep(key.clone(), prepared.selector.clone(), filtered);
     prepared
         .complete(server.vault.as_ref())
         .map_err(map_selector_filter_err)?;
