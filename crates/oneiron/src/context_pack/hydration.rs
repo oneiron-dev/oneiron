@@ -40,7 +40,7 @@ pub(crate) fn context_entity_matches_read_snapshot(
                 true,
             )?)
         } else {
-            decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..]).unwrap_or_default()
+            decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..], false).unwrap_or_default()
         };
         for (key, value) in fields {
             if key == super::WORLD_STALE_FIELD {
@@ -387,7 +387,7 @@ fn hydrate_selected_note_fields(
         if crate::batch::export::write_door_refuses_body(body) {
             return Ok(HashMap::new());
         }
-        return Ok(decode_entity_fields(body).unwrap_or_default());
+        return Ok(decode_entity_fields(body, true).unwrap_or_default());
     }
     let body =
         crate::note::live_body_from_in_txn(store.base(), store, rtxn, id, entity_type, body)?;
@@ -397,7 +397,7 @@ fn hydrate_selected_note_fields(
     {
         return Ok(HashMap::new());
     }
-    let mut fields = decode_entity_fields(&body).unwrap_or_default();
+    let mut fields = decode_entity_fields(&body, true).unwrap_or_default();
     fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
     Ok(fields)
 }
@@ -534,7 +534,11 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     out
 }
 
-fn decode_entity_fields(payload: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
+/// `write_accepted`: the write door's scan has read and accepted `payload`.
+fn decode_entity_fields(
+    payload: &[u8],
+    write_accepted: bool,
+) -> Option<HashMap<String, serde_json::Value>> {
     if payload.is_empty() {
         return Some(HashMap::new());
     }
@@ -543,7 +547,13 @@ fn decode_entity_fields(payload: &[u8]) -> Option<HashMap<String, serde_json::Va
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     // A body that reads as a secret whole, before this projection drops a
     // float's width and in the bytes it was stored as, hydrates no field.
-    if crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, payload) {
+    // The write door's read of bytes it accepted is not repeated (speed).
+    let reads_whole = if write_accepted {
+        crate::batch::secret_scan::release_accepted_body_reads_whole_as_stored(&value, payload)
+    } else {
+        crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, payload)
+    };
+    if reads_whole {
         return Some(HashMap::new());
     }
     let rmpv::Value::Map(entries) = value else {
