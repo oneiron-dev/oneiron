@@ -415,7 +415,8 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
             space
                 .validate()
                 .map_err(|error| refused_setup(error.to_string()))?;
-            if let Some(existing) = embedding_space_in_txn(store, wtxn, &space.id)?
+            let existing = embedding_space_in_txn(store, wtxn, &space.id)?;
+            if let Some(existing) = &existing
                 && existing.dimensions != space.dimensions
             {
                 if !WIDTH_CONFLICT_TAKES_CARRIER {
@@ -435,6 +436,17 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
                 }
                 drop_space_rows_in_txn(store, wtxn, &space.id, &InputKind::ALL.into())?;
             }
+            // A same-width declaration keeps what the bound slots use, as the local declare
+            // path does (FIX 9832, FIX 11170); a first declaration, or one arriving after the
+            // width-conflict handling above, lands as it came.
+            let space = match &existing {
+                Some(existing) if existing.dimensions == space.dimensions => {
+                    capabilities::reconcile_bound_space_capabilities_in_txn(
+                        store, wtxn, existing, &space,
+                    )?
+                }
+                _ => space,
+            };
             EMBEDDING_SPACE.put(store, wtxn, &space.id.clone(), &space)?;
         }
         EmbeddingSetup::Retired { id: space_id, .. } => {
