@@ -81,6 +81,7 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
             tree.root_node(),
             source.path,
             source.text,
+            source.document,
             &mut chunks,
             &mut extracted,
             &mut source_symbol_indexes,
@@ -236,6 +237,7 @@ fn parse_rust_source(source: &str) -> Result<tree_sitter::Tree> {
 pub(super) fn rust_code_embedding_inputs(
     repo_ref: &RepoRef,
     path: &str,
+    document: Option<[u8; 32]>,
     source: &str,
     changed_ranges: &[Range<usize>],
 ) -> Result<Vec<CodeEmbeddingInput>> {
@@ -244,7 +246,7 @@ pub(super) fn rust_code_embedding_inputs(
     collect_changed_rust_embedding_inputs(
         tree.root_node(),
         repo_ref,
-        path,
+        (path, document),
         source,
         changed_ranges,
         &mut inputs,
@@ -274,14 +276,18 @@ fn push_children<'tree>(node: tree_sitter::Node<'tree>, stack: &mut Vec<tree_sit
 fn collect_changed_rust_embedding_inputs(
     node: tree_sitter::Node<'_>,
     repo_ref: &RepoRef,
-    path: &str,
+    (path, document): (&str, Option<[u8; 32]>),
     source: &str,
     changed_ranges: &[Range<usize>],
     inputs: &mut Vec<CodeEmbeddingInput>,
 ) -> Result<()> {
     let mut stack = vec![node];
+    let mut ordinals = HashMap::new();
     while let Some(node) = stack.pop() {
         if let Some((name, kind)) = rust_definition_identity(node, source)? {
+            // Every definition counts toward its ordinal, changed or not, as
+            // the manifest's walk counts it.
+            let ordinal = next_ordinal(&mut ordinals, &name, kind);
             let definition = rust_definition_chunk(path, source, node)?;
             if definition_has_uncovered_changed_lines(
                 node,
@@ -304,7 +310,8 @@ fn collect_changed_rust_embedding_inputs(
                     vec![0],
                     None,
                     None,
-                );
+                )
+                .on_document(document, ordinal);
                 let entity_id = code_symbol_entity_id(repo_ref, &revision)?;
                 inputs.push(CodeEmbeddingInput::new(
                     entity_id,
@@ -323,18 +330,34 @@ fn collect_changed_rust_embedding_inputs(
     Ok(())
 }
 
+/// The ordinal the next definition named `name` of `kind` in one file takes:
+/// how many of the same name and kind its walk met before (FIX 7809).
+fn next_ordinal(
+    seen: &mut HashMap<(String, &'static str), u32>,
+    name: &str,
+    kind: &'static str,
+) -> u32 {
+    let count = seen.entry((name.to_owned(), kind)).or_insert(0);
+    let ordinal = *count;
+    *count = count.saturating_add(1);
+    ordinal
+}
+
 fn collect_rust_definitions(
     node: tree_sitter::Node<'_>,
     path: &str,
     source: &str,
+    document: Option<[u8; 32]>,
     chunks: &mut Vec<CodeChunk>,
     symbols: &mut Vec<ExtractedCodeSymbol>,
     source_symbol_indexes: &mut Vec<usize>,
 ) -> Result<()> {
     let mut stack = vec![node];
+    let mut ordinals = HashMap::new();
     while let Some(node) = stack.pop() {
         if let Some((name, kind)) = rust_definition_identity(node, source)? {
             validate_text(&name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
+            let ordinal = next_ordinal(&mut ordinals, &name, kind);
             let definition = rust_definition_chunk(path, source, node)?;
             let chunk = definition.chunk;
             let chunk_index = u32::try_from(chunks.len()).map_err(|_| {
@@ -359,7 +382,8 @@ fn collect_rust_definitions(
                     vec![chunk_index],
                     None,
                     None,
-                ),
+                )
+                .on_document(document, ordinal),
                 start_byte: byte_range.start,
                 end_byte: byte_range.end,
                 name_start_byte: name_range.start,
