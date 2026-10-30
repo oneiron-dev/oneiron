@@ -8,6 +8,11 @@
 //! releases the key, and removed only once that holder's retirement of it
 //! is verified. A retired key whose debt stands reads
 //! `custody_remote_retirement_pending(<holder>)`, never complete.
+//!
+//! Each debt recorded or cleared is journaled once its file is written or
+//! removed (FIX 11206), so every member's custody head is sealed again
+//! carrying the debts that stand (`head::holder_debts`), and a disaster
+//! recovery's landing keeps them.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -20,6 +25,7 @@ use crate::store::Store;
 use super::erasable::ErasablePurpose;
 use super::files::{EntryState, LocalCustody, custody_present, open_dir, write_once};
 use super::identity::{CustodySubject, hex_decode};
+use super::log::LogEntry;
 use super::platform;
 
 const HOLDERS: &str = ".holders";
@@ -43,19 +49,58 @@ fn debt_of_name(name: &str) -> Option<HolderDebt> {
     (debt_name(&key_ref, &holder) == name).then_some((key_ref, holder))
 }
 
+/// `standing (1) | ref (32) | holder (16)`: a log frame's body after its op
+/// (FIX 11206); `standing` is 0 for a debt cleared.
+pub(super) fn encode_debt(debt: &HolderDebt, standing: bool) -> [u8; 49] {
+    let mut out = [0u8; 49];
+    out[0] = u8::from(standing);
+    out[1..33].copy_from_slice(&debt.0);
+    out[33..].copy_from_slice(debt.1.as_bytes());
+    out
+}
+
+/// The debt and whether it stands a frame's body names; `None` for one
+/// custody would not write.
+pub(super) fn decode_debt(bytes: &[u8]) -> Option<(HolderDebt, bool)> {
+    let (&standing, rest) = bytes.split_first()?;
+    let (key_ref, holder) = rest.split_first_chunk::<32>()?;
+    let holder = EntityId::from_bytes(<[u8; 16]>::try_from(holder).ok()?).ok()?;
+    let standing = match standing {
+        0 => false,
+        1 => true,
+        _ => return None,
+    };
+    Some(((*key_ref, holder), standing))
+}
+
 impl LocalCustody<'_> {
     fn holders_dir(&self) -> Result<PathBuf> {
         Ok(self.compartment()?.join(HOLDERS))
     }
 
     /// Records that `holder` holds a copy of the key `key_ref`, synced
-    /// before this returns: before the export that sends it releases it.
+    /// before this returns: before the export that sends it releases it. A
+    /// new debt is journaled after its file (FIX 11206), so every head
+    /// sealed at the position it moves the log to carries it.
     pub(crate) fn record_holder(&self, key_ref: &[u8; 32], holder: &EntityId) -> Result<()> {
+        let debt = (*key_ref, *holder);
+        if self.put_holder_debt(&debt)? {
+            self.journal_entry(&LogEntry::HolderDebt {
+                debt,
+                standing: true,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Keeps `debt`, synced, journaling nothing: whether it was not kept
+    /// already. A disaster recovery's landing keeps each debt its head
+    /// carried this way (FIX 11206).
+    pub(super) fn put_holder_debt(&self, debt: &HolderDebt) -> Result<bool> {
         self.open_compartment()?;
         let dir = self.holders_dir()?;
         open_dir(&dir, true, None)?;
-        write_once(&dir, &debt_name(key_ref, holder), &[])?;
-        Ok(())
+        write_once(&dir, &debt_name(&debt.0, &debt.1), &[])
     }
 
     /// Every holder debt standing here, in order. No directory holds none.
@@ -86,14 +131,21 @@ impl LocalCustody<'_> {
     }
 
     /// Clears `holder`'s debt for the key `key_ref`, the directory synced:
-    /// its retirement of the copy was verified. None standing is fine.
+    /// its retirement of the copy was verified. None standing is fine. A
+    /// debt removed is journaled after its file (FIX 11206), so no head
+    /// sealed at the position it moves the log to carries it.
     pub(crate) fn clear_holder(&self, key_ref: &[u8; 32], holder: &EntityId) -> Result<()> {
         let dir = self.holders_dir()?;
         match fs::remove_file(dir.join(debt_name(key_ref, holder))) {
-            Ok(()) => platform::sync_dir(&dir),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err.into()),
+            Ok(()) => platform::sync_dir(&dir)?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err.into()),
         }
+        self.journal_entry(&LogEntry::HolderDebt {
+            debt: (*key_ref, *holder),
+            standing: false,
+        })?;
+        Ok(())
     }
 }
 
