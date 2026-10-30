@@ -52,11 +52,12 @@ impl Inner {
     /// Ends the driver in `phase`, unless demand arrived meanwhile and the
     /// worker is not retiring: then the driver goes on (`true`).
     fn finish_or_restart(&self, phase: Phase) -> bool {
+        let idle_stopped = matches!(phase, Phase::IdleStopped);
         let restart = {
             let mut state = self.lock();
             let restart = !state.retiring && state.waiting > 0;
             if restart {
-                if matches!(phase, Phase::IdleStopped) {
+                if idle_stopped {
                     // Publish the completed pressure unload before the
                     // victim's own demand starts its next incarnation.
                     state.phase = Phase::IdleStopped;
@@ -67,7 +68,7 @@ impl Inner {
             }
             restart
         };
-        if matches!(phase, Phase::IdleStopped) {
+        if idle_stopped {
             // The completion stays readable even after a restart overwrites
             // the transient phase: outstanding waiters see the request end.
             self.lock().unload_requested = false;
