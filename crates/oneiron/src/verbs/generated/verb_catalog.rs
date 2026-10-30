@@ -521,6 +521,7 @@ pub enum AgentVerb {
     VaultConnectorsCallsApproveOnce,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
+    VaultConsentCreateAutoWeaveGrant,
     VaultConsentRegistry,
     VaultConsentFailureSignalsHeld,
     VaultConsentRevoke,
@@ -1755,6 +1756,7 @@ impl AgentVerb {
         Self::VaultConnectorsCallsApproveOnce,
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
+        Self::VaultConsentCreateAutoWeaveGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentFailureSignalsHeld,
         Self::VaultConsentRevoke,
@@ -3004,6 +3006,7 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
+            Self::VaultConsentCreateAutoWeaveGrant => "vault.consent.create_auto_weave_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentFailureSignalsHeld => "vault.consent.failure_signals_held",
             Self::VaultConsentRevoke => "vault.consent.revoke",
@@ -4256,6 +4259,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -5519,6 +5523,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -6923,6 +6928,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -7880,6 +7886,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRevoke
                 | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentGraduationPolicySet
@@ -8853,6 +8860,7 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -10088,6 +10096,7 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -12331,6 +12340,9 @@ impl AgentVerb {
             }
             Self::VaultConsentCreateStandingGrant => {
                 "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."
+            }
+            Self::VaultConsentCreateAutoWeaveGrant => {
+                "The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."
             }
             Self::VaultConsentRegistry => {
                 "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."

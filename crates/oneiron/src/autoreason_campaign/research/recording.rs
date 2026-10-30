@@ -64,8 +64,9 @@ fn put_new_node_in_txn(
 /// it that let a row land. A controller weaves only a claim it wrote. A claim
 /// past Proposed stands for anyone but the owner only under the owner's
 /// auto-weave grant for its writer, scoped to this campaign (`campaign`),
-/// its skill or the claim's project, for which the gate's Allow stands in
-/// until an owner can mint that grant ([`auto_weave_granted`]).
+/// its skill or the claim's project, minted by
+/// `vault.consent.create_auto_weave_grant`; the gate's Allow alone no longer
+/// counts ([`auto_weave_granted`]).
 fn weave_claim_landing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -119,17 +120,18 @@ fn weave_claim_landing_in_txn(
 }
 
 /// Whether the gate's Allow alone still stands in for the owner's
-/// auto-weave grant. Until an owner can mint a weave-scoped grant through a
-/// door, it does, so a weave past Proposed keeps today's path; a ruling that
-/// asks for the scoped grant alone sets this to false (CALLS `FIX 3433
-/// auto-weave grant`).
-const GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT: bool = true;
+/// auto-weave grant. The owner mints that grant through
+/// `vault.consent.create_auto_weave_grant`, so the Allow alone no longer
+/// counts and this stays false; it remains the one switch should a ruling
+/// ever restore the stand-in (CALLS `FIX 3433 auto-weave grant`).
+const GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT: bool = false;
 
 /// Whether the gate's decision on a weave claim carries an owner auto-weave
-/// grant (FIX 3433): an Allow whose record names the owner's weave-scoped
-/// Grant for `writer` (`gate.allow.weave_grant` and its `grant_ref`), still
-/// active and scoped to one of `scopes`; or, while
-/// [`GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT`] holds, the gate's Allow alone.
+/// grant (FIX 3433), minted by `vault.consent.create_auto_weave_grant`: an
+/// Allow whose record names the owner's weave-scoped Grant for `writer`
+/// (`gate.allow.weave_grant` and its `grant_ref`), still active and scoped
+/// to one of `scopes`. The gate's Allow alone no longer counts; while
+/// [`GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT`] holds it still stands in.
 fn auto_weave_granted(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

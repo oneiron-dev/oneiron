@@ -8000,6 +8000,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consent.create_auto_weave_grant",
+      "description": "The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed.",
+      "input": "crate::gate::weave_grant::AutoWeaveGrantRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::gate::weave_grant::mint_auto_weave_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_auto_weave_grant\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.consent.registry",
       "description": "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants.",
       "input": "crate::consent::ConsentRegistryQuery",
