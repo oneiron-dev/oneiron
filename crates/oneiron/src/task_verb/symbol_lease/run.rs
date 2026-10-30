@@ -134,8 +134,10 @@ pub(crate) fn renew_symbols_for_run_in_txn(
     Ok(Some(lease))
 }
 
-/// Removes the declaration `fence` names, in `txn`. False, and nothing
-/// removed, when it is missing, released, replaced or expired.
+/// Removes the declaration `fence` names, in `txn`, expired or not: an
+/// expired one is still the run's own, and goes, so no later try inherits
+/// it under a fence it cannot name (FIX 7068). False, and nothing removed,
+/// when it is missing, released or replaced.
 ///
 /// # Errors
 /// A store failure.
@@ -143,9 +145,8 @@ pub(crate) fn release_symbols_for_run_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     fence: &SymbolLeaseFence,
-    now: u64,
 ) -> Result<bool> {
-    if admit_symbol_fence_in_txn(vault, txn, fence, now)?.is_none() {
+    if !load(&vault.store, txn, fence.task)?.is_some_and(|lease| fence.names(&lease)) {
         return Ok(false);
     }
     LEASES.delete(&vault.store, txn, &fence.task)
