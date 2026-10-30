@@ -418,6 +418,7 @@ impl AuthorityStructure {
             AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
+            AuthorityOp::ExportSupplementImported(mark) => install_key(mark.carrier),
             // A custody request's permit piece (FIX 11866): its carrier's
             // install key, as for the request it leads to; with no carrier, a
             // stored root's anchor alone, as for the kit push it leads to.
@@ -497,6 +498,7 @@ impl AuthorityStructure {
             AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),
+            AuthorityOp::ExportSupplementImported(mark) => machine_key(mark.carrier),
             AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
                 Some(carrier) => machine_key(carrier),
                 None => {

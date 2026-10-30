@@ -116,6 +116,7 @@ pub(super) fn apply_op(
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_) => {}

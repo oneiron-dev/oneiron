@@ -357,6 +357,7 @@ pub(super) fn admits_past(
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
@@ -479,8 +480,9 @@ impl<'a> RowMeta<'a> {
 /// revocations stale-roster expiry and renewal weigh (`stale_roster`), the
 /// world-key records whose envelopes a folded key carries
 /// (`world_key_fold::folded_world_keys`), and the owner work requests,
-/// results and cancels an executor and a receipt read past the base. Every
-/// other row's summary is all a later fold reads of it.
+/// results, cancels and import marks an executor, a receipt and a relay
+/// read past the base. Every other row's summary is all a later fold reads
+/// of it.
 pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -496,6 +498,7 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)
             | AuthorityOp::OwnerWorkCancel(_)
+            | AuthorityOp::ExportSupplementImported(_)
     )
 }
 

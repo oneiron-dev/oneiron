@@ -37,6 +37,10 @@
 //! signer's pieces of its commitment join at its parents, and the fold keeps
 //! it with them joined (`permit_pieces`, FIX 11866).
 //!
+//! The owner's mark that he imported an export secret request's supplement
+//! has effect as a cancel does, on an export secret request of his own, and
+//! the fold keeps the request marked (`import_mark`, FIX 12062).
+//!
 //! As for every act kind, an owner the request's parents hold removed carries
 //! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
 //! writer and the executor each check the owner live in their own
@@ -49,6 +53,7 @@
 
 mod cancel;
 mod custody;
+mod import_mark;
 mod kit_custody;
 mod permit_pieces;
 mod privacy_basis;
@@ -111,6 +116,9 @@ pub(super) struct OwnerWorkState {
     /// Each root request's cancels with effect, by the request's entry
     /// (`cancel`).
     cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    /// Each export secret request the owner's mark with effect says he
+    /// imported the supplement of (`import_mark`, FIX 12062).
+    imported: BTreeSet<AuthorityEntryHash>,
     /// Each custody permit piece, by its signer, commitment and place: what
     /// a request in pieces joins its permits from (`permit_pieces`, FIX
     /// 11866). Kept after its request joins (FIX 12015): a later fold
@@ -160,6 +168,9 @@ pub(crate) struct FoldedOwnerWork {
     revoked: BTreeSet<EntityId>,
     /// Each root request's cancels with effect, by the request's entry.
     cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    /// Each export secret request whose supplement the owner's mark says he
+    /// imported.
+    imported: BTreeSet<AuthorityEntryHash>,
 }
 
 impl AuthorityFold {
@@ -305,8 +316,9 @@ impl AuthorityFold {
 /// The owner work transitions, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: each is signed by an install key, never a roster key (FIX 2222:
-/// the host root acts as nobody), a cancel's too, and a custody permit
-/// piece's, but for a kit request's, which its anchor signs (FIX 11866).
+/// the host root acts as nobody), a cancel's and an import mark's too, and a
+/// custody permit piece's, but for a kit request's, which its anchor signs
+/// (FIX 11866).
 /// `None` for any other op.
 pub(super) fn apply_owner_work(
     state: &mut FoldState,
@@ -324,6 +336,9 @@ pub(super) fn apply_owner_work(
         AuthorityOp::OwnerWorkCancel(owner_cancel) => {
             Some(cancel::apply_cancel(state, entry, owner_cancel, hash, view))
         }
+        AuthorityOp::ExportSupplementImported(mark) => Some(import_mark::apply_import_mark(
+            state, entry, mark, hash, view,
+        )),
         AuthorityOp::CustodyPermitPiece(piece) => Some(permit_pieces::apply_permit_piece(
             state, entry, piece, hash, view,
         )),
@@ -471,12 +486,12 @@ fn apply_result(
     Ok(())
 }
 
-/// Joins two states: requests, refusals, revoked secrets and cancels by
-/// union, a request superseded on either side is superseded, and of two
-/// different results of one request the lesser entry hash stands, the other
-/// is without effect. Two copies of one request that disagree never count
-/// here. Custody permit pieces join by union, the lesser of two kept for one
-/// place standing (FIX 11866).
+/// Joins two states: requests, refusals, revoked secrets, cancels and
+/// import marks by union, a request superseded on either side is
+/// superseded, and of two different results of one request the lesser
+/// entry hash stands, the other is without effect. Two copies of one
+/// request that disagree never count here. Custody permit pieces join by
+/// union, the lesser of two kept for one place standing (FIX 11866).
 pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkState) {
     for (hash, request) in &right.requests {
         merged
@@ -493,6 +508,7 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     }
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
+    merged.imported.extend(right.imported.iter().copied());
     // A verified set stays verified only on the side whose pieces it was
     // judged on: the left's, where the merge left them unchanged. The
     // right's verdicts are not carried; a later join judges again.
@@ -578,6 +594,7 @@ pub(super) fn folded_owner_work(
         refused: work.refused.clone(),
         revoked: work.revoked.clone(),
         cancels: work.cancels.clone(),
+        imported: work.imported.clone(),
     }
 }
 

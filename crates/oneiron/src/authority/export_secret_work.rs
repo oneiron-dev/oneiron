@@ -213,6 +213,9 @@ pub struct ExportSecretSupplement {
 /// One export secret supplement the recipient opened: the archive row of
 /// its secret, its value in it, for the owner's import. Wiped when dropped.
 pub struct OpenedSecretSupplement {
+    /// The export secret request it answers, which the import marks
+    /// imported once it commits (FIX 12062).
+    pub(crate) request: AuthorityEntryHash,
     pub(crate) row: ArchiveSecretCustody,
 }
 

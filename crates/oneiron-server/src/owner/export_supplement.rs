@@ -8,7 +8,7 @@
 //! answer names only what the import did.
 
 use base64::Engine as _;
-use oneiron::authority::SecretSupplementImport;
+use oneiron::authority::{ActSurface, SecretSupplementImport};
 use oneiron::consent::AuthenticatedOwner;
 use serde::Serialize;
 
@@ -24,11 +24,15 @@ pub(crate) struct SupplementImported {
 
 /// Opens `sealed`, the holder's copy as standard base64, of the export
 /// secret request `request` (64 hex) for `owner`, here, and imports its
-/// secret. A copy sealed to another machine, or not the one its holder's
-/// signed result names, opens nowhere but there.
+/// secret, his act made from `surface` (audit only). A copy sealed to
+/// another machine, or not the one its holder's signed result names, opens
+/// nowhere but there. An import that restores the secret, or finds it here
+/// the same, marks the request imported, so no install relays its copy any
+/// more (FIX 12062).
 pub(crate) fn import(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     request: &str,
     sealed: &str,
 ) -> OwnerResult<SupplementImported> {
@@ -42,7 +46,7 @@ pub(crate) fn import(
             )
         })?;
     let opened = vault.open_export_secret_supplement(owner, *request.as_bytes(), &sealed)?;
-    let outcome = vault.import_secret_supplement(owner, &opened)?;
+    let outcome = vault.import_secret_supplement(owner, surface, &opened)?;
     Ok(SupplementImported {
         request: request.to_hex().to_string(),
         outcome,
