@@ -83,6 +83,7 @@ mod skill_edit_goal_policy;
 mod skill_tradeoff_policy;
 pub(crate) mod voice_serving;
 mod weave_correction_policy;
+pub(crate) mod weave_grant;
 pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;

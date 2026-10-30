@@ -672,6 +672,17 @@ pub(crate) fn standing_grant_is_active_in_txn(
     Ok(row.is_active())
 }
 
+/// One standing grant row by its ref, whatever its status, on the caller's
+/// transaction: [`Vault::consent_grant_in_txn`] for a reader that holds a
+/// `Store`.
+pub(crate) fn standing_grant_row_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    grant_ref: &str,
+) -> Result<Option<ConsentGrantRow>> {
+    GRANTS.get(store, txn, &grant_ref.to_owned())
+}
+
 /// Flips one standing grant to [`ConsentGrantStatus::Revoked`] inside the
 /// caller's write transaction, reporting whether a live row was actually
 /// revoked.
