@@ -357,7 +357,7 @@ impl Vault {
             .and_then(super::slip::TransferredBounds::pact_grant);
         let served_pact = match (&bounds, pact_grant) {
             (Ok(bounds), Some(_)) => {
-                bounds.served_pact_scope(&self.authority_view_readonly_in_txn(txn)?)
+                bounds.served_pact_scope(&self.authority_fold_readonly_in_txn(txn)?)
             }
             _ => None,
         };

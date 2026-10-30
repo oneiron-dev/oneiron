@@ -241,7 +241,7 @@ impl Vault {
                 )?);
             }
         }
-        let mut export_records = None;
+        let mut export_records: Option<Vec<crate::EntityId>> = None;
         let export = export.take().map(|(member, records, archive, ids)| {
             export_records = Some(ids.into_iter().collect());
             let summary = SharedActExport {
