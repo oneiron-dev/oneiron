@@ -365,9 +365,9 @@ pub struct SlideReviewBase<'a> {
     pub artifact: EntityId,
     pub package_limits: Limits,
     /// The deck each unit's text is read from when it is not `bytes`: a live
-    /// deck's projection at its head, which the units' images were rendered
-    /// from (FIX 11981). A unit is found there by its slide part and id; its
-    /// comment still lands on `bytes`.
+    /// deck's projection at its head, which a wake renders the units' images
+    /// from (FIX 11981, 12019). A unit is found there by its slide part and
+    /// id; its comment still lands on `bytes`.
     pub shown: Option<&'a [u8]>,
 }
 
