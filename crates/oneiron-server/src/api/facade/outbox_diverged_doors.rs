@@ -198,7 +198,8 @@ mod carrier {
                         format!(
                             "{end} keeps a copy of {member} that the carrier never agreed on, \
                              after the agreed version was retired. Nothing removes it without your \
-                             answer: remove it, or keep it."
+                             answer: remove it, or keep it under its own name, out of the way of \
+                             the member's next version."
                         ),
                         vec![
                             action("Remove this copy", OutboxDivergedAnswer::Remove),
@@ -208,9 +209,10 @@ mod carrier {
                     Some(OutboxDivergedAnswer::Keep) => (
                         format!("A {kind} outbox copy kept"),
                         format!(
-                            "You kept {end}'s copy of {member}, one the carrier never agreed on."
+                            "You kept {end}'s copy of {member}, one the carrier never agreed on: \
+                             it moves aside under its own name, where the carrier leaves it."
                         ),
-                        vec![action("Remove this copy", OutboxDivergedAnswer::Remove)],
+                        Vec::new(),
                     ),
                     Some(OutboxDivergedAnswer::Remove) => (
                         format!("A {kind} outbox copy is being removed"),
