@@ -3,7 +3,8 @@
 //! input, on the shared typed custody (`crate::store`
 //! `mint_carrier_leaf_in_txn`).
 //!
-//! SHIPPED OFF ([`CUSTODY_CARRIER_LEAF_WIRE`] is false): a carrier sealed
+//! ON ([`CUSTODY_CARRIER_LEAF_WIRE`] is true since L03's live leaf frame,
+//! FIX 11785 / FIX 11995): a carrier sealed
 //! under its own key opens only where that key is released live, to the
 //! exact current request's executor or one of its recipient permits, and a
 //! key, or a wrap of it under a permanent key, never rides a retained
@@ -43,10 +44,11 @@ use crate::error::Result;
 use crate::store::{CredentialLeaf, CustodyKind};
 
 /// Whether transitions and inputs are sealed under their own custody keys
-/// on the wire (CALLS `KS-6 carrier wire`): false until live leaf delivery
-/// lands, so no carrier needs a key its recipient cannot get. Every path
-/// FIX 7402 built branches on it.
-pub(crate) const CUSTODY_CARRIER_LEAF_WIRE: bool = false;
+/// on the wire (CALLS `KS-6 carrier wire`): true now that live leaf
+/// delivery (L03's frame and relay, FIX 11785) carries each key to the
+/// executor or recipient that must open it (FIX 11995). Every path FIX 7402
+/// built branches on it.
+pub(crate) const CUSTODY_CARRIER_LEAF_WIRE: bool = true;
 
 /// The transition wire a leaf-sealed carrier takes (CALLS `KS-6 carrier
 /// wire`): the payload domains are v2 today.
