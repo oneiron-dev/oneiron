@@ -8,6 +8,8 @@
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
 //! reads the human clear takes across a party's redirect shells;
 //! `descriptor` the synced ARCH-0057 claim-class descriptors;
+//! `generic_put_routing` the generic claim door's routing of the
+//! projector-only classes through the projector;
 //! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
@@ -15,6 +17,7 @@
 mod claims;
 mod consent;
 mod descriptor;
+mod generic_put_routing;
 mod opt_out_slots;
 mod parties;
 mod projection_writes;
@@ -53,12 +56,15 @@ pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
     seed_claim_class_descriptors,
 };
+pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
     CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
     resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
 };
-pub(crate) use self::projector::record_comm_actor_send_receipt_in_txn;
+pub(crate) use self::projector::{
+    record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
+};
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,

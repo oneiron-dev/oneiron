@@ -40,7 +40,7 @@ pub(super) enum ProjectorAction {
     LeaveThread,
 }
 
-const PROJECTOR_RULES: [ProjectorRule; 5] = [
+const PROJECTOR_RULES: [ProjectorRule; 6] = [
     ProjectorRule {
         event_kind: CommEventKind::SendSucceeded,
         predicate: PREDICATE_COMM_LAST_TOUCH,
@@ -48,6 +48,11 @@ const PROJECTOR_RULES: [ProjectorRule; 5] = [
     },
     ProjectorRule {
         event_kind: CommEventKind::InboundReply,
+        predicate: PREDICATE_COMM_LAST_TOUCH,
+        action: ProjectorAction::UpsertLastTouch,
+    },
+    ProjectorRule {
+        event_kind: CommEventKind::TouchAsserted,
         predicate: PREDICATE_COMM_LAST_TOUCH,
         action: ProjectorAction::UpsertLastTouch,
     },
@@ -299,6 +304,39 @@ pub fn record_comm_inbound_reply(
     )
 }
 
+/// [`record_comm_inbound_reply`] in the caller's write, so the event lands
+/// with the inbound admission that took the message, or not at all. The
+/// channel class is normalized first. A party key or channel class the comm
+/// family cannot hold records nothing: the message is admitted either way.
+pub(crate) fn record_comm_inbound_reply_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party: &str,
+    channel_class: &str,
+    occurred_at: u64,
+) -> crate::error::Result<()> {
+    let channel_class = normalize_channel_class(channel_class);
+    if validate_key_string(party).is_err() || validate_channel_class(&channel_class).is_err() {
+        return Ok(());
+    }
+    resolve_or_create_party_in_txn(vault, wtxn, party)
+        .and_then(|party_ref| {
+            put_source_event_in_txn(
+                vault,
+                wtxn,
+                party_ref,
+                CommEventKind::InboundReply,
+                Some(channel_class.as_str()),
+                None,
+                occurred_at,
+            )
+        })
+        .map_err(|error| match error {
+            CommError::Engine(error) => error,
+            _ => Error::InvalidClaimBody("inbound reply comm record refused"),
+        })
+}
+
 /// Records an inbound restrictive STOP event without directly writing claims.
 pub fn record_comm_inbound_stop(
     vault: &Vault,
@@ -375,22 +413,45 @@ fn record_event(
         // Resolve/create the party in the SAME transaction as the event so a
         // concurrent party deletion cannot leave the event bound to a missing
         // PERSON (which the projector would then skip forever as EntityNotFound).
-        let thread_ref = thread_ref
-            .map(|thread| crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread))
-            .transpose()?;
         let party_ref = resolve_or_create_party_in_txn(vault, wtxn, party)?;
-        let sequence = next_event_sequence_in_txn(vault, wtxn)?;
-        let record = CommRecord::Event {
-            sequence,
-            kind,
+        put_source_event_in_txn(
+            vault,
+            wtxn,
             party_ref,
-            channel_class: channel_class.map(normalize_channel_class),
+            kind,
+            channel_class,
             thread_ref,
             occurred_at,
-            projected: false,
-        };
-        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
+        )
     })
+}
+
+/// Writes one unprojected source event for `party_ref` at the next event
+/// sequence, in the caller's write: the channel class normalized, the thread
+/// as its canonical ref. The projector's next pass projects it.
+pub(super) fn put_source_event_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_ref: EntityId,
+    kind: CommEventKind,
+    channel_class: Option<&str>,
+    thread_ref: Option<&str>,
+    occurred_at: u64,
+) -> CommResult<()> {
+    let thread_ref = thread_ref
+        .map(|thread| crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread))
+        .transpose()?;
+    let sequence = next_event_sequence_in_txn(vault, wtxn)?;
+    let record = CommRecord::Event {
+        sequence,
+        kind,
+        party_ref,
+        channel_class: channel_class.map(normalize_channel_class),
+        thread_ref,
+        occurred_at,
+        projected: false,
+    };
+    put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
 }
 
 /// Projects one source event in its own write transaction, returning the index
