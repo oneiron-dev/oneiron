@@ -118,6 +118,7 @@ async fn import_hub_skill(
         owner.revalidate(vault)?;
         let at = unix_seconds_now();
         let entity = vault.import_default_hub_skill(
+            &owner,
             &request.subtree,
             TimeRange { start: at, end: at },
             at,
