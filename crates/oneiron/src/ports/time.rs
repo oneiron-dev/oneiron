@@ -360,6 +360,7 @@ impl crate::store::Store {
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
+        let _l15 = crate::stage_timing::stage("recall.grant_clock_write");
         // One short snapshot reads the committed floor, and ends before the
         // decision opens its own: it holds no reader slot while a writer is
         // waited for.
