@@ -67,24 +67,19 @@ fn raster(doc: &mut Document, image: &SignatureRaster) -> Result<ObjectId> {
 pub(super) struct BurnImages {
     ids: BTreeMap<String, ObjectId>,
 }
+/// Burns `fields`, the request item's fields on one page in document order.
 pub(super) fn burn_fields(
     out: &mut Document,
     resources: &mut Dictionary,
     crop: [f64; 4],
-    page: u32,
+    fields: &[&EsignField],
     request: &PdfPreparation<'_>,
     font: ObjectId,
     images: &mut BurnImages,
 ) -> Result<Vec<Operation>> {
     let font_name = resource(resources, b"Font", font)?;
     let mut ops = Vec::new();
-    for field in request
-        .state
-        .document
-        .fields
-        .iter()
-        .filter(|f| f.item == request.item && f.geometry.page == page)
-    {
+    for &field in fields {
         let presentation = present_field(
             field,
             request.state.signatures.get(&field.id).map(|s| &s.value),
