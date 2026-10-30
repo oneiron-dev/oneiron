@@ -67,6 +67,7 @@ pub(super) mod embedding_space_routes;
 mod export_audit_routes;
 pub(super) mod federation_connect_routes;
 mod feedback_triage_routes;
+mod folder_source_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
@@ -169,6 +170,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(embedding_space_routes::routes())
         .merge(export_audit_routes::routes())
         .merge(history_routes::routes())
+        .merge(folder_source_routes::routes())
         .merge(house_routes::routes())
         .merge(inbox_routes::routes())
         .merge(intent_routes::routes())
