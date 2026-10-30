@@ -139,12 +139,12 @@ fn owner_row(
             let options = crate::api::ai_options_for_program(server, line, &decode(input)?)?;
             // Its rows are priced from the installed model catalog pack when
             // the registry holds none: that pack's source is listed, as the
-            // facade's `ai.options` lists it.
-            if !options.options.is_empty() {
-                match (listed.as_mut(), server.vault.model_catalog_source()) {
-                    (Some(listed), Ok(source)) => listed.extend(source),
-                    _ => *listed = None,
-                }
+            // facade's `ai.options` lists it; a pack that cannot be read
+            // priced none (FIX 6080).
+            if !options.options.is_empty()
+                && let Some(listed) = listed.as_mut()
+            {
+                listed.extend(server.vault.model_catalog_source().ok().flatten());
             }
             encode(options)
         }

@@ -44,7 +44,8 @@ async fn owned_control<T: Send + 'static>(
 /// [`owned`] for a door that serves the Coach's drafted offers and their
 /// checks: it lists the union of the source rows those snapshots keep
 /// (FIX 5482, FIX 8171), read from the answer itself, forwarded as they are:
-/// unknown (`None`) only when a snapshot's is.
+/// unknown (`None`) only when a snapshot's is. A refusal carries nothing and
+/// lists none (FIX 6080).
 async fn owned_sourced<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -53,7 +54,7 @@ async fn owned_sourced<T: Send + 'static>(
     listed: impl FnOnce(&T) -> Option<Vec<oneiron::EntityId>>,
 ) -> MaybeListed<T> {
     let answer = owned(server, auth, verb, act).await;
-    let rows = answer.as_ref().ok().and_then(listed);
+    let rows = answer.as_ref().map_or_else(|_| Some(Vec::new()), listed);
     (answer, rows)
 }
 
