@@ -38,7 +38,9 @@ use crate::{EntityId, Vault};
 /// A replicated MESSAGE row's proof that one of the owner's own machines
 /// sent its exact bytes, over a connection that proved that machine (FIX
 /// 9600). Only an own-device import's span mints one, in the door that lands
-/// the row, and it vouches for that row's body alone.
+/// the row, and it vouches for that row's body alone. It names the machine
+/// at the other end of that connection, the home that relayed the row, not
+/// the device or actor that wrote it.
 #[derive(Debug)]
 pub(crate) struct VerifiedOwnDeviceLane {
     machine: EntityId,
@@ -48,8 +50,9 @@ pub(crate) struct VerifiedOwnDeviceLane {
 }
 
 impl VerifiedOwnDeviceLane {
-    /// The own machine that sent `data` as the body of row `id`, or `None`
-    /// when this lane vouches for another row or other bytes.
+    /// The own machine whose proven connection sent `data` as the body of
+    /// row `id`, or `None` when this lane vouches for another row or other
+    /// bytes.
     #[allow(
         dead_code,
         reason = "FIX 9600: the batch put reads the lane at the witness gate"
