@@ -89,6 +89,43 @@ pub(crate) fn deindex_entity_with_machine_history(
     Ok((existed, had_vector, had_graph_mutation, neighbors))
 }
 
+/// Stages the tombstone a cascade deindex owes its replicas: the same wire
+/// value a delete publishes, so the window's next load publishes it and a
+/// replica drops its copy. The cascade already removed the row, so the marker
+/// lands in the current window. Without `sync` there is no window to publish
+/// to and the helper does nothing — the same no-op as the tombstone writer's
+/// non-sync stub.
+#[cfg(feature = "sync")]
+pub(crate) fn stage_cascade_tombstone_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let now = store.clock.now_recorded_at();
+    crate::deletion::stage_engine_row_hard_erasure_in_txn(
+        store,
+        wtxn,
+        id,
+        now,
+        &crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: now,
+            request_id: *id.as_bytes(),
+        },
+    )
+}
+
+/// The same helper without `sync`: nothing propagates, so no marker is
+/// staged.
+#[cfg(not(feature = "sync"))]
+pub(crate) fn stage_cascade_tombstone_in_txn(
+    _store: &Store,
+    _wtxn: &mut RwTxn<'_>,
+    _id: &EntityId,
+) -> Result<()> {
+    Ok(())
+}
+
 pub(crate) fn deindex_entity(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

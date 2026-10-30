@@ -635,6 +635,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // none starts after (FIX 5324). A reap's freeze leaves them open; only
         // this stop ends them.
         sync_server.live_voice.stop_all().await;
+        // The recall doors' buffered retrieval rows go in one grouped write
+        // while the vault still takes writes (FIX 11011).
+        sync_server.flush_retrieval_meters();
         // Drain observation writes without thawing a previously quiescent process.
         let telemetry_drained = state.freeze();
         // No new durable background work from here on.

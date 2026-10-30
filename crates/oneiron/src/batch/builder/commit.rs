@@ -418,6 +418,11 @@ fn apply_admitted(
     rekeys.finish(&vault.store, wtxn)?;
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
+    // The approval's commit carries its consolidation debt (FIX 9598).
+    if !approved_vad_ids.is_empty() {
+        let now = vault.store.clock.now_recorded_at();
+        crate::store::owe_claim_vad_in_txn(&vault.store, wtxn, &approved_vad_ids, now)?;
+    }
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     Ok((changes_claims, tasks, approved_vad_ids, pad_windows))
 }

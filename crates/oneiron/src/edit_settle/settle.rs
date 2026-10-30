@@ -359,6 +359,17 @@ impl Vault {
                         limits,
                     )?;
                 }
+                if format == OfficeFormat::Docx {
+                    self.apply_docx_comment_annotations_in_txn(
+                        wtxn,
+                        artifact_id,
+                        base.version,
+                        proposal,
+                        actor,
+                        occurred,
+                        learned_at,
+                    )?;
+                }
                 // Replay the manifest anchor effects onto threads at the prior head.
                 // A dedupe no-op append (identical bytes) advances no version, so
                 // there is nothing to re-anchor.

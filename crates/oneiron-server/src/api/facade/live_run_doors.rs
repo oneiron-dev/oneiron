@@ -181,7 +181,7 @@ where
     let (writer, run, held) = hold_live_run(server, auth, session, &handle).await?;
     let actor = writer.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         // Keep the run held until the engine call and all its writes finish.
         let _held = held;
         let binding = _held.proof();

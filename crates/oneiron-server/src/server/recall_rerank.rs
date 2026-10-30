@@ -14,7 +14,11 @@
 //! payload, and a rung that failed after it went out is charged what it may
 //! have billed. Each rung, the first too, goes out only while the
 //! device-only verdict, run again, keeps none of the rows it sends with words
-//! ([`RerankEgress::holds`]).
+//! ([`RerankEgress::holds`]). A call over many documents sends them in
+//! batches on its one permit; before each later batch the recall's line is
+//! asked whether that batch still fits ([`BatchLine`], FIX 11228), and a call
+//! that stops short settles on its finished batches' usage and refuses the
+//! recall's rerank, saying how far it got.
 //!
 //! A call is driven on its caller's runtime when that runtime is
 //! multi-thread. A synchronous door holds its caller's thread until the
@@ -40,7 +44,9 @@ use rand_core::RngCore;
 use super::core::SyncServer;
 use crate::ai_host::AiHandle;
 use crate::config::models::role_key;
-use crate::models::{rerank_request, rerank_scores};
+use crate::models::{
+    RerankLine, RerankOutcome, RerankStop, on_line, rerank_outcome, rerank_request,
+};
 
 /// How one recall door serves a paid effort.
 pub(super) enum DoorRerank {
@@ -123,7 +129,15 @@ impl SyncServer {
         )?;
         // Taken for the rerank purpose, as each rung's permit is, so a policy
         // row that funds that purpose funds this check too.
-        let purpose = rerank_request("", &[], ModelLocality::OwnServer);
+        let mut purpose = rerank_request("", &[], ModelLocality::OwnServer);
+        // FIX 10592: the seat's whole ladder is the only custody source
+        // before `admit_role` picks the serving route; a manifest that would
+        // narrow to a keyless rung still reads the seat. A missing, mixed or
+        // keyed ladder stays paid, today's behavior.
+        purpose.envelope.host_keyless = self
+            .ai
+            .seat(ModelRole::Reranker)
+            .is_some_and(|seat| seat.ladder.all_keyless_own_server());
         let lease = meter
             .admit_for_request(&purpose)
             .inspect_err(|denied| {
@@ -183,9 +197,14 @@ impl RecallRerankHost for ServedRerank {
             .map_err(|refusal| unavailable(&format!("the reranker call was refused: {refusal}")))?;
         let model = call.request.model.clone();
         let may_send = || egress.holds();
-        let generate = call
-            .ladder
-            .generate_while(&run, call.request, None, &may_send);
+        let line = Arc::new(BatchLine {
+            meter: self.meter.clone(),
+        });
+        let generate = on_line(
+            line,
+            call.ladder
+                .generate_while(&run, call.request, None, &may_send),
+        );
         // The timer is made inside the runtime that drives it: a sync door's
         // thread has none of its own.
         let answered = match answer_at {
@@ -202,8 +221,28 @@ impl RecallRerankHost for ServedRerank {
             LlmError::BudgetDenied(denied) => spent(denied),
             error => unavailable(&format!("the reranker call failed: {error}")),
         })?;
-        let scores = rerank_scores(&response)
-            .ok_or_else(|| unavailable("the reranker's answer holds no scores"))?;
+        let scores = match rerank_outcome(&response) {
+            Some(RerankOutcome::Scored(scores)) => scores,
+            Some(RerankOutcome::Partial(partial)) => {
+                let (scored, of) = (partial.scored(), documents.len());
+                return Err(match partial.stopped {
+                    RerankStop::Line => MemoryError::new(
+                        MEMORY_CODE_BUDGET_SPENT,
+                        format!(
+                            "the recall's budget line could not cover the reranker's next \
+                             batch after {scored} of {of} documents were scored; the scored \
+                             batches were settled at their usage"
+                        ),
+                        &["Recall at medium, or raise [models.recall] rerank_budget_units."],
+                    ),
+                    RerankStop::Failed => unavailable(&format!(
+                        "a reranker batch failed after {scored} of {of} documents were scored; \
+                         the scored batches were settled at their usage"
+                    )),
+                });
+            }
+            None => return Err(unavailable("the reranker's answer holds no scores")),
+        };
         // The seat's receipt names the rung that answered, as `[models]`
         // spells it, and what the provider said served it.
         let receipt = &response.usage.raw_provider;
@@ -241,6 +280,36 @@ fn payload_units(query: &str, documents: &[&str]) -> u64 {
         })
         .fold(0_usize, usize::saturating_add);
     u64::try_from(pairs).unwrap_or(u64::MAX)
+}
+
+/// A recall's line as its rerank call's later batches ask it (FIX 11228). A
+/// batch goes while what the call has used, at least what the documents it
+/// already sent can bill ([`payload_units`]), and the most the batch can bill
+/// fit in the call's own reservation and what the line has left beside it.
+/// The call reserved its whole payload's price, so this stops only a call
+/// whose rung billed more than that price, on a line with no room left.
+struct BatchLine {
+    meter: BudgetGuard,
+}
+
+impl RerankLine for BatchLine {
+    fn admits(
+        &self,
+        lease: &BudgetLease,
+        used: u64,
+        query: &str,
+        sent: &[&str],
+        next: &[&str],
+    ) -> bool {
+        let room = self
+            .meter
+            .reserved_for(lease)
+            .unwrap_or(0)
+            .saturating_add(self.meter.read().remaining_units);
+        used.max(payload_units(query, sent))
+            .saturating_add(payload_units(query, next))
+            <= room
+    }
 }
 
 /// The rows a rerank call reads (FIX 6935, FIX 7001): the union of the rows

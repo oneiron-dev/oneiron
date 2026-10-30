@@ -91,6 +91,14 @@ impl Vault {
                     Ok(approved) => approved,
                     Err(err) => return Rows::Discard(Err(E::from(err))),
                 };
+            // The approval's commit carries its consolidation debt (FIX 9598).
+            if !approved.is_empty() {
+                let now = self.store.clock.now_recorded_at();
+                let owed = crate::store::owe_claim_vad_in_txn(&self.store, wtxn, &approved, now);
+                if let Err(err) = owed {
+                    return Rows::Discard(Err(E::from(err)));
+                }
+            }
             // A claim delete applied in this write staged its key's
             // retirement; destroy the key after the commit, not at the
             // next retention pass.
@@ -157,9 +165,11 @@ impl Vault {
         // A replicated, replayed or composed authority row stamps the worlds
         // of a pact it ended, as the authority door does (H213).
         stale_sweep.finish()?;
-        // Approval is durable now. The canonical consolidator opens its own
-        // writer; its failure is returned without rolling back Approved. The
-        // clock is observed only when there is an approval to consolidate.
+        // Approval is durable now, with its debt. The canonical consolidator
+        // opens its own writer; its failure is returned without rolling back
+        // Approved, and the debt stays for the housekeeping pass (FIX 9598,
+        // 10680). The clock is observed only when there is an approval to
+        // consolidate.
         if !approved_vad_ids.is_empty() {
             let now = self.store.clock.now_recorded_at();
             for id in approved_vad_ids {

@@ -288,7 +288,9 @@ impl OwnerWorkReceipt {
             None if fold.root_request_cancelled(&request) => OwnerWorkStatus::Cancelled,
             None if fold.root_request_superseded(&request) => OwnerWorkStatus::Superseded,
             None => OwnerWorkStatus::RecordedAwaitingHolder,
-            Some(OwnerWorkOutcome::Enacted { .. }) => OwnerWorkStatus::Enacted,
+            Some(OwnerWorkOutcome::Enacted { .. } | OwnerWorkOutcome::Sealed { .. }) => {
+                OwnerWorkStatus::Enacted
+            }
             Some(OwnerWorkOutcome::Refused { reason }) => {
                 OwnerWorkStatus::Refused { reason: *reason }
             }
@@ -299,7 +301,9 @@ impl OwnerWorkReceipt {
             .collect();
         let cancel_state = match outcome {
             None => OwnerWorkCancelState::Cancelled,
-            Some(OwnerWorkOutcome::Enacted { .. }) => OwnerWorkCancelState::AlreadyEnacted,
+            Some(OwnerWorkOutcome::Enacted { .. } | OwnerWorkOutcome::Sealed { .. }) => {
+                OwnerWorkCancelState::AlreadyEnacted
+            }
             Some(OwnerWorkOutcome::Refused { .. }) => OwnerWorkCancelState::AlreadyRefused,
         };
         let cancel = if cancels.is_empty() {
@@ -314,7 +318,8 @@ impl OwnerWorkReceipt {
             OwnerWorkBody::PublishBundle { home } => diagnostics::bundle_home_warning(fold, home),
             OwnerWorkBody::WorldKey { .. }
             | OwnerWorkBody::Root { .. }
-            | OwnerWorkBody::Custody { .. } => None,
+            | OwnerWorkBody::Custody { .. }
+            | OwnerWorkBody::ExportSecret(_) => None,
         };
         Some(Self {
             request: Some(entry_hex(&request)),

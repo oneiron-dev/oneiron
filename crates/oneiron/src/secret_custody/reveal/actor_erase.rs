@@ -29,7 +29,7 @@ pub(in crate::secret_custody) use crate::deletion::names_no_actor;
 impl RevealRow {
     /// Whether this reveal may still go out: covered, asked or approved,
     /// and inside its window at `now`.
-    fn still_open(&self, now: u64) -> bool {
+    pub(super) fn still_open(&self, now: u64) -> bool {
         matches!(
             self.state,
             SecretRevealState::Covered
