@@ -247,15 +247,12 @@ pub(super) fn write_artifact<T>(
     document: EntityId,
     write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
 ) -> MemoryResult<T> {
-    memory.with_actor_content_write_txn_as(
-        memory.write_actor(),
-        |content| {
-            content.update_artifact(document, |txn| {
-                reaches_in(lane, txn, document)?;
-                write(txn)
-            })
-        },
-    )
+    memory.with_actor_content_write_txn_as(memory.write_actor(), |content| {
+        content.update_artifact(document, |txn| {
+            reaches_in(lane, txn, document)?;
+            write(txn)
+        })
+    })
 }
 
 /// The refusal of a signing document, or an artifact it names, a narrowed
