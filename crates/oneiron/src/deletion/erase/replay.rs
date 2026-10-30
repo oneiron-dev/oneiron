@@ -263,7 +263,9 @@ impl Vault {
             // Cleanup's rows that name it go, as the registry's tear takes
             // them on every other erase (FIX 7517).
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
+            // A replayed erase holds no owner act here: the machine that made
+            // it carries its custody revokes (FIX 11883).
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, None)?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,
@@ -278,9 +280,14 @@ impl Vault {
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
         let (cascaded_shells, mut changed_documents) =
-            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
-        let (_existed, citing) =
-            self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref(), true)?;
+            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
+        let (_existed, citing) = self.purge_entity_active_store_in_txn(
+            wtxn,
+            id,
+            decoded.request_id.as_ref(),
+            true,
+            None,
+        )?;
         changed_documents.extend(citing);
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as

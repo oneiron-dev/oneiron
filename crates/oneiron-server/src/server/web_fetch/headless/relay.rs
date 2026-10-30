@@ -83,6 +83,10 @@ impl HostNetFloor for HeadlessRelay {
     fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
         self.vault.acquire_host_net_floor(fds, workers)
     }
+
+    fn acquire_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
+        self.vault.acquire_host_net_bytes(bytes)
+    }
 }
 
 impl EgressRelay for HeadlessRelay {

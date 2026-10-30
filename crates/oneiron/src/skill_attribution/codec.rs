@@ -9,6 +9,7 @@ use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::SkillRecord;
 
@@ -181,16 +182,9 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
         if reason.trim().is_empty() {
             return Err(invalid("attribution deviation needs a stated reason"));
         }
-        let txn = vault.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
-        let limits = policy
-            .attribution_limits()
-            .ok_or(invalid("attribution deviation policy is malformed"))?;
-        if (reason.len() as u64) > limits.reason_bytes_for(&actor) {
-            return Err(invalid(
-                "attribution deviation exceeds policy reason budget",
-            ));
-        }
+        // The reason is kept whole and measured against the engine's text
+        // row (OF-520): past it the vault's port asks (FIX 5465).
+        let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, reason.len() as u64);
     }
     ground_attempt_receipt(vault, &evidence.receipt_ref, &actor, evidence.skill)
 }

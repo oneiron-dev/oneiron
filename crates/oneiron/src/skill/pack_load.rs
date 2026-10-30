@@ -8,6 +8,11 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_cla
 use crate::skill_optimize::exploration_trial;
 use crate::{EntityId, Error, Result, Vault};
 
+// A paired eval measurement's skill arm, by its pinned content (FIX 10677).
+mod measured;
+
+pub use self::measured::MeasuredSkillPack;
+
 /// One actual tier-2 load. Native record-only skills have no file tree.
 #[derive(Debug, Clone)]
 pub struct LoadedSkillPack {
@@ -310,7 +315,9 @@ impl Vault {
     /// lease generation: `entity` at `version`, under the shared `skill` the
     /// owner bound. `entity` is `skill` itself, or the open proposal of it
     /// an exploration trial routed the pinning load to; no trial routes this
-    /// load and no trial charge is reserved. `skill` must still be an active
+    /// load. A pinned proposal's run reserves its trial-slice charge in the
+    /// load's transaction, as a routed run does, and loads the pinned arm
+    /// whatever the slice answers (FIX 10306). `skill` must still be an active
     /// approved shared skill, and a revision that moved or is gone refuses.
     /// The first executor stamps the attempt, and its manifest row lands
     /// once, as the exact door's does.
@@ -335,7 +342,7 @@ impl Vault {
                 "a pinned pack load requires the caller's live attempt lease",
             ))?;
         let (entity, version) = pinned;
-        self.with_write_txn_grouped(|txn| {
+        let (loaded, ask) = self.with_write_txn_grouped(|txn| {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                 return Err(Error::EntityNotFound);
             }
@@ -378,6 +385,11 @@ impl Vault {
             let entry =
                 super::loaded_revision::pin_loaded_in_txn(self, txn, entity, &record, entry)?;
             self.record_manifest_once_in_txn(txn, leased, lease_owner, executor_model, entry)?;
+            let ask = if entity == skill {
+                None
+            } else {
+                exploration_trial::charge_pinned_in_txn(self, txn, leased.id, skill, entity, at)?
+            };
             let read =
                 self.pack_source_rows_in_txn(txn, entity, &record, source_files.is_some())?;
             self.record_attempt_sources_best_effort_in_txn(
@@ -386,12 +398,23 @@ impl Vault {
                 ReadSetProducer::SKILL_PACK,
                 Some(read),
             );
-            Ok(LoadedSkillPack {
-                entity: *entity,
-                record,
-                source_files,
-            })
-        })
+            Ok((
+                LoadedSkillPack {
+                    entity: *entity,
+                    record,
+                    source_files,
+                },
+                ask,
+            ))
+        })?;
+        // As the load door does: the overrun ask is queued outside the
+        // load's transaction, and the load stands either way.
+        if let Some(proposal) = ask
+            && let Err(error) = exploration_trial::queue_trial_ask(self, &proposal)
+        {
+            tracing::warn!(%error, "an exploration trial's overrun ask is not queued yet");
+        }
+        Ok(loaded)
     }
 
     /// The skill's resident when the live attempt runs as that very agent,
