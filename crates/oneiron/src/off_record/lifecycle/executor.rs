@@ -233,22 +233,30 @@ impl OffRecordSession<'_> {
                 })
         };
         memory
-            .witness_into_session_for_run(self, &turn, None, host_turn_ref, admit, |wtxn| {
-                // A MESSAGE in base holds its body there, in the transaction
-                // that lands it. One in the overlay holds nothing: its body
-                // is the room's, and a save carries both (FIX 365).
-                if let (Some(result), Some(message_id), RouteTarget::Base) =
-                    (result, message_id, route.target())
-                {
-                    self.vault.retain_message_result_in_txn(
-                        wtxn,
-                        message_id,
-                        result.attachment,
-                        result.served_rows.map(<[EntityId]>::to_vec),
-                    )?;
-                }
-                Ok(())
-            })
+            .witness_into_session_for_run(
+                self,
+                &turn,
+                None,
+                host_turn_ref,
+                admit,
+                |wtxn| {
+                    // A MESSAGE in base holds its body there, in the transaction
+                    // that lands it. One in the overlay holds nothing: its body
+                    // is the room's, and a save carries both (FIX 365).
+                    if let (Some(result), Some(message_id), RouteTarget::Base) =
+                        (result, message_id, route.target())
+                    {
+                        self.vault.retain_message_result_in_txn(
+                            wtxn,
+                            message_id,
+                            result.attachment,
+                            result.served_rows.map(<[EntityId]>::to_vec),
+                        )?;
+                    }
+                    Ok(())
+                },
+                None,
+            )
             // The door reports a code+message `MemoryError`. A CEILING refusal
             // is a policy verdict the caller must be able to route on, so it
             // travels back out as the typed gate denial it was (ONE-1686) —

@@ -8,6 +8,9 @@
 //! The room lives in this server process: a restart ends it, and nothing of
 //! it survives.
 
+use std::sync::Arc;
+
+use crate::embedder::EmbedderSlot;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{MemoryError, WitnessReceipt, WitnessTurn};
@@ -212,12 +215,23 @@ pub(crate) fn witness(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     request: &Witness,
+    embedder: Option<&Arc<EmbedderSlot>>,
 ) -> OwnerResult<WitnessReceipt> {
     let actor = owner.revalidate(vault)?;
     let session = bind(vault, owner, &request.session_ref)?;
+    // FIX 3817 (a): the turn's vector is embedded after bind, before the
+    // verb, never under the witness writer. No server or error means `None`:
+    // the turn lands searchable by its words.
+    let turn_vector = crate::api::off_record_rooms::pre_embed_turn(embedder, &request.turn);
     vault
         .memory(actor, EdgeActorClass::Human)
-        .witness_into_session_as(owner, &session, &request.turn, request.summary.as_deref())
+        .witness_into_session_as(
+            owner,
+            &session,
+            &request.turn,
+            request.summary.as_deref(),
+            turn_vector,
+        )
         .map_err(|error| {
             // The proof is rechecked where the turn lands; one revoked while
             // the witness waited is the same refusal as at the door.

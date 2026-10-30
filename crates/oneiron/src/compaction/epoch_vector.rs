@@ -136,7 +136,7 @@ pub(super) fn room_vector_op(
 /// mechanical twin of [`EpochVector`]: it rides the witness call it is handed
 /// to, so it cannot reach another turn's mint.
 #[derive(Debug, Clone)]
-pub(crate) struct TurnVector {
+pub struct TurnVector {
     vector: Vec<f32>,
     provenance: EmbeddingProvenance,
 }
@@ -146,7 +146,7 @@ pub(crate) struct TurnVector {
 /// holds nothing to embed, when no embedder serves, or when the serving
 /// embedder runs anywhere but on this device. The input names the turn the
 /// vector is staged under.
-pub(crate) fn room_turn_vector(
+pub fn room_turn_vector(
     embedder: &dyn EpochEmbedder,
     turn_id: &EntityId,
     text: &str,

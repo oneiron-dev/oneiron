@@ -1007,7 +1007,10 @@ async fn witness_off_record(
 ) -> OwnerReply<oneiron::memory::WitnessReceipt> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
-    let receipt = blocking(move || off_record::witness(server.vault(), &owner, &request)).await?;
+    let receipt = blocking(move || {
+        off_record::witness(server.vault(), &owner, &request, server.embedder.as_ref())
+    })
+    .await?;
     Ok(Json(receipt))
 }
 
