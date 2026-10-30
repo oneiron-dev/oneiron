@@ -929,16 +929,21 @@ impl Vault {
             Reasked::Nothing => (false, None, Vec::new()),
             Reasked::Asked { proposal, units } => (true, proposal, units),
         };
-        // The carried envelope is admitted through the principal's own read as
-        // the fresh proposal waits (FIX 1229), its grant clock settled before
-        // the commit opens.
+        // The carried envelope is admitted through the principal's own read,
+        // inside the asking version's saved lane, as the fresh proposal waits
+        // (FIX 1229, FIX 11831), its grant clock settled before the commit
+        // opens.
         let lane = match (&proposal, &wake.made_by) {
             (Some(_), Some(made_by)) => self.edit_retention_lane(
                 &wake.artifact,
                 Some(made_by),
                 actor,
                 Some(super::MadeByReader::Lane(
-                    crate::llm::decision::questions::principal_lane(self, wake.principal)?,
+                    crate::llm::decision::questions::wake_lane(
+                        self,
+                        wake.principal,
+                        &wake.question,
+                    )?,
                 )),
             )?,
             _ => None,
@@ -1045,6 +1050,21 @@ impl Vault {
             deadline: Instant::now() + WAKE_DEADLINE,
             run_ref: &reask_ref,
         };
+        // The wake holds no credential: the artifact a sheet, paragraph or
+        // slide re-ask reads is read inside the asking version's saved lane,
+        // as a folder item's files are below (FIX 11830).
+        if !matches!(wake.shape, ReaskShape::FolderItems { .. })
+            && !crate::llm::decision::questions::wake_artifact_reads(
+                self,
+                wake.principal,
+                &wake.question,
+                &[wake.artifact],
+            )?
+            .readable
+            .contains(&wake.artifact)
+        {
+            return Ok((Reasked::Nothing, reask_ref));
+        }
         let (proposal, units) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,

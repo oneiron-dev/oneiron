@@ -44,8 +44,9 @@ use oneiron::code_run::{
 use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
-    closed_outcome_windows, create_question, edit_question, pause_question, question_answers,
-    read_question, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
+    closed_outcome_windows_in_lane, create_question_with_lane, edit_question_with_lane,
+    pause_question, question_answers_in_lane, read_question, run_graph_ask_receipted,
+    schedule_backfill_in_lane, select_graph_units_by_type,
 };
 use oneiron::llm::media::{AiOperation, Modality};
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
