@@ -15,6 +15,7 @@ mod manifest;
 mod migrations;
 mod organs;
 mod setup;
+mod setup_actor;
 mod setup_cards;
 mod setup_session;
 mod slack_install;
@@ -41,6 +42,7 @@ pub use setup::{
     MAX_SETUP_PERMISSIONS, PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection,
     PackSetupPermission, PackSetupRisk, PackSetupSecret,
 };
+pub use setup_actor::PackSetupActor;
 pub use setup_cards::PackSetupCardAction;
 pub use setup_session::{
     PackSetupAnswer, PackSetupCheck, PackSetupCheckRecord, PackSetupConnectionState,

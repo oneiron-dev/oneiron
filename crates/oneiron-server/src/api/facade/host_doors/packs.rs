@@ -4,16 +4,17 @@
 
 use std::sync::Arc;
 
-use oneiron::EntityId;
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::memory::MemoryResult;
 use oneiron::receipt::LensActivationReceipt;
+use oneiron::skill_hub::pack_catalog::PackSetupActor;
 use oneiron::task_verb::sdk::{
     ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest, ChannelSubscriptionRevoked,
     ChannelSubscriptions, ChannelSubscriptionsRequest, PackPutReceipt, PackPutRequest,
     PackRemoveRequest, PackSetupAnswerRequest, PackSetupReceipt, PackSetupRequest,
     PackSetupVerifyRequest,
 };
+use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
 use super::support::{Listed, MaybeListed, hex_rows, internal, naming, owner_proof};
 use crate::api::clock_ingress;
@@ -200,29 +201,76 @@ pub(super) fn lens_rows(receipt: &LensActivationReceipt) -> Vec<EntityId> {
     hex_rows(std::iter::once(&receipt.lens_ref).chain(receipt.previous_ref.iter()))
 }
 
-/// A pack setup door's act off the runtime as the owner, listing what its
-/// view is read from (`host_door_lists`): the pack's source row, each
-/// connection's connector key, each standing grant and each stored secret's
-/// custody record, as the view's own read found it. The session and its
-/// checks live in side tables.
+/// Whom a pack setup door acts for: the owner on the owner's proof, or an
+/// authenticated agent acting for the owner, which works the owner's
+/// session.
+pub(super) enum SetupProof {
+    Owner(oneiron::consent::AuthenticatedOwner),
+    Agent(WriteActor),
+}
+
+impl SetupProof {
+    /// The engine's setup actor for this proof.
+    pub(super) fn actor(&self) -> PackSetupActor<'_> {
+        match self {
+            Self::Owner(owner) => PackSetupActor::Owner(owner),
+            Self::Agent(agent) => PackSetupActor::Agent(*agent),
+        }
+    }
+}
+
+/// The proof a pack setup door acts under: the owner's, as `/v1/owner` takes
+/// it from the request, else the credential's own agent, which the engine
+/// verifies again as a bound writer in each snapshot. Any other caller gets
+/// the owner door's refusal, with the agent's path beside it.
+pub(super) fn setup_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<SetupProof> {
+    let mut refusal = match owner_proof(auth, server, verb) {
+        Ok(owner) => return Ok(SetupProof::Owner(owner)),
+        Err(refusal) => refusal,
+    };
+    if let Ok((agent, EdgeActorClass::Agent)) = crate::api::facade::facade_actor(server, auth) {
+        return Ok(SetupProof::Agent(WriteActor::new(
+            agent,
+            EdgeActorClass::Agent,
+        )));
+    }
+    refusal.suggestions.push(
+        "Or present an agent's own slip: an agent acting for the owner works the owner's setup."
+            .to_owned(),
+    );
+    Err(refusal)
+}
+
+/// The admission `door_admits` runs for the `vault.packs.setup.*` rows: the
+/// proof [`setup_proof`] finds.
+pub(super) fn setup_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
+    setup_proof(server, auth, verb).map(drop)
+}
+
+/// A pack setup door's act off the runtime for the owner or the owner's
+/// agent ([`setup_proof`]), listing what its view is read from
+/// (`host_door_lists`): the pack's source row, each connection's connector
+/// key, each standing grant and each stored secret's custody record, as the
+/// view's own read found it. The session and its checks live in side tables.
 pub(super) async fn setup_listing(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: &'static str,
-    act: impl FnOnce(
-        &Arc<SyncServer>,
-        &oneiron::consent::AuthenticatedOwner,
-    ) -> MemoryResult<PackSetupReceipt>
+    act: impl FnOnce(&Arc<SyncServer>, PackSetupActor<'_>) -> MemoryResult<PackSetupReceipt>
     + Send
     + 'static,
 ) -> MaybeListed<PackSetupReceipt> {
-    let owner = match owner_proof(auth, server, verb) {
-        Ok(owner) => owner,
+    let proof = match setup_proof(server, auth, verb) {
+        Ok(proof) => proof,
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
     let server = Arc::clone(server);
     clock_ingress::run_blocking(move || {
-        let answer = act(&server, &owner);
+        let answer = act(&server, proof.actor());
         let rows = match &answer {
             Ok(receipt) => Some(setup_rows(&receipt.setup)),
             Err(_) => Some(Vec::new()),
@@ -309,8 +357,9 @@ pub(crate) async fn vault_lenses_deactivate(
 }
 
 /// `vault.packs.setup.prepare`: the owner opens, or resumes, a pack's guided
-/// setup (OF-378), under the proof `/v1/owner` takes from the request.
-/// Opening grants nothing.
+/// setup (OF-378), under the proof `/v1/owner` takes from the request; an
+/// agent acting for the owner opens the owner's session. Opening grants
+/// nothing.
 pub(crate) async fn vault_packs_setup_prepare(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -320,15 +369,15 @@ pub(crate) async fn vault_packs_setup_prepare(
         server,
         auth,
         "vault.packs.setup.prepare",
-        move |server, owner| {
-            oneiron::task_verb::sdk::prepare_pack_setup_as_owner(server.vault(), owner, &input)
+        move |server, actor| {
+            oneiron::task_verb::sdk::prepare_pack_setup_as_actor(server.vault(), actor, &input)
         },
     )
     .await
 }
 
-/// `vault.packs.setup.get`: a pack's guided setup as it stands, under the
-/// same proof.
+/// `vault.packs.setup.get`: a pack's guided setup as it stands, for the
+/// owner or the owner's agent.
 pub(crate) async fn vault_packs_setup_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -338,17 +387,19 @@ pub(crate) async fn vault_packs_setup_get(
         server,
         auth,
         "vault.packs.setup.get",
-        move |server, owner| {
-            oneiron::task_verb::sdk::pack_setup_as_owner(server.vault(), owner, &input)
+        move |server, actor| {
+            oneiron::task_verb::sdk::pack_setup_as_actor(server.vault(), actor, &input)
         },
     )
     .await
 }
 
-/// `vault.packs.setup.answer`: one answer or card action, under the same
-/// proof. The verb never answers `allow` (the owner's review stays at
-/// `/v1/owner/packs/setup/answer`), and a store action answers with the
-/// owner secrets door; a credential value never passes here.
+/// `vault.packs.setup.answer`: one answer or card action, for the owner or
+/// the owner's agent. The verb never lands `allow`: it puts the allow to the
+/// owner as an ask, whose yes at `/v1/owner/decisions/asks/answer` lands it
+/// (the owner's review stays at `/v1/owner/packs/setup/answer` too). A store
+/// action answers with the owner secrets door; a credential value never
+/// passes here.
 pub(crate) async fn vault_packs_setup_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -358,11 +409,11 @@ pub(crate) async fn vault_packs_setup_answer(
         server,
         auth,
         "vault.packs.setup.answer",
-        move |server, owner| {
+        move |server, actor| {
             let checks = HostConnectionChecks::new(&server)?;
-            oneiron::task_verb::sdk::answer_pack_setup_as_owner(
+            oneiron::task_verb::sdk::answer_pack_setup_as_actor(
                 server.vault(),
-                owner,
+                actor,
                 &input,
                 &checks,
             )
@@ -372,7 +423,8 @@ pub(crate) async fn vault_packs_setup_answer(
 }
 
 /// `vault.packs.setup.verify`: checks one connection with the engine's fixed
-/// read-only provider call for its declared check, under the same proof.
+/// read-only provider call for its declared check, for the owner or the
+/// owner's agent.
 pub(crate) async fn vault_packs_setup_verify(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -382,11 +434,11 @@ pub(crate) async fn vault_packs_setup_verify(
         server,
         auth,
         "vault.packs.setup.verify",
-        move |server, owner| {
+        move |server, actor| {
             let checks = HostConnectionChecks::new(&server)?;
-            oneiron::task_verb::sdk::verify_pack_setup_as_owner(
+            oneiron::task_verb::sdk::verify_pack_setup_as_actor(
                 server.vault(),
-                owner,
+                actor,
                 &input,
                 &checks,
             )

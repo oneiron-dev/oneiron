@@ -11,14 +11,16 @@
 //!
 //! Model setup is not here: first-run model setup is the server's one
 //! shared operation (`commands::init::setup_models`, ARCH-0036), and a
-//! pack's setup covers the pack's own connections. Agents reach this setup
-//! through the `vault.packs.setup.*` verbs, which never answer `allow`.
+//! pack's setup covers the pack's own connections. Agents reach the owner's
+//! session through the `vault.packs.setup.*` verbs (`setup_actor`); an
+//! agent's `allow` is put to the owner as an ask, whose yes lands it.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use super::admission::{PACK_CANDIDATE, pack_permissions};
 use super::setup::{PackSetup, PackSetupConnection, PackSetupSecret};
+use super::setup_actor::PackSetupActor;
 use super::{PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource, invalid};
 use crate::consent::AuthenticatedOwner;
 use crate::secret_custody::{SecretCustodyStatus, resolve_secret_ref_in_txn};
@@ -219,8 +221,20 @@ impl Vault {
         pack: &str,
         content_hash: Option<&str>,
     ) -> Result<PackSetupView> {
+        self.prepare_pack_setup_as(PackSetupActor::Owner(owner), pack, content_hash)
+    }
+
+    /// [`Self::prepare_pack_setup`] for `actor`: the owner on their own
+    /// proof, or an agent acting for the owner, which opens or resumes the
+    /// owner's session.
+    pub fn prepare_pack_setup_as(
+        &self,
+        actor: PackSetupActor<'_>,
+        pack: &str,
+        content_hash: Option<&str>,
+    ) -> Result<PackSetupView> {
         self.with_write_txn_grouped(|txn| {
-            let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
+            let principal = actor.principal_in_txn(self, txn, pack, content_hash)?;
             let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
             let held = PACK_SETUP.get(&self.store, txn, &binding.key)?;
             let mut session = match held {
@@ -257,8 +271,19 @@ impl Vault {
         pack: &str,
         content_hash: Option<&str>,
     ) -> Result<PackSetupView> {
-        let principal = owner.principal_ref_for_read(self)?.to_owned();
+        self.pack_setup_as(PackSetupActor::Owner(owner), pack, content_hash)
+    }
+
+    /// [`Self::pack_setup`] for `actor`: an agent acting for the owner reads
+    /// the owner's session.
+    pub fn pack_setup_as(
+        &self,
+        actor: PackSetupActor<'_>,
+        pack: &str,
+        content_hash: Option<&str>,
+    ) -> Result<PackSetupView> {
         let txn = self.store.env.read_txn()?;
+        let principal = actor.principal_for_read(self, &txn, pack, content_hash)?;
         let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
         let session = self.require_pack_setup_in_txn(&txn, &binding)?;
         self.pack_setup_view_in_txn(&txn, &binding, &session)
@@ -273,31 +298,53 @@ impl Vault {
         content_hash: Option<&str>,
         answer: &PackSetupAnswer,
     ) -> Result<PackSetupView> {
-        match answer {
-            PackSetupAnswer::SecretStored { connection, secret } => {
-                self.pin_pack_setup_custody(owner, pack, content_hash, connection, secret)
+        self.answer_pack_setup_as(PackSetupActor::Owner(owner), pack, content_hash, answer)
+    }
+
+    /// [`Self::answer_pack_setup`] for `actor`. An agent acting for the
+    /// owner pins a stored credential and binds a connector key in the
+    /// owner's session. Allowing a connection's permissions is the owner's
+    /// own decision, taken on the owner's proof at
+    /// [`Self::answer_pack_setup`]; an agent puts it to the owner with
+    /// [`Self::ask_owner_to_allow_pack_connection`].
+    pub fn answer_pack_setup_as(
+        &self,
+        actor: PackSetupActor<'_>,
+        pack: &str,
+        content_hash: Option<&str>,
+        answer: &PackSetupAnswer,
+    ) -> Result<PackSetupView> {
+        match (answer, actor) {
+            (PackSetupAnswer::SecretStored { connection, secret }, _) => {
+                self.pin_pack_setup_custody(actor, pack, content_hash, connection, secret)
             }
-            PackSetupAnswer::Allow {
-                connection,
-                permissions,
-            } => self.allow_pack_connection(owner, pack, content_hash, connection, permissions),
-            PackSetupAnswer::BindKey { connection, key } => {
-                self.bind_pack_connection_key(owner, pack, content_hash, connection, key)
+            (PackSetupAnswer::BindKey { connection, key }, _) => {
+                self.bind_pack_connection_key(actor, pack, content_hash, connection, key)
             }
+            (
+                PackSetupAnswer::Allow {
+                    connection,
+                    permissions,
+                },
+                PackSetupActor::Owner(owner),
+            ) => self.allow_pack_connection(owner, pack, content_hash, connection, permissions),
+            (PackSetupAnswer::Allow { .. }, PackSetupActor::Agent(_)) => Err(invalid(
+                "allowing a connection's permissions is the owner's own decision; ask the owner",
+            )),
         }
     }
 
     fn pin_pack_setup_custody(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: PackSetupActor<'_>,
         pack: &str,
         content_hash: Option<&str>,
         connection: &str,
         secret: &str,
     ) -> Result<PackSetupView> {
         let effector = {
-            let principal = owner.principal_ref_for_read(self)?.to_owned();
             let txn = self.store.env.read_txn()?;
+            let principal = actor.principal_for_read(self, &txn, pack, content_hash)?;
             let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
             declared_secret(&binding.setup, connection, secret)?
                 .effector
@@ -307,7 +354,7 @@ impl Vault {
         // bound for read to the effector the pack uses, under door policy.
         self.check_secret_at_door(secret, &effector)?;
         self.with_write_txn_grouped(|txn| {
-            let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
+            let principal = actor.principal_in_txn(self, txn, pack, content_hash)?;
             let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
             let mut session = self.require_pack_setup_in_txn(txn, &binding)?;
             let declared = declared_secret(&binding.setup, connection, secret)?;

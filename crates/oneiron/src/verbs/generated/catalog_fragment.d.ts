@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1253 code-mode rows (1213 host rows, 40 run rows), 4394 declarations.
+// Census: 1253 code-mode rows (1213 host rows, 40 run rows), 4395 declarations.
 // Replies: 1070 fully typed, 182 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
@@ -1253,7 +1253,8 @@ declare namespace Sdk {
   type PackSetupConnectionState = { id: string; secrets: PackSetupSecretState[]; permissions: PackSetupPermissionState[]; connector_key?: string | null; check: PackSetupCheck; ready: boolean };
   type PackSetupView = { session_id: string; pack_name: string; description: string; version: string; source_id: string; content_hash: string; status: PackInstallStatus; setup: PackSetup; instructions: string; permissions: PackPermissions; connections: PackSetupConnectionState[]; ready: boolean };
   type PackSetupStoreSecret = { door: string; connection: string; name: string; effector: string };
-  type PackSetupReceipt = { setup: PackSetupView; cards: unknown[]; text: string; store_secret?: PackSetupStoreSecret | null };
+  type PackSetupOwnerAsk = { seq: number; door: string; connection: string; permissions: string[] };
+  type PackSetupReceipt = { setup: PackSetupView; cards: unknown[]; text: string; store_secret?: PackSetupStoreSecret | null; owner_ask?: PackSetupOwnerAsk | null };
   type PackSetupAnswer = { answer: "secret_stored"; connection: string; secret: string } | { answer: "allow"; connection: string; permissions: string[] } | { answer: "bind_key"; connection: string; key: string };
   type PackSetupCardActionInput = { action_id: string; state?: GeneratedUiStateSnapshot };
   type PackSetupAnswerRequest = { pack: string; source?: string | null; answer?: PackSetupAnswer | null; card_action?: PackSetupCardActionInput | null };
@@ -6557,11 +6558,11 @@ declare const vault: Sdk.VaultHost & {
       };
     };
     setup: {
-      /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
+      /** One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here. */
       answer(input: Sdk.PackSetupAnswerRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
-      /** A pack's guided setup as it stands, for the owner. */
+      /** A pack's guided setup as it stands, for the owner or an agent acting for the owner. */
       get(input: Sdk.PackSetupRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
-      /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
+      /** The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing. */
       prepare(input: Sdk.PackSetupRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
       /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
       verify(input: Sdk.PackSetupVerifyRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
