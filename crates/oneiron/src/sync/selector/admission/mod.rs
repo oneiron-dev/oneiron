@@ -23,6 +23,7 @@ use crate::error::RecordError;
 
 mod birth_scope;
 mod blobs;
+mod derived_world;
 mod revalidate;
 mod routing;
 mod state;
@@ -255,6 +256,9 @@ fn admit_window_update(
         Some(source) => Routes::plan(vault, key, &remote, source, &mut terminal)?,
         None => Routes::unrouted(key),
     };
+    // A guest's base copy lands with a derived WORLD row when it has none
+    // (FIX 3831).
+    let derived = derived_world::DerivedBaseWorld::plan(vault, &remote, &routes)?;
     // Every part's rows and edges are copied before any birth is: a ref to a
     // row another part carries is not one admission dropped.
     let mut copied = Vec::with_capacity(routes.keys.len());
@@ -275,6 +279,9 @@ fn admit_window_update(
         )?;
         if part == 0 {
             crate::sync::note::copy_judged(vault, &remote, &admitted)?;
+            if let Some(derived) = &derived {
+                derived.land(&admitted)?;
+            }
         }
         copied.push((admitted, early));
     }
