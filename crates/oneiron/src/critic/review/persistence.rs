@@ -394,18 +394,21 @@ pub(crate) fn declared_critiques_in_txn(
     Ok((found, unread))
 }
 
-/// The verdict claim of the stored review holding each in-scope critique,
-/// keyed by the critique's branch and artifact id, read in the caller's
-/// snapshot (FIX 6380): the way back from a critique found on its branch to
-/// the review that wrote it. A critique two reviews hold names the first in
-/// stored order. One line names each review whose verdict ref does not read;
-/// a review that does not decode is skipped here, as
-/// [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
+/// The verdict claim and declared run of every stored review holding each
+/// in-scope critique, keyed by the critique's branch and artifact id, read in
+/// the caller's snapshot (FIX 6380, FIX 9078): the way back from a critique
+/// found on its branch to the reviews that wrote it, in stored order. The
+/// caller picks the review declared for its run. One line names each review
+/// whose verdict ref does not read; a review that does not decode is skipped
+/// here, as [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
 pub(crate) fn critique_review_refs_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<(BTreeMap<([u8; 16], String), EntityId>, Vec<String>)> {
-    let mut refs = BTreeMap::new();
+) -> Result<(
+    BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>>,
+    Vec<String>,
+)> {
+    let mut refs: BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>> = BTreeMap::new();
     let mut unread = Vec::new();
     for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
         let (_, value) = row?;
@@ -422,7 +425,8 @@ pub(crate) fn critique_review_refs_in_txn(
         for artifact in stored.artifacts {
             if !artifact.out_of_scope {
                 refs.entry((*artifact.branch_attempt.as_bytes(), artifact.artifact_id))
-                    .or_insert(verdict);
+                    .or_default()
+                    .push((verdict, stored.spawn_attempt));
             }
         }
     }
