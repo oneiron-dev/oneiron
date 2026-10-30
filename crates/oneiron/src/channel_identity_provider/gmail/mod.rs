@@ -102,7 +102,7 @@ pub const GMAIL_SEND_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gmail.
 
 const GMAIL_INBOX_POLL_DEDUPE_PREFIX: &str = "gmail:inbox_poll:v1:";
 pub(super) const GMAIL_EVENT_ID_PREFIX: &str = "gmail:";
-pub(super) const GMAIL_THREAD_PAYLOAD_PREFIX: &str = "gmail:thread:";
+pub(crate) const GMAIL_THREAD_PAYLOAD_PREFIX: &str = "gmail:thread:";
 const MAX_GMAIL_MESSAGES_PER_PAGE: usize = 500;
 
 /// Provider-native ceiling on a Gmail id, independent of where it lands.
