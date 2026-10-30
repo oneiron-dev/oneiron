@@ -180,6 +180,7 @@ pub(crate) use self::reveal::{
     erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
+pub(crate) use self::run_bound::run_secret_effector;
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
     StoredValue, archive_custody_body, archive_custody_guard, archive_same_custody_in_txn,
