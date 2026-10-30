@@ -363,10 +363,6 @@ fn rule_on_proposal(
         {
             return Err(retry("goal definition moved while the scorer was thinking"));
         }
-        // The rubric pin the measurements record is the one every judgment read.
-        if judge_rubric_digest_in_txn(vault, &*wtxn)? != measurements.judge_rubric_digest {
-            return Err(retry("the judge rubric moved while the scorer was thinking"));
-        }
         // The concurrent duplicate: two deliveries that both got past the read
         // above serialize HERE, and the second one finds the first's row.
         if let Some(standing) =
@@ -451,7 +447,8 @@ struct ScoreInputs {
     outcomes: Vec<(String, bool)>,
     basis: ScoredBasis,
     goal_definition: GoalDefinition,
-    /// The judge rubric's pin in force when scoring began (FIX 3585).
+    /// The pin of the judge rubric the scoring read, taken in the pre-score
+    /// transaction (FIX 3585).
     judge_rubric_digest: Option<String>,
 }
 
