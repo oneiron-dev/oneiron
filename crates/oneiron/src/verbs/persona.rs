@@ -214,7 +214,7 @@ pub fn preview_persona_snapshot_listing_as(
         ..Default::default()
     };
     let compile = vault.compile_persona_snapshot(&input.subject, &options)?;
-    let rows = vault.persona_snapshot_compile_rows(&compile, &options)?;
+    let rows = vault.persona_snapshot_compile_rows(&compile);
     let preview = PersonaSnapshotPreview {
         subject: compile.subject_ref,
         stamp: compile.stamp.identity(),

@@ -473,6 +473,7 @@ impl crate::Vault {
         }
 
         let mut third_party_rows = Vec::new();
+        let mut label_claims = Vec::new();
         for (other, (record_role, record_ref)) in &related {
             let other_claims = self.persona_snapshot_candidate_claims(
                 other,
@@ -481,9 +482,20 @@ impl crate::Vault {
                 &mut read_receipt,
             )?;
             let other_name = top_claim_text(&other_claims, PERSONA_SNAPSHOT_NAME_PREDICATE)
-                .map_or_else(|| person_fallback_label(other), |(_, name)| name);
+                .map_or_else(
+                    || person_fallback_label(other),
+                    |(claim, name)| {
+                        label_claims.push(claim.id);
+                        name
+                    },
+                );
             let role = record_role.clone().or_else(|| {
-                top_claim_text(&other_claims, PERSONA_SNAPSHOT_ROLE_PREDICATE).map(|(_, role)| role)
+                top_claim_text(&other_claims, PERSONA_SNAPSHOT_ROLE_PREDICATE).map(
+                    |(claim, role)| {
+                        label_claims.push(claim.id);
+                        role
+                    },
+                )
             });
             let text = role.map_or_else(
                 || format!("{other_name} — relationship"),
@@ -607,25 +619,18 @@ impl crate::Vault {
             stale_after_secs: options.stale_after_secs,
             stamp,
             read_receipt,
+            label_claims,
         })
     }
 
-    /// The rows `compile`, compiled under `options`, carries (FIX 6080):
-    /// its subject, each row's person, the claim or relationship record each
-    /// row cites, and for a relationship row the name and role claims its
-    /// coarse label may read, read again as the compile read them. An agent
+    /// The rows `compile` carries (FIX 6080): its subject, each row's
+    /// person, the claim or relationship record each row cites, and the name
+    /// and role claims its relationship rows' labels read, as the compile
+    /// recorded them ([`PersonaSnapshotCompile::label_claims`]). An agent
     /// take cites an actor, not a row.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn persona_snapshot_compile_rows(
-        &self,
-        compile: &PersonaSnapshotCompile,
-        options: &PersonaSnapshotCompileOptions,
-    ) -> Result<Vec<EntityId>> {
+    #[must_use]
+    pub fn persona_snapshot_compile_rows(&self, compile: &PersonaSnapshotCompile) -> Vec<EntityId> {
         let mut rows = vec![compile.subject_ref];
-        let mut related = BTreeSet::new();
         for row in &compile.rows {
             rows.push(row.subject_ref);
             rows.extend(row.provenance_refs.iter().filter_map(|cited| {
@@ -634,38 +639,11 @@ impl crate::Vault {
                     _ => None,
                 }
             }));
-            if row.kind == PersonaSnapshotRowKind::Relationship {
-                related.insert(row.subject_ref);
-            }
         }
-        if !related.is_empty() {
-            let audience_read = options
-                .audience
-                .as_ref()
-                .map(|key| self.scoped_read(key.clone()));
-            let kept = {
-                let rtxn = self.store.env.read_txn()?;
-                crate::settings::device_local_worlds_for(self, &rtxn, &options.destination)?
-            };
-            let mut receipt = None;
-            for person in &related {
-                let claims = self.persona_snapshot_candidate_claims(
-                    person,
-                    audience_read.as_ref(),
-                    &kept,
-                    &mut receipt,
-                )?;
-                for predicate in [
-                    PERSONA_SNAPSHOT_NAME_PREDICATE,
-                    PERSONA_SNAPSHOT_ROLE_PREDICATE,
-                ] {
-                    rows.extend(top_claim_text(&claims, predicate).map(|(claim, _)| claim.id));
-                }
-            }
-        }
+        rows.extend(compile.label_claims.iter().copied());
         rows.sort_unstable();
         rows.dedup();
-        Ok(rows)
+        rows
     }
 
     /// Admissible claims about `person_ref`, none in a `kept` world; with an
