@@ -348,7 +348,6 @@ pub(in crate::sync) fn submit(
             &target,
         )?
     {
-        super::shell_pin::pin_parent(vault, txn, &source, &target)?;
         settle(vault, txn, window, &source, &target)?;
         return Ok(ParentOutcome::Ignored);
     }
