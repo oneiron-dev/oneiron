@@ -153,6 +153,13 @@ impl StoreCore {
         self.key_custody.archived_at_open() || self.env.is_sealed()
     }
 
+    /// Whether every write on this handle refuses: its vault opened archived,
+    /// or a restore's swap has sealed it since. An admission that writes
+    /// nothing before its reply reads it (FIX 12023 W0).
+    pub(crate) fn writes_sealed(&self) -> bool {
+        self.env.is_sealed()
+    }
+
     /// The page size this store writes in: the creating host's, which LMDB
     /// keeps with the file. A value too large for a leaf takes whole pages
     /// of it.

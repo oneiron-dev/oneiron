@@ -77,7 +77,7 @@ use super::{Store, StoreCore, active_write_txn_depth};
 
 mod detached;
 
-pub(crate) use detached::{AfterCommit, DetachedWrite};
+pub(crate) use detached::{AfterCommit, DetachedWrite, release_vault_handle};
 use detached::{DetachedGroup, DetachedWrites};
 
 /// Whose closure a write runs, which decides whether its group may go on

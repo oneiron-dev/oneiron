@@ -101,6 +101,10 @@ pub struct Vault {
     /// only: a close or a crash drops them.
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
+    /// The holder-proof nonces an admission spent in memory before its
+    /// reply, whose rows land through the detached door (FIX 12023 W0). In
+    /// memory only.
+    pub(crate) spent_nonces: crate::authority::SpentNonces,
     /// One housekeeping pass at a time on this handle.
     pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,

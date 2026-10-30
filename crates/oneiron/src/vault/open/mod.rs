@@ -573,6 +573,7 @@ impl Vault {
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
             pending_owner_export_receipts: Default::default(),
+            spent_nonces: Default::default(),
             housekeeping: Default::default(),
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
@@ -673,6 +674,10 @@ impl Vault {
         // refuses every write from here on (`Store::swap_out`).
         vault.store.seal_if_archived()?;
         vault.resolve_pending_credential_restores_logged();
+        // The second this handle opened at: a slip minted after it spends its
+        // nonces in memory (FIX 12023 W0). Read last, so every slip minted
+        // while it opened takes the writer.
+        vault.spent_nonces.note_open(&vault);
         Ok(vault)
     }
 
