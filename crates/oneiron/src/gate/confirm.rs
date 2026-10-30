@@ -16,8 +16,10 @@ use super::ceiling::PolicyCriticality;
 use super::decision::GateReasonCode;
 use super::input::{GateContentKind, GateEvaluatorInput};
 
+mod demotion_retry;
 mod status_grant;
 
+pub(crate) use self::demotion_retry::ConfirmDemotionRetries;
 pub(super) use self::status_grant::{
     PreauthorizedClaimStatusGrant, put_preauthorized_claim_status_in_txn,
 };
@@ -434,8 +436,11 @@ impl Vault {
 
     /// Demotes every expired confirm the page reaches, recording each
     /// demotion as a `Demoted` settlement settled by the engine (FIX 1093).
+    /// A row whose demotion failed waits out its backoff before the walk
+    /// tries it again (FIX 12079); the backoff it learned is kept once the
+    /// page commits.
     fn expire_critical_write_confirms_impl(&self, at: Option<u64>) -> Result<ConfirmExpiryPage> {
-        self.with_write_txn_grouped(|wtxn| {
+        let (page, outcomes) = self.with_write_txn_grouped(|wtxn| {
             let now = at.unwrap_or_else(|| self.store.clock.now_recorded_at());
             let (cursor, prior_fence) = self
                 .store
@@ -458,6 +463,7 @@ impl Vault {
                 if complete { None } else { fence },
             )?;
             let mut demoted = 0;
+            let mut outcomes = Vec::new();
             for (_, row) in pending {
                 if critical_confirm_has_no_deadline(&row) {
                     continue;
@@ -465,7 +471,9 @@ impl Vault {
                 let Ok(binding) = critical_write_confirm_binding(&row) else {
                     continue;
                 };
-                if binding.expires_at > now {
+                if binding.expires_at > now
+                    || !self.confirm_demotion_retries.due(&binding.confirm_id, now)
+                {
                     continue;
                 }
                 // Each demotion runs in a savepoint: one that fails drops only
@@ -483,25 +491,29 @@ impl Vault {
                         savepoint.commit()?;
                         Ok(landed)
                     });
-                match landed {
-                    Ok(true) => demoted += 1,
-                    Ok(false) => {}
+                let retry = match landed {
+                    Ok(landed) => {
+                        demoted += usize::from(landed);
+                        None
+                    }
                     Err(error @ (Error::Storage(_) | Error::Io(_) | Error::MapFull)) => {
                         return Err(error);
                     }
-                    Err(error) => tracing::warn!(
-                        claim = %claim_id.to_hex(),
-                        kind = ?error.kind(),
-                        "a timeout demotion did not land: the expiry walk passes it over"
-                    ),
-                }
+                    Err(error) => {
+                        Some(self.confirm_demotion_failed_in_txn(wtxn, &binding, &error, now)?)
+                    }
+                };
+                outcomes.push((binding.confirm_id, retry));
             }
-            Ok(ConfirmExpiryPage {
+            let page = ConfirmExpiryPage {
                 demoted,
                 began_at: cursor.is_none().then_some(now),
                 ended: complete,
-            })
-        })
+            };
+            Ok((page, outcomes))
+        })?;
+        self.confirm_demotion_retries.record(outcomes);
+        Ok(page)
     }
 
     /// The timeout demotion of an expired confirm's `row` whose claim still
