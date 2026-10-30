@@ -163,11 +163,24 @@ side_tables! {
     /// and the identity rows of DREAMER_MAINTENANCE_APPLIED (FIX 8707).
     DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named
         => crate::dreamer_runner::maintenance::identity::erase_actor_sources_in_txn;
+    /// Each open identity ask under every id its erase reads (FIX 10376):
+    /// its turn, message, candidates and provisional. Key: id16(source) +
+    /// hash32(ask key).
+    DREAMER_IDENTITY_ASK_BY_SOURCE: VaultMeta b"dreamer:identity:v1:ask_by_source:" Raw;
     /// The identity re-check's page cursor: the last TURN a nightly pass read. Key: ().
     DREAMER_IDENTITY_CURSOR: VaultMeta b"dreamer:identity:v1:cursor" Named;
     /// A settled identity's context hint: each answered mention's own name, the words around it
     /// and its span, for the entity it named. Key: u8(kind) + hash32(name) + id16(entity).
     DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
+    /// Each saved identity hint under every id its erase reads (FIX 10376):
+    /// the entity it named and each contribution's turn and message. Key:
+    /// id16(source) + u8(kind) + hash32(name) + id16(entity).
+    DREAMER_IDENTITY_HINT_BY_SOURCE: VaultMeta b"dreamer:identity:v1:hint_by_source:" Raw;
+    /// Each background identity disposition's inverse under every id its
+    /// erase reads (FIX 10376): the ask copy's ids, the held provisionals'
+    /// ids/origins/spans, the settled entity and the hint copies' spans.
+    /// Key: id16(source) + hash32(ask key = the APPLIED IdentityAsk target).
+    DREAMER_IDENTITY_INVERSE_BY_SOURCE: VaultMeta b"dreamer:identity:v1:inverse_by_source:" Raw;
     /// The original mention and its resolving evidence, written with the link.
     /// Key: id16(turn) + hash32(message, span).
     DREAMER_IDENTITY_RESOLUTION: VaultMeta b"dreamer:identity:v1:resolution:" Named;
