@@ -20,6 +20,7 @@ mod gate_mode;
 mod gate_staging;
 mod leader_chat_admission;
 mod lexical_query_hints;
+mod ops_derived_copies;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
