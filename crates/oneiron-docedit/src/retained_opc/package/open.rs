@@ -4,6 +4,8 @@
 
 use super::*;
 use crate::resource::{Dimension, Hold, bytes_of};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// The most entries classic ZIP records: 65,535 is its ZIP64 sentinel.
 const ZIP32_ENTRIES: usize = u16::MAX as usize - 1;
@@ -282,6 +284,7 @@ impl Package {
             editability: Editability::Unsigned,
             added: Vec::new(),
             resources: resources.clone(),
+            inflated: Arc::default(),
         };
         drop(scratch);
         package.editability = package.signature_or_unsafe_metadata()?;
@@ -334,6 +337,9 @@ impl Package {
         if entry.method == 0 {
             return Ok(raw.to_vec());
         }
+        if let Some(part) = self.inflated.read(entry.data.start) {
+            return Ok(part);
+        }
         let mut out = Vec::with_capacity(entry.uncompressed);
         DeflateDecoder::new(raw)
             .take(entry.uncompressed as u64 + 1)
@@ -342,7 +348,48 @@ impl Package {
         if out.len() != entry.uncompressed || crc32fast::hash(&out) != entry.crc {
             return Err(Error::Invalid("entry size or CRC mismatch"));
         }
+        // The kept copy is reserved before it is allocated; one the port
+        // does not admit is left out, and its part inflates on each read.
+        if let Ok(_kept) = self.resources.reserve(wide(out.len())) {
+            self.inflated.keep(entry.data.start, &out);
+        }
         Ok(out)
+    }
+}
+
+/// The source's DEFLATE parts inflated and CRC-checked so far, by their
+/// payload's offset in the source (FIX 5144). The source never changes, so a
+/// part stays exact for the package's life and every copy of it shares the
+/// parts; an edited or removed part is answered before these are read.
+#[derive(Default)]
+pub(super) struct Inflated(Mutex<HashMap<usize, Vec<u8>>>);
+
+impl Inflated {
+    /// A copy of the part whose payload starts at `offset`, once inflated.
+    fn read(&self, offset: usize) -> Option<Vec<u8>> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&offset)
+            .cloned()
+    }
+
+    /// Keeps a copy of `part`, inflated from the payload at `offset`.
+    fn keep(&self, offset: usize, part: &[u8]) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(offset)
+            .or_insert_with(|| part.to_vec());
+    }
+}
+
+impl std::fmt::Debug for Inflated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let parts = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        f.debug_struct("Inflated")
+            .field("parts", &parts.len())
+            .finish()
     }
 }
 
