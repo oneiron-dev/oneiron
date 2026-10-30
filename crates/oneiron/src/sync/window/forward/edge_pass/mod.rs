@@ -138,6 +138,14 @@ enum Queued {
     },
     /// The mandate-checked write.
     Main(EdgeWork),
+    /// A withdrawn Shell's own ChildOf or RepliesTo: the edge waits in its
+    /// window (FIX 931), and the room it names pins the Shell content-free
+    /// in the chunk's write (FIX 11803, L09 01:42), as Observer B pins it.
+    ShellPin {
+        kind: crate::edge::EdgeKind,
+        src: EntityId,
+        tgt: EntityId,
+    },
 }
 
 /// The mandate-checked write one edge owes its chunk.
@@ -282,6 +290,14 @@ impl Pass<'_> {
                     &edge.buf,
                 )?;
                 self.ledger.terminal_quarantines.extend(*terminal);
+                Ok(())
+            }
+            Queued::ShellPin { kind, src, tgt } => {
+                if let Err(err) = vault.with_write_txn_grouped(|wtxn| {
+                    bridge::shell_pin::pin_from_edge(vault, wtxn, &ctx.edges_map, *kind, src, tgt)
+                }) {
+                    unpinned(ctx, edge.key, &err);
+                }
                 Ok(())
             }
             Queued::Main(work) => {
@@ -483,7 +499,9 @@ fn gate(ctx: &RematCtx<'_>, key: &str, buf: Option<&[u8]>) -> Result<Gate> {
     }
 
     // A withdrawn Shell's structural edge has no body to prove it (FIX 931):
-    // it waits in the window, as an edge of an absent endpoint does.
+    // it waits in the window, as an edge of an absent endpoint does. Its own
+    // ChildOf or RepliesTo still pins it, in the chunk's write: this gate
+    // holds only a read transaction.
     let shell = {
         let txn = vault.store.env.read_txn()?;
         crate::sync::withdrawn_cutoffs::withdrawn_shell_edge_in(
@@ -495,6 +513,12 @@ fn gate(ctx: &RematCtx<'_>, key: &str, buf: Option<&[u8]>) -> Result<Gate> {
         )?
     };
     if shell {
+        if matches!(
+            kind,
+            crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::RepliesTo
+        ) {
+            return Ok(Gate::Queued(Queued::ShellPin { kind, src, tgt }));
+        }
         return Ok(Gate::Skip);
     }
 
@@ -529,6 +553,16 @@ fn stage(
             staged.push(Staged::Terminal(*terminal));
             Ok(())
         }
+        Queued::ShellPin { kind, src, tgt } => match savepoint(vault, parent, |child| {
+            bridge::shell_pin::pin_from_edge(vault, child, &ctx.edges_map, *kind, src, tgt)
+        }) {
+            Err(err) if out_of_room(&err) => Err(err),
+            Err(err) => {
+                unpinned(ctx, edge.key, &err);
+                Ok(())
+            }
+            Ok(()) => Ok(()),
+        },
         Queued::Main(work) => {
             match savepoint(vault, parent, |child| {
                 apply_edge_in_txn(ctx, child, edge.key, &edge.buf, work)
@@ -567,6 +601,17 @@ fn stage(
             }
         }
     }
+}
+
+/// A withdrawn Shell's pin that failed rolled back alone: its edge waits in
+/// the window as before, and the next pass that meets it pins again.
+fn unpinned(ctx: &RematCtx<'_>, key: &str, err: &Error) {
+    tracing::warn!(
+        window = %ctx.window_key,
+        edge = %key,
+        kind = ?err.kind(),
+        "forward remat: a withdrawn Shell's pin failed; its edge waits"
+    );
 }
 
 /// Writes a refused edge's `x:` row in a child of `parent`: a failed
