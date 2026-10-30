@@ -42392,7 +42392,7 @@
      "purpose": "One snapshot and one admission for policy-managed inference calls",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 4
      }
     },
@@ -65892,7 +65892,7 @@
      "path": "src/speculative/scoped.rs",
      "purpose": "Credential-bound candidate admission, inside every speculative pass",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -100319,7 +100319,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/options.rs",
@@ -112446,7 +112446,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 12,
       "re-export": 1,
       "struct": 1
@@ -115034,7 +115034,17 @@
      "path": "src/server/recall_hyde.rs",
      "purpose": "A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/recall_hyde/wait.rs",
+     "purpose": "Owned recall workers, so HyDE waits hold no shared blocking-pool thread",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -116743,7 +116753,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 72,
+     "files": 73,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116822,7 +116832,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1456,
+   "source_files": 1457,
    "test_files": 182
   },
   "oneiron-spawn": {
