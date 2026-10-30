@@ -4788,7 +4788,7 @@ export type CodeProposalSubmitted = { proposal: EntityId; repo: EntityId; actor:
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictRecordRequest` */
 export type CodeConflictRecordRequest = { repo: EntityId; branch_subject: EntityId; branch: string; left_proposal: EntityId; right_proposal: EntityId }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictView` */
-export type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task: EntityId }
+export type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task?: EntityId | null; held?: string | null }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictViewRequest` */
 export type CodeConflictViewRequest = { branch_subject: EntityId }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictResolutionView` */
