@@ -33,9 +33,9 @@
 //!
 //! The candidate, its version and its history-free state are persisted in one transaction that
 //! also retires the old window's pending updates and the queued sends it took in, whose effects
-//! step 1 carried over, and clears the pending mirrors step 1 replayed. Preparation refused
-//! before that transaction leaves every mirror marker in place. The caller attaches observers
-//! last.
+//! step 1 carried over, and clears the pending mirrors (`pm:`, `lm:w:`) step 1 replayed; a
+//! `lm:w:` marker whose value comes back as a conflict stays owed. Preparation refused before
+//! that transaction leaves every mirror marker in place. The caller attaches observers last.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -176,6 +176,8 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     // the old window, so the carry-over judges it like any other unseen write and never puts it
     // over a value the peer provably superseded. Its marker clears with the install below.
     let mirrored = replay_pending_mirrors_kept(vault, old, key)?;
+    // So does what a local write's `lm:w:` marker owes the window (FIX 11822).
+    let owed = vault.mirror_owed_into_replaced(old, key)?;
     // Delete semantics never weaken: no carried write or queued send may soften or remove a hard
     // delete the replacement holds, nor one of this vault's own once it is carried over.
     let mut hard = hard_tombstones(&candidate);
@@ -247,6 +249,12 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         for marker in &mirrored {
             OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
         }
+        // A row or edge the candidate does not hold as mirrored stays owed.
+        owed.retire_in_txn(vault, wtxn, |carrier| {
+            conflicts.iter().any(|conflict| {
+                matches!(conflict.map.as_str(), "entities" | "edges") && conflict.key == carrier
+            })
+        })?;
         write_window_svf_in_txn(vault, wtxn, key)
     })?;
     Ok(PreparedReplacement {
