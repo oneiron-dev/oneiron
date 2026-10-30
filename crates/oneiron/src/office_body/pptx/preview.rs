@@ -18,8 +18,9 @@
 //! refused, any ask its read filed kept. The keys judged are those of what
 //! is drawn, read in the snapshot the deck is (FIX 9994, 9995): its texts',
 //! and those the marks of the retained package it draws over, of that
-//! package's parts and of each picture it resolves name. A mark in the
-//! package or a part counts only where the asked slides draw it (FIX 10453).
+//! package's parts and of each picture it resolves name. A text, a picture,
+//! and a mark in the package or a part count only where the asked slides
+//! draw them (FIX 10453, FIX 12234).
 //!
 //! The memory a preview allocates is admitted to the host's renderer before
 //! it is (FIX 7653, [`SlideRenderer::admit`]): the copy the package keeps,
@@ -40,7 +41,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use super::{live, open_record};
-use drawn_parts::PackageMarks;
+use drawn_parts::{PackageMarks, drawn_nodes, drawn_parts, drawn_pictures, drawn_strings};
 use crate::Vault;
 use crate::edit_roundtrip::VaultAssets;
 use crate::edit_roundtrip::slides_review::{SlideRenderer, review_image_key};
@@ -185,10 +186,9 @@ impl Memory<'_> {
             vault.deck_projection(&artifact, fork.as_ref(), &input.slides, renderer)?;
         let key = projection.key.hash();
         // Whether this read needs sight is the snapshot drawn's to say, its
-        // texts, retained package, parts and pictures (FIX 9995, 9994), the
-        // package and its parts where the asked slides draw them (FIX 10453),
-        // and it is judged on this read before a kept drawing is read or one
-        // drawn.
+        // texts, retained package, parts and pictures (FIX 9995, 9994), each
+        // where the asked slides draw it (FIX 10453, FIX 12234), and it is
+        // judged on this read before a kept drawing is read or one drawn.
         let held_back = masked && !projection.lifted.is_empty();
         let view = if !masked {
             DrawView::Raw
@@ -360,8 +360,8 @@ struct Projection {
     rows: Vec<EntityId>,
     /// The keys what is drawn holds, read in the snapshot the deck was: its
     /// lifted texts' (FIX 2941), and those the marks of the retained package,
-    /// of its parts and of each resolved picture name (FIX 9994), the
-    /// package's and the parts' where the asked slides draw them (FIX 10453).
+    /// of its parts and of each resolved picture name (FIX 9994), each where
+    /// the asked slides draw it (FIX 10453, FIX 12234).
     lifted: LiftedSources,
     /// The bytes of the package `package` was read from.
     source_bytes: u64,
@@ -389,7 +389,7 @@ impl Vault {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let (head, retained, deck, (lifted, marks), (assets, asset_rows, pictures)) = {
+        let (head, retained, deck, (lifted, narrowed, marks), (assets, asset_rows, pictures)) = {
             let txn = self.store.env.read_txn()?;
             let texts = self.typed_body_lifted_sources_in_txn(&txn, artifact)?;
             let (head, body) = self.deck_head(&txn, artifact)?;
@@ -421,9 +421,34 @@ impl Vault {
             // marks count where the asked slides draw them (FIX 10453).
             let pinned = retained.map_or(source.source_hash, |retained| retained.hash);
             let marks = PackageMarks::read_in_txn(&self.store, &txn, &pinned, &deck)?;
-            let lifted = self.lifted_sources_with_files_in_txn(&txn, texts, &listing.files.take())?;
+            let files = listing.files.take();
+            let lifted = self.lifted_sources_with_files_in_txn(&txn, texts, &files)?;
+            // The texts' and the pictures' keys where the asked slides draw
+            // them, read in the same snapshot (FIX 12234); `None` where the
+            // mapping cannot tell, so the drawing judges every text and
+            // picture as before.
+            let narrowed = drawn_nodes(&deck, slides)
+                .map(|drawn| {
+                    let texts = self.typed_body_lifted_sources_drawn_in_txn(
+                        &txn,
+                        artifact,
+                        &drawn_strings(&deck, &drawn),
+                    )?;
+                    let mut hashes = BTreeSet::new();
+                    for image in drawn_pictures(&deck, &drawn) {
+                        if let Some((_, bytes)) = assets.resolve(&image) {
+                            hashes.insert(*blake3::hash(&bytes).as_bytes());
+                        }
+                    }
+                    self.lifted_sources_with_files_in_txn(
+                        &txn,
+                        texts,
+                        &hashes.into_iter().collect::<Vec<_>>(),
+                    )
+                })
+                .transpose()?;
             let resolved = (assets, listing.rows.into_inner(), listing.admitted.get());
-            (head, retained, deck, (lifted, marks), resolved)
+            (head, retained, deck, (lifted, narrowed, marks), resolved)
         };
         let (bytes, rows) = self.deck_source_listing(artifact, &source, retained)?;
         // The package, its size known only once read whole, is named
@@ -444,7 +469,14 @@ impl Vault {
             )
         })?;
         renderer.materialized(source_bytes, source_bytes);
-        let lifted = lifted.with_keys(marks.drawn_keys(&deck, slides, &package, &bytes));
+        // The narrowed texts and pictures count where the parts mapping
+        // tells too; where it cannot (a live-born slide, an unreadable
+        // archive) every text and picture counts as before (FIX 12234).
+        let base = match (narrowed, drawn_parts(&deck, slides, &package).is_some()) {
+            (Some(narrowed), true) => narrowed,
+            _ => lifted,
+        };
+        let lifted = base.with_keys(marks.drawn_keys(&deck, slides, &package, &bytes));
         let key = export_key(
             &deck,
             &package,
