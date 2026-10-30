@@ -21,6 +21,7 @@ mod reply_content;
 mod reply_job;
 mod retry_audit;
 mod served_sink;
+mod weave_digest_send;
 mod window_door;
 
 #[cfg(test)]
@@ -88,6 +89,8 @@ pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
 pub(crate) use self::reply_job::{
     erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
 };
+pub(crate) use self::weave_digest_send::erase_weave_digest_channel_override_actor_in_txn;
+pub use self::weave_digest_send::{WeaveDigestChannelOverride, WeaveDigestChannelSetting};
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has
