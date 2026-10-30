@@ -84,7 +84,7 @@ pub use self::door::{
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
-    token_event_type, token_page_ref,
+    confirm_hold_taken_at, token_event_type, token_page_ref,
 };
 pub use self::types::{
     BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,
