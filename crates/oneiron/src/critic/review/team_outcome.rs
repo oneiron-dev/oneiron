@@ -35,7 +35,10 @@ fn deliverable_reviews_in_txn(
     deliverables: &[EntityId],
 ) -> Option<Vec<ReviewResult>> {
     let mut reviews = Vec::new();
-    for deliverable in deliverables.iter().collect::<std::collections::BTreeSet<_>>() {
+    for deliverable in deliverables
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
         match reviews_of_in_txn(vault, txn, deliverable) {
             Ok(of) => reviews.extend(of),
             Err(error) => {
@@ -76,7 +79,11 @@ fn reviews_of_in_txn(
 fn deliverable_critics(reviews: &[ReviewResult]) -> Vec<TeamCritic> {
     let mut critics = Vec::new();
     for review in reviews {
-        for artifact in review.artifacts.iter().filter(|artifact| !artifact.out_of_scope) {
+        for artifact in review
+            .artifacts
+            .iter()
+            .filter(|artifact| !artifact.out_of_scope)
+        {
             let Some(executor) = artifact.calibration.executor.clone() else {
                 continue;
             };
@@ -121,7 +128,11 @@ pub(crate) fn record_deliverable_outcomes_in_txn(
         OutcomeWriter::Owner(WriteActor::new(owner, crate::EdgeActorClass::Human))
     });
     for review in reviews {
-        for artifact in review.artifacts.iter().filter(|artifact| !artifact.out_of_scope) {
+        for artifact in review
+            .artifacts
+            .iter()
+            .filter(|artifact| !artifact.out_of_scope)
+        {
             let upheld = (artifact.verdict == CritiqueVerdict::Accept) == outcome.success;
             let landed = vault
                 .store

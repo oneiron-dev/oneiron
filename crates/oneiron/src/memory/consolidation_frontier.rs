@@ -13,7 +13,9 @@ pub struct ConsolidationRootBucket {
     pub predicate_root: String,
     pub world: Option<String>,
     pub facet: Option<String>,
-    pub relationship: Option<String>,
+    /// The bucket's relationship key: absent for all, `[]` for the explicit
+    /// empty set, otherwise every relationship of the set.
+    pub relationship: Option<Vec<String>>,
     pub project: String,
 }
 

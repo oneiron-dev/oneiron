@@ -291,6 +291,9 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
                 deleted_at,
                 request_id: *attempt.as_bytes(),
             };
+            // The archive drops a fact: its person's `about` lines hide
+            // until a wake pass reads the facts left (FIX 3196).
+            super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
             vault.put_archive_tombstone_in_txn(txn, &id, &marker)?;
             let link = vault.attempt_action_link_in_txn(&*txn, attempt);
             let receipt = archive_receipt(actor, id, &snapshot, now_ms, link);

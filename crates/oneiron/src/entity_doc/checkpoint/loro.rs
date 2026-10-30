@@ -63,6 +63,11 @@ impl LoroActorCodec for EntityDocActors {
         if let Some(split) = message_receipts::split(message) {
             return split;
         }
+        // A replayed commit restates the row's birth and names no one (FIX
+        // 10929).
+        if message == super::super::commit_receipts::ROW_BIRTH_RESTATED {
+            return Ok(SplitValue::kept(message.to_owned()));
+        }
         let (head, id, tail) = cut_stamp(message).ok_or(NOT_A_STAMP)?;
         if id == ERASED_CALL_IDENTITY {
             return Ok(SplitValue::kept(message.to_owned()));

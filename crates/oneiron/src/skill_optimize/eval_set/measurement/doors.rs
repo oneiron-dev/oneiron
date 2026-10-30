@@ -68,7 +68,15 @@ pub(in crate::skill_optimize::eval_set) fn measurement_in_txn(
     MEASUREMENTS.get(&vault.store, txn, digest)
 }
 
-pub(super) fn put_in_txn(
+/// Every measurement with its request digest, on the caller's snapshot.
+pub(in crate::skill_optimize::eval_set) fn measurements_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<([u8; 32], EvalMeasurement)>> {
+    MEASUREMENTS.scan(&vault.store, txn)
+}
+
+pub(in crate::skill_optimize::eval_set) fn put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     digest: &[u8; 32],
@@ -385,7 +393,12 @@ impl Vault {
             if cohort.seat != row.request.seat || cohort_moved(&cohort, &row.request) {
                 return Ok(row);
             }
-            MEASUREMENTS.put(&self.store, txn, &again, &pending(&again, &row.request, now))?;
+            MEASUREMENTS.put(
+                &self.store,
+                txn,
+                &again,
+                &pending(&again, &row.request, now),
+            )?;
             enqueue_coach_eval_measurement_in_txn(self, txn, &again, now)?;
             Ok(row)
         })

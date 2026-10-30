@@ -419,9 +419,10 @@ fn hosts_bytes(store: &Store) -> bool {
 /// the held record for that legal reason only: where Oneiron hosts the bytes
 /// it gets a use limit under every standing hold, a customer hold or a host
 /// order whatever its own terms say (C5, C6, WILL-PLAN L01 row 03, FIX
-/// 8849). Returns how many were written.
+/// 8849), and the PEOPLE `about` lines of a fact it kept hide (FIX 3196).
+/// Returns how many were written.
 pub(crate) fn flush_refusals_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     notes: &[RefusalNote],
     hosted: bool,
@@ -429,7 +430,7 @@ pub(crate) fn flush_refusals_in_txn(
     let mut written = 0_u64;
     for note in notes {
         // A hold its retention already dropped has no log left.
-        let Some(hold) = hold_in_txn(dbs, txn, &note.hold)? else {
+        let Some(hold) = hold_in_txn(store, txn, &note.hold)? else {
             continue;
         };
         let reason = if note.actor.privacy_erase {
@@ -438,7 +439,7 @@ pub(crate) fn flush_refusals_in_txn(
             LegalHoldReason::HeldRecord
         };
         log_in_txn(
-            dbs,
+            store,
             txn,
             &hold,
             LegalHoldEventKind::DeleteRefused,
@@ -453,7 +454,7 @@ pub(crate) fn flush_refusals_in_txn(
             && hosted
             && notice::restricts_use(&hold)
         {
-            keep_use_limited_in_txn(dbs, txn, record, note.at)?;
+            keep_use_limited_in_txn(store, txn, record, note.at)?;
         }
         written = written.saturating_add(1);
     }
@@ -461,16 +462,18 @@ pub(crate) fn flush_refusals_in_txn(
 }
 
 fn keep_use_limited_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     record: EntityId,
     at: u64,
 ) -> Result<()> {
-    if USE_LIMITS.contains(dbs, txn, &record)? {
+    if USE_LIMITS.contains(store, txn, &record)? {
         return Ok(());
     }
+    // A use-limited fact no longer reads: its `about` lines hide (FIX 3196).
+    crate::dreamer_consolidation::mark_person_about_dropped_in_txn(store, txn, &record)?;
     USE_LIMITS.put(
-        dbs,
+        store,
         txn,
         &record,
         &LegalHoldUseLimit {

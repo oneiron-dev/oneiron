@@ -308,7 +308,10 @@ pub(crate) fn claim_ids_for_world_page_in_txn(
     after: Option<EntityId>,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
-    let from = (world, after.unwrap_or_else(|| EntityId::from_bytes_unchecked([0; 16])));
+    let from = (
+        world,
+        after.unwrap_or_else(|| EntityId::from_bytes_unchecked([0; 16])),
+    );
     let start = match after {
         Some(_) => std::ops::Bound::Excluded(&from),
         None => std::ops::Bound::Included(&from),

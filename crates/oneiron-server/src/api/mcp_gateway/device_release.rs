@@ -181,9 +181,7 @@ pub(super) fn mcp_rerelease_refusal(
 ) -> Value {
     const WORDS: &str = "the call failed; its detail stays on this device";
     let mut reply = reply;
-    let denied = reply
-        .get("error")
-        .is_some_and(Value::is_object)
+    let denied = reply.get("error").is_some_and(Value::is_object)
         && crate::device_local::replay_withheld(
             &server.vault,
             actor.destination(),

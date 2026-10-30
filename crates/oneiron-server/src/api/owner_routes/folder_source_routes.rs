@@ -104,7 +104,11 @@ async fn attach(
     payload: OwnerJsonBody<AttachFolder>,
 ) -> OwnerReply<AttachedFolder> {
     let owner = owner(&auth, &server)?;
-    let AttachFolder { path, include, kind } = payload.read(&server).await?;
+    let AttachFolder {
+        path,
+        include,
+        kind,
+    } = payload.read(&server).await?;
     let attached =
         blocking(move || folder_sources::attach(server.vault(), &owner, &path, include, &kind))
             .await?;
@@ -133,8 +137,7 @@ async fn detach(
 ) -> OwnerReply<DetachedFolder> {
     let owner = owner(&auth, &server)?;
     let DetachFolder { path } = payload.read(&server).await?;
-    let detached =
-        blocking(move || folder_sources::detach(server.vault(), &owner, &path)).await?;
+    let detached = blocking(move || folder_sources::detach(server.vault(), &owner, &path)).await?;
     Ok(Json(detached))
 }
 

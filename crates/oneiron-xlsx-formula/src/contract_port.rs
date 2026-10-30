@@ -28,8 +28,11 @@ impl RecalcPort for FormualizerEngine {
                     .ok_or_else(|| bad("location needs a folder ending in a separator"))
             })
             .transpose()?;
+        // The port carries no host resources yet, so this entry measures
+        // explicitly (FIX 10588): `Ports.resources` never reaches it.
+        let measuring = oneiron_docedit::resource::Resources::measuring();
         let recalc = self
-            .recalculate_xlsx(workbook, limits, &clock, location.as_ref())
+            .recalculate_xlsx(workbook, limits, &clock, location.as_ref(), &measuring)
             .map_err(refusal)?;
         Ok(Recalculated {
             bytes: recalc.bytes,
@@ -45,8 +48,20 @@ fn bad(detail: &str) -> ContractError {
 }
 
 /// A refused workbook names the precision fallback; malformed content is the
-/// caller's document, not the engine's failure.
+/// caller's document, not the engine's failure. A memory or deadline refusal
+/// and a package ceiling keep their typed causes (FIX 10588, 10652).
 fn refusal(error: FormulaError) -> ContractError {
+    if let FormulaError::Resource(refusal) = &error {
+        return ContractError::resource(*refusal);
+    }
+    if let FormulaError::Package(error) = &error {
+        if let Some(hit) = error.capacity() {
+            return ContractError::capacity(hit);
+        }
+        if let Some(refusal) = error.resource() {
+            return ContractError::resource(refusal);
+        }
+    }
     let code = match &error {
         FormulaError::UnsupportedWorkbook(_) => ErrorCode::NeedsFallback,
         FormulaError::InvalidWorkbook(_) | FormulaError::Package(_) => ErrorCode::InvalidDocument,
@@ -54,6 +69,8 @@ fn refusal(error: FormulaError) -> ContractError {
         | FormulaError::UnsupportedValue(_)
         | FormulaError::InvalidCorpus(_) => ErrorCode::BadRequest,
         FormulaError::Engine(_) => ErrorCode::Internal,
+        // Returned above; kept typed so the match stays exhaustive.
+        FormulaError::Resource(refusal) => return ContractError::resource(*refusal),
     };
     ContractError::new(code, error.to_string())
 }

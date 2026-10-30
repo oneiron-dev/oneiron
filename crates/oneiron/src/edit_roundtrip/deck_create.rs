@@ -440,7 +440,15 @@ impl crate::Vault {
         for template in templates {
             let bytes = self.version_bytes_in_txn(txn, template)?;
             let package = Package::open(&bytes, limits, &crate::office_body::document_resources())
-                .map_err(|_| invalid("template package"))?;
+                .map_err(|error| {
+                    // A resource refusal is the engine's error (FIX 10587).
+                    error.resource().map_or_else(
+                        || invalid("template package"),
+                        |refusal| {
+                            DeckCreateError::Vault(crate::office_body::document_refused(refusal))
+                        },
+                    )
+                })?;
             check_template(&package)?;
             let outcome = compile_with_fonts(&kept_brief(&kept), &package, &bindings, &book)?;
             questions.push(match &outcome {
@@ -538,7 +546,13 @@ impl crate::Vault {
             limits,
             &crate::office_body::document_resources(),
         )
-        .map_err(|_| invalid("template package"))?;
+        .map_err(|error| {
+            // A resource refusal is the engine's error (FIX 10587), never an invalid template.
+            error.resource().map_or_else(
+                || invalid("template package"),
+                |refusal| DeckCreateError::Vault(crate::office_body::document_refused(refusal)),
+            )
+        })?;
         let brief = kept_brief(&kept);
         let plan = match compile_with_fonts(&brief, &template, &bindings, &book)? {
             Outcome::Ask(decisions) => {
