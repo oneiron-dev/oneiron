@@ -284,11 +284,10 @@ pub(crate) async fn claim_door_invocation(
                     crate::invocation_claims::InvocationClaimLookup::Interrupted {
                         committed_writes,
                     } if waited => {
-                        return if committed_writes == 0 {
-                            DoorClaim::InFlight
-                        } else {
-                            DoorClaim::ReplyNotKept { committed_writes }
-                        };
+                        // No live runner exists here, so even zero counted
+                        // writes means the reply was not kept, not InFlight
+                        // for a same-id retry that cannot succeed (FIX 12350).
+                        return DoorClaim::ReplyNotKept { committed_writes };
                     }
                     crate::invocation_claims::InvocationClaimLookup::Interrupted { .. } => {
                         waited = true;
