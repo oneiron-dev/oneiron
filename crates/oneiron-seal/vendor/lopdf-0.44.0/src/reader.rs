@@ -803,6 +803,8 @@ impl Reader<'_> {
     pub fn read(mut self, filter_func: Option<FilterFunc>) -> Result<Document> {
         let offset = self.buffer.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
         self.buffer = &self.buffer[offset..];
+        // With an admission, every object the load parses is charged to it (FIX 8446).
+        let _scope = decode_admission::ParseScope::enter(self.decode_admission.as_ref());
 
         // The document structure can be expressed in PEG as:
         //   document <- header indirect_object* xref trailer xref_start
@@ -838,7 +840,7 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-            xref.merge(prev_xref);
+            xref.merge_admitted(prev_xref, self.decode_admission.as_deref())?;
 
             // Read xref stream in hybrid-reference file
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
@@ -848,7 +850,7 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-                xref.merge(prev_xref);
+                xref.merge_admitted(prev_xref, self.decode_admission.as_deref())?;
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
@@ -957,7 +959,7 @@ impl Reader<'_> {
                 if let Some(container_obj) = self.document.objects.get_mut(&(container_id, 0))
                     && let Ok(stream) = container_obj.as_stream_mut()
                 {
-                    match ObjectStream::new_admitted(stream, self.max_decompressed_size, self.decode_admission.as_deref()) {
+                    match ObjectStream::new_admitted(stream, self.max_decompressed_size, self.decode_admission.as_ref()) {
                         Ok(mut object_stream) => {
                             // Each object number is listed once, so its object moves out instead of being copied.
                             for (obj_num, _index) in objects_in_stream {
@@ -1054,7 +1056,7 @@ impl Reader<'_> {
                         let obj_stream = match ObjectStream::new_admitted(
                             stream,
                             self.max_decompressed_size,
-                            self.decode_admission.as_deref(),
+                            self.decode_admission.as_ref(),
                         ) {
                             Ok(obj_stream) => obj_stream,
                             Err(Error::DecodeAdmission(err)) => {
@@ -1214,7 +1216,7 @@ impl Reader<'_> {
         let mut object_stream = ObjectStream::new_admitted(
             &mut container_stream,
             self.max_decompressed_size,
-            self.decode_admission.as_deref(),
+            self.decode_admission.as_ref(),
         )?;
         object_stream.objects.remove(&id).ok_or(Error::MissingXrefEntry)
     }
