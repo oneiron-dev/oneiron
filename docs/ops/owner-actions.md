@@ -1510,7 +1510,7 @@ JSON object: `{"row", "question_id", "question_version", "corpus_revision", "fea
 "label_schema", "source", "consent": {"basis", "receipt"}, "label": {"answer": "no" | "yes",
 "unit": "target", "adjudication"}, "input": {"target", "context": [...]}}`. The pins must match
 the plan's question, and `source` is a record that you already assigned to one of the seat's eval
-families.
+families (`vault.evals.families.assign`).
 
 `POST /v1/owner/coach/training-runs/prepare` with `{"draft", "corpus": {"rows": <artifact pin>},
 "connector"}` prepares the run. Rows of a training family become the training file, and rows
