@@ -30,6 +30,9 @@ use super::*;
 use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::pipeline::WorldAuthoritySet;
 
+/// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
+const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is not saved";
+
 /// The scope a read lane read under when its work was saved (OF-506). The
 /// engine mints it from the saver's live lane ([`Self::freeze`]) or as the
 /// principal's own ([`Self::principal`]); no caller authors one.
@@ -130,9 +133,7 @@ impl FrozenReadLane {
             return Ok(Self::principal());
         }
         if claims.is_some_and(|claims| claims.grant_ref.is_some()) {
-            return Err(Error::InvalidConfig(
-                "a narrowed guest credential's read lane is not saved".into(),
-            ));
+            return Err(Error::InvalidConfig(GUEST_LANE_NOT_SAVED.into()));
         }
         let authority = if channel_refused {
             Scope::default()
@@ -146,6 +147,14 @@ impl FrozenReadLane {
             worlds,
             room_facets: key.room_facets,
         })
+    }
+
+    /// Whether `error` is [`Self::freeze`]'s refusal of a narrowed guest
+    /// credential's lane (FIX 12059), which a door that admitted that lane
+    /// answers as its own typed record-scope refusal.
+    #[must_use]
+    pub fn is_guest_lane_refusal(error: &Error) -> bool {
+        matches!(error, Error::InvalidConfig(message) if message.as_str() == GUEST_LANE_NOT_SAVED)
     }
 
     /// `key`, the principal's own live key, narrowed by this frozen lane in

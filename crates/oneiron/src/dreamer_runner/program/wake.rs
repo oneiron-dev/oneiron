@@ -1,12 +1,14 @@
 //! The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it
 //! is recorded in the turn's own commit, so a crash after that commit cannot
 //! lose it, and drained after the turn and at boot through the one admission
-//! and its dedupe.
+//! and its dedupe. A wake whose sealed slip lapsed stays owed, held, until
+//! its rebind or its own expiry (FIX 12058).
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+use super::admit::WakeAdmission;
 use super::authority::TurnProgramAuthority;
 use super::types::{LandedTurnRef, TurnProgramAdmissionOutcome, TurnProgramDrain, TurnProgramWake};
 use super::{ADMISSION, ARM, WAKE};
@@ -54,6 +56,7 @@ pub(crate) fn record_turn_program_wakes_in_txn(
             revision: arming.revision,
             authority: authority.clone(),
             turn: *turn,
+            held: None,
         };
         if WAKE.contains(vault, &*txn, &wake.key())?
             || ADMISSION.contains(vault, &*txn, &wake.admission_id())?
@@ -68,21 +71,31 @@ pub(crate) fn record_turn_program_wakes_in_txn(
 
 /// Admits a batch of owed wakes, each in its own writer. A wake whose
 /// admission fails to be judged (not refused) is logged and kept for the
-/// next drain; it never blocks the others.
+/// next drain; it never blocks the others. A wake held on its lapsed slip
+/// (FIX 12058) is passed by, taking no place in the batch, until its own
+/// expiry: before then only its rebind admits it, in the rebind's writer.
 pub(crate) fn drain_turn_program_wakes(vault: &Vault, now: u64) -> Result<TurnProgramDrain> {
     let pending = {
         let txn = vault.store.env.read_txn()?;
         let mut pending = Vec::new();
-        for row in WAKE.iter_from(vault, &txn, &[])?.take(DRAIN_BATCH + 1) {
-            pending.push(row?.1);
+        for row in WAKE.iter_from(vault, &txn, &[])? {
+            let wake = row?.1;
+            if wake.held.as_ref().is_some_and(|held| now < held.expires_at) {
+                continue;
+            }
+            pending.push(wake);
+            if pending.len() > DRAIN_BATCH {
+                break;
+            }
         }
         pending
     };
     let rows = pending.len();
-    let (mut admitted, mut refused, mut failed) = (0, 0, 0);
+    let (mut admitted, mut refused, mut held, mut failed) = (0, 0, 0, 0);
     for wake in pending.into_iter().take(DRAIN_BATCH) {
         match vault.admit_turn_program(&wake, now) {
-            Ok(receipt) => {
+            Ok(WakeAdmission::Held) => held += 1,
+            Ok(WakeAdmission::Decided(receipt)) => {
                 if matches!(receipt.outcome, TurnProgramAdmissionOutcome::Refused { .. }) {
                     refused += 1;
                 } else {
@@ -103,6 +116,7 @@ pub(crate) fn drain_turn_program_wakes(vault: &Vault, now: u64) -> Result<TurnPr
     Ok(TurnProgramDrain {
         admitted,
         refused,
+        held,
         // A batch that made no progress asks for no other.
         more: rows > DRAIN_BATCH && failed < DRAIN_BATCH,
     })

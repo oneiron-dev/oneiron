@@ -45,8 +45,9 @@
 //! `witness`).
 //!
 //! While the carrier wire is on, an input is sealed under its own erasable
-//! carrier key first, and the recorder retires that key once its request is
-//! answered (FIX 7402, `carrier_seal`).
+//! carrier key first, a surface's past one row in numbered parts (FIX
+//! 12148), and the recorder retires that key once its request is answered
+//! (FIX 7402, `carrier_seal`).
 
 mod attached;
 mod carrier_seal;
@@ -82,8 +83,9 @@ pub(crate) use self::attached::{
     attach_published_manifests, attach_unread,
 };
 pub(crate) use self::carrier_seal::{
-    LeafSource, input_carrier_binds, input_carrier_in_txn, leaf_input_retries_in_txn,
-    open_leaf_input, retire_input_carriers_in_txn, seal_leaf_input_in_txn, surface_leaf_input,
+    LeafSource, SurfaceLeaf, input_carrier_binds, input_carrier_in_txn, leaf_input_retries_in_txn,
+    open_leaf_input, retire_input_carriers_in_txn, seal_leaf_input_in_txn, seal_leaf_parts_in_txn,
+    surface_leaf_input,
 };
 pub use self::stream::SealedInput;
 pub(crate) use self::stream::{InputDigests, SealedFrame, kept_input_in_txn};

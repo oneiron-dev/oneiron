@@ -361,7 +361,8 @@ pub(crate) async fn list_core_sub_sessions(
 /// (ARCH-0006a). Refused up front when no Dreamer here writes summaries.
 /// The declaration keeps the caller's own lane, frozen (FIX 2194), so its
 /// landing checks a reply inside it; a narrowed lane must read every source
-/// the summary plans (FIX 11829).
+/// the summary plans (FIX 11829). A narrowed guest credential's lane has no
+/// frozen form: it is refused as the typed record-scope 403 (FIX 12059).
 fn declare_summary(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -376,7 +377,13 @@ fn declare_summary(
     let queued = server
         .vault
         .request_scope_summary_in_lane(request, purpose, &lane)
-        .map_err(|e| core_engine_error("summary declaration failed", e))?;
+        .map_err(|e| {
+            if oneiron::claim::FrozenReadLane::is_guest_lane_refusal(&e) {
+                ApiError::forbidden_scope("record-scope")
+            } else {
+                core_engine_error("summary declaration failed", e)
+            }
+        })?;
     server.ai.attempt_queued();
     Ok((StatusCode::ACCEPTED, Json(summary::queued_response(queued))))
 }
