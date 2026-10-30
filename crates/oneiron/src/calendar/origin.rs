@@ -565,11 +565,6 @@ pub(crate) fn invalidate_dependents(
     }
     Ok(())
 }
-pub(in crate::calendar) fn invalidated(vault: &Vault, event: EntityId) -> Result<bool> {
-    let txn = vault.store.env.read_txn()?;
-    invalidated_in_txn(vault, &txn, event)
-}
-
 pub(in crate::calendar) fn invalidated_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

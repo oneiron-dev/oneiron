@@ -48,9 +48,10 @@ pub(crate) struct OutboundEffectResult {
     /// The actor whose decision held this call, when `approval_digest` is
     /// set: the press it names is that actor's (FIX 6424 part 2a).
     pub(crate) approval_actor: Option<EntityId>,
-    /// Set when a full count-bound budget window paced this call (FIX 8788,
-    /// FIX 8686), to the engine instant, Unix seconds, its windows all open
-    /// again: nothing was recorded, charged or sent.
+    /// Set when a full count-bound budget window (FIX 8788, FIX 8686) or a
+    /// full sender envelope window (FIX 7948) paced this call, to the engine
+    /// instant, Unix seconds, its windows all open again: nothing was
+    /// recorded, charged or sent.
     pub(crate) paced_until: Option<u64>,
 }
 

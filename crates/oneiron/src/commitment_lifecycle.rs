@@ -91,13 +91,21 @@ pub struct LapseSweepReport {
     pub repaired_close_hooks: Vec<EntityId>,
 }
 
-/// The committed close anchor of a terminal commitment: its claim row's current
-/// `learned_at`.
+/// The committed close anchor of a terminal commitment: the current
+/// `learned_at` of the claim at the head of its status chain, which holds the
+/// terminal status.
 ///
 /// A repair at `t2` reads the SAME `t1` the transition committed, which is what
 /// makes the close hook idempotent in time as well as in effect.
 fn commitment_terminal_learned_at(vault: &Vault, id: &EntityId) -> Result<u64> {
-    let raw = vault.get_raw(id)?.ok_or(Error::EntityNotFound)?;
+    let txn = vault.store.env.read_txn()?;
+    terminal_learned_at_in(vault, &txn, id)
+}
+
+/// [`commitment_terminal_learned_at`] in the caller's transaction.
+fn terminal_learned_at_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<u64> {
+    let head = vault.commitment_head_in_txn(txn, id)?;
+    let raw = vault.get_raw_in(txn, &head)?.ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("commitment claim header"))?;
     Ok(header.learned_at)
@@ -436,8 +444,10 @@ fn close_with_hook(
     mismatch: &'static str,
 ) -> Result<CommitmentCloseResult> {
     vault.with_write_txn_grouped(|wtxn| {
+        // The commitment's current status sits at the head of its status chain.
+        let head = vault.commitment_head_in_txn(wtxn, commitment_ref)?;
         let body = vault
-            .get_claim_in_txn(wtxn, commitment_ref)?
+            .get_claim_in_txn(wtxn, &head)?
             .ok_or(Error::EntityNotFound)?;
         let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
             Error::InvalidClaimBody("claim predicate is not commitment.record"),
@@ -459,6 +469,11 @@ fn close_with_hook(
 
 /// Shared terminal transition and schedule cleanup. A retry preserves the
 /// original terminal row, evidence and learned time instead of writing again.
+///
+/// The status is read and changed at the head of the commitment's status
+/// chain, and the close instant is the learned time of the claim that holds
+/// the terminal status. `commitment_ref` stays the commitment's identity for
+/// the schedule close hook and the result.
 pub(crate) fn close_commitment_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -468,33 +483,23 @@ pub(crate) fn close_commitment_in_txn(
     outcome: CommitmentInstanceOutcome,
     evidence: Option<Value>,
 ) -> Result<CommitmentCloseResult> {
+    let head = vault.commitment_head_in_txn(wtxn, commitment_ref)?;
     let body = vault
-        .get_claim_in_txn(wtxn, commitment_ref)?
+        .get_claim_in_txn(wtxn, &head)?
         .ok_or(Error::EntityNotFound)?;
     let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
         Error::InvalidClaimBody("claim predicate is not commitment.record"),
     )?;
     let target = outcome.status();
     if record.status == CommitmentStatus::Open {
-        vault.update_commitment_status_in_txn(
-            wtxn,
-            commitment_ref,
-            target,
-            envelope,
-            learned_at,
-            evidence,
-        )?;
+        vault
+            .update_commitment_status_in_txn(wtxn, &head, target, envelope, learned_at, evidence)?;
     } else if record.status != target {
         return Err(Error::InvalidClaimBody(
             "commitment is closed with another status",
         ));
     }
-    let raw = vault
-        .get_raw_in(wtxn, commitment_ref)?
-        .ok_or(Error::EntityNotFound)?;
-    let closed_at = EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("commitment claim header"))?
-        .learned_at;
+    let closed_at = terminal_learned_at_in(vault, wtxn, commitment_ref)?;
     vault.on_instance_closed_in_txn(wtxn, commitment_ref, outcome, envelope, closed_at)?;
     Ok(CommitmentCloseResult {
         commitment_ref: *commitment_ref,

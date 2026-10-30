@@ -1264,7 +1264,7 @@ declare namespace Sdk {
   type PackSetupRequest = { pack: string; source?: string | null };
   type PackSetupAccount = { id: string; label: string; sign_up?: string | null; note?: string | null };
   type PackSetupAuth = "oauth" | "api_key" | "bot_token" | "app_password" | "session" | "webhook" | "local";
-  type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null };
+  type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null; optional?: boolean };
   type PackSetupRisk = "low" | "medium" | "high";
   type PackSetupPermission = { id: string; scope?: string | null; grant?: string | null; what: string; risk: string; level: PackSetupRisk; optional?: boolean };
   type PackSetupConnection = { id: string; label: string; account?: string | null; auth: PackSetupAuth; connector?: string | null; secrets?: PackSetupSecret[]; permissions: PackSetupPermission[]; verify: string };
