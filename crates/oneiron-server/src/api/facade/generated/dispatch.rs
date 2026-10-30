@@ -2977,6 +2977,7 @@ async fn vault_recall(
     call: &FacadeCall<'_>,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
+    let l15_dispatch_pre = oneiron::stage_timing::stage("server.dispatch_pre");
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
@@ -2984,6 +2985,7 @@ async fn vault_recall(
     oneiron::task_verb::sdk::validate_input("vault.recall", &value)?;
     let (actor, class) = facade_actor(server, auth)?;
     let hooks = facade_hooks_pre(server, call, "vault.recall", value).await?;
+    drop(l15_dispatch_pre);
     let value = hooks.args.clone();
     let ran = async {
         let (output, listed) = server
@@ -2997,7 +2999,9 @@ async fn vault_recall(
                 call.home_caller(),
             )
             .await;
+        let l15_json = oneiron::stage_timing::stage("server.json");
         let output = facade_output(output?)?;
+        drop(l15_json);
         let rows = Some(listed);
         Ok::<_, FacadeApiError>((output, rows))
     }
