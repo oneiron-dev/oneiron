@@ -180,7 +180,7 @@ fn close_answer(
         let mut evidence: Vec<EntityId> = Vec::new();
         for output in &answer.outputs {
             let body = vault
-                .get_claim_in_txn(&txn, output)?
+                .get_claim_for_effect_in_txn(&txn, output)?
                 .filter(crate::claim::claim_surfaceable);
             match (body, RowRevision::read_in(vault, &txn, output)?) {
                 (Some(body), Some(revision)) => {

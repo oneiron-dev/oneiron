@@ -646,7 +646,7 @@ impl crate::Vault {
                 continue;
             }
             let body = decode_claim_body(body_bytes, true)?;
-            if !keeps(&body) {
+            if !keeps(&body) || !self.claim_critical_confirm_settled(&claim_id)? {
                 continue;
             }
             candidates.push(CandidateClaim { id: claim_id, body });

@@ -117,7 +117,7 @@ pub(super) fn close_conflicts_naming(
     let (body, revision) = {
         let txn = vault.store.env.read_txn()?;
         (
-            vault.get_claim_in_txn(&txn, &replacement)?,
+            vault.get_claim_for_effect_in_txn(&txn, &replacement)?,
             RowRevision::read_in(vault, &txn, &replacement)?,
         )
     };

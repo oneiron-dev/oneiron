@@ -198,7 +198,7 @@ fn claim_still_admitted_in_txn(
     id: &EntityId,
     author: EntityId,
 ) -> Result<bool> {
-    let Some(body) = vault.get_claim_in_txn(txn, id)? else {
+    let Some(body) = vault.get_claim_for_effect_in_txn(txn, id)? else {
         return Ok(false);
     };
     if body.predicate != PREDICATE
