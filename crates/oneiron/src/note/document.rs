@@ -2,6 +2,7 @@
 
 use crate::error::{Error, RecordError, Result};
 use crate::memory::CommitReceipt;
+use crate::provenance::ActorStamp;
 use crate::{EntityId, WriteActor};
 use loro::cursor::{Cursor, Side};
 use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
@@ -156,7 +157,7 @@ impl NoteDocument {
             .map_err(|_| invalid("NOTE birth insert"))?;
         stamp_author(&doc, author);
         let born = Self { doc, id };
-        super::operations::record_authorship(
+        super::operations::record_birth_authorship(
             &born,
             &super::NoteAuthorship {
                 operation: id,
@@ -293,13 +294,15 @@ impl NoteDocument {
         Ok(())
     }
 
-    pub(super) fn set_title(&self, title: &str, actor: &WriteActor) -> Result<()> {
+    /// Sets the title, its commit naming the writer's stamp token `stamp`
+    /// (FIX 10930).
+    pub(super) fn set_title(&self, title: &str, stamp: ActorStamp) -> Result<()> {
         validate_title(title)?;
         self.doc
             .get_map(META)
             .insert("title", title)
             .map_err(|_| invalid("NOTE title insert"))?;
-        stamp(&self.doc, actor);
+        commit_stamped(&self.doc, stamp);
         Ok(())
     }
 
@@ -318,7 +321,9 @@ impl NoteDocument {
         Ok(pins)
     }
 
-    pub(super) fn add_pin(&self, pin: &NotePin, actor: &WriteActor) -> Result<()> {
+    /// Adds `pin`, its commit naming the writer's stamp token `stamp` (FIX
+    /// 10930).
+    pub(super) fn add_pin(&self, pin: &NotePin, stamp: ActorStamp) -> Result<()> {
         pin.validate()?;
         if self.pins()?.len() >= 256 {
             return Err(invalid("NOTE citation cap reached"));
@@ -329,7 +334,7 @@ impl NoteDocument {
             .get_map("pins")
             .insert(&key, value)
             .map_err(|_| invalid("NOTE pin insert"))?;
-        stamp(&self.doc, actor);
+        commit_stamped(&self.doc, stamp);
         Ok(())
     }
 
@@ -419,13 +424,14 @@ impl NoteDocument {
     }
 
     /// Edit a fork of the client's actual base; merge its stamped operations
-    /// into the live document. Concurrent batches therefore never overwrite a
+    /// into the live document, each commit naming the writer's stamp token
+    /// `stamp` (FIX 10930). Concurrent batches therefore never overwrite a
     /// whole markdown body or use offsets against the wrong frontier.
     pub(super) fn edit(
         &self,
         base: &[u8],
         edits: &[NoteEdit],
-        actor: &WriteActor,
+        stamp: ActorStamp,
         cited_by: &[NotePin],
     ) -> Result<bool> {
         if edits.len() > 256 {
@@ -466,9 +472,9 @@ impl NoteDocument {
             if text.len_utf8() > MAX_NOTE_BYTES {
                 return Err(invalid("NOTE body exceeds bound"));
             }
-            stamp(&base_doc.doc, actor);
+            commit_stamped(&base_doc.doc, stamp);
         }
-        stamp(&base_doc.doc, actor);
+        commit_stamped(&base_doc.doc, stamp);
         let updates = base_doc
             .doc
             .export(ExportMode::updates(&self.doc.oplog_vv()))
@@ -491,15 +497,22 @@ impl NoteDocument {
     }
 }
 
-fn stamp(doc: &LoroDoc, actor: &WriteActor) {
-    stamp_author(doc, super::NoteActor::Actor(actor.entity_ref()));
+/// The engine stamp of a live write, naming the writer's stamp token in the
+/// actor's place (FIX 10930).
+fn commit_stamped(doc: &LoroDoc, stamp: ActorStamp) {
+    commit_naming(doc, &stamp.token.to_hex());
 }
 
-/// The engine stamp naming `author`, or no one once erased.
+/// The engine stamp of a birth, naming `author`, or no one once erased: a
+/// birth is derived alike on every replica from the stored core, which names
+/// its author, so it names no device's stamp token.
 fn stamp_author(doc: &LoroDoc, author: super::NoteActor) {
-    doc.commit_with(
-        CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={}", author.to_wire())),
-    );
+    commit_naming(doc, &author.to_wire());
+}
+
+/// Commits `doc` under the engine stamp naming `named`.
+fn commit_naming(doc: &LoroDoc, named: &str) {
+    doc.commit_with(CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={named}")));
 }
 
 /// A title is human metadata, not a body hash. Keep the socket check bounded.

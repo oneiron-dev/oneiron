@@ -9,6 +9,7 @@ use super::side_keys::HexPair;
 use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
 use super::{NoteEdit, NoteEditOutcome, NotePin};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
+use crate::provenance::ActorStamp;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::HexId;
@@ -111,7 +112,33 @@ pub(super) fn authorship(doc: &loro::LoroDoc) -> crate::Result<Vec<NoteAuthorshi
     Ok(records)
 }
 
-pub(super) fn record_authorship(doc: &NoteDocument, record: &NoteAuthorship) -> crate::Result<()> {
+/// Records `record` in `doc`'s authorship map, its commit naming the
+/// writer's stamp token `stamp` (FIX 10930). The map entry names the actor as
+/// it always has.
+pub(super) fn record_authorship(
+    doc: &NoteDocument,
+    record: &NoteAuthorship,
+    stamp: ActorStamp,
+) -> crate::Result<()> {
+    insert_authorship(doc, record, &stamp.token.to_hex())
+}
+
+/// [`record_authorship`] for a birth's own record, its commit naming the
+/// record's author as the birth's stamp does: a birth is derived alike on
+/// every replica.
+pub(super) fn record_birth_authorship(
+    doc: &NoteDocument,
+    record: &NoteAuthorship,
+) -> crate::Result<()> {
+    insert_authorship(doc, record, &record.actor.to_wire())
+}
+
+/// Inserts `record` and commits it under the engine stamp naming `named`.
+fn insert_authorship(
+    doc: &NoteDocument,
+    record: &NoteAuthorship,
+    named: &str,
+) -> crate::Result<()> {
     if authorship(&doc.doc)?.len() >= 4096 {
         return Err(invalid("NOTE authorship cap reached"));
     }
@@ -121,8 +148,7 @@ pub(super) fn record_authorship(doc: &NoteDocument, record: &NoteAuthorship) -> 
         .insert(&record.operation.to_hex(), value)
         .map_err(|_| invalid("NOTE authorship insert"))?;
     doc.doc.commit_with(
-        loro::CommitOptions::new()
-            .commit_msg(&format!("oneiron.note/v1 actor={}", record.actor.to_wire())),
+        loro::CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={named}")),
     );
     Ok(())
 }
@@ -286,10 +312,12 @@ impl Memory<'_> {
         // candidate admission. Even free prose resolves the policy in this txn.
         let policy = crate::gate::resolve_policy_manifest(&self.vault().store, txn)?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
+        // Each commit names the actor's stamp token (FIX 10930).
+        let stamp = crate::provenance::actor_stamp_in_txn(self.vault(), txn, actor)?;
         let outcome = match &operation.change {
             NoteChange::Edit { base, edits } => {
                 let cited_by = cited_by(self.vault(), txn, note)?;
-                if doc.edit(base, edits, &actor, &cited_by)? {
+                if doc.edit(base, edits, stamp, &cited_by)? {
                     None
                 } else {
                     if !policy.enforces_write_gate() {
@@ -311,12 +339,12 @@ impl Memory<'_> {
                     title,
                     &mut crate::batch::secret_scan::Lifted::default(),
                 )?;
-                doc.set_title(&title, &actor)?;
+                doc.set_title(&title, stamp)?;
                 None
             }
             NoteChange::Cite { pin } => {
                 validate_pin_source(self.vault(), txn, pin)?;
-                doc.add_pin(pin, &actor)?;
+                doc.add_pin(pin, stamp)?;
                 None
             }
         };
@@ -332,6 +360,7 @@ impl Memory<'_> {
                         grant: grant.map(|id| id.to_hex()),
                         command_hash: hash,
                     },
+                    stamp,
                 )?;
                 persist_authoritative(self.vault(), txn, &doc)?;
                 NoteEditOutcome::Applied(doc.view()?)

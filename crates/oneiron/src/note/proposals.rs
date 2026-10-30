@@ -510,10 +510,12 @@ impl Vault {
                         doc: fork_doc,
                     };
                     let mut rewrite = matches!(edit, NoteProgramEdit::Rewrite { .. });
+                    // The fork's commits name the actor's stamp token (FIX 10930).
+                    let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
                     if let Some(replacement) = fork.apply(
                         &self.store.clock,
                         edit,
-                        actor.entity_ref(),
+                        stamp,
                         self.store.clock.now_recorded_at(),
                     )? {
                         rewrite = true;

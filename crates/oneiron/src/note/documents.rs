@@ -2,6 +2,7 @@
 
 use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
 use crate::error::{Error, RecordError, Result};
+use crate::provenance::ActorStamp;
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault};
 use loro::cursor::{Cursor, Side};
@@ -236,11 +237,13 @@ impl NoteDocument {
         };
         Ok(Some((base, vec![change])))
     }
+    /// Applies `edit`, each commit naming the writer's stamp token `stamp`
+    /// (FIX 10930): in place, or as the rewrite fork it returns.
     pub(super) fn apply(
         &self,
         clock: &crate::ports::StoreClock,
         edit: &NoteEdit,
-        actor: EntityId,
+        stamp: ActorStamp,
         at: u64,
     ) -> Result<Option<Self>> {
         let text = self.doc.get_text(TEXT);
@@ -303,23 +306,23 @@ impl NoteDocument {
                     .is_err()
                 {
                     return self
-                        .rewrite(clock.entity_id()?, replacement, actor, at)
+                        .rewrite(clock.entity_id()?, replacement, stamp, at)
                         .map(Some);
                 }
-                stamp(&candidate, actor, at, "edit");
+                stamp_program_edit(&candidate, stamp, at, "edit");
                 self.doc
                     .import(&snapshot(&candidate)?)
                     .map_err(|_| invalid("diff import"))?;
                 return Ok(None);
             }
             NoteEdit::Rewrite { text } => {
-                return self.rewrite(clock.entity_id()?, text, actor, at).map(Some);
+                return self.rewrite(clock.entity_id()?, text, stamp, at).map(Some);
             }
         }
-        stamp(&self.doc, actor, at, "edit");
+        stamp_program_edit(&self.doc, stamp, at, "edit");
         Ok(None)
     }
-    fn rewrite(&self, head: EntityId, text: &str, actor: EntityId, at: u64) -> Result<Self> {
+    fn rewrite(&self, head: EntityId, text: &str, stamp: ActorStamp, at: u64) -> Result<Self> {
         let fork = self
             .doc
             .fork_at(&self.doc.state_frontiers())
@@ -331,7 +334,7 @@ impl NoteDocument {
         target
             .insert(0, text)
             .map_err(|_| invalid("rewrite insert"))?;
-        stamp(&fork, actor, at, "rewrite");
+        stamp_program_edit(&fork, stamp, at, "rewrite");
         Ok(Self {
             note: self.note,
             head,
@@ -343,8 +346,10 @@ impl NoteDocument {
 pub(crate) fn invalid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidNoteBody(reason))
 }
-pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
-    doc.set_next_commit_message(&format!("note:v1:{action}:actor={}", actor.to_hex()));
+/// Commits `doc` under the program-edit stamp of `action`, naming the
+/// writer's stamp token in the actor's place (FIX 10930).
+fn stamp_program_edit(doc: &LoroDoc, stamp: ActorStamp, at: u64, action: &str) {
+    doc.set_next_commit_message(&format!("note:v1:{action}:actor={}", stamp.token.to_hex()));
     doc.set_next_commit_timestamp(at.min(i64::MAX as u64) as i64);
     doc.commit();
 }
