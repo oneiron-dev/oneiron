@@ -145,9 +145,9 @@ pub struct JudgeMeasurements {
     pub world_labels_digest: String,
     /// The judge against the human picks in the skill's anchor, read before scoring.
     pub anchor: AnchorLabelScore,
-    /// The pin of the judge rubric in force while the verdict was scored,
-    /// beside its `judge_revision` (FIX 3585): the rubric text's BLAKE3,
-    /// lower hex; `None` while no rubric is in force.
+    /// The pin of the judge rubric the scoring read, taken in the pre-score
+    /// transaction, beside the verdict's `judge_revision` (FIX 3585): the
+    /// rubric text's BLAKE3, lower hex; `None` while no rubric is in force.
     pub judge_rubric_digest: Option<String>,
 }
 
