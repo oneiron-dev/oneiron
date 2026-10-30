@@ -30,6 +30,7 @@ mod session;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::runtime_hooks::verb::{
@@ -41,7 +42,8 @@ use crate::runtime_hooks::{
 };
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{
-    AgentVerb, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view, validate_input,
+    AgentVerb, CUSTODY_VALUE_ROWS, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view,
+    validate_input,
 };
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
@@ -252,10 +254,12 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
     vault: &Vault,
     session: Option<&HookSession>,
     call: VerbCall,
-    args: Value,
+    mut args: Value,
     check: VerbArgsCheck<'_>,
     run: impl FnOnce(Value) -> Result<Value, E>,
 ) -> Result<Result<Value, VerbHookStop>, E> {
+    let secret = CustodySecret::lift(&call.verb, &mut args);
+    let run = move |args| run(CustodySecret::restored(secret.as_ref(), args));
     let Some(session) = session else {
         return vault.verb_hooks(call, args, check, run);
     };
@@ -549,9 +553,10 @@ fn chain_post(
 pub fn row(
     memory: &Memory<'_>,
     verb: &str,
-    args: Value,
+    mut args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
+    let secret = CustodySecret::lift(verb, &mut args);
     // Bound on every call: a retry of a call an ask parked meets its saved
     // reference whether or not a hook takes the verb now. A credential
     // caller's reference comes first; else a handle the drain can rebuild is
@@ -581,7 +586,7 @@ pub fn row(
         .landing
         .is_some()
         .then(crate::authority::restriction_only_clock);
-    let ran = run(pre.args.clone());
+    let ran = run(CustodySecret::restored(secret.as_ref(), pre.args.clone()));
     drop(restriction);
     let result = match ran {
         Ok(result) => result,
@@ -634,7 +639,8 @@ where
     I: Serialize + DeserializeOwned,
     O: Serialize + DeserializeOwned,
 {
-    let args = encode(&input)?;
+    let mut args = encode(&input)?;
+    let secret = CustodySecret::lift(verb, &mut args);
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
     let pre_restriction = restriction_clock_for_call(memory, verb, &args);
@@ -657,9 +663,10 @@ where
         let input = if pre.args == args {
             input
         } else {
-            serde_json::from_value(pre.args.clone()).map_err(|error| {
-                MemoryError::bad_request(format!("a verb hook rewrote {verb}'s input: {error}"))
-            })?
+            serde_json::from_value(CustodySecret::restored(secret.as_ref(), pre.args.clone()))
+                .map_err(|error| {
+                    MemoryError::bad_request(format!("a verb hook rewrote {verb}'s input: {error}"))
+                })?
         };
         // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
         let _restriction = pre
@@ -698,6 +705,53 @@ where
 /// When the owner's id cannot be derived.
 pub fn host_actor() -> crate::Result<EntityId> {
     crate::vault::embedded_owner_actor_id()
+}
+
+/// A custody row's secret member ([`CUSTODY_VALUE_ROWS`]: a secret's value,
+/// or its sealed input), lifted out of the call's args before its pre chain
+/// as the server's doors lift it (FIX 11665, 11724). Its hooks, their
+/// records and an ask's saved args meet the member empty; only the args the
+/// verb runs with carry it back. A retry that resumes a pause runs with the
+/// value the retry itself carries.
+struct CustodySecret {
+    member: &'static str,
+    value: Zeroizing<String>,
+}
+
+impl CustodySecret {
+    /// Takes `verb`'s secret member out of `args`, leaving it empty; `None`
+    /// for any other row, and for a member absent or empty already.
+    fn lift(verb: &str, args: &mut Value) -> Option<Self> {
+        if !CUSTODY_VALUE_ROWS.contains(&verb) {
+            return None;
+        }
+        let member = if verb == "vault.secrets.custody.submit" {
+            "input_base64"
+        } else {
+            "value_base64"
+        };
+        let Some(Value::String(held)) = args.get_mut(member) else {
+            return None;
+        };
+        if held.is_empty() {
+            return None;
+        }
+        Some(Self {
+            member,
+            value: Zeroizing::new(std::mem::take(held)),
+        })
+    }
+
+    /// `args` the verb runs with, `secret`'s member put back.
+    fn restored(secret: Option<&Self>, mut args: Value) -> Value {
+        if let (Some(secret), Some(fields)) = (secret, args.as_object_mut()) {
+            fields.insert(
+                secret.member.to_owned(),
+                Value::String((*secret.value).clone()),
+            );
+        }
+        args
+    }
 }
 
 fn encode(value: &impl Serialize) -> MemoryResult<Value> {
