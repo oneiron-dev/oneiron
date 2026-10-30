@@ -7,14 +7,13 @@
 //! Its caller gates it on the file plane: nothing makes one while
 //! [`super::ASSET_FILE_PLANE`] is off.
 
-use std::io::{self, Read};
 use std::sync::Arc;
 
 use super::AssetBodyFacts;
-use super::stage::StagedAssetBody;
+use super::stage::{FileFromStart, StagedAssetBody};
 use crate::error::{Error, Result};
 use crate::secret_custody::KnownValues;
-use crate::store::{BodyDir, BodyFile, BodyMint, BodySpill};
+use crate::store::{BodyDir, BodyMint, BodySpill};
 
 /// One ASSET body being received: the bytes so far, spilled to a temp file
 /// and measured, against the facts its sender offered. Nothing is refused
@@ -120,11 +119,8 @@ impl AssetBodySpool {
             return Err(Error::CorruptedIndex("received asset body digest"));
         }
         let spilled = spill.finish(&digest, self.received)?;
-        let body = FromStart {
-            file: spilled.reader()?,
-            at: 0,
-            len: self.received,
-        };
+        let file = spilled.reader()?;
+        let body = FileFromStart::new(&file, self.received);
         // KS-2A: a body file is one vault instance minted before its writer,
         // so a received body past the inline bound files under the mint its
         // receiver took before the writer opened (FIX 12120).
@@ -141,31 +137,6 @@ impl Drop for AssetBodySpool {
         if let Some(spill) = self.spill.take() {
             self.dir.discard(spill.temp());
         }
-    }
-}
-
-/// A body file read from its start by range, whatever its descriptor's
-/// offset: a plain spill's stands at its end once written.
-struct FromStart {
-    file: BodyFile,
-    at: u64,
-    len: u64,
-}
-
-impl Read for FromStart {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        let left = usize::try_from(self.len.saturating_sub(self.at)).unwrap_or(usize::MAX);
-        let take = left.min(out.len());
-        if take == 0 {
-            return Ok(0);
-        }
-        let bytes = self
-            .file
-            .read_range(self.at, take)
-            .map_err(io::Error::other)?;
-        out[..take].copy_from_slice(&bytes);
-        self.at += take as u64;
-        Ok(take)
     }
 }
 
