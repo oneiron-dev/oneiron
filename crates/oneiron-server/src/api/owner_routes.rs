@@ -194,6 +194,7 @@ fn owner_tables() -> OwnerTable {
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
+        super::owner_origin::owner_table(),
         super::packs::owner_table(),
         carrier_table(),
     ]
@@ -203,7 +204,7 @@ fn owner_tables() -> OwnerTable {
 }
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    serve(owner_tables()).merge(super::owner_origin::routes())
+    serve(owner_tables())
 }
 
 /// The vault VM outbox carrier's owner routes (FIX 11074); none off Linux,
