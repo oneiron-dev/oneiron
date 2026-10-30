@@ -90,27 +90,36 @@ impl ResultShare {
 
     /// Holds `bytes` of body in memory, or, past the run's share or the
     /// pool's bound, asks that row's question through `watch` and holds
-    /// nothing: the caller leaves the body in its file.
+    /// nothing: the caller leaves the body in its file. Each add is checked
+    /// as it lands, so two runs racing for the last bytes never both pass,
+    /// and a pool add that does not fit gives the run's back (FIX 313).
     pub(crate) fn hold(&self, bytes: u64, watch: &LimitWatch) -> Option<ResultHold> {
         let share = self.bytes();
-        let run_after = self.held().saturating_add(bytes);
-        if run_after > share {
+        if let Err(held) = add_within(&self.0.held, bytes, share) {
+            let run_after = held.saturating_add(bytes);
             watch.crossed(EngineLimit::CodeResultSessionMemoryBytes, share, run_after);
             return None;
         }
         let pool = &self.0.pool;
-        let pool_after = pool.held().saturating_add(bytes);
-        if pool_after > pool.bound {
+        if let Err(held) = add_within(&pool.held, bytes, pool.bound) {
+            self.0.held.fetch_sub(bytes, Ordering::Relaxed);
+            let pool_after = held.saturating_add(bytes);
             watch.crossed(EngineLimit::CodeResultMemoryBytes, pool.bound, pool_after);
             return None;
         }
-        self.0.held.fetch_add(bytes, Ordering::Relaxed);
-        pool.held.fetch_add(bytes, Ordering::Relaxed);
         Some(ResultHold {
             share: Arc::clone(&self.0),
             bytes,
         })
     }
+}
+
+/// Adds `bytes` to `held` in one step while the sum stays within `bound`;
+/// else adds nothing and returns what `held` was.
+fn add_within(held: &AtomicU64, bytes: u64, bound: u64) -> Result<u64, u64> {
+    held.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |now| {
+        now.checked_add(bytes).filter(|after| *after <= bound)
+    })
 }
 
 /// Body bytes one run holds in memory, given back when dropped.
