@@ -87,7 +87,7 @@ impl Pipe {
 
 /// The bytes `items` hold, as `footprint` measures each value, with the
 /// room past them the driver keeps (FIX 11578).
-pub(crate) fn footprint_items(items: &[Value]) -> usize {
+pub(crate) fn footprint_items(items: &Vec<Value>) -> usize {
     let slot = std::mem::size_of::<Value>();
     let spare = items
         .capacity()

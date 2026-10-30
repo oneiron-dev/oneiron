@@ -158,8 +158,8 @@ impl RunGuests {
         // operands against the proposing session's driver, which this job
         // has none of, so a proposal carrying typed secret arguments, or
         // naming a seed candidate whose own program stands in for the
-        // proposal's, is read by propose itself as before, and nothing it
-        // would have admitted ends here.
+        // proposal's, keeps propose's own read as before and never ends
+        // at this one.
         let own_read = proposal.secret_args.is_empty() && proposal.candidate.is_none();
         let mut unmet = Vec::new();
         if own_read {

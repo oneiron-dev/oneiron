@@ -157,9 +157,10 @@ impl CdpDriver {
         self.mouse_click_in(&self.session, x, y)
     }
 
-    /// A left click at viewport point (`x`, `y`) of `session`'s viewport
-    /// (FIX 11576): a frame target's box reads in its frame's viewport, so
-    /// its click dispatches there too.
+    /// A left click at viewport point (`x`, `y`), sent on `session`
+    /// (FIX 11576): the front tab's, the viewport a mouse press is routed
+    /// by, and a frame target's point reaches here already carried out
+    /// of its frame's viewport.
     fn mouse_click_in(&self, session: &str, x: f64, y: f64) -> Result<(), BrowserError> {
         for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
             self.call_in(
