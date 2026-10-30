@@ -492,7 +492,7 @@ async fn execute_hold(
     mut input: BookingHoldInput,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
-) -> Result<BookingOperationResponse, ApiError> {
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
     // Taken rather than copied: the canonical object is the only constraint
     // with a reader after this line — the verb carries it, and the offerability
@@ -504,15 +504,16 @@ async fn execute_hold(
         .transpose()?;
     // Offerability decides BEFORE anything is minted. A slot this page never
     // offered gets the ordinary taken answer and no token at all.
-    if let Some(unofferable) = unoffered_slot_answer(
+    let (unofferable, rows) = unoffered_slot_answer(
         server,
         page_ref,
         &input,
         constraint.as_ref(),
         session_key,
         now,
-    )? {
-        return Ok(unofferable);
+    )?;
+    if let Some(unofferable) = unofferable {
+        return Ok((unofferable, rows));
     }
     let lease = match input.checkout_lease_token {
         Some(token) => HoldLeaseSpec::CheckoutExtension {
@@ -537,22 +538,24 @@ async fn execute_hold(
         public_authority,
     )
     .await?;
-    match receipt {
-        BookingVerbReceipt::Held(held) => {
-            Ok(BookingOperationResponse::Book(BookingBookResult::Held {
-                hold_token: held.token.0,
-                selected_slot: SelectedSlot {
-                    start_utc: held.slot.start,
-                    end_utc: held.slot.end,
-                },
-                expires_at: held.expires_at,
-            }))
+    // The hold writer reads only node-local hold and lease rows beside the
+    // publication it rechecks, so the offerability solve's rows are the
+    // hold's own (FIX 5483).
+    let response = match receipt {
+        BookingVerbReceipt::Held(held) => BookingOperationResponse::Book(BookingBookResult::Held {
+            hold_token: held.token.0,
+            selected_slot: SelectedSlot {
+                start_utc: held.slot.start,
+                end_utc: held.slot.end,
+            },
+            expires_at: held.expires_at,
+        }),
+        BookingVerbReceipt::SlotTaken { alternatives } => {
+            BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives })
         }
-        BookingVerbReceipt::SlotTaken { alternatives } => Ok(BookingOperationResponse::Book(
-            BookingBookResult::SlotTaken { alternatives },
-        )),
-        other => Err(unexpected_receipt("hold", &other)),
-    }
+        other => return Err(unexpected_receipt("hold", &other)),
+    };
+    Ok((response, rows))
 }
 
 /// Stage two: consume the opaque hold token on the home-node writer.
