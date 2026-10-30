@@ -4,7 +4,7 @@ use super::*;
 
 // One fold per manifest row, in manifest order: splitting it would scatter one manifest.
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
-pub(crate) fn resolve_policy_manifest(
+pub(super) fn fold_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
