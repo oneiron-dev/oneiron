@@ -142,6 +142,9 @@ pub fn review_artifact(
     {
         return Err(invalid_critic_config("claim review target is not a claim"));
     }
+    // Fair admission for complete catalogs: past the bound, work waits its
+    // turn; it is never refused for count (FIX 8173).
+    let _turn = vault.admit_task_work_blocking(request.actor.entity_ref());
     {
         let txn = vault.store.env.read_txn()?;
         if let Some(result) = cached_review(vault, &txn, request)? {
@@ -180,8 +183,7 @@ pub fn review_artifact(
     triage.auto_resolved =
         super::findings::verdict_confidence(&artifacts, &reliabilities, triage.verdict)
             >= request.auto_resolve_threshold;
-    let mut result = persist_review(vault, request, &triage, &artifacts)?;
-    result.receipts = receipts;
+    let result = persist_review(vault, request, &triage, &artifacts, &receipts)?;
     let result = keep_declared_spawn(vault, request, result);
     preserve_overruled(vault, &result, request.at)?;
     Ok(result)
