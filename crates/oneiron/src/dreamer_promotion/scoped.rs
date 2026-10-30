@@ -473,9 +473,9 @@ fn attach_ref(
         // fewer answers than the try that wrote it, and reads back the rest.
         let (stored_scope, stored_answers) = match existing.scope.as_ref() {
             Some(scope) => {
-                let (scope, answers) =
+                let (scope, named) =
                     super::resolved_outputs::split_attachment_answers(scope, DERIVED_EVIDENCE_KEY);
-                (Some(scope), answers)
+                (Some(scope), named)
             }
             None => (None, Vec::new()),
         };
