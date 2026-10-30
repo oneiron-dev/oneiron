@@ -312,7 +312,8 @@ pub(crate) fn declared_critiques_in_txn(
     // whose row reads again, or is gone, heals below.
     let mut reported: BTreeSet<Vec<u8>> = UNREADABLE_REPORTED
         .scan_keys(&vault.store, txn, &[])?
-        .collect::<Result<_>>()?;
+        .into_iter()
+        .collect();
     let mut encountered = BTreeSet::new();
     let mut to_mark = Vec::new();
     let mut to_unmark = Vec::new();

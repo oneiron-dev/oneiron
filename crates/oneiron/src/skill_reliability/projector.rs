@@ -378,7 +378,7 @@ pub(super) fn project_in_txn(
                     .get(&row.cell)
                     .is_some_and(|(_, rows)| rows.iter().any(|row| row.receipt == receipt))
             {
-                EVIDENCE.delete(&vault.store, txn, &(digest, receipt))?;
+                EVIDENCE.delete(&vault.store, txn, &(digest, receipt.clone()))?;
                 changed.insert(digest);
                 // The same stale row under the person's cell (FIX 8968).
                 if let Some(attempt) =
