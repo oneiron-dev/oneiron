@@ -100,6 +100,7 @@ pub use self::types::{
 
 pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity, booking_invite_identity_in_txn,
+    erase_booking_receipt_carriers_in_txn,
 };
 pub(super) use self::emergency::{
     admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
