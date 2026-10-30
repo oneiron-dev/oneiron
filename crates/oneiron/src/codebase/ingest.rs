@@ -391,7 +391,7 @@ pub(crate) fn read_asset_blob_sighted_in_txn(
         return Ok(bytes);
     }
     let bytes = inline_asset_blob_in_txn(vault, txn, &asset_id, content_hash)?;
-    crate::secret_custody::sighted_bytes_in_txn(&vault.store, txn, bytes, sight)
+    crate::secret_custody::sighted_bytes_in_txn(&vault.store, txn, bytes, Some(content_hash), sight)
 }
 
 /// The body ASSET `asset_id`'s row holds, checked against `content_hash`.

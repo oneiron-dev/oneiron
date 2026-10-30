@@ -4,14 +4,16 @@
 //!
 //! The index keeps no plaintext. Each custody write records, under the
 //! record's id, its value's byte length, a keyed fingerprint of the whole
-//! value and a keyed tag of its first bytes (all of a value shorter than
-//! the tag's window), for each value the record held. Both keys derive from
-//! one random master key; without it a fingerprint cannot be tested against
-//! a guess. A match reads the incoming bytes: each window whose tag is known
-//! is fingerprinted at each length that tag holds, longest first, and the
-//! leftmost match wins. Every non-empty value is indexed, however short (FIX
-//! 5270): a short one masks text that merely contains it, as custody holds
-//! it. An empty body is a revoked record's absent value, never a match.
+//! value, and a keyed tag and a keyed 2-byte rolling value of its first
+//! bytes (all of a value shorter than the tag's window), for each value the
+//! record held. Every key derives from one random master key; without it a
+//! fingerprint cannot be tested against a guess. A match reads the incoming
+//! bytes: the rolling values pick the offsets whose windows are read (FIX
+//! 12209, `rolling`), each window whose tag is known is fingerprinted at
+//! each length that tag holds, longest first, and the leftmost match wins.
+//! Every non-empty value is indexed, however short (FIX 5270): a short one
+//! masks text that merely contains it, as custody holds it. An empty body
+//! is a revoked record's absent value, never a match.
 //!
 //! KS-3 (FIX 5684 = FIX 5503 card A): the master and every entry live in
 //! typed custody (`store::known_history`), LMDB and every image keeping
@@ -25,7 +27,10 @@
 //! A pass holds the matcher for as long as it reads, and wipes it after: in
 //! the writer it runs in ([`KnownValues::load_in_writer`]), or, for a
 //! stream, once per frame through the ids the stream began with
-//! ([`KnownSource`]), under the custody read guard.
+//! ([`KnownSource`]), under the custody read guard. A write the group
+//! commit runs keeps the matcher its first pass loaded for its later
+//! passes, checked against the writer before each, and wipes it when the
+//! write ends (FIX 12210, `writer_index`).
 //!
 //! A value spelled another way (base64, percent or JSON escapes) is found
 //! where its spelling sits, under the same handle (FIX 2725, `forms`); a
@@ -33,6 +38,8 @@
 //! 2722, [`KnownValues::growing`]).
 
 mod forms;
+mod rolling;
+mod writer_index;
 
 use std::cmp::Reverse;
 use std::ops::Range;
@@ -41,6 +48,7 @@ use std::sync::Arc;
 use heed::{RoTxn, RwTxn};
 use zeroize::{Zeroize, Zeroizing};
 
+use self::rolling::{RollingKey, RollingScan, RollingSets};
 use super::types::SecretCustodyRecord;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -49,6 +57,7 @@ use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, S
 use crate::vault::Vault;
 
 pub(super) use self::forms::decodings;
+pub(crate) use self::writer_index::known_index_scope;
 
 /// The shortest value matched exactly: every non-empty value (FIX 5270). An
 /// empty body is a revoked record's absent value. One constant, so a ruling
@@ -73,10 +82,12 @@ const KNOWN_GROWING_HOLD: usize = TAG_WINDOW - 1;
 const FINGERPRINT_CONTEXT: &str = "oneiron secret_custody known-value fingerprint v1";
 const TAG_CONTEXT: &str = "oneiron secret_custody known-value tag v1";
 
-/// The two keys derived from the index's master.
+/// The three keys derived from the index's master.
 struct Keys {
     fingerprint: Zeroizing<[u8; 32]>,
     tag: Zeroizing<[u8; 32]>,
+    /// The rolling prefilter's, under its own label (FIX 12209).
+    rolling: RollingKey,
 }
 
 impl Keys {
@@ -84,6 +95,7 @@ impl Keys {
         Self {
             fingerprint: crate::world_keys::derive_guarded(FINGERPRINT_CONTEXT, &[&key[..]]),
             tag: crate::world_keys::derive_guarded(TAG_CONTEXT, &[&key[..]]),
+            rolling: RollingKey::derive(key),
         }
     }
 
@@ -132,14 +144,23 @@ pub(super) fn remember_in_txn(
     }
     let len =
         u32::try_from(value.len()).map_err(|_| Error::ArithmeticOverflow("known value length"))?;
-    store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
+    let window = &value[..value.len().min(TAG_WINDOW)];
+    let changed = store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
         let keys = Keys::derive(master);
         KnownEntry {
             len,
-            tag: keys.tag(&value[..value.len().min(TAG_WINDOW)]),
+            tag: keys.tag(window),
+            // The window the tag keys, as a match rolls it (FIX 12209).
+            rolling: keys.rolling.value(window),
             fingerprint: keys.fingerprint(value),
         }
-    })
+    })?;
+    // A value the history did not hold drops the index this write keeps
+    // (FIX 12210).
+    if changed {
+        writer_index::forget_kept();
+    }
+    Ok(changed)
 }
 
 /// One value the index knows, as a match reads it. Its fingerprint is
@@ -170,7 +191,8 @@ impl Drop for Bucket {
 }
 
 /// The index, loaded for one pass over incoming bytes. Never kept past the
-/// pass that loaded it: the writer it was read in, or one stream frame.
+/// writer it was read in (a write's later passes share it, FIX 12210), or
+/// one stream frame.
 pub(crate) struct KnownValues {
     keys: Keys,
     /// Candidates by the tag of their first window, in tag order.
@@ -178,6 +200,9 @@ pub(crate) struct KnownValues {
     /// Each tag window length some value has, ascending: [`TAG_WINDOW`], and
     /// the length of each shorter value.
     windows: Vec<usize>,
+    /// The rolling values of the values' first windows, by window length,
+    /// in the order of `windows` (FIX 12209).
+    rolling: RollingSets,
     /// Each value length the index knows, ascending.
     lengths: Vec<usize>,
     longest: usize,
@@ -211,7 +236,7 @@ impl KnownValues {
         handle_of: impl Fn(&EntityId) -> Result<Option<String>>,
     ) -> Result<Option<Self>> {
         let mut buckets: Vec<Bucket> = Vec::new();
-        let mut windows = Vec::new();
+        let mut rolling = RollingSets::default();
         let mut lengths = Vec::new();
         let mut longest = 0;
         for (custody, entries) in &history.holders {
@@ -225,10 +250,7 @@ impl KnownValues {
                 if len == 0 {
                     continue;
                 }
-                let window = len.min(TAG_WINDOW);
-                if !windows.contains(&window) {
-                    windows.push(window);
-                }
+                rolling.insert(len.min(TAG_WINDOW), entry.rolling);
                 let at = match buckets.binary_search_by(|bucket| bucket.tag.cmp(&entry.tag)) {
                     Ok(at) => at,
                     Err(at) => {
@@ -268,13 +290,13 @@ impl KnownValues {
                 .known
                 .sort_by_key(|known| std::cmp::Reverse(known.len));
         }
-        windows.sort_unstable();
         lengths.sort_unstable();
         lengths.dedup();
         Ok(Some(Self {
             keys: Keys::derive(&history.master),
             buckets,
-            windows,
+            windows: rolling.windows().collect(),
+            rolling,
             lengths,
             longest,
         }))
@@ -423,7 +445,22 @@ impl KnownValues {
     fn growing_in(&self, bytes: &[u8]) -> (Option<usize>, usize) {
         let hold = self.longest.saturating_sub(1);
         let from = bytes.len().saturating_sub(hold);
+        let held = bytes.len() - hold.min(KNOWN_GROWING_HOLD).min(bytes.len());
+        // FIX 12250: only an offset whose tag window's rolling value the
+        // index holds is read; a value arriving there always is, and each
+        // one read is confirmed by its keyed tag as before.
+        let Some(lane) = self
+            .windows
+            .iter()
+            .position(|&window| window == TAG_WINDOW)
+        else {
+            return (None, held);
+        };
+        let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, &bytes[from..]);
         let opens = (from..bytes.len()).find(|&at| {
+            if scan.hits(at - from) & (1 << lane) == 0 {
+                return false;
+            }
             let rest = &bytes[at..];
             rest.len() >= TAG_WINDOW
                 && self
@@ -434,10 +471,7 @@ impl KnownValues {
                             .any(|known| known.len >= TAG_WINDOW && known.len > rest.len())
                     })
         });
-        (
-            opens,
-            bytes.len() - hold.min(KNOWN_GROWING_HOLD).min(bytes.len()),
-        )
+        (opens, held)
     }
 
     /// Merges one decoded tail's growing answer into `opens` and `held`
@@ -467,9 +501,19 @@ impl KnownValues {
     /// overlapping: at each place the longest value there wins.
     fn raw_spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
         let mut spans = Vec::new();
+        // FIX 12209: only an offset where some window's rolling value is one
+        // the index holds is read; the offset a known value starts at always
+        // is, and each one read is confirmed by tag and fingerprint.
+        let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, data);
         let mut at = 0;
         while at < data.len() {
-            match self.longest_at(&data[at..]) {
+            let hits = scan.hits(at);
+            let known = if hits == 0 {
+                None
+            } else {
+                self.longest_in(&data[at..], hits)
+            };
+            match known {
                 Some(known) => {
                     spans.push(KnownSpan {
                         span: at..at + known.len,
@@ -493,15 +537,25 @@ impl KnownValues {
         Some(&self.buckets[at].known)
     }
 
-    /// The longest known value `rest` starts with. Each window's tag is
-    /// hashed once, the shorter ones on the way to the longer.
+    /// The longest known value `rest` starts with.
     fn longest_at(&self, rest: &[u8]) -> Option<&Known> {
+        self.longest_in(rest, u32::MAX)
+    }
+
+    /// The longest known value `rest` starts with whose first window's
+    /// length `hits` names: bit n for the n-th of `self.windows` (FIX
+    /// 12209). Each named window's tag is hashed once, the shorter ones on
+    /// the way to the longer.
+    fn longest_in(&self, rest: &[u8], hits: u32) -> Option<&Known> {
         let mut hasher = blake3::Hasher::new_keyed(&self.keys.tag);
         let mut tags = [None; TAG_WINDOW];
         let mut hashed = 0;
-        for &window in &self.windows {
+        for (lane, &window) in self.windows.iter().enumerate() {
             if window > rest.len() {
                 break;
+            }
+            if hits & (1 << lane) == 0 {
+                continue;
             }
             hasher.update(&rest[hashed..window]);
             hashed = window;

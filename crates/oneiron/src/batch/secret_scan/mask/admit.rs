@@ -136,7 +136,7 @@ pub(crate) fn admit_stream_text_in_txn(
         .last()
         .filter(|(span, _)| open && span.end == text.len())
         .map(|(span, _)| span.start);
-    let known = KnownValues::load_in_writer(&vault.store, wtxn)?.map(Arc::new);
+    let known = KnownValues::shared_in_writer(&vault.store, wtxn)?;
     let (opens, held) = match known.as_deref().filter(|_| open) {
         Some(known) => {
             let growing = known.growing(text.as_bytes());

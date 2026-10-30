@@ -523,7 +523,8 @@ impl Journal {
                 LogEntry::Mint(_)
                 | LogEntry::PublicationPolicy(_)
                 | LogEntry::BodyHistory(_)
-                | LogEntry::EraseEvidence(_) => {
+                | LogEntry::EraseEvidence(_)
+                | LogEntry::HolderDebt { .. } => {
                     continue;
                 }
             };
