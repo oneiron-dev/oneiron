@@ -19540,6 +19540,8 @@ pub struct ConnectorSlateRevisionAcceptRequest {
     pub slate_ref: String,
     #[serde(rename = "expected_revision")]
     pub expected_revision: u64,
+    #[serde(rename = "overrides", default, skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<std::collections::HashMap<String, SlateDisposition>>,
 }
 
 /// `oneiron::verbs::connector_slate_revision::ConnectorRevisionGrantView`.

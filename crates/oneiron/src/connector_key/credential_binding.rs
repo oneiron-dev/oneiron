@@ -398,7 +398,7 @@ pub(super) fn accept_issuer_in_txn(
     slate_id: EntityId,
     binding_ref: EntityId,
     expected_generation: u64,
-) -> Result<()> {
+) -> Result<EntityId> {
     let mut binding = BINDINGS
         .get(store, txn, &binding_ref)?
         .ok_or_else(|| invalid_body("the revision's credential binding is gone"))?;
@@ -435,7 +435,7 @@ pub(super) fn accept_issuer_in_txn(
             crate::unix_seconds_now(),
         )?;
     }
-    Ok(())
+    Ok(binding.catalog_key)
 }
 
 impl Vault {

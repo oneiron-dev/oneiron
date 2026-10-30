@@ -19,13 +19,17 @@ use serde::{Deserialize, Serialize};
 
 use super::lifecycle::{
     ConnectorConsentTarget, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
+    derived_key_catalog_in_txn,
 };
-use super::record::{invalid_body, normalize_connector_key};
-use super::slate::{ConnectorGrantSlate, new_slate, put_slate_in_txn, read_slate_in_store_txn};
+use super::record::{ConnectorKeyStatus, invalid_body, normalize_connector_key};
+use super::slate::{
+    ConnectorGrantSlate, SlateOwnerOverride, new_slate, put_slate_in_txn, read_slate_in_store_txn,
+};
 use super::slate_scope_signal::{
     ConnectorScopeExceed, ConnectorSlateScopeSignal, read_signal_in_txn, scan_signals_in_txn,
     signal_is_current_in_txn, signal_ramp_scope,
 };
+use super::txn::read_connector_key_in_txn;
 use crate::consent::AuthenticatedOwner;
 use crate::consent_graduation::RampScope;
 use crate::edit_distance::graduation::{
@@ -376,6 +380,29 @@ impl Vault {
         slate_id: EntityId,
         expected_revision: u64,
     ) -> Result<ConnectorSlateRevisionAccepted> {
+        self.accept_connector_slate_revision_with_overrides(
+            owner,
+            slate_id,
+            expected_revision,
+            &BTreeMap::new(),
+        )
+    }
+
+    /// The owner's one stamp of a proposed revision at `expected_revision`
+    /// (ARCH-0072 settlement), ruling rows by key through `overrides`: a tool
+    /// name, or the elicitation row. A row left out keeps its drafted setting.
+    /// Its evidence is rechecked in the stamping writer: a scope revision's
+    /// offer must still stand on the authority it was earned under, and mints
+    /// the widened grant; an issuer revision must match its binding's expected
+    /// generation, and accepts the new issuer so the rows it held run again.
+    /// A drift delta lands through its connector's own revision instead.
+    pub fn accept_connector_slate_revision_with_overrides(
+        &self,
+        owner: &AuthenticatedOwner,
+        slate_id: EntityId,
+        expected_revision: u64,
+        overrides: &BTreeMap<String, SlateOwnerOverride>,
+    ) -> Result<ConnectorSlateRevisionAccepted> {
         let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
             let proposal = read_slate_in_store_txn(&self.store, txn, slate_id)?
@@ -387,14 +414,9 @@ impl Vault {
                 .cause()
                 .cloned()
                 .ok_or_else(|| invalid_body("the slate is not a proposed revision"))?;
-            let stamped = self.stamp_slate_in_txn(
-                txn,
-                owner,
-                slate_id,
-                expected_revision,
-                &BTreeMap::new(),
-                None,
-            )?;
+            let stamped =
+                self.stamp_slate_in_txn(txn, owner, slate_id, expected_revision, overrides, None)?;
+            let mut issuer_catalog_key: Option<EntityId> = None;
             let grants = match &cause {
                 SlateRevisionCause::ScopeExceed { signal_ref, .. } => {
                     accept_scope_in_txn(self, txn, owner, slate_id, *signal_ref, now)?
@@ -404,13 +426,14 @@ impl Vault {
                     expected_generation,
                     ..
                 } => {
-                    super::credential_binding::accept_issuer_in_txn(
+                    let catalog_key = super::credential_binding::accept_issuer_in_txn(
                         &self.store,
                         txn,
                         slate_id,
                         *binding_ref,
                         *expected_generation,
                     )?;
+                    issuer_catalog_key = Some(catalog_key);
                     Vec::new()
                 }
                 SlateRevisionCause::ManifestDrift => {
@@ -419,6 +442,69 @@ impl Vault {
                     ));
                 }
             };
+            // FIX 9304: the cause arm above runs first, byte-identical to today,
+            // so the mint reads the pre-adopt live grant; the owner's row rulings
+            // land last and win ties (a just-minted widening on a now-`never_allow`
+            // row retires through the adopt's derived-key sync: his explicit hand
+            // beats the earned widening in one act). The proposal never governs
+            // (calls meet `key.slate_ref`, the prior), so proposal-only overrides
+            // would be recorded-but-inert: the same map also stamps the prior, whose
+            // live holder narrows only a prior stamp clears. Empty overrides skip
+            // this whole step, and the accept behaves exactly as today.
+            if !overrides.is_empty() {
+                // A forced revision always carries its prior; `None` skips,
+                // defensive.
+                if let Some(prior_id) = proposal.prior() {
+                    let prior = read_slate_in_store_txn(&self.store, txn, prior_id)?
+                        .ok_or_else(|| invalid_body("connector slate missing"))?;
+                    self.stamp_slate_in_txn(
+                        txn,
+                        owner,
+                        prior_id,
+                        prior.revision(),
+                        overrides,
+                        None,
+                    )?;
+                    let target: Option<EntityId> = match &cause {
+                        SlateRevisionCause::CredentialIssuerChanged { .. } => issuer_catalog_key,
+                        SlateRevisionCause::ScopeExceed { signal_ref, .. } => {
+                            if let Some(signal) = read_signal_in_txn(&self.store, txn, signal_ref)?
+                            {
+                                if let Some(record) =
+                                    read_connector_key_in_txn(&self.store, txn, &signal.key_ref)?
+                                {
+                                    if record.catalog.is_some() {
+                                        Some(signal.key_ref)
+                                    } else {
+                                        derived_key_catalog_in_txn(&self.store, txn, &record)?
+                                            .map(|(id, _, _)| id)
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        SlateRevisionCause::ManifestDrift => None,
+                    };
+                    if let Some(key_id) = target {
+                        if let Some(key) = read_connector_key_in_txn(&self.store, txn, &key_id)? {
+                            let admitted = key.catalog.is_some()
+                                && matches!(
+                                    key.status,
+                                    ConnectorKeyStatus::Active | ConnectorKeyStatus::Suspended
+                                )
+                                && key.qualification_receipt.is_some();
+                            // Pending keys: the stamp suffices, qualify reads it;
+                            // mirrors `/slate/accept`'s `if admitted` gate.
+                            if admitted {
+                                self.adopt_connector_slate_stamp_in_txn(txn, &key_id, now)?;
+                            }
+                        }
+                    }
+                }
+            }
             Ok(ConnectorSlateRevisionAccepted {
                 slate_id,
                 revision: stamped.revision(),
