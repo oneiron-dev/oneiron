@@ -13,7 +13,9 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use rustix::io::Errno;
-use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, recvmsg};
+use rustix::net::{
+    RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, recv, recvmsg,
+};
 use tokio::io::Interest;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -245,6 +247,16 @@ fn receive(channel: &UnixStream) -> io::Result<Option<Vec<OwnedFd>>> {
     Ok(Some(fds))
 }
 
+/// Whether the daemon has closed its end of the call's socket: a peek that
+/// waits for nothing reads the end of the stream.
+fn hung_up(stream: &UnixStream) -> bool {
+    let mut byte = [0; 1];
+    matches!(
+        recv(stream, &mut byte[..], RecvFlags::PEEK | RecvFlags::DONTWAIT),
+        Ok((0, _))
+    )
+}
+
 /// Serves one call within its `deadline`. A frame that cannot be read gets
 /// no reply: the daemon counts the call as lost.
 async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline) {
@@ -252,6 +264,11 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
     else {
         return;
     };
+    // A daemon that hung up while the call waited has stopped waiting for
+    // it, so it is never sent (FIX 8559).
+    if hung_up(&stream) {
+        return;
+    }
     if call.header.shape.streams() {
         // The reply is checked as it streams, so the key is wiped only after
         // its last chunk.
