@@ -35,6 +35,7 @@ pub(super) fn dream_request(
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
+    let keyless = model.inference.selected_keyless();
     // OF-490: it dreams knowing its own craft, every note, loaded on this
     // attempt so its manifest names them: fixed input beside its cut, never
     // diary progress, so no cut defers or consumes it. A craft that does not
@@ -94,6 +95,7 @@ pub(super) fn dream_request(
             ),
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages,

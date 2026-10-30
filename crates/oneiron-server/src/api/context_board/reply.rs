@@ -78,6 +78,7 @@ async fn reply(
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: false,
             seat_effort: effort,
         },
         messages: Vec::new(),

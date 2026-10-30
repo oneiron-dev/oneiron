@@ -208,6 +208,7 @@ pub(crate) async fn asked(
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: seat.locality,
+            host_keyless: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
