@@ -316,6 +316,10 @@ side_tables! {
     /// Key: id16(actor) + id16(attempt).
     DREAMER_TURN_PROGRAM_ACTOR_ATTEMPT: VaultMeta b"dreamer:turn_program:actor_attempt:v1:"
         Named Engine;
+    /// FIX 5774: each owed turn program wake by its waking actor, written and deleted with the
+    /// wake. Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_ACTOR_WAKE: VaultMeta b"dreamer:turn_program:actor_wake:v1:"
+        Named Engine;
     /// DOOR-141: one turn program admission: the sealed wake, its Gate receipt, and the attempt it
     /// queued or why it was refused. Key: hash32(actor, registration, revision, turn).
     DREAMER_TURN_PROGRAM_ADMISSION: VaultMeta b"dreamer:turn_program:admission:v1:" Named;

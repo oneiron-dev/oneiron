@@ -1,8 +1,9 @@
-//! Keyed indexes over the program tables (FIX 5735): an actor's erase and a
-//! restore's rerun of it for each erased id read the actor's attempt stamps
-//! and admissions by key, never every stamp and every admission. Each index
-//! row is written in the writer that writes the row it names, and neither
-//! row is ever deleted, so the index holds exactly the rows its table holds.
+//! Keyed indexes over the program tables (FIX 5735, FIX 5774): an actor's
+//! erase, its receipt's count and a restore's rerun of that erase for each
+//! erased id read the actor's attempt stamps, admissions and owed wakes by
+//! key, never every row of each table. Each index row is written and
+//! deleted in the writer that writes or deletes the row it names, so the
+//! index holds exactly the rows its table holds.
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -18,6 +19,10 @@ const ACTOR_ATTEMPT: SideTable<(EntityId, AttemptId), (), Named> =
 /// the admission.
 const ACTOR_ADMISSION: SideTable<(EntityId, [u8; 32]), (), Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ACTOR_ADMISSION);
+/// Each wake owed for an actor's turn, keyed by the actor, then the wake's
+/// own key: the turn, then the registration it woke.
+const ACTOR_WAKE: SideTable<(EntityId, EntityId, EntityId), (), Named> =
+    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ACTOR_WAKE);
 
 /// Indexes `attempt` under the actor its stamp names, in the stamp's writer.
 pub(super) fn index_attempt_in_txn(
@@ -63,5 +68,42 @@ pub(super) fn actor_admissions_in_txn(
         .scan_keys(vault, txn, actor.as_bytes())?
         .into_iter()
         .map(|(_, admission)| admission)
+        .collect())
+}
+
+/// Indexes the wake keyed `(turn, registration)` under `actor`, in the
+/// wake's writer.
+pub(super) fn index_wake_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    (turn, registration): (EntityId, EntityId),
+) -> Result<()> {
+    ACTOR_WAKE.put(vault, txn, &(actor, turn, registration), &())
+}
+
+/// Drops the index row of the wake keyed `(turn, registration)` under
+/// `actor`, in the writer that deletes the wake.
+pub(super) fn unindex_wake_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    (turn, registration): (EntityId, EntityId),
+) -> Result<()> {
+    ACTOR_WAKE
+        .delete(vault, txn, &(actor, turn, registration))
+        .map(drop)
+}
+
+/// The keys of the wakes owed for `actor`'s turns, in key order.
+pub(super) fn actor_wakes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<Vec<(EntityId, EntityId)>> {
+    Ok(ACTOR_WAKE
+        .scan_keys(vault, txn, actor.as_bytes())?
+        .into_iter()
+        .map(|(_, turn, registration)| (turn, registration))
         .collect())
 }

@@ -110,6 +110,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // FIX 5735: each index stands as the rows it names do.
     (&t::DREAMER_TURN_PROGRAM_ACTOR_ADMISSION, LIVE),
     (&t::DREAMER_TURN_PROGRAM_ACTOR_ATTEMPT, CONTENT),
+    (&t::DREAMER_TURN_PROGRAM_ACTOR_WAKE, CONTENT),
     // DOOR-141: a consumed wake stays consumed, as a spent one-shot does, so
     // no restore re-admits a program its turn already woke.
     (&t::DREAMER_TURN_PROGRAM_ADMISSION, LIVE),

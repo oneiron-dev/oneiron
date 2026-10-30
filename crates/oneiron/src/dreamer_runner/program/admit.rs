@@ -74,6 +74,7 @@ fn admit_in_txn(
             ));
         }
         WAKE.delete(vault, txn, &wake.key())?;
+        super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
         return Ok(existing.receipt(false));
     }
     let judged = judge_in_txn(vault, &*txn, wake)?;
@@ -97,6 +98,7 @@ fn admit_in_txn(
         ADMISSION.put(vault, txn, &admission, &record)?;
     }
     WAKE.delete(vault, txn, &wake.key())?;
+    super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
     Ok(record.receipt(true))
 }
 
