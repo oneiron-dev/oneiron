@@ -14,19 +14,20 @@
 //! split out are grouped under each actor's own entity tree ([`actors`]),
 //! and each bundle is sealed under its compartment's key ([`seal`]).
 //!
-//! Nothing calls this before KS7-5 wires capture and restore, and while
-//! [`CHECKPOINT_PAYLOADS_ENABLED`] is false it answers
+//! KS7-5 wires capture ([`capture`]: the snapshot's projection, sealed) and
+//! restore ([`restore`]: each compartment opened before anything is made).
+//! While [`CHECKPOINT_PAYLOADS_ENABLED`] is false the projection answers
 //! [`Projection::Unchanged`] before it classifies, reads, mints or refuses
 //! anything. The artifact's writer is handed no payload, so the image's
 //! bytes, its stream numbering and every refusal stay as they are.
-#![allow(
-    dead_code,
-    reason = "KS7-5 wires capture and restore; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
-)]
+#![allow(dead_code, reason = "CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6")]
 
 mod actors;
+mod capture;
+mod restore;
 mod rows;
 mod seal;
+mod structure;
 #[cfg(feature = "sync")]
 mod sync;
 
@@ -35,25 +36,24 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-#[allow(unused_imports, reason = "KS7-5 restores through them")]
 pub(super) use self::actors::{opened_content, unavailable};
+pub(super) use self::capture::{project_image, seal_image};
+pub(super) use self::restore::{OpenedPayload, open_image_payload, restore_opened_in_txn};
 use self::rows::{Class, DbClass, Families};
 use self::seal::Bundle;
-#[allow(unused_imports, reason = "KS7-5 restores through it")]
 pub(super) use self::seal::open_bundle;
 pub(super) use self::seal::{BundleRole, Compartment, PayloadSection, PayloadStreams};
 #[cfg(feature = "sync")]
-#[allow(unused_imports, reason = "KS7-5 hands it to project and restore")]
 pub(super) use self::sync::SyncCarriers;
 use super::{INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
 use crate::error::{Error, Result};
 use crate::side_table::SideDb;
-use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::CHECKPOINT_PAYLOADS_ENABLED;
 use crate::store::checkpoint_payload::rows::{
     Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator, RowPart,
     frame_actor_parts, frame_owner,
 };
+use crate::store::{ManifestDbs, Store};
 
 /// CALLS PAYLOAD_UNCLASSIFIED (Engine 10-20 07:3x): a row of an
 /// Unclassified family, and any row no handler compartments, stays under
@@ -291,20 +291,31 @@ fn row_db(database: &str) -> Option<RowDb> {
     }
 }
 
-/// What the image takes, as the snapshot decides it: canonical rows only,
-/// and no row of an excluded entity (a diagnostic): its own, its short ids,
-/// its edges and its index sources.
+/// What the image takes, the one rule the snapshot and the projection read
+/// it by (FIX 6377): canonical rows only, and no row of an excluded entity
+/// (a diagnostic): its own, its short ids, its edges and its index sources.
 pub(super) struct ImageFilter {
     excluded: BTreeSet<Vec<u8>>,
 }
 
 impl ImageFilter {
-    /// `excluded`: the ids of the entities the image leaves out.
-    pub(super) fn new(excluded: BTreeSet<Vec<u8>>) -> Self {
-        Self { excluded }
+    /// The filter of the image `txn` reads: every diagnostic entity left
+    /// out, as runtime-only.
+    pub(super) fn of_snapshot(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
+        let mut excluded = BTreeSet::new();
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(store, txn)? {
+            let (key, value) = row?;
+            if crate::batch::EntityMetadataHeader::parse(&value)
+                .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
+            {
+                excluded.insert(key.as_bytes().to_vec());
+            }
+        }
+        Ok(Self { excluded })
     }
 
-    fn takes(&self, database: &str, key: &[u8], value: &[u8]) -> bool {
+    /// Whether the image takes the row `key` of `database`, as it rests.
+    pub(super) fn takes(&self, database: &str, key: &[u8], value: &[u8]) -> bool {
         if storage_tier(database, key) != StorageTier::Canonical {
             return false;
         }
@@ -456,6 +467,9 @@ pub(super) struct Projected {
     pub(super) not_compartmented: BTreeMap<&'static str, u64>,
     /// Every image row a compartment holds, which the image leaves out.
     pub(super) sealed: BTreeSet<(RowDb, Vec<u8>)>,
+    /// Every row a structure family keeps that holds an id link, with the
+    /// owners it links to (FIX 6376).
+    links: Vec<structure::Link>,
 }
 
 impl Projected {
@@ -481,8 +495,10 @@ impl Projected {
     }
 
     /// Seals every bundle for `vault`, each under its owner's compartment
-    /// in `compartments` (one for each of [`Self::owners`]): each handler's
-    /// owners' content, framed by that handler, then each actor's parts.
+    /// in `compartments`: each handler's owners' content, framed by that
+    /// handler, then each actor's parts. An owner with no compartment there
+    /// was erased since the read: its bundles are left out, and its rows
+    /// with them.
     pub(super) fn seal(
         &self,
         vault: &[u8; 32],
@@ -491,6 +507,9 @@ impl Projected {
         let mut bundles = Vec::new();
         for (role, captured) in &self.captures {
             for rows in captured.owners() {
+                if !compartments.contains_key(&rows.owner()) {
+                    continue;
+                }
                 let plain = match role {
                     BundleRole::Content(getter) => getter.bytes_for_owner(rows)?,
                     _ => frame_owner(rows, |_| true)?,
@@ -503,6 +522,9 @@ impl Projected {
             }
         }
         for (actor, parts) in actors::group(&self.captures) {
+            if !compartments.contains_key(&OwnerRef::entity(&actor)) {
+                continue;
+            }
             bundles.push(Bundle {
                 owner: OwnerRef::entity(&actor),
                 role: BundleRole::Actors,
@@ -624,7 +646,13 @@ pub(super) fn project(
                         projected.count(family);
                     }
                 }
-                (Class::Structure | Class::Other(_), None) => {}
+                // A structure row stays in the image; one that names an
+                // owner keeps the link, so it goes with that owner (FIX
+                // 6376).
+                (Class::Structure, None) => {
+                    projected.links.extend(structure::link(name, key, value));
+                }
+                (Class::Other(_), None) => {}
                 _ => {
                     return Err(Error::InvariantViolation(
                         "an image row is placed against its family's class",
