@@ -5,20 +5,24 @@
 use super::*;
 
 /// The scoring subject the incumbent's retest noise is kept under: the
-/// shipped `judge` SKILL (FIX 8079), a row the learning projection can write
-/// its claim about.
-pub(super) fn scorer() -> Result<EntityId> {
-    EntityId::derive(
-        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
-        &[JUDGE_SKILL_ID.as_bytes()],
-    )
+/// judge head (FIX 9076), a row the learning projection can write its claim
+/// about. `None` when no live head exists (FIX 8079's absent subject).
+pub(super) fn scorer(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
+    crate::skill_optimize::labels::judge_head_in_txn(vault, txn)
 }
 
-/// The cell [`record_retest`] keeps the incumbent's noise in.
-pub(super) fn noise_cell(incumbent: &str) -> Result<LearningCell> {
-    Ok(LearningCell::new(LearningPredicate::RetestNoise, scorer()?)
-        .executor(incumbent.to_owned())
-        .axis(NOISE_AXIS.to_owned()))
+/// The cell [`record_retest`] keeps the incumbent's noise in. `None` when no
+/// live head exists.
+pub(super) fn noise_cell(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    incumbent: &str,
+) -> Result<Option<LearningCell>> {
+    Ok(scorer(vault, txn)?.map(|scorer| {
+        LearningCell::new(LearningPredicate::RetestNoise, scorer)
+            .executor(incumbent.to_owned())
+            .axis(NOISE_AXIS.to_owned())
+    }))
 }
 
 /// The swap's or the re-pin's notice: one finding in each owner's inbox, or
