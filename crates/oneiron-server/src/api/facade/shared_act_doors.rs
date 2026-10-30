@@ -25,8 +25,8 @@
 //! the authority log and the shared-act tables, which hold no row, and an
 //! act's effect reads the act, the roster and the grants its receipt names:
 //! so beside its answer each lists the records it names, and none past
-//! them. A receipt with a removal's export goes unlisted: no list covers the
-//! records its export counted, after the first execution.
+//! them. A receipt with a removal's export lists the records its export
+//! counted, as kept beside its receipt.
 use std::sync::Arc;
 
 use oneiron::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
@@ -178,11 +178,17 @@ pub(super) async fn as_person_naming<P: Send + 'static, T: Send + 'static>(
     (answer, rows)
 }
 
-/// A receipt's rows: none past those it names, or `None` for one with a
-/// removal's export, whose counted records no list names after the first
-/// execution (`sdk::execute_shared_act_listing`).
-pub(super) fn receipt_rows(receipt: &SharedActExecutionReceipt) -> Option<Vec<oneiron::EntityId>> {
-    receipt.export.is_none().then(Vec::new)
+/// A receipt's rows: none past those it names, or for one with a
+/// removal's export, the records its export counted, as kept beside its
+/// receipt; `None` for one executed before they were kept.
+pub(super) fn receipt_rows(
+    vault: &oneiron::Vault,
+    receipt: &SharedActExecutionReceipt,
+) -> Option<Vec<oneiron::EntityId>> {
+    if receipt.export.is_none() {
+        return Some(Vec::new());
+    }
+    vault.shared_act_export_records(&receipt.id).ok().flatten()
 }
 
 /// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
@@ -278,12 +284,13 @@ pub(crate) async fn vault_shared_receipt(
     input: SharedReceiptRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.shared.receipt";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
         person(server, auth, VERB),
         move |server, reader| sdk::read_shared_receipt(server.vault(), &reader, input),
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -331,6 +338,7 @@ pub(crate) async fn vault_members_add(
     input: SharedMemberAddRequest,
 ) -> MaybeListed<SharedMemberInvited> {
     const VERB: &str = "vault.members.add";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -343,7 +351,7 @@ pub(crate) async fn vault_members_add(
                 sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
             })
         },
-        |invited| receipt_rows(&invited.receipt),
+        move |invited| receipt_rows(vault.vault(), &invited.receipt),
     )
     .await
 }
@@ -356,6 +364,7 @@ pub(crate) async fn vault_members_change(
     input: SharedMemberRoleRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.change";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -365,7 +374,7 @@ pub(crate) async fn vault_members_change(
                 sdk::change_shared_member_as(server.vault(), &admin, Some(slips), input)
             })
         },
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -378,6 +387,7 @@ pub(crate) async fn vault_members_remove(
     input: SharedMemberRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.remove";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -387,7 +397,7 @@ pub(crate) async fn vault_members_remove(
                 sdk::remove_shared_member_as(server.vault(), &admin, Some(slips), input)
             })
         },
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -400,6 +410,7 @@ pub(crate) async fn vault_members_leave(
     input: SharedVaultRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.leave";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -409,7 +420,7 @@ pub(crate) async fn vault_members_leave(
                 sdk::leave_shared_vault_as(server.vault(), &member, Some(slips), input)
             })
         },
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
