@@ -314,28 +314,21 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             return Ok(ProjectVerdict::Quarantined(reason::PARENTLESS));
         }
         let anchor = match parent {
-            None => None,
+            None => Vec::new(),
             Some(parent) => {
                 let prior = self.verdict(parent)?;
                 if prior != ProjectVerdict::Visible {
                     return Ok(prior);
                 }
                 match anchor_of(self.held, parent) {
-                    Some(anchor) => Some(anchor),
+                    Some(anchor) => anchor,
                     None => return Ok(ProjectVerdict::Pending(reason::AWAITING_PARENT)),
                 }
             }
         };
-        let write_proof = ProjectWriteProof {
-            slip_wire: proof.slip_wire.clone(),
-            holder_signature: proof.holder_signature.clone(),
-            signed_at: proof.signed_at,
-            anchor: anchor.map(Box::new),
-            version: proof.version,
-        };
         let holder = match self
             .reader
-            .verify_revision(self.id, hash, authority, &write_proof)?
+            .verify_revision(self.id, hash, authority, proof, &anchor)?
         {
             Ok(holder) => holder,
             Err(verdict) => return Ok(verdict),
@@ -910,7 +903,7 @@ fn witnessed_leader(
     if stored.write_proof.is_some() {
         return Ok(Err(waits));
     }
-    let boundary = revision::revisions_of(parent, &stored.anchor())?;
+    let boundary = revision::revisions_of(parent, &stored.anchor()?)?;
     Ok(boundary
         .last()
         .filter(|(hash, _)| *hash == head)
