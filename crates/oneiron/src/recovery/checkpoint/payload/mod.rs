@@ -15,15 +15,20 @@
 //! and each bundle is sealed under its compartment's key ([`seal`]).
 //!
 //! KS7-5 wires capture ([`capture`]: the snapshot's projection, sealed) and
-//! restore ([`restore`]: each compartment opened before anything is made).
-//! While [`CHECKPOINT_PAYLOADS_ENABLED`] is false the projection answers
+//! restore ([`restore`]: each compartment opened before anything is made),
+//! and KS7-6 turned [`CHECKPOINT_PAYLOADS_ENABLED`] on. A registry gap
+//! never refuses a capture: the preflight ([`preflight`]) names each, and
+//! the rows it covers stay in the image. Off, the projection answers
 //! [`Projection::Unchanged`] before it classifies, reads, mints or refuses
-//! anything. The artifact's writer is handed no payload, so the image's
-//! bytes, its stream numbering and every refusal stay as they are.
-#![allow(dead_code, reason = "CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6")]
+//! anything, and the artifact's writer is handed no payload.
+#![allow(
+    dead_code,
+    reason = "the port before KS7-3 (`Deferred`) serves only builds without sync"
+)]
 
 mod actors;
 mod capture;
+mod preflight;
 mod restore;
 mod rows;
 mod seal;
@@ -339,60 +344,62 @@ impl ImageFilter {
     /// `captured` with only the rows the image takes: an owner's part the
     /// image leaves out goes, with its actor parts and its dependencies.
     fn keep(&self, captured: Captured) -> Captured {
-        let mut kept = Captured::default();
-        for rows in captured.owners() {
-            let parts: Vec<&RowPart> = rows
-                .rows
-                .iter()
-                .filter(|part| {
-                    actors::image_row(rows, part)
-                        .is_some_and(|(db, key, value)| self.takes(db_name(db), key, value))
-                })
-                .collect();
-            if parts.is_empty() {
-                continue;
-            }
-            let held: BTreeSet<&RowLocator> = parts.iter().copied().map(RowPart::at).collect();
-            let owner = kept.owner(rows.owner());
-            owner.occurrence_hint = rows.occurrence_hint;
-            owner.rows = parts.into_iter().cloned().collect();
-            owner.actor_parts = rows
-                .actor_parts
-                .iter()
-                .filter(|part| held.contains(&part.content_locator))
-                .cloned()
-                .collect();
-            owner.dependencies = rows
-                .dependencies
-                .iter()
-                .filter(|dependency| held.contains(&dependency.at))
-                .cloned()
-                .collect();
-            owner.image_keys = rows
-                .image_keys
-                .iter()
-                .filter(|(at, _)| held.contains(at))
-                .map(|(at, key)| (at.clone(), key.clone()))
-                .collect();
-        }
-        let takes = |at: &RowLocator, value: &[u8]| self.takes(db_name(at.db), &at.key, value);
-        kept.structure = captured
-            .structure
-            .into_iter()
-            .filter(|row| takes(&row.at, &row.value))
-            .collect();
-        kept.dispatched = captured
-            .dispatched
-            .into_iter()
-            .filter(|row| takes(&row.at, &row.value))
-            .collect();
-        kept.unclassified = captured
-            .unclassified
-            .into_iter()
-            .filter(|row| takes(&row.at, &[]))
-            .collect();
+        let takes = |db: RowDb, key: &[u8], value: &[u8]| self.takes(db_name(db), key, value);
+        let mut kept = keep_owner_parts(captured, &takes);
+        kept.structure
+            .retain(|row| takes(row.at.db, &row.at.key, &row.value));
+        kept.dispatched
+            .retain(|row| takes(row.at.db, &row.at.key, &row.value));
+        kept.unclassified
+            .retain(|row| takes(row.at.db, &row.at.key, &[]));
         kept
     }
+}
+
+/// `captured` with only the owner parts whose image rows `keeps` takes: a
+/// part it leaves out goes, with its actor parts and its dependencies. Its
+/// structure, dispatched and unclassified rows stay as they are.
+fn keep_owner_parts(captured: Captured, keeps: &dyn Fn(RowDb, &[u8], &[u8]) -> bool) -> Captured {
+    let mut kept = Captured::default();
+    for rows in captured.owners() {
+        let parts: Vec<&RowPart> = rows
+            .rows
+            .iter()
+            .filter(|part| {
+                actors::image_row(rows, part)
+                    .is_some_and(|(db, key, value)| keeps(db, key, value))
+            })
+            .collect();
+        if parts.is_empty() {
+            continue;
+        }
+        let held: BTreeSet<&RowLocator> = parts.iter().copied().map(RowPart::at).collect();
+        let owner = kept.owner(rows.owner());
+        owner.occurrence_hint = rows.occurrence_hint;
+        owner.rows = parts.into_iter().cloned().collect();
+        owner.actor_parts = rows
+            .actor_parts
+            .iter()
+            .filter(|part| held.contains(&part.content_locator))
+            .cloned()
+            .collect();
+        owner.dependencies = rows
+            .dependencies
+            .iter()
+            .filter(|dependency| held.contains(&dependency.at))
+            .cloned()
+            .collect();
+        owner.image_keys = rows
+            .image_keys
+            .iter()
+            .filter(|(at, _)| held.contains(at))
+            .map(|(at, key)| (at.clone(), key.clone()))
+            .collect();
+    }
+    kept.structure = captured.structure;
+    kept.dispatched = captured.dispatched;
+    kept.unclassified = captured.unclassified;
+    kept
 }
 
 /// How a handler placed one image row.
@@ -470,6 +477,9 @@ pub(super) struct Projected {
     /// Every row a structure family keeps that holds an id link, with the
     /// owners it links to (FIX 6376).
     links: Vec<structure::Link>,
+    /// Every registry gap the capture rode past, which its receipt names
+    /// (KS7-6).
+    findings: Vec<preflight::Finding>,
 }
 
 impl Projected {
@@ -536,13 +546,13 @@ impl Projected {
 }
 
 /// Every row of the manifest database `name` in `txn`, as stored, to
-/// `each`.
+/// `each`: `false`, with nothing read, for a database it has no reader for.
 fn for_each_row(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     name: &str,
     each: &mut dyn FnMut(&[u8], &[u8]) -> Result<()>,
-) -> Result<()> {
+) -> Result<bool> {
     let db = match name {
         "entities" => dbs.entities(),
         "short_ids" => dbs.short_ids(),
@@ -558,27 +568,24 @@ fn for_each_row(
                 let (key, value) = row?;
                 each(key.as_bytes(), &value)?;
             }
-            return Ok(());
+            return Ok(true);
         }
-        _ => {
-            return Err(Error::InvariantViolation(
-                "a checkpoint payload database the image does not take",
-            ));
-        }
+        _ => return Ok(false),
     };
     for row in db.iter(txn)? {
         let (key, value) = row?;
         each(&key, &value)?;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Places every row the image of `txn` takes (KS7-2b). `filter` is the
 /// image's own, and `carriers` is KS7-3's port. While
 /// CHECKPOINT_PAYLOADS_ENABLED is off this answers
-/// [`Projection::Unchanged`] before anything else; on, a registry that
-/// does not name every family, database and kind refuses ([`rows::check`]),
-/// and nothing else does.
+/// [`Projection::Unchanged`] before anything else. On, every registry gap
+/// the preflight finds is logged, kept for the receipt and ridden past: the
+/// rows of a family or kind it names stay in the image, named, and a
+/// database it names is not read ([`preflight`]).
 pub(super) fn project(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -588,24 +595,27 @@ pub(super) fn project(
     if !CHECKPOINT_PAYLOADS_ENABLED {
         return Ok(Projection::Unchanged);
     }
-    rows::check()?;
-    let mut projected = Projected::default();
+    let preflight = preflight::preflight();
+    for finding in preflight.findings() {
+        finding.log();
+    }
+    let mut projected = Projected {
+        findings: preflight.findings().to_vec(),
+        ..Projected::default()
+    };
     let mut claims = Claims::default();
     // Each getter reads its whole families once; only the rows the image
-    // takes are kept.
+    // takes are kept, and no part of a family or kind a finding names.
     for getter in Getter::ALL {
         let role = BundleRole::Content(*getter);
-        let captured = filter.keep(getter.capture(dbs, txn)?);
+        let captured = preflight.hold_out(filter.keep(getter.capture(dbs, txn)?));
         claims.note(role, &captured)?;
         projected.captures.push((role, captured));
     }
     let families = Families::new();
     let mut split: BTreeMap<Carrier, Captured> = BTreeMap::new();
     let mut documents = Vec::new();
-    for &(name, class) in rows::DATABASES {
-        if matches!(class, DbClass::Rows(Class::NotImaged)) {
-            continue;
-        }
+    for &(name, class) in preflight.databases() {
         let mut place = |key: &[u8], value: &[u8]| -> Result<()> {
             if !filter.takes(name, key, value) {
                 return Ok(());
@@ -613,9 +623,15 @@ pub(super) fn project(
             let (family, class) = match class {
                 DbClass::Rows(class) => (name, class),
                 DbClass::Families(db) => match families.of(db, key) {
+                    // A family a finding names stays in the image, named.
+                    Some((decl, _)) if preflight.holds_out(decl) => {
+                        projected.count(decl.name);
+                        return Ok(());
+                    }
                     Some((decl, class)) => (decl.name, class),
                     None => {
-                        projected.count(UNDECLARED);
+                        let decl = preflight.family_of(db, key);
+                        projected.count(decl.map_or(UNDECLARED, |decl| decl.name));
                         return Ok(());
                     }
                 },
@@ -661,7 +677,11 @@ pub(super) fn project(
             }
             Ok(())
         };
-        for_each_row(dbs, txn, name, &mut place)?;
+        if !for_each_row(dbs, txn, name, &mut place)? {
+            let finding = preflight::Finding::unread(name);
+            finding.log();
+            projected.findings.push(finding);
+        }
     }
     let grouped = carriers.project_documents(txn, filter, &documents, &mut split)?;
     for (index, row) in documents.iter().enumerate() {
@@ -675,7 +695,7 @@ pub(super) fn project(
     }
     for (carrier, captured) in split {
         let role = BundleRole::Carrier(carrier);
-        let captured = filter.keep(captured);
+        let captured = preflight.hold_out(filter.keep(captured));
         claims.note(role, &captured)?;
         for at in captured.unclassified.iter().map(|row| &row.at) {
             let family = match at.db {
