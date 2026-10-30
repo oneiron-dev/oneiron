@@ -294,18 +294,14 @@ impl ChannelIdentity {
         self.manifest_ref
     }
 
-    /// Rebinds this row to the channel actor that owns it.
+    /// Names the channel actor this row's reputation and credential ride on.
     ///
     /// `register_channel_actor` mints the actor and the identity in one
     /// transaction, so the actor ref does not exist when the caller builds the
-    /// row. This is a WRITER's door, not a field: the binding target and the
-    /// reputation ref move together, and the facet mask worn on the channel is
-    /// carried over rather than dropped.
-    pub(super) fn bind_to_channel_actor(&mut self, actor_ref: EntityId) {
-        self.binding = ChannelIdentityBinding::Actor {
-            actor_ref,
-            facet_ref: self.binding.facet_ref(),
-        };
+    /// row. This is a WRITER's door, not a field. The binding stays as the
+    /// caller asked: the channel actor is plumbing that carries the channel's
+    /// credential and reputation, never the recipient inbound events route to.
+    pub(super) fn set_channel_actor(&mut self, actor_ref: EntityId) {
         self.reputation_ref = Some(actor_ref);
     }
 

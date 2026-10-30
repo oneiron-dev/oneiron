@@ -23,9 +23,10 @@ use crate::store::Store;
 /// ONE-1868 leg 2, optional enrichment: the opt-out verdict rests on
 /// `(counterparty, channel_class)`, never on this value. Nothing new is minted —
 /// the governing connector key (OF-277) names the sending actor, and the
-/// ChannelIdentity bound to that actor on the connector's channel is the
-/// identity that will carry the send. Missing, unregistered, or inactive
-/// identities resolve to `None`. Multiple eligible identities instead return
+/// ChannelIdentity on the connector's channel that is bound to that actor, or
+/// whose channel actor it is (a registered channel keeps its recipient
+/// binding), is the identity that will carry the send. Missing, unregistered,
+/// or inactive identities resolve to `None`. Multiple eligible identities instead return
 /// [`Error::InvalidConfig`]: automatic selection must not send without a unique sender.
 pub(crate) fn resolve_channel_identity_ref_for_connector(
     store: &Store,
@@ -56,7 +57,8 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
             continue;
         };
         if normalize_channel_class(&facts.channel) != channel_class
-            || facts.binding.actor_ref() != Some(bound_actor)
+            || (facts.binding.actor_ref() != Some(bound_actor)
+                && facts.reputation_ref != Some(bound_actor))
         {
             continue;
         }
