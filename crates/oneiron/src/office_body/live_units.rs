@@ -108,7 +108,8 @@ impl Vault {
     }
 
     /// [`Self::office_body_pin`] read in `txn`, with the time its newest
-    /// commit was made: an edit's quiet interval runs from it.
+    /// commit was made, or a merged fork's commits landed if that is later:
+    /// an edit's quiet interval runs from it (FIX 11983).
     pub(crate) fn office_body_pin_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -132,6 +133,7 @@ impl Vault {
             .iter()
             .filter_map(|id| doc.get_change(id))
             .filter_map(|change| u64::try_from(change.timestamp).ok())
+            .chain(head.landed_at)
             .max()
             .unwrap_or(0);
         Ok(Some((
