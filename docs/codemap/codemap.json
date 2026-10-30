@@ -29990,7 +29990,7 @@
      "path": "src/edit_distance/attribution/triage.rs",
      "purpose": "The triage packet a persistent failure mints, and the one owner-inbox escalation that carries it (ARCH-0056…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 1,
       "struct": 6
@@ -38289,7 +38289,7 @@
      "path": "src/inbox/mod.rs",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -38335,7 +38335,7 @@
      "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
      "surface": {
       "const": 4,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 4,
       "struct": 3

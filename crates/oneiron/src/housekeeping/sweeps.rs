@@ -212,7 +212,9 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     // An erased actor's erasable keys (FIX 8875), retried here.
     vault.finish_erasable_retirements_after_commit();
     // An erased owner's checkpoint payload leaves (KS7-4), retried here.
-    vault.store.finish_checkpoint_payload_retirements_after_commit();
+    vault
+        .store
+        .finish_checkpoint_payload_retirements_after_commit();
     // A restore's credentials pending on their source's evidence (FIX 10671).
     vault.resolve_pending_credential_restores_logged();
     // Body instances nothing needs any longer, by the one policy (FIX 6022).
