@@ -37,6 +37,33 @@ impl Vault {
         crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())
     }
 
+    /// Names `record` in its ref's visible slot again while it is still
+    /// `Published`: a re-drive that moved the ref back to its value
+    /// advertises it again (FIX 10002). The caller holds the coordinator.
+    pub(super) fn restore_origin_visible_slot(
+        &self,
+        record: &OriginPublicationRecord,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|wtxn| {
+            let current = PUBLICATIONS
+                .get(&self.store, wtxn, &record.publication_id)?
+                .ok_or(Error::CorruptedIndex("origin publication disappeared"))?
+                .into_record()?;
+            if current.status != OriginPublicationStatus::Published {
+                return Err(Error::ConcurrentWrite("origin publication changed"));
+            }
+            VISIBLE_REF.put(
+                &self.store,
+                wtxn,
+                &visible_ref_key(&record.repo_id, &record.ref_name),
+                &record.publication_id,
+            )?;
+            Ok(())
+        })?;
+        self.note_origin_ref_moved(record.ref_name.as_str());
+        Ok(())
+    }
+
     /// Starts the count of one publication's obligation walk against its
     /// scan row (rule 5, FIX 10001): every required Git and LFS object is
     /// pinned and proved one at a time, however many. The caller holds no

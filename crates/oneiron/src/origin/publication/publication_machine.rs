@@ -489,7 +489,9 @@ impl Vault {
     /// What runs again is the git wire's own journaled effect, which replays
     /// when the repository agrees, rolls a crash-interrupted advance forward
     /// when it is merely behind, and refuses when the repository carries a
-    /// value nobody decided against.
+    /// value nobody decided against. Its dependencies are pinned again before
+    /// the ref moves, and a move that lands names the record in the visible
+    /// slot again (FIX 10002). Callers hold the repository coordinator.
     pub(super) fn redrive_published_origin_ref(
         &self,
         git: &GitWire<'_>,
@@ -507,6 +509,7 @@ impl Vault {
                 "published origin ref no longer has its required objects",
             ));
         }
+        self.repin_origin_dependencies(git, repo, &record, learned_at)?;
         let outcome = git.update_ref_cas(
             repo,
             &record.ref_name,
@@ -522,6 +525,7 @@ impl Vault {
             ));
         }
         if outcome.is_applied() {
+            self.restore_origin_visible_slot(&record)?;
             // Both a fresh advance and a replay can finish leaked cleanup.
             // Failure here keeps a safe root for census; it does not undo the
             // already-durable publication or reject a successful landing.
