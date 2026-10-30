@@ -15,7 +15,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::ENTITY_TYPE_NOTE;
+use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_WORLD};
 use crate::store::ManifestDbs;
 use std::collections::BTreeSet;
 
@@ -50,7 +50,8 @@ enum WorldLookupFault {
 
 const NOTE_WORLD_LOOKUP_FAULT: WorldLookupFault = WorldLookupFault::NoSingleWorldAndWarn;
 
-/// Where a NOTE sits by its live `InWorld` edges.
+/// Where a NOTE sits by its live `InWorld` edges. A WORLD row is held the
+/// same way at its two positions ([`world_row_worlds`], FIX 3830).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NoteWorlds {
     /// The distinct worlds its edges name, base reality as the base world;
@@ -220,14 +221,35 @@ fn world_scope(worlds: ScopeAxis<ScopeId>) -> Scope {
     }
 }
 
-/// The live worlds of the stored row `id` of `kind` when it is a NOTE.
-pub(crate) fn note_worlds_of(
+/// The worlds a door reading under a world ceiling may hold the stored row
+/// `id` of `kind` at: a NOTE's live worlds, a WORLD row's two
+/// ([`world_row_worlds`]); `None` for any other row, which sits at its one
+/// position.
+pub(crate) fn held_worlds_of(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
 ) -> Option<NoteWorlds> {
-    (kind == ENTITY_TYPE_NOTE).then(|| note_worlds_in(store, txn, id))
+    match kind {
+        ENTITY_TYPE_NOTE => Some(note_worlds_in(store, txn, id)),
+        ENTITY_TYPE_WORLD => Some(world_row_worlds(id)),
+        _ => None,
+    }
+}
+
+/// Where the WORLD row `id` sits (FIX 3830; Engine ruling 09:39 A): in base
+/// reality, where it is stored, and in the world it describes. Base comes
+/// first, so a door that reads base, or holds no ceiling, reads it as today.
+/// A door whose world ceiling holds the world it describes but not base, a
+/// credential scoped to that world among them, holds it there; one whose
+/// ceiling holds neither holds it at base and refuses it as before. No door
+/// reads it past the worlds it already holds.
+pub(crate) fn world_row_worlds(id: EntityId) -> NoteWorlds {
+    NoteWorlds::In(BTreeSet::from([
+        ScopeId(crate::claim::base_world_id()),
+        ScopeId(id),
+    ]))
 }
 
 /// `scope`, the position the stored row `id` of `kind` is stamped or derived
@@ -308,7 +330,7 @@ pub(crate) fn held_at(
     if matches!(met(ceilings), ScopeAxis::All) {
         return record.clone();
     }
-    let worlds = note_worlds_of(store, txn, id, kind);
+    let worlds = held_worlds_of(store, txn, id, kind);
     position_at(record, worlds.as_ref(), ceilings)
 }
 
@@ -344,9 +366,10 @@ pub(crate) fn blob_scope_every_world(
 }
 
 /// The world-only position of the stored row `id` of `kind`, with body
-/// `data`, as a read under the world ceiling of `ceiling` holds it: a NOTE at
-/// its witness there, else its one position; any other row where
-/// [`super::record_world_in`] places it. `None` where the row proves no world.
+/// `data`, as a read under the world ceiling of `ceiling` holds it: a NOTE or
+/// a WORLD row at its witness there ([`held_worlds_of`]), else its one
+/// position; any other row where [`super::record_world_in`] places it. `None`
+/// where the row proves no world.
 pub(crate) fn world_record_held_at(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -355,9 +378,8 @@ pub(crate) fn world_record_held_at(
     data: &[u8],
     ceiling: &Scope,
 ) -> Result<Option<Scope>> {
-    if kind == ENTITY_TYPE_NOTE {
-        let worlds = note_worlds_in(store, txn, id).axis_at(&ceiling.worlds);
-        return Ok(Some(world_scope(worlds)));
+    if let Some(worlds) = held_worlds_of(store, txn, id, kind) {
+        return Ok(Some(world_scope(worlds.axis_at(&ceiling.worlds))));
     }
     let base = crate::claim::base_world_id();
     Ok(
