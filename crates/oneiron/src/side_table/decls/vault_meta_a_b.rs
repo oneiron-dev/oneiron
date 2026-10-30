@@ -181,6 +181,9 @@ side_tables! {
     /// dispatched. Key: id16 (root attempt) + u64be (0 bootstrap, n + 1 round n).
     AUTORESEARCH_CONTINUATION: VaultMeta b"autoresearch:continuation:v1:" Named
         => crate::autoreason_campaign::research::erase_release_source_rows_in_txn;
+    /// Round-robin cursor of the research continuation sweep: the last served root id16.
+    /// Key: ().
+    AUTORESEARCH_CONTINUATION_CURSOR: VaultMeta b"autoresearch:continuation_cursor:v1" Raw;
     /// One held-out selection benchmark of an autoresearch parent-selection estimator version
     /// against the DGM formula, recorded once. Key: string (estimator version).
     AUTORESEARCH_ESTIMATOR: VaultMeta b"autoresearch:estimator:v1:" Named;
