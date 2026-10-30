@@ -1719,7 +1719,7 @@ class Oneiron:
             """Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_rebind(json.dumps(spec))))
         def admission(self, spec):
-            """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
+            """Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_admission(json.dumps(spec))))
     class _VaultWeaveVerbs:
         def __init__(self, client: _NativeClient) -> None:

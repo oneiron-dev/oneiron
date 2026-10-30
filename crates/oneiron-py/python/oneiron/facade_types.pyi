@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1212 facade rows, 4395 declarations.
+Census: 1212 facade rows, 4397 declarations.
 Inputs: 1140 of 1212 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1046 of 1212 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -20075,9 +20075,22 @@ class TurnProgramAdmissionItem(TypedDict):
     outcome: ProgramAdmissionOutcomeView
     decided_at: int
     withheld: list[str]
+class OwedWakeHoldView(TypedDict):
+    reason: str
+    held_at: int
+    expires_at: NotRequired[int | None]
+class TurnProgramOwedWakeItem(TypedDict):
+    registration: EntityId
+    actor: EntityId
+    actor_class: str
+    revision: str
+    sealed_scope: NotRequired[str | None]
+    held: NotRequired[OwedWakeHoldView | None]
+    withheld: list[str]
 class TurnProgramAdmissionView(TypedDict):
     turn_ref: str
     admissions: list[TurnProgramAdmissionItem]
+    owed: list[TurnProgramOwedWakeItem]
     next_cursor: NotRequired[str | None]
     undecodable_admission_rows_examined: int
 class ProgramRunRequest(TypedDict):
