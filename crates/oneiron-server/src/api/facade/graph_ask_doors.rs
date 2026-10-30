@@ -37,7 +37,7 @@ pub(crate) use self::question_outcomes::{
 use oneiron::llm::decision::questions::{
     AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionRecord,
     QuestionScheduleHead, ScheduledBackfill, answers_in_lane, pause_question, question_call_budget,
-    read_question, read_question_schedule, refresh_artifact_question_now,
+    read_question_in_lane, read_question_schedule, refresh_artifact_question_now,
     refresh_standing_question_with, run_graph_ask_receipted, schedule_backfill_in_lane,
     select_graph_units_by_type, standing_ask_route,
 };
@@ -357,7 +357,8 @@ async fn vault_questions_backfill_answer(
 
 /// `vault.questions.read`: the caller's standing question at its current
 /// version or a past one; none when no such question or version is the
-/// caller's.
+/// caller's. A narrowed caller gets the record with each unit and artifact
+/// ask its own lane reads (OF-506, FIX 12060).
 /// Beside it, the rows the question names ([`question_rows`]), none when
 /// it found none.
 pub(crate) async fn vault_questions_read(
@@ -379,9 +380,12 @@ async fn vault_questions_read_answer(
     const VERB: &str = "vault.questions.read";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<Option<QuestionRecord>> {
-        Ok(read_question(
+        let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+        Ok(read_question_in_lane(
             server.vault(),
+            &lane,
             principal,
             input.id,
             input.version,

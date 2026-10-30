@@ -11,7 +11,7 @@ use super::{
     RenderRefusal, RunAdmission, SyncServer, TaskWaveRequest, Value, WriteActor, agent_lane,
     closed_outcome_windows_in_lane, create_question_with_lane, decode, edit_question_with_lane,
     encode, inside_host_dial, internal, on_caller_payer, owners, pause_question,
-    question_answers_in_lane, read_question, resume_held_wave, run_graph_ask_receipted,
+    question_answers_in_lane, read_question_in_lane, resume_held_wave, run_graph_ask_receipted,
     run_verdict, schedule_backfill_in_lane, select_graph_units_by_type, wave_plan, wave_receipt,
 };
 
@@ -150,8 +150,12 @@ pub(super) fn host_row(
         }
         AgentVerb::VaultQuestionsRead => {
             let request: QuestionReadRequest = decode(input)?;
-            encode(read_question(
+            // Each unit and artifact ask the agent's own lane reads (FIX
+            // 12060).
+            let lane = agent_lane(server, actor)?;
+            encode(read_question_in_lane(
                 vault,
+                &lane,
                 principal,
                 request.id,
                 request.version,
