@@ -17,6 +17,16 @@ pub enum EngineScan {
     VisibleRefRows,
     /// One repository's keep-ref owners, every kind.
     KeepOwnerRows,
+    /// One repository's full Git tree walk, trees and files (once refused past 100,000).
+    OriginTreeEntries,
+    /// One annotated-tag chain document ingress peels (once refused past 64).
+    OriginTagPeelSteps,
+    /// One GitWire plan's written and existing objects (once refused past 256).
+    GitWirePlanObjects,
+    /// One GitWire ref transaction's publications (once refused past 64).
+    GitWirePublications,
+    /// One origin publication's required Git and LFS objects (once refused past 4096).
+    OriginPublicationObligations,
     /// One entity type's rows in the type index.
     TypeIndexRows,
     /// One learned-at window's rows in the temporal index.
@@ -325,11 +335,16 @@ pub enum EngineScan {
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 119] = [
+    pub const ALL: [Self; 124] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
         Self::KeepOwnerRows,
+        Self::OriginTreeEntries,
+        Self::OriginTagPeelSteps,
+        Self::GitWirePlanObjects,
+        Self::GitWirePublications,
+        Self::OriginPublicationObligations,
         Self::TypeIndexRows,
         Self::LearnedRangeRows,
         Self::EdgePeerRows,
@@ -463,6 +478,11 @@ impl EngineScan {
             Self::PublicationRows => "publication_rows",
             Self::VisibleRefRows => "visible_ref_rows",
             Self::KeepOwnerRows => "keep_owner_rows",
+            Self::OriginTreeEntries => "origin_tree_entries",
+            Self::OriginTagPeelSteps => "origin_tag_peel_steps",
+            Self::GitWirePlanObjects => "git_wire_plan_objects",
+            Self::GitWirePublications => "git_wire_publications",
+            Self::OriginPublicationObligations => "origin_publication_obligations",
             Self::TypeIndexRows => "type_index_rows",
             Self::LearnedRangeRows => "learned_range_rows",
             Self::EdgePeerRows => "edge_peer_rows",
@@ -585,6 +605,10 @@ impl EngineScan {
     /// once cut its read short at, or the engine-wide default.
     pub(super) const fn default_threshold(self) -> u64 {
         match self {
+            Self::OriginTreeEntries => 100_000,
+            Self::OriginTagPeelSteps | Self::GitWirePublications => 64,
+            Self::GitWirePlanObjects => 256,
+            Self::OriginPublicationObligations => 4096,
             Self::ClaimVadIncidentEdges | Self::TaskAuthorityFactEdges => 100_000,
             Self::RoomRosterMembers
             | Self::DagWalkRecords
@@ -664,6 +688,11 @@ impl EngineScan {
             Self::PublicationRows => 2,
             Self::VisibleRefRows => 3,
             Self::KeepOwnerRows => 4,
+            Self::OriginTreeEntries => 200,
+            Self::OriginTagPeelSteps => 201,
+            Self::GitWirePlanObjects => 202,
+            Self::GitWirePublications => 203,
+            Self::OriginPublicationObligations => 204,
             Self::TypeIndexRows => 16,
             Self::LearnedRangeRows => 17,
             Self::EdgePeerRows => 18,
