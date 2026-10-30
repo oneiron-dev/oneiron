@@ -23,8 +23,7 @@ use super::retry_audit::{
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, FailAttempt,
-    RetryAttempt,
+    AttemptQueue, CompleteAttempt, CompleteOutcome, FailAttempt, RetryAttempt,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -34,11 +33,13 @@ use crate::outbound_intent_ledger::{
 use crate::receipt::SendReceiptOutcome;
 
 mod phases;
+mod send_line;
 
 use self::phases::{
     ambient_alternative_went, connector_dispatch_request, settle_failed_connector_task,
     settle_held_connector_task,
 };
+use self::send_line::ConnectorSendLine;
 
 pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
 /// The queue reason a provider wait ends with at its caller's deadline (FIX
@@ -111,8 +112,10 @@ impl Vault {
             .min())
     }
 
-    /// Claims pending connector-send TASK attempts and runs each through the
-    /// existing outbound dispatch pipeline with a real delivery window.
+    /// Claims pending connector-send TASK attempts in the fair line's order
+    /// (FIX 12157: round-robin across their writers, oldest first within
+    /// one) and runs each through the existing outbound dispatch pipeline
+    /// with a real delivery window.
     pub fn run_connector_task_executor<S: OutboundExecutionSink>(
         &self,
         sink: &mut S,
@@ -123,19 +126,12 @@ impl Vault {
         // The vault clock as the drain starts, beside the caller's `now`: each
         // send's window door measures the time the drain spent from here.
         let drain_clock = self.now_recorded_at();
+        // The sends a full window paced all come back at the instant it
+        // opens; taken in the fair line's order, they share it by writer.
+        let mut line = ConnectorSendLine::default();
         loop {
-            // The kind's own claim door runs the job port's claim and
-            // broadcasts only a real claim, so an empty queue never wakes the
-            // worker that just found it empty.
-            let attempt = match queue.claim_kind(
-                crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
-                ClaimAttempt {
-                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                    now,
-                },
-            )? {
-                ClaimOutcome::Empty => break,
-                ClaimOutcome::Claimed(attempt) => attempt,
+            let Some(attempt) = line.claim_next(self, &queue, now)? else {
+                break;
             };
             let payload: ConnectorSendAttemptPayload =
                 match serde_json::from_slice(&attempt.payload) {

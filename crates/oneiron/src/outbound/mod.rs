@@ -13,6 +13,7 @@ mod dispatch_attempt_id;
 mod dispatch_pipeline;
 mod dispatch_types;
 mod executor;
+mod fair_line;
 mod intent;
 mod manifests;
 mod receipt_fields;
@@ -28,6 +29,8 @@ mod window_door;
 mod tests;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
+
+pub(crate) use self::fair_line::fair_line_order;
 
 pub use self::ambient_alternative::{
     OutboundAmbientAlternative, OutboundScheduleContinuation, OutboundSendSelection,
