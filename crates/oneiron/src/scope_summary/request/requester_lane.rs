@@ -5,7 +5,9 @@
 //! frozen one, so a header's reply is checked inside the narrowing the
 //! declaration was admitted in, and inside nothing once its credential is no
 //! longer live. A lane that read as its requester's own adds nothing to the
-//! declaration, which stays the one every other door declares.
+//! declaration, which stays the one every other door declares. A narrowed
+//! lane must read every source its summary plans, judged in the plan's own
+//! snapshot (FIX 11829): a requester summarizes only what it reads.
 
 use rmpv::Value;
 
@@ -46,12 +48,14 @@ pub(super) fn default_purpose(target: &ScopeSummaryTarget) -> &'static str {
 impl Vault {
     /// [`Self::request_scope_summary`], or [`Self::request_scope_summary_for`]
     /// with `purpose`, declared under `lane`, the requester's own live read
-    /// lane at its door: a narrowed lane rides the declaration frozen, and
-    /// every landing's reply lane is narrowed by it.
+    /// lane at its door: a narrowed lane rides the declaration frozen, every
+    /// landing's reply lane is narrowed by it, and it must read every source
+    /// the plan names.
     ///
     /// # Errors
-    /// As the request it stands for, and [`FrozenReadLane::freeze`]'s
-    /// refusal of a lane whose bound has no frozen form.
+    /// As the request it stands for, [`FrozenReadLane::freeze`]'s refusal of
+    /// a lane whose bound has no frozen form, and a narrowed lane's refusal
+    /// of a planned source it does not read.
     pub fn request_scope_summary_in_lane(
         &self,
         request: &ScopeSummaryRequest,
@@ -66,6 +70,9 @@ impl Vault {
             };
         }
         let frozen = lane_value(&frozen)?;
+        // The lane's grant clock settles before the write opens, so its
+        // sources are judged in the plan's own snapshot.
+        lane.persist_grant_clock()?;
         let queued = self.with_write_txn_grouped(|txn| {
             let purpose = purpose.unwrap_or_else(|| default_purpose(&request.target));
             let previous = derivation::current_in_txn(self, txn, request, purpose)?;
@@ -74,7 +81,8 @@ impl Vault {
             };
             fields.push((Value::from(REQUESTER_LANE_KEY), frozen));
             let input = Value::Map(fields);
-            plan_in_txn(self, txn, &input)?;
+            let plan = plan_in_txn(self, txn, &input)?;
+            require_sources_in_lane(lane, txn, &plan)?;
             let now = self.store.clock.now_recorded_at();
             let queued = enqueue_with_lineage_in_txn(self, txn, input, None, None, now)?;
             crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt);
@@ -83,6 +91,26 @@ impl Vault {
         self.store.notify_attempt_observers();
         Ok(queued)
     }
+}
+
+/// Refuses a plan naming a source `lane` does not read, judged in `txn`, the
+/// plan's own snapshot (FIX 11829).
+///
+/// # Errors
+/// A planned source the lane does not read, and a store, fold or clock
+/// failure judging one.
+fn require_sources_in_lane(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    plan: &ScopeSummaryPlan,
+) -> Result<()> {
+    let policy = lane.live_policy_manifest_in(txn)?;
+    for source in &plan.sources {
+        if !lane.is_ref_readable_with_policy_in(txn, &policy, source)? {
+            return Err(invalid("summary source outside the requester's read lane"));
+        }
+    }
+    Ok(())
 }
 
 /// `lane`, the requester's actor-level reply lane for `plan`, narrowed by
