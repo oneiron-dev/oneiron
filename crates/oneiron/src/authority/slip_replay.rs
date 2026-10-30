@@ -240,11 +240,17 @@ impl Vault {
             return Ok(None);
         }
         // A proof the vault admitted before stays refused on any clock, its
-        // row landed or still on its way (FIX 12023 W0).
+        // row landed or still on its way (FIX 12023 W0). Its entry in memory
+        // leaves once its row lands (L02 10-31), so the row is read in a
+        // snapshot opened after the entry is: one of the two holds it. A
+        // thread holds one reader at a time, so the first closes before.
         let admitted = SpentKey::of(&verified.claims().binding_key, nonce, timestamp);
-        if REPLAY_NONCE.contains(&self.store, &txn, &admitted.row())?
-            || self.spent_nonces.admitted(&admitted)
-        {
+        drop(txn);
+        if self.spent_nonces.admitted(&admitted) {
+            return Ok(None);
+        }
+        let txn = self.store.env.read_txn()?;
+        if REPLAY_NONCE.contains(&self.store, &txn, &admitted.row())? {
             return Ok(None);
         }
         Ok(Some((
@@ -479,6 +485,10 @@ fn put_nonce_row_in_txn(
 /// W0). A door that rides an admitted request reads it to know the values it
 /// was handed are that request's own, without spending the nonce a second
 /// time (FIX 3377).
+///
+/// `txn` is a writer's, as a renewal's is: an entry in memory leaves once its
+/// row lands (L02 10-31), and a writer sees every row landed before it began,
+/// where a snapshot opened before that commit sees neither.
 pub(super) fn nonce_admitted_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
