@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
+mod admission_fault;
+pub(crate) use admission_fault::is_window_admission_read_fault;
 mod asset_bodies;
 pub use asset_bodies::{
     ASSET_BODY_FRAME_BYTES, ASSET_BODY_RETRY, AssetBodyAddress, AssetBodyData, AssetBodyEnd,

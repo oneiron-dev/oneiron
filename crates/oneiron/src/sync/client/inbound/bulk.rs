@@ -84,7 +84,9 @@ impl SyncClient {
                     doc_state,
                     &window.key,
                 )
-                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
+                .map_err(|error| {
+                    TransportError::from_window_admission(&error, "bulk window residence denied")
+                })?;
                 crate::sync::ingest::with_own_device_import(
                     &self.vault,
                     own_device.as_ref(),
@@ -161,7 +163,9 @@ impl SyncClient {
                     doc_state,
                     &key,
                 )
-                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
+                .map_err(|error| {
+                    TransportError::from_window_admission(&error, "bulk window residence denied")
+                })?;
                 let window = self.ensure_window(window_key)?;
                 crate::sync::window::validate_window_update_residence_with_vault(
                     &self.vault,
@@ -169,7 +173,9 @@ impl SyncClient {
                     doc_state,
                     &key,
                 )
-                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
+                .map_err(|error| {
+                    TransportError::from_window_admission(&error, "bulk window residence denied")
+                })?;
                 let imported = crate::sync::ingest::with_own_device_import(
                     &self.vault,
                     own_device.as_ref(),

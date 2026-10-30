@@ -587,6 +587,11 @@ pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportEr
 }
 
 fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
+    // A fault reading this vault's own admission state is this device's,
+    // never the peer's refused update (FIX 5926).
+    if transport::is_window_admission_read_fault(e) {
+        return true;
+    }
     matches!(
         e,
         crate::error::Error::Storage(_)

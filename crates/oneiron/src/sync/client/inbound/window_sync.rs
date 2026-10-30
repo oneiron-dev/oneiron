@@ -405,8 +405,9 @@ impl SyncClient {
                         index += 1;
                         continue;
                     }
-                    Err(_) => {
-                        return Err(TransportError::InvalidPayload(
+                    Err(error) => {
+                        return Err(TransportError::from_window_admission(
+                            &error,
                             "staged world residence denied",
                         ));
                     }
@@ -484,7 +485,9 @@ impl SyncClient {
             &window.key,
             evidence,
         )
-        .map_err(|_| TransportError::InvalidPayload("entity outside window residence"))?;
+        .map_err(|error| {
+            TransportError::from_window_admission(&error, "entity outside window residence")
+        })?;
         // A retained world shell has no body to tell Observer B its address.
         // The isolated pre-import validator proved its witness; persist that
         // address BEFORE the observed import fires the tombstone and edge
