@@ -342,7 +342,7 @@ pub fn add_shared_member_as(
     let key = input
         .holder_key
         .as_deref()
-        .map(super::sdk_shared_members::holder_key)
+        .map(super::shared_members::holder_key)
         .transpose()?;
     let (receipt, slip) =
         vault.invite_shared_member(admin, input.vault_id, member, input.role, slips.zip(key))?;

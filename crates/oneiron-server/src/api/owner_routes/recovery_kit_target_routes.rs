@@ -47,7 +47,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::response::Json;
@@ -56,7 +55,6 @@ use oneiron::authority::{Destination, OwnerWorkRefusal, PeerMachine, RequestCode
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
     KitCoverage, KitIssue, KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceHome,
-    restore_kit,
 };
 use oneiron::settings::{ReadDestination, RecipientLimit, RecipientWhy};
 use oneiron::world_keys::{
@@ -68,7 +66,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::owner_work_routes::request_entry;
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::pairing::MachineEnrolment;
 use crate::auth::CoreAuth;
@@ -82,12 +80,20 @@ pub(crate) mod pad_access;
 pub(crate) mod root_doors;
 pub(crate) mod secret_anchor;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/roots/requests/run", post(run))
-        .merge(pad_access::routes())
-        .merge(root_doors::routes())
-        .merge(secret_anchor::routes())
+pub(super) fn owner_table() -> OwnerTable {
+    let mut table = vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/roots/requests/run",
+            summary: "The named target's own call: runs a root request pending here with the kit material its change needs, for this call alone, once the target proves to be this install and a machine the worlds' privacy lets hold their keys; answers the target's report and its words to this caller only.",
+            row: None,
+        },
+        post(run),
+    )];
+    table.extend(pad_access::owner_table());
+    table.extend(root_doors::owner_table());
+    table.extend(secret_anchor::owner_table());
+    table
 }
 
 /// The material for one pending root request, as the target's caller
@@ -341,16 +347,18 @@ impl Kit {
     }
 
     /// The recovery root seed this kit rebuilds for `vault`, checked by the
-    /// kit's own rules before anything is asked of the home.
+    /// kit's own rules before anything is asked of the home, with this
+    /// machine's own piece of the kit when it keeps one (FIX 2063).
     fn seed(&self, vault: &Vault) -> OwnerResult<RecoveryRootSeed> {
         let vault_id = vault_id(vault)?;
-        let secret = restore_kit(
-            vault_id,
-            KitSecretKind::RecoveryRoot,
-            &self.pieces(),
-            self.passphrase.as_ref(),
-        )
-        .map_err(|error| OwnerError::Invalid(format!("the kit does not open: {error}")))?;
+        let secret = vault
+            .restore_kit_here(
+                vault_id,
+                KitSecretKind::RecoveryRoot,
+                &self.pieces(),
+                self.passphrase.as_ref(),
+            )
+            .map_err(|error| OwnerError::Invalid(format!("the kit does not open: {error}")))?;
         Ok(RecoveryRootSeed::from_restored_kit(secret)?)
     }
 }
@@ -373,10 +381,11 @@ fn request_code(text: &str) -> OwnerResult<RequestCode> {
     RequestCode::from_text(text).map_err(|why| OwnerError::Invalid(format!("code: {why}")))
 }
 
-/// The homes a kit is issued over: a `this_machine` home waits for
-/// device-piece custody.
-fn issue_homes(homes: &[PieceHome; 3]) -> OwnerResult<()> {
-    if homes.contains(&PieceHome::ThisMachine) {
+/// The homes a kit is issued over: a `this_machine` home's piece stays in
+/// this install's keystore (FIX 2063), so it waits for device-piece custody
+/// while the host installed none.
+fn issue_homes(vault: &Vault, homes: &[PieceHome; 3]) -> OwnerResult<()> {
+    if homes.contains(&PieceHome::ThisMachine) && vault.device_keystore_assurance().is_none() {
         return Err(OwnerError::Invalid(
             "a this_machine home waits for device-piece custody; pick another home".to_owned(),
         ));
@@ -420,7 +429,7 @@ fn run_material(
 ) -> OwnerResult<RootWorkDone> {
     let done = match material {
         Material::IssueKit { homes, passphrase } => {
-            issue_homes(&homes)?;
+            issue_homes(vault, &homes)?;
             let passphrase = Zeroizing::new(passphrase);
             let passphrase = passphrase.as_deref().map(passphrase_of).transpose()?;
             let issue = KitIssue {

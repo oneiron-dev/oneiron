@@ -430,7 +430,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "pause this job"
   - "resume this job"
   - "cancel this subagent run"
-- safety: Mutating control endpoint; requires core write auth. Interventions are recorded as queue events and repeated pause, resume, or cancel requests are idempotent no-ops when the job is already in that state. With an `Idempotency-Key` the intervention runs once and a retry replays the kept effect; `tree` is null without run-tree read authority. A 409 `idempotent_outcome_unknown` means the key's first request never settled an outcome: read the job's state, or send a new key to act again.
+- safety: Mutating control endpoint; requires core write auth. Interventions are recorded as queue events and repeated pause, resume, or cancel requests are idempotent no-ops when the job is already in that state. With an `Idempotency-Key` the intervention runs once and a retry replays the kept effect; `tree` is null without run-tree read authority. A 409 `idempotent_outcome_unknown` means the key's first request never settled an outcome: read the job's state, or send a new key to act again. A 409 `idempotent_reply_not_kept` means its writes landed and its reply was not kept: read the job's state for what they wrote.
 
 #### core-context-pack - `POST /v1/core/context-pack`
 
@@ -511,6 +511,14 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "which sealed bundles does the home keep for my kit"
   - "list the kit's sealed bundle generations"
 - safety: Read-only metadata: generation ids, lengths and ciphertext digests, only those named for the kit's root. No bearer: signed by that root's owner anchor like a part request, under its own domain and path. A request that does not verify looks exactly like a root with no generation (`404`).
+
+#### recovery-custody-page - `POST /v1/recovery/custody/page`
+
+- when-to-use: Read one page of a custody lineage's sealed head and log frames from the residence home with the recovery kit alone, to restore on a new host. Page from head offset 0 and sequence 0 until the reply carries no next cursor; `fromSeq` names the first log frame the restore needs (the home starts its frames there, or right after the head), and stays the same on every page.
+- trigger phrases:
+  - "fetch key custody with the kit"
+  - "read a custody page from the home"
+- safety: Read-only; serves sealed bytes only, to the kit's recovery root. No bearer: each request is signed by that root's owner anchor, within 300 seconds of the home's clock, with a nonce the home takes once. A request that does not verify, a vault or root the home does not pin, a lineage it holds no head of, and an offset past the head's end all look missing (`404`).
 
 #### booking-agent-instructions - `GET /api/booking/{page_token}/agent-instructions`
 

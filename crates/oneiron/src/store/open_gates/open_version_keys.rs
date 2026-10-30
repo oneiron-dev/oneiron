@@ -221,19 +221,17 @@ pub(in crate::store) const RECEIPT_FAMILY_INDEX_VERSION: u8 = 1;
 
 /// Production reads/writes of these rows now go through the typed
 /// `side_table::{TEXT_INDEX_SCHEMA_VERSION, TEXT_ANALYZER_MANIFEST,
-/// TEXT_BM25_FIELD_SCHEMA_HASH}` tables bound in `vault::doctor_manifest`; the
-/// raw key constants themselves are now named only from the store test suite
-/// (corrupt/legacy-row fixtures), so they stay `#[cfg(test)]`.
+/// TEXT_BM25_FIELD_SCHEMA_HASH}` tables bound in `vault::doctor_manifest`.
+/// The raw index-version and analyzer-body keys stay `#[cfg(test)]`; the two
+/// hash keys below are production reads for replay identity.
 #[cfg(test)]
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"text_index_schema_version";
 
 #[cfg(test)]
 pub(crate) const TEXT_ANALYZER_MANIFEST_KEY: &[u8] = b"text_analyzer_manifest";
 
-#[cfg(test)]
 pub(crate) const TEXT_ANALYZER_MANIFEST_HASH_KEY: &[u8] = b"text_analyzer_manifest_hash";
 
-#[cfg(test)]
 pub(crate) const TEXT_BM25_FIELD_SCHEMA_HASH_KEY: &[u8] = b"text_bm25_field_schema_hash";
 
 /// Current text-index schema version written on new vaults.
@@ -452,7 +450,6 @@ impl PersistedHnswCompatibility {
 
 pub(crate) enum HnswCompatibilityState {
     Missing,
-    Legacy(PersistedHnswCompatibility),
     Current(PersistedHnswCompatibility),
 }
 

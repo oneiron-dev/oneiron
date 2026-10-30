@@ -36,7 +36,8 @@ use super::super::corpus_filter::CorpusFilter;
 use super::super::criticality::critical_candidate_ids;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
 use super::super::trace::{
-    capture_replay_inputs, record_ppr_cache_outcome, retrieval_trace_fused_scores,
+    capture_replay_identity_in_txn, capture_replay_inputs, record_ppr_cache_outcome,
+    retrieval_trace_fused_scores,
 };
 use super::super::types::{
     ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode, TurnFold,
@@ -175,6 +176,7 @@ impl PipelineBuilder<'_> {
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let mut phonetic_channel_index = None;
+            let mut ppr_channel_index = None;
             let blend_weights = match self.blend_weights_override {
                 Some(weights) => weights,
                 None => retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?,
@@ -218,6 +220,9 @@ impl PipelineBuilder<'_> {
                 None
             };
             filter_config.stale_worlds = stale_worlds.as_ref();
+            let replay_identity = (capture_retrieval_trace || capture_replay_enabled)
+                .then(|| capture_replay_identity_in_txn(self, rtxn))
+                .transpose()?;
             // A scoped scan scores every posting through its scope, D19's gate
             // included. Unscoped text probes for a posting the gate rejects
             // and scans that way too when it finds one; candidate-filtered
@@ -428,14 +433,14 @@ impl PipelineBuilder<'_> {
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
                 let ppr_results = ppr.scores;
                 let deferred_cache_write = ppr.deferred_cache_write;
-                acc.admit_channel(
+                ppr_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Ppr,
                     ppr_results,
                     &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
-                )?;
+                )?);
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
@@ -516,6 +521,9 @@ impl PipelineBuilder<'_> {
                             blend_weights,
                             authority_filter,
                             world_authority.as_ref(),
+                            replay_identity
+                                .as_ref()
+                                .expect("identity is captured with replay"),
                             hyde_expansion,
                             overrides.extra_text_queries,
                             overrides.widen_channel_limits,
@@ -547,6 +555,7 @@ impl PipelineBuilder<'_> {
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
                     &acc.trace_ranked_lists,
+                    phonetic_channel_index.as_slice(),
                     trace_candidate_limit,
                 ));
             }
@@ -570,6 +579,7 @@ impl PipelineBuilder<'_> {
                     vector: vector_channel_index,
                     text: text_channel_index,
                     phonetic: phonetic_channel_index,
+                    ppr: ppr_channel_index,
                 },
                 &self.read,
                 rtxn,
@@ -630,6 +640,7 @@ impl PipelineBuilder<'_> {
                             vector: vector_channel_index,
                             text: text_channel_index,
                             phonetic: phonetic_channel_index,
+                            ppr: ppr_channel_index,
                         },
                         temporal_now,
                         codebase_scope_active,
@@ -843,30 +854,40 @@ impl PipelineBuilder<'_> {
             let pending_vectors =
                 pending_vectors_for_scores(&self.vault.store, &self.read, rtxn, &scores)?;
             let retrieval_trace = if capture_retrieval_trace {
-                Some(self.assemble_retrieval_trace(TraceInputs {
-                    derivation_owner: crate::federation::derivation::owner_in_txn(
-                        &self.vault.store,
+                Some(
+                    self.assemble_retrieval_trace(TraceInputs {
                         rtxn,
-                    )?,
-                    scores: &scores,
-                    trace_channels: acc.trace_channels,
-                    trace_ranked_lists: &acc.trace_ranked_lists,
-                    signal_components: &acc.signal_components,
-                    fused_trace_scores,
-                    blended_trace_scores,
-                    reranked_trace_scores: reranked_trace_scores.as_deref(),
-                    rerank_merged_components: rerank_merged_components.as_ref(),
-                    blend_components: &blend_components,
-                    blend_access_factors: &blend_access_factors,
-                    community_trace_identity,
-                    world_authority: world_authority.as_ref(),
-                    bm25_config,
-                    blend_weights,
-                    explicit_time_dependent_now,
-                    occurred_range,
-                    rerank_query,
-                    trace_candidate_limit,
-                }))
+                        replay_identity: replay_identity
+                            .as_ref()
+                            .expect("identity is captured with trace"),
+                        hyde_expansion,
+                        extra_text_queries: overrides.extra_text_queries,
+                        widen_channel_limits: overrides.widen_channel_limits,
+                        skip_ret01_abstain: overrides.skip_ret01_abstain,
+                        derivation_owner: crate::federation::derivation::owner_in_txn(
+                            &self.vault.store,
+                            rtxn,
+                        )?,
+                        scores: &scores,
+                        trace_channels: acc.trace_channels,
+                        trace_ranked_lists: &acc.trace_ranked_lists,
+                        signal_components: &acc.signal_components,
+                        fused_trace_scores,
+                        blended_trace_scores,
+                        reranked_trace_scores: reranked_trace_scores.as_deref(),
+                        rerank_merged_components: rerank_merged_components.as_ref(),
+                        blend_components: &blend_components,
+                        blend_access_factors: &blend_access_factors,
+                        community_trace_identity,
+                        world_authority: world_authority.as_ref(),
+                        bm25_config,
+                        blend_weights,
+                        explicit_time_dependent_now,
+                        occurred_range,
+                        rerank_query,
+                        trace_candidate_limit,
+                    })?,
+                )
             } else {
                 None
             };
@@ -877,6 +898,9 @@ impl PipelineBuilder<'_> {
                     blend_weights,
                     authority_filter,
                     world_authority.as_ref(),
+                    replay_identity
+                        .as_ref()
+                        .expect("identity is captured with replay"),
                     hyde_expansion,
                     overrides.extra_text_queries,
                     overrides.widen_channel_limits,

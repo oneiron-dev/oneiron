@@ -46,6 +46,9 @@ pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill}
 pub(crate) mod health_review;
 mod judge;
 pub(crate) use self::judge::JudgeTrace;
+mod decision_receipts;
+pub use self::decision_receipts::attribution_decision_receipts;
+pub(crate) use self::decision_receipts::erase_decision_receipts_entity_in_txn;
 mod judge_supersession;
 #[cfg(test)]
 pub(crate) use judge_supersession::set_pre_writer_hook;
@@ -90,6 +93,8 @@ pub(crate) use self::projector::{
     attribution_judgments_in_txn, draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn,
     withdraw_edit_proposal_in_txn,
 };
+mod row_ids;
+pub(crate) use self::row_ids::{attribution_judgment_row_ids, edit_proposal_row_ids};
 mod skill_erase;
 pub(crate) use self::skill_erase::{
     erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
@@ -97,7 +102,8 @@ pub(crate) use self::skill_erase::{
 };
 mod split;
 pub(crate) use self::split::{
-    classify_split_traced, settled_split, split_from_verdicts, unclear_floor, unclear_floor_sourced,
+    classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,
+    unclear_floor_sourced,
 };
 mod types;
 mod unclear;
@@ -151,13 +157,16 @@ mod derivation_witness;
 pub(crate) use derivation_witness::{
     erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
 };
+mod site_exposure;
+pub(crate) use site_exposure::erase_site_exposure_in_txn;
+pub use site_exposure::{SiteSkillExposure, record_site_exposures, site_exposed};
 mod run_writes;
-pub use run_writes::{RunWriteToken, with_run_write_token};
 pub(crate) use run_writes::{
-    current_run_write_token, enter_run_write_token, enter_run_writes,
+    RunDerivations, current_run_write_token, enter_run_write_token, enter_run_writes,
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
     run_derivations,
 };
+pub use run_writes::{RunWriteToken, with_run_write_token};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,

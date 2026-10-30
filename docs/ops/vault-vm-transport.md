@@ -116,8 +116,20 @@ credential.
   same page and answer, with their SDK and MCP doors (FIX 11739). The
   carrier does it at its next turn. For a guest copy, `remove` deletes the file while it still
   has that digest. For a host copy, the guest's next scan sends an ordinary
-  remove that names the digest. This change does not bump the outbox wire
-  revision: both carrier ends ship in one release.
+  remove that names the digest. `keep` moves the copy, while it still has
+  that digest, to a hidden sibling of the member, `.<leaf>.diverged-<digest>`
+  (the leaf cut to fit one name), and never over a file already there. The
+  carrier skips hidden names, as it skips its own temporaries, so the copy
+  stays whole under its own name and the origin's next version lands at the
+  member's name (FIX 11736). The guest tells the host of every answer but a
+  `remove` of a host copy with a `divergence_cleared` frame at its next turn
+  (kind, member, digest, the end that holds the copy), kept on the guest's
+  member record until a turn sends it (FIX 11737). For a guest copy, the
+  host drops its refusal of its own version, so its next scan sends that
+  version again. For a host copy the owner kept, the host moves its copy
+  aside, so the guest's next version lands. The host acts only on a copy
+  its own record keeps with that digest. This frame is outbox wire revision
+  3, and each end refuses revision 2 at the hello.
 
 ## The channel
 

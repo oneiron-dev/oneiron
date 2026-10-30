@@ -325,7 +325,9 @@ impl OfferLadder {
             return Ok(None);
         };
         let warm = || self.rests.warmth.warm(&key);
-        let takes_now = self.kept_on_device(0, &request).is_none()
+        let routes = self.rests.world_routes(&request);
+        let takes_now = self.route_admitted(&routes, 0)
+            && self.kept_on_device(0, &request).is_none()
             && self
                 .rests
                 .resting(&rung.offer.binding, &rung.wire_model)
@@ -347,9 +349,11 @@ impl OfferLadder {
         let Ok((bound, permit)) = self.admit(&rung_run, rung, &request, None, false) else {
             return Ok(None);
         };
-        // Admission can wait on the run's receipts: the prefix and the world
-        // are judged again right before the rung is sent.
-        if !warm() || self.kept_on_device(0, &request).is_some() {
+        // Admission can wait on the run's receipts: the prefix, the
+        // world's order and the world are judged again right before the rung
+        // is sent.
+        if !warm() || !self.route_admitted(&routes, 0) || self.kept_on_device(0, &request).is_some()
+        {
             settle_failed(permit);
             return Ok(None);
         }

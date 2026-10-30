@@ -39,7 +39,7 @@ use oneiron::{
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::speech::{TurnSources, add_rows, notice_rows};
+use super::speech::{TurnSources, notice_rows};
 use super::{HostError, VoiceBrainOut};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::RoomAudience;
@@ -112,14 +112,15 @@ pub struct ChatBrain {
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
     foreign: Vec<(oneiron::task_verb::sdk::ConnectorToolResult, Vec<EntityId>)>,
-    /// Every row this call's turns were made from so far: a safeguard
-    /// notice is not told which turn's sentence it judged.
-    said_ever: Option<Vec<EntityId>>,
+    /// The rows each of this call's turns was made from, by generation: a
+    /// safeguard notice is made from the turn whose sentence it judged.
+    said_by: BTreeMap<GenerationEpoch, Vec<EntityId>>,
 }
 
-/// One history message, beside the rows it was made from (FIX 4778);
-/// `None` when they are unknown.
-type HistoryEntry = (LlmMessage, Option<Vec<EntityId>>);
+/// One history message, beside the rows it was made from (FIX 4778): the
+/// person's words none, an answer its own turn's, a notice the turn's it
+/// judged and the policy row it names, so each is known (FIX 6080, 5484).
+type HistoryEntry = (LlmMessage, Vec<EntityId>);
 
 /// The turn answering now.
 struct Running {
@@ -133,7 +134,7 @@ struct Running {
     /// The rows it was made from until an event carries them.
     sources: Arc<Mutex<Option<TurnSources>>>,
     /// The rows what it says is made from, for its history entry.
-    said_from: Option<Vec<EntityId>>,
+    said_from: Vec<EntityId>,
 }
 
 /// The turn's retrieved memories, as the brain hears them.
@@ -158,7 +159,7 @@ type OpenedTurn = (
     LlmStream<'static>,
     bool,
     Option<TurnMemories>,
-    Option<Vec<EntityId>>,
+    Vec<EntityId>,
 );
 
 impl ChatBrain {
@@ -178,7 +179,7 @@ impl ChatBrain {
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
-            said_ever: Some(Vec::new()),
+            said_by: BTreeMap::new(),
         })
     }
 
@@ -235,7 +236,7 @@ impl ChatBrain {
             .iter()
             .map(|text| text_message(LlmMessageRole::System, text.clone()))
             .collect();
-        let mut said_from = Some(vec![*agent]);
+        let mut said_from = vec![*agent];
         {
             let history = self
                 .history
@@ -244,20 +245,20 @@ impl ChatBrain {
             let skip = history.len().saturating_sub(settings.history_turns);
             for (message, rows) in history.iter().skip(skip) {
                 messages.push(message.clone());
-                add_rows(&mut said_from, rows.as_deref());
+                said_from.extend_from_slice(rows);
             }
         }
         // The turn's context: its memories' board, then each tool context.
         let mut context = Vec::new();
         if let Some(memories) = &memories {
             context.push(memories.board.clone());
-            add_rows(&mut said_from, Some(&memories.ids));
+            said_from.extend_from_slice(&memories.ids);
         }
         for (foreign, rows) in &self.foreign {
             // The connector's own source and foreign marker stay with every
             // field. They are task data, never a System instruction.
             context.push(serde_json::to_string(foreign).map_err(refused)?);
-            add_rows(&mut said_from, Some(rows));
+            said_from.extend_from_slice(rows);
         }
         messages.push(text_message(
             LlmMessageRole::User,
@@ -293,8 +294,8 @@ impl ChatBrain {
         )?;
         let run = ai.model_runtime().funded_run(line, meter, funding.clone());
         // Its permits and metered settlement carry the rows the input was
-        // read from (FIX 6935); unknown stays unknown.
-        let read = oneiron::skill_optimize::union_source_rows([said_from.as_deref()]);
+        // read from (FIX 6935).
+        let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
         let stream = admitted
             .ladder
@@ -524,9 +525,9 @@ impl Brain for ChatBrain {
             .map_err(|_| refused("history poisoned"))?
             .push((
                 text_message(LlmMessageRole::User, request.transcript.clone()),
-                Some(Vec::new()),
+                Vec::new(),
             ));
-        add_rows(&mut self.said_ever, said_from.as_deref());
+        self.said_by.insert(generation, said_from.clone());
         let sources = Arc::new(Mutex::new(Some(TurnSources {
             said: said_from.clone(),
             found: request
@@ -582,11 +583,15 @@ impl Brain for ChatBrain {
 
     /// The notice enters the call's history as System context, so the next
     /// turn hears it; a turn already answering is not interrupted.
-    /// It is heard as made from every turn so far, whose sentence it may
-    /// have judged, and the policy row it names.
-    fn notice(&mut self, notice: &GateSystemNoticeRecord) -> oneiron::Result<()> {
-        let mut rows = self.said_ever.clone();
-        add_rows(&mut rows, Some(&notice_rows(notice)));
+    /// It is heard as made from the rows of `generation`, the turn whose
+    /// sentence it judged, and the policy row it names (FIX 5484).
+    fn notice(
+        &mut self,
+        generation: GenerationEpoch,
+        notice: &GateSystemNoticeRecord,
+    ) -> oneiron::Result<()> {
+        let mut rows = self.said_by.get(&generation).cloned().unwrap_or_default();
+        rows.extend(notice_rows(notice));
         self.history
             .lock()
             .map_err(|_| refused("history poisoned"))?
@@ -623,7 +628,7 @@ struct Turn {
     /// same way (FIX 4778).
     sources: Arc<Mutex<Option<TurnSources>>>,
     /// The rows what it says is made from, for its history entry.
-    said_from: Option<Vec<EntityId>>,
+    said_from: Vec<EntityId>,
     out: mpsc::Sender<VoiceBrainOut>,
     history: Arc<Mutex<Vec<HistoryEntry>>>,
     /// What the turn has handed the speech host, shared with its cancel.

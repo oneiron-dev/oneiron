@@ -206,6 +206,8 @@ impl BatchBuilder<'_> {
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
         let rows = super::super::vad_postcommit::ops_written_rows(&ops);
+        #[cfg(feature = "sync")]
+        let removed_edges = super::super::vad_postcommit::ops_removed_edges(&ops);
         let stale_sweep = crate::federation::StaleSweepWatch::begin(vault);
         let committed = vault.store.group_write(Some(announced), |wtxn| {
             if let Err(err) = target_guard(wtxn) {
@@ -295,6 +297,17 @@ impl BatchBuilder<'_> {
             };
             match applied {
                 Ok((changes_claims, tasks, approved_vad_ids, pad_windows)) => {
+                    // FIX 7957, 9599: the rows this batch changed and the
+                    // edges it removed leave their windows durable markers.
+                    #[cfg(feature = "sync")]
+                    if let Err(err) = vault.mark_pending_mirrors_in_txn(wtxn, &rows) {
+                        return Rows::Discard(Err(Refused::from(err)));
+                    }
+                    #[cfg(feature = "sync")]
+                    if let Err(err) = vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)
+                    {
+                        return Rows::Discard(Err(Refused::from(err)));
+                    }
                     Rows::Commit(Committed {
                         changes_claims,
                         tasks,
@@ -377,7 +390,10 @@ fn apply_admitted(
     // relocation. The content-hash index row is maintained by
     // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
     // content bytes rather than to any departing holder.
-    let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops);
+    // A write to a watched unit queues the proactivity wake too, as the
+    // caller-transaction terminal does (FIX 11705).
+    let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops)
+        || super::super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &batch.ops)?;
     let tasks = super::super::vad_postcommit::ops_put_tasks(&batch.ops);
     // A WORLD delete stages its pads' tombstones under this scope (FIX 3334).
     // Only their windows are taken from it: this terminal reads the rest of

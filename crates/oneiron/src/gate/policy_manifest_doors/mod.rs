@@ -249,6 +249,25 @@ pub fn put_policy_manifest_as_owner(
 /// 8177): one target for every manifest, at vault scope.
 pub const GATE_POLICY_PUT_GRANT_TARGET: &str = "gate-policy:manifest-put";
 
+/// Whether `holder`'s person holds the vault-scope policy power over a gate
+/// policy manifest put now (FIX 8516): the read-only preflight of
+/// [`put_policy_manifest_as_holder`]'s own write-transaction check. The
+/// admission consults it so a powerless person's pre-hooks never fire; the
+/// writer still checks, so a revocation landing between the two is still
+/// refused at commit, and a grant landing there is admitted on retry.
+/// Read-only: it opens no writer.
+pub fn holder_has_policy_power(vault: &Vault, holder: &AuthenticatedOwner) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let actor = holder.revalidate_person_in_txn(vault, &txn)?;
+    crate::policy_model::holds_vault_policy_power_in_txn(
+        vault,
+        &txn,
+        actor,
+        GATE_POLICY_PUT_GRANT_TARGET,
+        crate::unix_seconds_now(),
+    )
+}
+
 /// [`put_policy_manifest_as_owner`] for a policy-power holder (FIX 8177): a
 /// live Owner, or an Admin or Delegate whose Owner-minted grant names
 /// [`GATE_POLICY_PUT_GRANT_TARGET`], found again in this write transaction
@@ -310,7 +329,7 @@ pub fn propose_policy_manifest(
     let vault = memory.vault();
     let data = encode_manifest(&input.manifest, None)?;
     memory.with_verified_actor_write_txn(|txn| {
-        let actor = crate::WriteActor::new(memory.actor(), memory.actor_class());
+        let actor = memory.write_actor();
         let policy = resolve_policy_manifest(&vault.store, txn)?;
         let decision = policy.evaluate_gate(&GateEvaluatorInput {
             actor: GateActor {

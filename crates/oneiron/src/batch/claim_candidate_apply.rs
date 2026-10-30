@@ -62,7 +62,7 @@ pub(super) fn apply_claim_candidate(
         return Err(Error::EntityNotFound);
     }
 
-    if let Some(relationship) = candidate.relationship() {
+    for &relationship in candidate.relationship().into_iter().flatten() {
         let found = crate::vault::live_entity_row_in_txn(store, wtxn, &relationship)?.live_type();
         if found != Some(crate::registry::ENTITY_TYPE_RELATIONSHIP) {
             return Err(crate::error::RegistryError::InvalidRelationship {

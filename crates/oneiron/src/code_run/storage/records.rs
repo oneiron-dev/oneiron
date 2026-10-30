@@ -353,7 +353,9 @@ impl Vault {
     /// true.
     ///
     /// A body the secret scan marked is `TaintedLive` for good: no custody
-    /// record holds what it found, so nothing can rotate it away.
+    /// record holds what it found, so nothing can rotate it away. So is the
+    /// bytes' own occurrence once a row they were recorded as derived from is
+    /// erased or withdrawn (FIX 10447): no rotation answers a withdrawal.
     ///
     /// The state is that of the occurrence `owner` holds (Docs Q08); with no
     /// owner, of every occurrence of the bytes.
@@ -364,7 +366,10 @@ impl Vault {
     ) -> Result<ArtifactTaintState> {
         let rtxn = self.store.env.read_txn()?;
         let (refs, secret) = self.result_marks_in_txn(&rtxn, owner, output)?;
-        if secret.is_some() || self.result_erased_in_txn(&rtxn, owner)? {
+        if secret.is_some()
+            || self.result_erased_in_txn(&rtxn, owner)?
+            || self.unowned_output_withdrawn_in_txn(&rtxn, owner, output)?
+        {
             return Ok(ArtifactTaintState::TaintedLive);
         }
         taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
@@ -398,6 +403,67 @@ impl Vault {
             Some(owner) => response_erased_in_txn(&self.store, rtxn, &owner),
             None => Ok(false),
         }
+    }
+
+    /// Whether the occurrence of `output`'s bytes alone reads as withdrawn,
+    /// for a read with no `owner` (FIX 10447): a row the bytes were recorded
+    /// as derived from ([`Self::record_unowned_output_sources_in_txn`]) is
+    /// erased or withdrawn, or the walk from one has reached it. The
+    /// occurrence names no row, so it carries no body flag of its own; the
+    /// gate a filed compaction step's response reads through judges the
+    /// rest. A result a run holds is read by its own marks.
+    fn unowned_output_withdrawn_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+    ) -> Result<bool> {
+        if owner.is_some() {
+            return Ok(false);
+        }
+        let occurrence = ResultOccurrence::of(None, output)?.id();
+        Ok(!crate::ports::body_readable_in_txn(
+            &self.store,
+            rtxn,
+            &occurrence,
+            &[],
+            crate::ports::BodyStale::Withdrawn,
+        )?)
+    }
+
+    /// Records the occurrence of `output`'s bytes alone, which no run holds,
+    /// as a dependent of each of its input rows in the dependency index, in
+    /// the publishing transaction (FIX 10447): erasing one walks to it, as to
+    /// a fold's words, and every read of the bytes alone then reads it
+    /// withdrawn ([`Self::unowned_output_withdrawn_in_txn`]). A row already
+    /// erased or withdrawn has run its walk, so the occurrence is born
+    /// withdrawn, as an epoch summary minted after the erasure is, and takes
+    /// no dependency row on it. An id no entity row holds and no deletion
+    /// names has nothing to walk from, and takes none. Unknown input rows
+    /// record nothing.
+    fn record_unowned_output_sources_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        output: &CodeRunRawOutput,
+    ) -> Result<()> {
+        let Some(rows) = &output.input_rows else {
+            return Ok(());
+        };
+        let occurrence = ResultOccurrence::of(None, output)?.id();
+        let mut born_withdrawn = false;
+        for row in rows {
+            let state =
+                crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, wtxn, row)?;
+            if state.deleted || state.stale {
+                born_withdrawn = true;
+            } else if crate::ports::EntityStoreRead::port_entity_present(&self.store, wtxn, row)? {
+                crate::ports::record_derived_edge_in_txn(&self.store, wtxn, &occurrence, row)?;
+            }
+        }
+        if born_withdrawn {
+            crate::ports::RetrievalIndex::port_retrieval_mark_stale(self, wtxn, &occurrence)?;
+        }
+        Ok(())
     }
 
     /// Marks the occurrence of `output` that `owner` holds with the taint of

@@ -17,8 +17,8 @@
 //! the old image authorized. A mismatch is `stale_image`, with no click.
 
 use super::{
-    Base, DesktopSession, PressMode, Snapshot, WALK_ON_MS_MOST, effect_class, floor_press,
-    looks_as_it_did, mask, press_for, receipt_class, walk_on_ms,
+    Base, DesktopSession, Snapshot, WALK_ON_MS_MOST, effect_class, floor_press, looks_as_it_did,
+    mask, receipt_class, walk_on_ms,
 };
 use crate::{BrowserError, Observation, PointInput};
 use serde_json::json;
@@ -73,10 +73,7 @@ impl DesktopSession {
         }
         let row = line.map(|line| line.row.clone());
         let class = row.as_ref().and_then(|row| effect_class(&row.name));
-        let press = match (class, &row) {
-            (Some(class), Some(row)) => press_for(&mut self.policy, class, row)?,
-            _ => PressMode::None,
-        };
+        let press = self.press_or_hold("click_at", &input, class, row.as_ref(), &read)?;
         let key = read.key;
         let mut observation = self.act(&read, &Base::of(input.base), |session| {
             session

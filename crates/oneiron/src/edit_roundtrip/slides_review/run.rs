@@ -60,17 +60,24 @@ pub fn review_slides(
     if !inspection.signature_parts.is_empty() {
         return Err(PptxError::SignedPackage.into());
     }
+    // A resource refusal is the engine's error (FIX 10587), never an invalid deck.
     let package = Package::open(
         base.bytes,
         base.package_limits,
         &crate::office_body::document_resources(),
     )
-    .map_err(|_| invalid("slide review package"))?;
-    let view = DeckView::read(&package).map_err(|_| invalid("slide review deck view"))?;
+    .map_err(|error| {
+        crate::office_body::document_error(error.resource(), "slide review package")
+    })?;
+    let view = DeckView::read(&package).map_err(|error| {
+        crate::office_body::document_error(error.resource(), "slide review deck view")
+    })?;
     // A located answer is kept in slide EMU when the deck gives its size.
     let slide_size = if question.contract.locates() {
         TemplateView::read(&package)
-            .map_err(|_| invalid("slide review deck size"))?
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "slide review deck size")
+            })?
             .slide_size
     } else {
         None
@@ -307,12 +314,14 @@ pub fn review_slides(
                 presence,
                 location,
                 band_mode: band_policy.mode,
+                ceiling: call.dial.ceiling,
                 renderer: unit.renderer.clone(),
                 frontier,
                 media: call.entries,
                 render_hash,
                 evidence_hash: *blake3::hash(&state_bytes).as_bytes(),
                 judged_version: base.version,
+                judged_live: None,
                 comment,
                 labels: labels.clone(),
             });

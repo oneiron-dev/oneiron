@@ -75,11 +75,19 @@ pub(crate) struct GatedDeletion<'a> {
     soft_scrub_committed: Cell<bool>,
     claim: Option<DeletionClaim<'a>>,
     guest_revoke: Option<GuestRevokeAuthority<'a>>,
+    /// The owner act the delete carries out, when its door bound one (FIX
+    /// 11883): an erase's custody revokes reach his other machines under it.
+    owner_act: Option<&'a crate::secret_custody::EraseOwnerAct<'a>>,
 }
 
 impl<'a> GatedDeletion<'a> {
     pub(super) fn actor_principal(&self) -> EntityId {
         self.context.actor
+    }
+
+    /// The owner act the delete carries out, when its door bound one.
+    pub(super) fn owner_act(&self) -> Option<&'a crate::secret_custody::EraseOwnerAct<'a>> {
+        self.owner_act
     }
 
     pub(super) fn room_authority(&self) -> Option<(EntityId, crate::conversation::RoomRole)> {
@@ -117,6 +125,7 @@ impl<'a> GatedDeletion<'a> {
             soft_scrub_committed: Cell::new(false),
             claim: None,
             guest_revoke: None,
+            owner_act: None,
         }
     }
 
@@ -134,6 +143,7 @@ impl<'a> GatedDeletion<'a> {
             soft_scrub_committed: Cell::new(false),
             claim: None,
             guest_revoke: None,
+            owner_act: None,
         }
     }
 
@@ -146,6 +156,15 @@ impl<'a> GatedDeletion<'a> {
     /// See [`GuestRevokeAuthority`].
     pub(crate) fn with_guest_revoke(mut self, authority: Option<GuestRevokeAuthority<'a>>) -> Self {
         self.guest_revoke = authority;
+        self
+    }
+
+    /// Binds the owner act the delete carries out (FIX 11883).
+    pub(crate) fn with_owner_act(
+        mut self,
+        act: Option<&'a crate::secret_custody::EraseOwnerAct<'a>>,
+    ) -> Self {
+        self.owner_act = act;
         self
     }
 

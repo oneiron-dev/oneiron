@@ -124,41 +124,47 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     slice_refs(&body.slice, &mut ids);
     // Every anchor is read, however many (rule 5, FIX 9436): the read fold
     // counts the chain's depth against its threshold row.
-    let mut proof = body.write_proof.as_ref();
-    while let Some(signed) = proof {
-        let slip = crate::authority::CapabilitySlip::from_token(&signed.slip_wire)
-            .map_err(|_| invalid())?;
-        if let Some(org) = &slip.claims.org_ref {
-            ids.push(EntityId::from_hex(org).map_err(|_| invalid())?);
-        }
-        // The holder is the actor the proof writes as; `host` names none.
-        if let Ok(holder) = EntityId::from_hex(&slip.claims.holder_ref) {
-            ids.push(holder);
-        }
-        slip_scope_refs(&slip.claims.scope, &mut ids);
-        for block in &slip.caveats {
-            if let Some(scope) = &block.caveat.scope {
-                slip_scope_refs(scope, &mut ids);
+    if let Some(signed) = &body.write_proof {
+        slip_refs(&signed.slip_wire, &mut ids)?;
+        // An earlier authority state is a carrier too: its parents, leader,
+        // board, roster and slice may not name a live off-record id either.
+        for link in signed.anchor_links().map_err(|_| invalid())?.iter().rev() {
+            authority_refs(&link.authority, &mut ids)?;
+            if let Some(proof) = &link.proof {
+                slip_refs(&proof.slip_wire, &mut ids)?;
             }
-            if let Some((grant, bound)) = &block.caveat.pact {
-                ids.push(*grant);
-                // The pact bound names worlds and facets too (ARCH-0052 D2).
-                for axis in [&bound.worlds, &bound.facets] {
-                    if let crate::federation::ScopeAxis::Some(values) = axis {
-                        ids.extend(values.iter().map(|id| id.0));
-                    }
+        }
+    }
+    Ok(ids)
+}
+
+/// The ids a proof's slip names: its org, its holder and every scope and
+/// pact its caveats carry.
+fn slip_refs(slip_wire: &str, ids: &mut Vec<EntityId>) -> Result<()> {
+    let slip = crate::authority::CapabilitySlip::from_token(slip_wire).map_err(|_| invalid())?;
+    if let Some(org) = &slip.claims.org_ref {
+        ids.push(EntityId::from_hex(org).map_err(|_| invalid())?);
+    }
+    // The holder is the actor the proof writes as; `host` names none.
+    if let Ok(holder) = EntityId::from_hex(&slip.claims.holder_ref) {
+        ids.push(holder);
+    }
+    slip_scope_refs(&slip.claims.scope, ids);
+    for block in &slip.caveats {
+        if let Some(scope) = &block.caveat.scope {
+            slip_scope_refs(scope, ids);
+        }
+        if let Some((grant, bound)) = &block.caveat.pact {
+            ids.push(*grant);
+            // The pact bound names worlds and facets too (ARCH-0052 D2).
+            for axis in [&bound.worlds, &bound.facets] {
+                if let crate::federation::ScopeAxis::Some(values) = axis {
+                    ids.extend(values.iter().map(|id| id.0));
                 }
             }
         }
-        // An earlier authority state is a carrier too: its parents, leader,
-        // board, roster and slice may not name a live off-record id either.
-        let Some(anchor) = signed.anchor.as_deref() else {
-            break;
-        };
-        authority_refs(&anchor.authority, &mut ids)?;
-        proof = anchor.proof.as_ref();
     }
-    Ok(ids)
+    Ok(())
 }
 
 fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Result<()> {
@@ -181,9 +187,10 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
 
 fn slice_refs(slice: &crate::llm::Scope, ids: &mut Vec<EntityId>) {
     ids.extend(
-        [slice.world, slice.facet, slice.relationship, slice.project]
+        [slice.world, slice.facet, slice.project]
             .into_iter()
-            .flatten(),
+            .flatten()
+            .chain(slice.relationship.iter().flatten().copied()),
     );
     for resource in slice.readable.iter().chain(&slice.writable) {
         if let crate::llm::ScopeResource::DocumentVersion { document, .. } = resource {

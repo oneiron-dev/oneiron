@@ -16,7 +16,6 @@ use crate::registry::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
-use crate::write_envelope::WriteActor;
 
 use super::{
     BlobArtifactInput, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralPutInput,
@@ -183,7 +182,7 @@ impl Memory<'_> {
                     &artifact_id,
                     bytes,
                     &provenance,
-                    WriteActor::new(self.actor, self.actor_class),
+                    self.write_actor(),
                     occurred,
                     learned_at.unwrap_or(occurred_at),
                 )

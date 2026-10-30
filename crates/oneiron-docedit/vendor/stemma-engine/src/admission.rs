@@ -16,9 +16,14 @@
 //! an operation, or without a port, a read reserves nothing and refuses
 //! nothing, as the standalone fork always has, under
 //! [`ArchiveLimits::DEFAULT`] unless the operation names its own.
+//!
+//! What the work writes reserves the same way: a written package, a streamed
+//! part and an exported copy grow in a [`HeldBuffer`], which takes each
+//! growth of its capacity from its hold before it allocates (FIX 10657).
 
 use std::cell::RefCell;
 use std::fmt;
+use std::io::{self, Cursor, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::docx::ArchiveLimits;
@@ -52,6 +57,15 @@ impl fmt::Display for Refusal {
 }
 
 impl std::error::Error for Refusal {}
+
+impl Refusal {
+    /// The refusal an I/O error carries: a [`HeldBuffer`] reports a refused
+    /// growth to its writer as one.
+    #[must_use]
+    pub fn from_io(error: &io::Error) -> Option<Self> {
+        error.get_ref()?.downcast_ref::<Self>().copied()
+    }
+}
 
 /// One operation's port to the memory it runs in and the deadline it runs
 /// within.
@@ -202,6 +216,25 @@ impl Hold {
         self.spare = self.spare.saturating_add(step).saturating_sub(bytes);
         Ok(())
     }
+
+    /// Makes room in `buffer` for `additional` more bytes, taking what its
+    /// capacity grows by first: measured, the bytes about to be allocated
+    /// (FIX 10656, 10657). The capacity at least doubles, as a `Vec`'s does,
+    /// so a growing buffer reallocates rarely.
+    ///
+    /// # Errors
+    /// The port's refusal; the buffer and the hold stay as they were.
+    pub fn grow(&mut self, buffer: &mut Vec<u8>, additional: usize) -> Result<(), Refusal> {
+        let needed = buffer.len().saturating_add(additional);
+        let capacity = buffer.capacity();
+        if needed <= capacity {
+            return Ok(());
+        }
+        let target = needed.max(capacity.saturating_mul(2)).max(MIN_BUFFER);
+        self.take(wide(target - capacity))?;
+        buffer.reserve_exact(target - buffer.len());
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Hold {
@@ -209,6 +242,85 @@ impl fmt::Debug for Hold {
         f.debug_struct("Hold")
             .field("reservations", &self.held.len())
             .field("spare", &self.spare)
+            .finish()
+    }
+}
+
+/// The least capacity a growing buffer allocates, as a `Vec<u8>`'s.
+const MIN_BUFFER: usize = 8;
+
+/// A growing byte buffer that takes each growth of its capacity from its
+/// hold before it allocates (FIX 10657): a writer's output, measured as it
+/// is written. It writes and seeks as a `Cursor<Vec<u8>>` does.
+///
+/// A refused growth fails that write with the [`Refusal`]
+/// ([`Refusal::from_io`]). The buffer asks no more after it: later writes are
+/// dropped, so a writer that finishes on its way out (a ZIP writer's drop)
+/// neither allocates nor waits again, and [`Self::into_inner`] returns the
+/// refusal.
+#[must_use = "a held buffer gives its memory back as soon as it drops"]
+pub struct HeldBuffer {
+    bytes: Cursor<Vec<u8>>,
+    hold: Hold,
+    refused: Option<Refusal>,
+}
+
+impl HeldBuffer {
+    /// An empty buffer growing under `hold`.
+    pub fn new(hold: Hold) -> Self {
+        Self {
+            bytes: Cursor::new(Vec::new()),
+            hold,
+            refused: None,
+        }
+    }
+
+    /// The bytes written; once the buffer is dropped, the machine's live
+    /// reading carries them.
+    ///
+    /// # Errors
+    /// The refusal of a growth, when one was refused.
+    pub fn into_inner(self) -> Result<Vec<u8>, Refusal> {
+        match self.refused {
+            Some(refusal) => Err(refusal),
+            None => Ok(self.bytes.into_inner()),
+        }
+    }
+}
+
+impl Write for HeldBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.refused.is_some() {
+            return Ok(buf.len());
+        }
+        let end = usize::try_from(self.bytes.position())
+            .unwrap_or(usize::MAX)
+            .saturating_add(buf.len());
+        let additional = end.saturating_sub(self.bytes.get_ref().len());
+        if let Err(refusal) = self.hold.grow(self.bytes.get_mut(), additional) {
+            self.refused = Some(refusal);
+            return Err(io::Error::other(refusal));
+        }
+        self.bytes.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Seek for HeldBuffer {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.bytes.seek(position)
+    }
+}
+
+impl fmt::Debug for HeldBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HeldBuffer")
+            .field("len", &self.bytes.get_ref().len())
+            .field("hold", &self.hold)
+            .field("refused", &self.refused)
             .finish()
     }
 }

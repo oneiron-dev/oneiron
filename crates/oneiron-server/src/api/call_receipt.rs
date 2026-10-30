@@ -166,6 +166,7 @@ pub(crate) fn connection_call(
         actor_ref: request_connection(),
         actor_class: oneiron::receipt::CONNECTION_CALL_ACTOR_CLASS.to_owned(),
         credential_ref: None,
+        carrier_machine: None,
         outcome,
         request_digest,
         result_digest,
@@ -411,6 +412,44 @@ pub(crate) fn credential_ref(auth: &CoreAuth) -> Option<String> {
     auth.jti().map(str::to_owned)
 }
 
+/// Who a call a device forwarded to its home is attributed to (FIX 3550):
+/// the caller whose own holder proof the home verified, named as
+/// [`call_actor`] and [`credential_ref`] name a slip holder, and the linked
+/// machine that carried it.
+#[derive(Debug, Clone)]
+pub(crate) struct ForwardedAttribution {
+    pub(crate) actor_ref: String,
+    pub(crate) actor_class: String,
+    pub(crate) credential_ref: String,
+    pub(crate) carrier_machine: String,
+}
+
+impl ForwardedAttribution {
+    /// The attribution of the verified forwarded `caller`.
+    pub(crate) fn of(caller: &oneiron::authority::VerifiedForwardedCaller) -> Self {
+        let claims = caller.caller().claims();
+        let slip: String = claims
+            .slip_id
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let actor_ref = match claims.holder_ref.as_str() {
+            "host" => format!("slip:{slip}"),
+            holder => oneiron::EntityId::from_hex(holder)
+                .map_or_else(|_| holder.to_owned(), |id| id.to_hex()),
+        };
+        Self {
+            actor_ref,
+            actor_class: claims
+                .actor_class
+                .clone()
+                .unwrap_or_else(|| "unbound".to_owned()),
+            credential_ref: slip,
+            carrier_machine: caller.machine().to_hex(),
+        }
+    }
+}
+
 /// The input versions a call of `verb` on `request` reads, captured before
 /// it runs (OF-568): the vault's state and each entity the request names.
 /// `None` for a call that reads the world, or when the capture failed.
@@ -438,6 +477,12 @@ pub(crate) fn action_inputs(
 /// An off-record session's own rows (`NO_RECORD_ROWS`, DOOR-127) write none
 /// on any transport, as the owner's off-record routes write none: ARCH-0052
 /// keeps no wire receipt that a session ran.
+///
+/// The reply does not wait for the row's commit (Engine ruling 10-30 23:09,
+/// `Vault::record_call_receipt_deferred_commit`): the row is staged in the
+/// vault's group commit, in order, before the reply, and a refusal there is
+/// still logged here; it commits with that group after the reply. A crash can
+/// lose the last receipts of calls already answered.
 pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInput) -> CallStamp {
     if anonymous || oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&input.verb.as_str()) {
         return CallStamp::NoRecord;
@@ -446,7 +491,7 @@ pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInp
     let verb = input.verb.clone();
     let actor_class = input.actor_class.clone();
     let outcome = input.outcome.clone();
-    match server.vault().record_call_receipt(input) {
+    match server.vault().record_call_receipt_deferred_commit(input) {
         Ok(receipt_ref) => CallStamp::Recorded(receipt_ref),
         Err(error) => {
             tracing::warn!(

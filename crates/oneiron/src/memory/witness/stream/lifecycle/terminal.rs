@@ -5,6 +5,14 @@
 use super::*;
 use crate::memory::witness::reply_assertions::admitted_reply_assertions_in_txn as admitted_in_txn;
 
+mod continuation;
+mod new_message;
+mod receipts;
+
+use self::continuation::{continuation_unlinked_prose, write_continuation_terminal};
+use self::new_message::write_new_message_terminal;
+use self::receipts::{landed_receipt, opening_receipt};
+
 fn admit_terminal(gate: TerminalGate<'_>, txn: &heed::RwTxn<'_>) -> MemoryResult<()> {
     if gate.is_some_and(|admit| !admit(txn)) {
         return Err(crate::memory::MemoryError::new(
@@ -86,59 +94,13 @@ fn terminal_write(
     let seed = &state.seed;
     // A postcommit index hook can return an error after a successful commit.
     // Recognize our immutable generation receipt before attempting another write.
-    {
-        let txn = vault.store.env.read_txn()?;
-        if let Some(done) = storage::receipt(vault, &txn, seed.message_id)?
-            && done.generation == seed.generation
-        {
-            return Ok(done);
-        }
+    if let Some(done) = landed_receipt(vault, seed)? {
+        return Ok(done);
     }
-    let mut receipt = MessageStreamReceipt {
-        message_id: seed.message_id,
-        actor: seed.actor,
-        generation: seed.generation,
-        finality,
-        finality_reason: reason,
-        finish_reason,
-        bytes: state.text().len() as u64,
-        recovered,
-        // Every accepted delta was checkpointed before it was accepted, so a
-        // recovered stream's text is all its process ever accepted.
-        ephemeral_text_lost: false,
-        receipt_ref: format!(
-            "stream:v1:{}:{}",
-            seed.message_id.to_hex(),
-            seed.generation.to_hex()
-        ),
-        reply_assertions: crate::llm::ReplyAssertions::default(),
-    };
+    let mut receipt = opening_receipt(state, (finality, reason), finish_reason, recovered);
     // The opener's own proof, restored, reads every link below (FIX 1667).
     let memory = super::super::reader::terminal_memory(vault, seed)?;
-    // OF-063 prose links (Engine ruling 10-17): a continuation's appended
-    // text is read for the links its AI writer cannot resolve, receipt-only,
-    // before the writer opens, and receipted only once the finalize has
-    // landed (Engine ruling 10-18); a new message's final witness reads its
-    // own through the witness program. A recovered stream is read the same
-    // way. This close is the stream's one link receipt: its checkpoints and
-    // presence frames leave none (Engine ruling 10-18).
-    let mut unlinked_prose = Vec::new();
-    if seed.continuation
-        && seed.author == crate::memory::WitnessAuthor::Companion
-        && !state.pending.is_empty()
-        && let Ok(txn) = vault.store.env.read_txn()
-        && let Ok(Some(base)) = admission::committed_text(vault, &txn, seed)
-    {
-        drop(txn);
-        let text = format!("{base}{}", state.pending);
-        unlinked_prose = crate::gate::record_references::prose_text_unlinked(
-            &memory,
-            crate::gate::record_references::WITNESS_PROSE_ROW,
-            "/messages/0/content",
-            &text,
-            base.len(),
-        );
-    }
+    let unlinked_prose = continuation_unlinked_prose(vault, state, &memory);
     // A host's gate is host code inside the transaction, so a gated write
     // takes the hosts' door: a group of its own.
     let callback = if gate.is_some() {
@@ -156,47 +118,20 @@ fn terminal_write(
         None
     };
     let unread = std::cell::Cell::new(None);
+    // The created records the judged set does not prove, receipted once
+    // the terminal lands (FIX 11034).
+    let unproven = std::cell::Cell::new(Vec::new());
     let written: MessageStreamResult<()> = if seed.continuation {
-        vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
-            admit_terminal(gate, txn)?;
-            reply_assertions::judge_in_txn(lane.as_ref(), txn, assertions, &unread)?;
-            // Judged: this generation keeps its seed's and its terminal's
-            // set on its own receipt; the birth envelope stays (FIX 10258).
-            receipt.reply_assertions =
-                admitted_in_txn(&vault.store, txn, &[&seed.assertions, assertions])?;
-            let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
-            let text = format!("{base}{}", state.pending);
-            admission::authorize(vault, txn, seed, &text, !state.pending.is_empty())?;
-            let was_final =
-                storage::receipt(vault, txn, seed.message_id)?.is_none_or(|prior| prior.complete());
-            // A nonempty continuation edits the MESSAGE, and its first births
-            // the document; an empty one edits nothing and births none (FIX
-            // 4840).
-            if !state.pending.is_empty() {
-                crate::entity_doc::append_message_stream_in_txn(
-                    vault,
-                    txn,
-                    &seed.message_id,
-                    &state.pending,
-                    crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
-                    seed.occurred_at,
-                )?;
-            }
-            receipt.bytes = text.len() as u64;
-            storage::finish(vault, txn, seed, &receipt)?;
-            // Readers see only complete words: a finalize that adds some, or
-            // makes an incomplete MESSAGE complete again, re-dirties its TURN.
-            // One that ends a complete MESSAGE incomplete takes its words out
-            // of the transcript: no new words for a branch, but the sieve and
-            // the projector read what the turn says now.
-            let now_final = receipt.complete();
-            if now_final && (!state.pending.is_empty() || !was_final) {
-                storage::redirty_turn(vault, txn, seed)?;
-            } else if was_final && !now_final {
-                crate::dreamer_wake::words_changed_in_txn(&vault.store, txn, &seed.turn)?;
-            }
-            Ok(())
-        })
+        write_continuation_terminal(
+            vault,
+            state,
+            assertions,
+            gate,
+            callback,
+            (lane.as_ref(), &memory),
+            (&unread, &unproven),
+            &mut receipt,
+        )
     } else {
         // A recovered stream's `pending` is its seed's checkpoint.
         let text = state.text();
@@ -204,101 +139,26 @@ fn terminal_write(
         // The reply's assertions ride the turn its terminal witnesses, and
         // its metadata keeps them; the seed stays as it was (FIX 3416).
         let turn = reply_assertions::terminal_turn(seed, text, assertions)?;
-        // A Retry's reads take their own snapshots, so they open before the
-        // writer does.
-        match seed
-            .action
-            .as_ref()
-            .map(|action| memory.retry_lanes(action))
-            .transpose()
-        {
-            Err(error) => {
-                refused.set(true);
-                Err(error.into())
-            }
-            Ok(lanes) => memory
-                .witness_with_route_prepare_and_txn_effect(
-                    &turn,
-                    None,
-                    callback,
-                    || {},
-                    |txn| {
-                        admit_terminal(gate, txn)?;
-                        // A Retry's reply names the reply it answers again,
-                        // and the Retry is proven again, in the transaction
-                        // that writes it: its TURN lands here, or its room
-                        // regeneration permit admits its room row.
-                        let retry = match admission::validate_regeneration(vault, txn, seed) {
-                            Err(error) => {
-                                Err(crate::memory::MemoryError::bad_request(error.to_string()))
-                            }
-                            Ok(()) => match (&seed.action, &lanes) {
-                                (Some(action), Some((writer, requester))) => memory
-                                    .prepare_action_retry_in_txn(
-                                        txn,
-                                        action,
-                                        seed.turn,
-                                        seed.occurred_at,
-                                        writer,
-                                        requester,
-                                    ),
-                                _ => Ok(None),
-                            },
-                        };
-                        if retry.is_err() && seed.action.is_some() {
-                            refused.set(true);
-                        }
-                        retry
-                    },
-                    |txn| -> MemoryResult<()> {
-                        // The new MESSAGE keeps its words inline: its document
-                        // is born at its first later edit (FIX 4840).
-                        if let Some(source) = seed.regenerates {
-                            // The kind's creation is this stream's alone (FIX
-                            // 5972), its pair proven above in this transaction:
-                            // the internal write lands it at the public put's
-                            // weight, neutral VAD, no flags and clock.
-                            let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-                            vault
-                                .batch_in()
-                                .edge_with_value_fields(
-                                    &seed.message_id,
-                                    crate::edge::EdgeKind::Regenerates,
-                                    &source,
-                                    crate::batch::EdgeValueFields {
-                                        weight: 1.0,
-                                        created_at,
-                                        vad: crate::affect::Vad::NEUTRAL,
-                                        provenance: None,
-                                    },
-                                )
-                                .apply(txn)?;
-                        }
-                        // The turn's set, seed and terminal, was admitted in
-                        // this write: its receipt keeps it (FIX 10260).
-                        receipt.reply_assertions =
-                            admitted_in_txn(&vault.store, txn, &[&turn.assertions])?;
-                        storage::finish(vault, txn, seed, &receipt)?;
-                        Ok(())
-                    },
-                )
-                .map(|_| ())
-                .map_err(MessageStreamError::from),
-        }
+        write_new_message_terminal(
+            vault,
+            seed,
+            &memory,
+            &turn,
+            gate,
+            callback,
+            refused,
+            &mut receipt,
+        )
     };
     let written = reply_assertions::settle(&memory, &unread, written);
     if let Err(error) = written {
-        let landed = {
-            let txn = vault.store.env.read_txn()?;
-            storage::receipt(vault, &txn, seed.message_id)?
-                .filter(|done| done.generation == seed.generation)
-        };
-        if let Some(done) = landed {
+        if let Some(done) = landed_receipt(vault, seed)? {
             crate::gate::record_references::receipt_landed_prose(&memory, &unlinked_prose);
             return Ok(done);
         }
         return Err(error);
     }
     crate::gate::record_references::receipt_landed_prose(&memory, &unlinked_prose);
+    reply_assertions::receipt_unproven(&memory, &unproven);
     Ok(receipt)
 }

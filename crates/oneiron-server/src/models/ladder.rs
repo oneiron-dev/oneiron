@@ -28,11 +28,12 @@ mod stream_health;
 mod worker_lease;
 
 use futures_util::StreamExt;
+use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, OfferBinding, Payer, RunAdmission, RunCall, RunDenied, RunPermit,
-    WorkPhysical,
+    WorkPhysical, offer_id, offer_place,
 };
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
@@ -80,6 +81,20 @@ pub(super) struct LadderRung {
 }
 
 impl LadderRung {
+    /// The full `model@place` route id of this rung (FIX 11768 seam for
+    /// L05): its model and the place [`offer_place`] names for its
+    /// binding's locality and its route's origin, minted through
+    /// [`offer_id`] — the one producer, the same resolution the ladder's
+    /// doors judge.
+    #[must_use]
+    pub(super) fn offer_id(&self) -> String {
+        let place = offer_place(
+            self.offer.binding.locality,
+            self.offer.binding.route.origin(),
+        );
+        offer_id(&self.model, &place)
+    }
+
     /// The call as this rung sends it: its model at its route, its
     /// instruction first.
     fn bind(&self, mut request: LlmRequest) -> LlmRequest {
@@ -298,12 +313,76 @@ impl OfferLadder {
         self
     }
 
+    /// This ladder with its rungs in the order `routes` names them (FIX
+    /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
+    /// [`LadderRung::offer_id`], the same route id the ladder's doors
+    /// judge. Name, pick, rests, scope and prefix pass through untouched;
+    /// an order that names no rung yields a ladder with no rungs, which
+    /// reaches the existing no-rung error downstream. Under inherit the
+    /// rungs keep their own order, so a vault with no per-world routes
+    /// behaves as before; routes that name no rung add nothing, and
+    /// duplicates repeat, exactly as `order` reads them.
+    #[must_use]
+    pub(crate) fn for_world_routes(&self, routes: &WorldModelRoutes) -> Self {
+        let keys: Vec<(String, usize)> = self
+            .rungs
+            .iter()
+            .enumerate()
+            .map(|(index, rung)| (rung.offer_id(), index))
+            .collect();
+        let ordered = routes.order(&keys, |key| key.0.as_str());
+        let rungs = ordered
+            .iter()
+            .map(|key| self.rungs[key.1].clone())
+            .collect();
+        Self {
+            name: self.name.clone(),
+            rungs,
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: self.scope,
+            prefix: self.prefix.clone(),
+        }
+    }
+
     /// Each rung's engine model id and the prompt it prepends, in ladder
     /// order.
     pub(super) fn rung_models(&self) -> impl Iterator<Item = (&ModelId, Option<&str>)> {
         self.rungs
             .iter()
             .map(|rung| (&rung.model, rung.prompt.as_deref()))
+    }
+
+    /// The rung models and prompts of each live fallback the owner named for
+    /// this seat's offers, limited to targets that are not resting and keep
+    /// the seat's wire and on-device rule (FIX 10916).
+    pub(super) fn fallback_rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        let mut models = Vec::new();
+        for rung in &self.rungs {
+            let Some(target) = self
+                .rests
+                .fallback_for(&rung.offer.binding, &rung.wire_model)
+            else {
+                continue;
+            };
+            if target.rests_now() || target.scope.wire != self.scope.wire {
+                continue;
+            }
+            if self.scope.stays_on_device
+                && target
+                    .rungs
+                    .iter()
+                    .any(|rung| leaves_device(&rung.offer.binding))
+            {
+                continue;
+            }
+            models.extend(
+                target
+                    .rung_models()
+                    .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned))),
+            );
+        }
+        models
     }
 
     /// The offers of the rungs that could serve `request` (FIX 3194): each
@@ -415,6 +494,10 @@ impl OfferLadder {
         include_prompt: bool,
     ) -> LlmResult<(LlmRequest, ServedOffer)> {
         self.admits(&request)?;
+        let routes = self.rests.world_routes(&request);
+        if !self.route_admitted(&routes, 0) {
+            return Err(RetryableLlmError::WorldRouteNotAdmitted.into());
+        }
         if let Some(reason) = self.kept_on_device(0, &request) {
             return Err(RetryableLlmError::KeptOnDevice {
                 retry_after: None,
@@ -534,6 +617,21 @@ impl OfferLadder {
         passed_over
     }
 
+    /// Whether the rung at `index` may take a call under `routes` (FIX
+    /// 11768): the world's order names its full `model@place` route id, the
+    /// one [`offer_id`] mints for its model and the place [`offer_place`]
+    /// names for its binding's locality and its route's origin. Position 0
+    /// and a picked rung are gated like any other: the order names routes,
+    /// never positions.
+    fn route_admitted(&self, routes: &WorldModelRoutes, index: usize) -> bool {
+        let rung = &self.rungs[index];
+        let place = offer_place(
+            rung.offer.binding.locality,
+            rung.offer.binding.route.origin(),
+        );
+        routes.admits(&offer_id(&rung.model, &place))
+    }
+
     /// Why a fallback to the rung at `index` would take `request` off the
     /// device while its world stays on it, judged for where that rung's
     /// offer sends it (FIX 4938); `None` when it would not. A seat's
@@ -549,14 +647,19 @@ impl OfferLadder {
     }
 
     /// Whether the call passes the rung at `index` without sending it: it
-    /// does not hold the call's voice (FIX 1746), a fallback to it would
-    /// take the work off the device and the call's world stays on it, its
-    /// offer rests from an earlier refusal, or its offer is on probation
-    /// with its one probation request out. The voice and the device come
-    /// first, so a rung the call may not use is never one it waits for.
+    /// does not hold the call's voice (FIX 1746), its world's order does not
+    /// name its route (FIX 11768), a fallback to it would take the work off
+    /// the device and the call's world stays on it, its offer rests from an
+    /// earlier refusal, or its offer is on probation with its one probation
+    /// request out. The voice, the order and the device come first, so a rung
+    /// the call may not use is never one it waits for.
     fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
         if self.voice_not_held(call, index) {
             walk.note(index, Passed::VoiceNotHeld);
+            return true;
+        }
+        if !self.route_admitted(call.routes, index) {
+            self.refuse_route(call, index, walk);
             return true;
         }
         if let Some(reason) = self.kept_on_device(index, call.request) {
@@ -744,7 +847,8 @@ impl OfferLadder {
     /// for the first parked offer that has one (`use_fallback`). It applies
     /// while that model's offer is in rotation, while it can take this call
     /// from this seat ([`Self::can_serve`]), and while the call's world may
-    /// go where it runs.
+    /// go where it runs. Routes gate when the fallback call walks its own
+    /// rungs under its own routes (FIX 11768): no pre-check here.
     fn fallback(&self, call: Call<'_>, walk: &Walk) -> Option<Arc<OfferLadder>> {
         walk.parked(self.rungs.len())?
             .into_iter()
@@ -814,6 +918,29 @@ impl OfferLadder {
             rung = rung.position,
             reason = "world_stays_on_device",
             "a fallback would take the work off the device; passed over"
+        );
+    }
+
+    /// Refuses the rung at `index` for the world's own order (FIX 11768):
+    /// the order does not name the rung's route. A refused call is never
+    /// silent: the first time this call is refused from that rung, the run's
+    /// receipts get a `Denied` row for it.
+    fn refuse_route(&self, call: Call<'_>, index: usize, walk: &mut Walk) {
+        let first = !walk.unadmitted_from(index);
+        walk.note(index, Passed::WorldRouteNotAdmitted);
+        if !first {
+            return;
+        }
+        let rung = &self.rungs[index];
+        call.run.refuse(
+            Some(call.selector.unwrap_or(self.name.as_str())),
+            rung.model.as_str(),
+            RunDenied::WorldRouteNotAdmitted,
+        );
+        tracing::info!(
+            rung = rung.position,
+            reason = "world_route_not_admitted",
+            "the world's order names no such route; passed over"
         );
     }
 
@@ -922,9 +1049,12 @@ impl OfferLadder {
         // What is left of the call's deadline bounds the wait (FIX 8213).
         let budget_secs = call.deadline.wait_secs();
         for index in 0..self.rungs.len() {
-            if !self.voice_not_held(call, index)
-                && let Some(reason) = self.kept_on_device(index, call.request)
-            {
+            if self.voice_not_held(call, index) {
+                continue;
+            }
+            if !self.route_admitted(call.routes, index) {
+                self.refuse_route(call, index, walk);
+            } else if let Some(reason) = self.kept_on_device(index, call.request) {
                 self.hold(call, index, walk, reason);
             }
         }
@@ -952,17 +1082,25 @@ impl OfferLadder {
         })
     }
 
-    /// The call's end with no answer. A call kept from a rung that would
-    /// take its work off the device is kept on it, with the earliest time a
-    /// resting offer it may use is back, if one rests. Otherwise a last
-    /// failure that was a limit refusal, or a call that reached no rung
-    /// because each one it could use rests, refuses with that time, so a
-    /// caller can say when. Any other last failure is returned as it came,
-    /// as is an outage: every rung resting rests for its health, so the call
-    /// ends with its provider's own failure, never a rate refusal.
-    /// Every rung parked, the owner is asked about the spent ones.
+    /// The call's end with no answer. A call every met rung of which its
+    /// world's order refused ends with that refusal (FIX 11768). A call kept
+    /// from a rung that would take its work off the device is kept on it,
+    /// with the earliest time a resting offer it may use is back, if one
+    /// rests. Otherwise a last failure that was a limit refusal, or a call
+    /// that reached no rung because each one it could use rests, refuses with
+    /// that time, so a caller can say when. Any other last failure is
+    /// returned as it came, as is an outage: every rung resting rests for
+    /// its health, so the call ends with its provider's own failure, never a
+    /// rate refusal. Every rung parked, the owner is asked about the spent
+    /// ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
         self.ask_parked(&walk, call.needs, call.run.principal());
+        // The world's own order refused every rung the call met: that
+        // refusal is the end, with no rest to name, since an unadmitted rung
+        // never rests.
+        if walk.route_refused_only() {
+            return RetryableLlmError::WorldRouteNotAdmitted.into();
+        }
         if walk.outage() && !walk.kept() {
             return walk
                 .last
@@ -1186,6 +1324,7 @@ impl OfferLadder {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
         let _awake = oneiron_vault_contract::host_adapters::run_awake();
+        let routes = self.rests.world_routes(&request);
         let call = Call {
             run,
             request: &request,
@@ -1194,6 +1333,7 @@ impl OfferLadder {
                 request: &request,
                 stream: false,
             },
+            routes: &routes,
             deadline,
         };
         let mut walk = Walk::default();
@@ -1293,6 +1433,12 @@ impl OfferLadder {
             settle_failed(permit);
             return Ok(Sent::Stopped);
         }
+        // The world's order is judged again beside it (FIX 11768).
+        if !self.route_admitted(call.routes, index) {
+            settle_failed(permit);
+            self.refuse_route(call, index, walk);
+            return Ok(Sent::Held);
+        }
         // Admission can wait on the run's receipts, and the world settings
         // can change meanwhile: the world is judged again right before the
         // rung is sent.
@@ -1384,6 +1530,7 @@ impl OfferLadder {
         Box::pin(async move {
             let admission = request.admission_request();
             self.admits(&admission)?;
+            let routes = self.rests.world_routes(&admission);
             let call = Call {
                 run,
                 request: &admission,
@@ -1392,6 +1539,7 @@ impl OfferLadder {
                     Some(voices) => Needs::Voiced(voices),
                     None => Needs::Media(&request),
                 },
+                routes: &routes,
                 deadline,
             };
             let mut walk = Walk::default();
@@ -1477,6 +1625,12 @@ impl OfferLadder {
         let permit = call
             .run
             .admit_media(selector, &bound, &rung.offer.binding)?;
+        // The world's order is judged again beside it (FIX 11768).
+        if !self.route_admitted(call.routes, index) {
+            settle_failed(permit);
+            self.refuse_route(call, index, walk);
+            return Ok(None);
+        }
         if let Some(reason) = self.kept_on_device(index, call.request) {
             settle_failed(permit);
             self.hold(call, index, walk, reason);
@@ -1589,6 +1743,7 @@ impl OfferLadder {
         deadline: CallDeadline,
     ) -> LlmResult<LlmStream<'static>> {
         self.admits(&request)?;
+        let routes = self.rests.world_routes(&request);
         let call = Call {
             run,
             request: &request,
@@ -1597,6 +1752,7 @@ impl OfferLadder {
                 request: &request,
                 stream: true,
             },
+            routes: &routes,
             deadline,
         };
         let mut walk = Walk::default();
@@ -1633,6 +1789,7 @@ impl OfferLadder {
                 start,
                 first,
                 wait,
+                routes,
                 walk,
             };
             let sends = Sends {
@@ -1658,6 +1815,7 @@ impl OfferLadder {
             start,
             first,
             wait,
+            routes,
             mut walk,
         } = opening;
         let Sends {
@@ -1673,16 +1831,19 @@ impl OfferLadder {
                 request,
                 stream: true,
             },
+            routes: &routes,
             deadline,
         };
         let mut held = Some((start, first));
         let mut wait = wait;
         // A stream that opened with every usable offer resting admitted the
         // first one back. When that admission saw the world kept on the
-        // device, the rung is settled unsent and every rung is judged again,
-        // so the one wait goes to an offer the call may use now, or none.
+        // device, or its order refusing the rung, the rung is settled unsent
+        // and every rung is judged again, so the one wait goes to an offer
+        // the call may use now, or none.
         if let Some(back) = wait
-            && self.kept_on_device(back.index, request).is_some()
+            && (!self.route_admitted(call.routes, back.index)
+                || self.kept_on_device(back.index, request).is_some())
         {
             if let Some((_, (_, permit))) = held.take() {
                 settle_failed(permit);
@@ -1807,6 +1968,12 @@ impl OfferLadder {
                     }
                 }
             };
+            // The world's order is judged again beside it (FIX 11768).
+            if !self.route_admitted(call.routes, index) {
+                settle_failed(next.1);
+                self.refuse_route(call, index, walk);
+                continue;
+            }
             // The world is judged again right before the rung is sent: its
             // admission, or the wait a held first rung sat through, may have
             // outlasted the world settings it was judged by.
@@ -1925,14 +2092,15 @@ impl OfferLadder {
 }
 
 /// One call on its way down the ladder: its run, its request, what the
-/// caller named it by, what it asks of an owner's fallback, and its one
-/// deadline (FIX 7792).
+/// caller named it by, what it asks of an owner's fallback, the routes its
+/// world's order names for it (FIX 11768), and its one deadline (FIX 7792).
 #[derive(Clone, Copy)]
 struct Call<'a> {
     run: &'a RunAdmission,
     request: &'a LlmRequest,
     selector: Option<&'a str>,
     needs: Needs<'a>,
+    routes: &'a WorldModelRoutes,
     deadline: CallDeadline,
 }
 
@@ -1945,12 +2113,14 @@ struct Sends<'a> {
 }
 
 /// Where a stream opens: the first rung the call can use and its permit,
-/// the wait for it when every usable offer rested, and what the call met on
+/// the wait for it when every usable offer rested, the routes its world's
+/// order names for the whole stream (FIX 11768), and what the call met on
 /// the rungs before it.
 struct Opening {
     start: usize,
     first: (LlmRequest, RunPermit),
     wait: Option<Back>,
+    routes: WorldModelRoutes,
     walk: Walk,
 }
 
@@ -1970,8 +2140,9 @@ enum Sent {
     Answer(LlmResponse),
     /// It failed and the call goes on.
     Failed,
-    /// It was kept from the work, unsent, and the call goes on. Either the
-    /// world stays on the device, or its offer's health holds it.
+    /// It was kept from the work, unsent, and the call goes on: the world
+    /// stays on the device, its order refuses the route, or its offer's
+    /// health holds it.
     Held,
     /// `may_send` said no once it was admitted: the call stops.
     Stopped,
@@ -1999,11 +2170,13 @@ impl OfferLadder {
     ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
         let admission = request.admission_request();
         self.admits(&admission)?;
+        let routes = self.rests.world_routes(&admission);
         let call = Call {
             run,
             request: &admission,
             selector: None,
             needs: Needs::Media(&request),
+            routes: &routes,
             deadline: CallDeadline::Open,
         };
         let mut walk = Walk::default();

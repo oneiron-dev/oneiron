@@ -51,8 +51,6 @@ side_tables! {
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
     TASK_BY_OWNER_FORWARD: VaultMeta b"tasks.by_owner.v1/" Raw;
-    /// Marker that the one-time consult party fact migration has run. Key: ().
-    TASK_CONSULT_PARTY_BACKFILLED: VaultMeta b"tasks.consult_party.backfilled.v1" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
     /// The creator attempt a create's agent TASK lands under (OF-532): parent attempt, its project
@@ -205,7 +203,8 @@ side_tables! {
     /// answer landed on the unit: the question, principal and unit it decides, the declined
     /// decision it went up from, and the answer claim that landed. Key: u64be(ask sequence).
     TYPED_QUESTION_UNIT_ASK: VaultMeta b"typed_question:unit_ask:v1:" Named;
-    TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
+    TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named
+        => crate::llm::decision::questions::erase_questions_for_actor_in_txn;
     /// Reverse watch index from an outcome predicate to the questions learning from it. Key:
     /// string(predicate) "\x00" id16(question).
     TYPED_QUESTION_WATCH: VaultMeta b"typed_question:watch:v1:" Raw;

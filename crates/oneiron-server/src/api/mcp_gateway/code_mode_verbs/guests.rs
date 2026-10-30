@@ -2,8 +2,10 @@
 //! `RunGuests` (its `admits` and `call`) and `start_run_guest` are its call surface.
 //! The code_mode_verbs root defines `RunGuests`, `RunBrowser` and `RunDesktop`.
 
+mod press_grants;
+
+use self::press_grants::{VaultPressGrants, browser_send_policy};
 use super::*;
-use oneiron_browser::PressGrants;
 
 /// Starts one run's guest from a pinned image through the engine's tier
 /// selector, behind the run's egress proxy, on `command`, and receipts its
@@ -91,52 +93,6 @@ pub(super) fn drive_run_guest<S: RunGuestSession>(
     Ok(output)
 }
 
-/// The press policy the vault's standing action grants set for one run's
-/// browser: a grant naming a browser effect class covers it (no press),
-/// and a budgeted grant covers that many sends as one reviewed batch.
-/// No grant leaves the floor: a press per send.
-pub(super) fn browser_send_policy(server: &SyncServer) -> SendPolicy {
-    grants_policy(&server.vault)
-}
-
-/// The press policy `vault`'s standing action grants set now, as
-/// [`browser_send_policy`] reads it; the floor where they cannot be read.
-fn grants_policy(vault: &oneiron::Vault) -> SendPolicy {
-    let mut policy = SendPolicy::default();
-    let Ok(grants) = vault.active_standing_consent_grants() else {
-        return policy;
-    };
-    for grant in &grants {
-        let StandingConsentGrant::Action(_) = grant else {
-            continue;
-        };
-        let bound = grant.bound();
-        let BoundClass::Action(class) = bound.class() else {
-            continue;
-        };
-        let class = class.as_str();
-        if !EFFECT_CLASSES.contains(&class) || SendPolicy::person_only(class) {
-            continue;
-        }
-        let budget = match bound.envelope() {
-            BoundEnvelope::Action(envelope) => envelope.budget(),
-            BoundEnvelope::Disclosure(_) => None,
-        };
-        match budget {
-            Some(count) => {
-                policy.modes.insert(class.to_owned(), PressMode::PerBatch);
-                policy
-                    .batch
-                    .insert(class.to_owned(), u32::try_from(count).unwrap_or(u32::MAX));
-            }
-            None => {
-                policy.modes.insert(class.to_owned(), PressMode::None);
-            }
-        }
-    }
-    policy
-}
-
 /// A batch's or library run's answer with its row hooks' decisions among
 /// its own (FIX 8042): a library run's `model_free` then reads them too, so
 /// a hook that asked a model leaves it false.
@@ -186,16 +142,6 @@ fn logged_receipt(receipt: &Value) -> Value {
         action.retain(|key, _| matches!(key.as_str(), "action" | "locator"));
     }
     logged
-}
-
-/// The vault's grants, read again at each classified browser send (FIX
-/// 4613): a grant revoked during the run covers no later send.
-struct VaultPressGrants(Arc<oneiron::Vault>);
-
-impl PressGrants for VaultPressGrants {
-    fn current(&self) -> SendPolicy {
-        grants_policy(&self.0)
-    }
 }
 
 impl FreshGuest for RunFreshGuest {
@@ -330,9 +276,11 @@ impl RunBrowser {
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
-        // Each classified send reads the grants again (FIX 4613); the sends
-        // a budget paid stay on the session every door shares (FIX 4615).
-        driver.set_press_grants(Box::new(VaultPressGrants(Arc::clone(&self.vault))));
+        // Each classified send reads the grants again (FIX 4613), those
+        // whose scope covers this caller's sends (FIX 10422); the sends a
+        // budget paid stay on the session every door shares (FIX 4615).
+        let grants = VaultPressGrants::new(&self.vault, &decider.asker, self.run_id);
+        driver.set_press_grants(Box::new(grants));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (CUA E6): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));
@@ -566,12 +514,15 @@ impl RunGuests {
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
                 Err(refused) => {
-                    let refused = self.bound_refusal(call.verb, origin, memory, refused);
+                    let refused = self.bound_refusal(call.verb, origin, memory, &hooks, refused);
                     self.refused.keep(Some(&refused));
                     return Ok(Err(AgentVerbRefusal { code: refused.code }));
                 }
             };
         let held = self.take_held_press();
+        let hook_pre = held
+            .as_ref()
+            .and_then(|_| oneiron::runtime_hooks::VerbHookPreSnapshot::from_pre(&hooks));
         let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         });
@@ -579,7 +530,7 @@ impl RunGuests {
         match post {
             Ok(mut output) => {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
-                self.hold_stopped_batch(call.verb, origin, memory, held, &output);
+                self.hold_stopped_batch(call.verb, origin, memory, held, hook_pre, &output);
                 Ok(Ok(AgentVerbAnswer::new(output, answer.rows)))
             }
             Err(error) => refused(super::mcp_facade_error(error)),
