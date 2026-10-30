@@ -67,6 +67,7 @@ mod expression_import;
 mod expression_import_tests;
 mod provenance_import;
 mod result_reserve;
+mod secret_supplement;
 mod snapshot_body;
 pub(crate) use document_snapshot::{ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun};
 pub use document_types::*;

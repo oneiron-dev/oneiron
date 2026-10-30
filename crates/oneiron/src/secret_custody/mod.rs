@@ -73,6 +73,7 @@ mod control;
 mod doors;
 mod floor;
 mod found_keys;
+pub(crate) mod holder_export;
 mod known_values;
 mod masked_files;
 mod owner_door;
@@ -161,14 +162,15 @@ pub(crate) use self::pending_restore::{PendingRestoreStage, erase_pending_restor
 pub use self::reveal::{
     ACTOR_ERASE_REVEAL_ASK, HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal,
     REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RepoFileRevealScope,
-    RevealAskErase, RevealTarget, SECRET_REVEAL_REASON_ASKED, SECRET_REVEAL_REASON_OWNER,
-    SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
-    SecretRevealDecision, SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
+    RevealAskErase, RevealGrantScope, RevealTarget, SECRET_REVEAL_REASON_ASKED,
+    SECRET_REVEAL_REASON_OWNER, SecretHandleCard, SecretProvenance, SecretRevealAnswer,
+    SecretRevealAnswered, SecretRevealAsk, SecretRevealCause, SecretRevealDecision,
+    SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
 pub(crate) use self::reveal::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
-    RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, erase_reveal_actor_in_txn,
-    parse_secret_handle, reveal_value_in_txn,
+    RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
+    erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{

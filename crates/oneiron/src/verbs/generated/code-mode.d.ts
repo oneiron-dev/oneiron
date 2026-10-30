@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1260 code-mode rows (1220 host rows, 40 run rows), 4426 declarations.
+// Census: 1260 code-mode rows (1220 host rows, 40 run rows), 4429 declarations.
 // Replies: 1072 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -85,7 +85,7 @@ declare namespace Sdk {
   type DiaryEntryRequest = { content: string; kind?: string | null };
   type RecordRef = { kind: string; id: string; short_id?: string | null; label: string };
   type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null };
-  type DiaryReadsRequest = { limit?: number | null };
+  type DiaryReadsRequest = { limit?: number | null; include_used?: boolean };
   type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string };
   type DiaryReviewState = "pending" | "approved" | "declined" | "used";
   type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null };
@@ -704,9 +704,14 @@ declare namespace Sdk {
   type RetrievalPolicyDisposition = "applied" | "offered";
   type RetrievalPolicyUpdateReceipt = { disposition: RetrievalPolicyDisposition; reason?: string | null; candidate: RetrievalPolicyCandidate; view: RetrievalPolicyView };
   type ExportDelivery = "inline" | "transfer";
-  type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null };
-  type MemoryExport = { format: string; archive: string; digest: string };
-  type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string };
+  type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null; secrets_recipient?: EntityId | null };
+  type OwnerWorkRefusal = "stale_revision" | "owner_not_live" | "world_not_live" | "executor_not_reader" | "home_not_linked" | "secret_not_portable" | "secret_not_active" | "recipient_changed" | "invalid_input" | "custody_conflict" | "wider_than_floor" | "root_revision_mismatch";
+  type OwnerWorkStatus = { state: "recorded_awaiting_holder" } | { state: "enacted" } | { state: "refused"; reason: OwnerWorkRefusal } | { state: "cancelled" } | { state: "superseded" };
+  type HolderExportUnassigned = "no_owner_act" | "owner_not_live" | "no_recipient" | "recipient_not_linked" | "no_holder" | "no_carrier";
+  type HolderExportState = { kind: "recorded"; request: string; holder: EntityId; status: OwnerWorkStatus } | { kind: "unassigned"; reason: HolderExportUnassigned } | { kind: "unrecorded" };
+  type HolderExportRequest = { secret: EntityId; generation: number; state: HolderExportState };
+  type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[] };
+  type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[] };
   type ExportAnswer = MemoryExport | ExportTransfer;
   type ExportTransferReadRequest = { transfer_ref: string; offset?: number; length?: number | null };
   type ExportTransferPiece = { transfer_ref: string; offset: number; bytes_base64: string; length: number; total_bytes: number; digest: string; end: boolean };
@@ -1851,9 +1856,7 @@ declare namespace Sdk {
   type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] };
   type HandoffAlarmRequest = { signer: string };
   type RootRequestCancelRequest = { request: string };
-  type OwnerWorkKind = "world_key" | "root" | "publish_bundle" | "custody";
-  type OwnerWorkRefusal = "stale_revision" | "owner_not_live" | "world_not_live" | "executor_not_reader" | "home_not_linked" | "secret_not_portable" | "secret_not_active" | "recipient_changed" | "invalid_input" | "custody_conflict" | "wider_than_floor" | "root_revision_mismatch";
-  type OwnerWorkStatus = { state: "recorded_awaiting_holder" } | { state: "enacted" } | { state: "refused"; reason: OwnerWorkRefusal } | { state: "cancelled" } | { state: "superseded" };
+  type OwnerWorkKind = "world_key" | "root" | "publish_bundle" | "custody" | "export_secret";
   type OwnerWorkUnassigned = "no_eligible_reader" | "target_is_recorder" | "target_not_linked" | "no_bundle_holder" | "no_custody_holder";
   type CustodyUncheckedReason = "none_named" | "none_published" | "unread" | "other_manifest" | "disagrees";
   type CustodyRegisterCheck = { kind: "checked"; manifest_ref: string } | { kind: "unchecked"; reason: CustodyUncheckedReason; refs: string[] };
@@ -2257,7 +2260,7 @@ declare namespace Sdk {
   type DisclosureCeilingView = { connection: string; class?: DisclosureDataClass | null; ceiling?: DisclosureBand | null };
   type DisclosureCeilingSet = { connection: string; class?: DisclosureDataClass | null; ceiling: DisclosureBand };
   type RevealAsksRequest = { pending?: boolean; limit?: number | null };
-  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
+  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null; cause?: string | null; scope?: string | null };
   type RevealAskView = { receipt: RevealReceipt; state: string; expires_at: number; disclosure?: string | null; expected_digest?: string | null; grant_ref?: string | null };
   type RevealOutcome = "once" | "standing" | "deny";
   type RevealAnswerRequest = { reveal: string; expected_digest: string; outcome: RevealOutcome };
@@ -2265,7 +2268,7 @@ declare namespace Sdk {
   type RevealRequest = { handle: string; why: string };
   type RevealPending = { reveal: string };
   type RevealWaitRequest = { reveal: string };
-  type RevealDecision = "pending" | "granted" | "denied" | "expired";
+  type RevealDecision = "pending" | "granted" | "denied" | "expired" | "unavailable";
   type RevealWaitAnswer = { decision: RevealDecision; value?: string | null; value_base64?: string | null; receipt?: RevealReceipt | null };
   type RevealDescribeRequest = { handle: string };
   type RevealProvenance = { record: string; place: string; kind: string; masked_at?: number | null; learned_at?: number | null };
