@@ -120,78 +120,53 @@ pub(crate) fn capture_withdrawn_record_in_txn(
     super::reply::invalidate_thread_meta(store, txn, *id)
 }
 
-/// Pins withdrawn Shell `id`'s topology content-free from the structural ids
-/// its received edges name (FIX 11803): `room`, the CONVERSATION its ChildOf
-/// names, and `parent`, the record its Parent names. A store that never held
-/// the body pinned nothing at the withdrawal
-/// ([`capture_withdrawn_record_in_txn`]), so its room readers place the Shell
-/// from these. A first pin needs the room, a CONVERSATION here, and takes the
-/// session its membership row names; a parent is kept only once it stands in
-/// that room here, and a later one fills a pin that has none. A pin that
-/// stands is otherwise left as it is. With no body there is no thread mark
-/// and no byline: the pin keeps the record kind and names no author.
+/// Pins Shell `id`'s topology content-free from the structural ids its
+/// received edges name, typed, never read from body bytes (FIX 11803, L09
+/// 01:22): `room`, `parent`, `session` and its `thread` mark. A store that
+/// never held a withdrawn reply's body holds only its Shell header, so no
+/// withdrawal here pinned it ([`capture_withdrawn_record_in_txn`]). A pin
+/// that stands wins. Where the full TURN row and its edges are here, local
+/// truth pins it ([`pin_record_in_txn`]); otherwise the received ids do,
+/// with no author. A room this store holds as anything but a CONVERSATION
+/// pins nothing; a room not yet here still pins. The header passed the
+/// bridge's admission already, so no other check runs. Its thread's cached
+/// projection goes stale.
 #[cfg(feature = "sync")]
-pub(crate) fn pin_received_shell_in_txn(
+pub(crate) fn pin_shell_record_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    room: Option<EntityId>,
+    room: EntityId,
     parent: Option<EntityId>,
+    session: Option<EntityId>,
+    thread: bool,
 ) -> Result<()> {
-    let pin = match read(store, txn, id)? {
-        Some(mut pin) => {
-            let Some(parent) = parent else {
-                return Ok(());
-            };
-            if pin.parent.is_some()
-                || room.is_some_and(|room| room != pin.room)
-                || !placed_in(store, txn, &parent, &pin.room)?
-            {
-                return Ok(());
-            }
-            pin.parent = Some(parent);
-            pin
-        }
-        None => {
-            let Some(room) = room else {
-                return Ok(());
-            };
-            if store
-                .port_entity_record(txn, &room)?
-                .is_none_or(|owner| owner.entity_type != ENTITY_TYPE_CONVERSATION)
-            {
-                return Ok(());
-            }
-            let parent = match parent {
-                Some(parent) if placed_in(store, txn, &parent, &room)? => Some(parent),
-                _ => None,
-            };
-            RecordPin {
-                room,
-                parent,
-                session: crate::compaction::turn_session_membership_in_txn(store, txn, id)?,
-                thread: false,
-                author: None,
-            }
-        }
-    };
-    PINS.put(store, txn, id, &pin)
-}
-
-/// Whether `record` stands in `room` here: its own ChildOf names that room,
-/// or, with none, the pin kept for it does.
-#[cfg(feature = "sync")]
-fn placed_in(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    record: &EntityId,
-    room: &EntityId,
-) -> Result<bool> {
-    let owners = edge_ids(store, txn, record, EdgeKind::ChildOf, false, 2)?;
-    if !owners.is_empty() {
-        return Ok(owners == [*room]);
+    if read(store, txn, id)?.is_some() {
+        return Ok(());
     }
-    Ok(read(store, txn, record)?.is_some_and(|pin| pin.room == *room))
+    let full_row = store
+        .port_entity_record(txn, id)?
+        .is_some_and(|row| row.entity_type == ENTITY_TYPE_TURN && !row.body.is_empty())
+        && !edge_ids(store, txn, id, EdgeKind::ChildOf, false, 2)?.is_empty();
+    if full_row {
+        pin_record_in_txn(store, txn, id)?;
+    } else {
+        if store
+            .port_entity_record(txn, &room)?
+            .is_some_and(|owner| owner.entity_type != ENTITY_TYPE_CONVERSATION)
+        {
+            return Ok(());
+        }
+        let pin = RecordPin {
+            room,
+            parent,
+            session,
+            thread,
+            author: None,
+        };
+        PINS.put(store, txn, id, &pin)?;
+    }
+    super::reply::invalidate_thread_meta(store, txn, *id)
 }
 
 /// Every erased child `parent` keeps, however many; the walk reading them
