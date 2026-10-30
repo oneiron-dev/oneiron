@@ -59,7 +59,9 @@ mod history_pin_exchange;
 pub(crate) use history_pin_exchange::MachineHistoryRuntime;
 #[cfg(feature = "sync")]
 pub(crate) use history_pin_exchange::PinExchangeOutcome;
+pub(crate) mod history_advance;
 mod history_pin_freshness;
+pub(crate) mod history_seal;
 pub use history_pin_freshness::{
     MACHINE_HISTORY_FRESHNESS_CHALLENGE_LIFETIME, MACHINE_HISTORY_FRESHNESS_DOMAIN,
     MACHINE_HISTORY_FRESHNESS_VERSION, MachineHistoryFreshnessChallenge,

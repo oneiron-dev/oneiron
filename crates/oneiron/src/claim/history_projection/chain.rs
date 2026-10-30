@@ -1,6 +1,57 @@
 //! Reading and verifying a pinned history: its rows, its handoff chain and its projection.
 
+use std::borrow::Cow;
+
 use super::*;
+
+/// Where the history readers read a target's controls: the store, or what
+/// the last advance of the target carried (`history_advance`, FIX 4296).
+/// Each answers exactly as the store does in the same transaction.
+pub(crate) trait ControlRows {
+    /// Every control id in `target`'s index, in key order.
+    fn index_ids(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<Vec<EntityId>>;
+
+    /// The stored row at `id`, if any.
+    fn row<'a>(
+        &'a self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Cow<'a, [u8]>>>;
+
+    /// Whether `packet`'s signature verifies.
+    fn handoff_signed(&self, packet: &ClaimHistoryHandoff) -> bool {
+        verify_handoff_signature(packet)
+    }
+}
+
+/// The store itself.
+pub(crate) struct StoreRows;
+
+impl ControlRows for StoreRows {
+    fn index_ids(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        machine_history_ids_for_target(store, txn, target)
+    }
+
+    fn row<'a>(
+        &'a self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Cow<'a, [u8]>>> {
+        Ok(crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.map(Cow::Owned))
+    }
+}
 
 /// Verified navigation from the target-local projection index, for the
 /// history the trusted pin names. A malformed index/record refuses; absence
@@ -10,14 +61,25 @@ pub(crate) fn machine_history_rows(
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> Result<MachineHistoryRows> {
+    machine_history_rows_from(&StoreRows, store, txn, target)
+}
+
+/// [`machine_history_rows`] read through `rows`.
+pub(crate) fn machine_history_rows_from(
+    rows: &dyn ControlRows,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<MachineHistoryRows> {
     let pin = trusted_machine_handoff(store, txn, target)?;
-    machine_history_rows_at(store, txn, target, &pin)
+    machine_history_rows_at(rows, store, txn, target, &pin)
 }
 
 /// [`machine_history_rows`] for the history `tip`'s chain names, where `tip`
-/// is a candidate not pinned yet (adoption). Its ancestors are read from
-/// stored packets; an absent one is incomplete.
+/// is a candidate not pinned yet (adoption), read through `rows`. Its
+/// ancestors are read from stored packets; an absent one is incomplete.
 pub(crate) fn machine_history_rows_at(
+    rows: &dyn ControlRows,
     store: &Store,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
@@ -30,7 +92,7 @@ pub(crate) fn machine_history_rows_at(
     if tip.births.len() != 1 || tip.births[0].id != target {
         return Err(bad());
     }
-    let chain = read_handoff_chain(store, txn, tip)?;
+    let chain = read_handoff_chain_from(rows, store, txn, tip)?;
     let transitions = chain_transitions(&chain)?;
     let mut expected = BTreeSet::new();
     for hash in std::iter::once(tip.births[0].digest).chain(transitions.keys().copied()) {
@@ -43,11 +105,12 @@ pub(crate) fn machine_history_rows_at(
     }
     let mut birth = None;
     let mut events = Vec::new();
-    for id in machine_history_ids_for_target(store, txn, target)? {
+    for id in rows.index_ids(store, txn, target)? {
         if !expected.remove(&id) {
             continue;
         }
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        let raw = rows
+            .row(store, txn, &id)?
             .ok_or(Error::CorruptedIndex("machine history index row missing"))?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine history header"))?;
@@ -111,9 +174,9 @@ pub(crate) fn machine_history_rows_at(
     let original = super::super::decode_claim_body(&birth.initial_body, true)?;
     for event in &events {
         let id = machine_claim_transition_event_id(event).map_err(|_| bad())?;
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or(
-            Error::CorruptedIndex("machine transition index row missing"),
-        )?;
+        let raw = rows.row(store, txn, &id)?.ok_or(Error::CorruptedIndex(
+            "machine transition index row missing",
+        ))?;
         let row = super::super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if event.birth_digest != birth.digest
             || event.vault_id != birth.vault_id
@@ -148,6 +211,16 @@ pub(crate) fn read_handoff_chain(
     txn: &heed::RoTxn<'_>,
     tip: &ClaimHistoryHandoff,
 ) -> Result<Vec<ClaimHistoryHandoff>> {
+    read_handoff_chain_from(&StoreRows, store, txn, tip)
+}
+
+/// [`read_handoff_chain`] read through `rows`.
+pub(crate) fn read_handoff_chain_from(
+    rows: &dyn ControlRows,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    tip: &ClaimHistoryHandoff,
+) -> Result<Vec<ClaimHistoryHandoff>> {
     let scope = tip
         .births
         .first()
@@ -176,8 +249,7 @@ pub(crate) fn read_handoff_chain(
         let Some(parent) = parent else { break };
         let id =
             EntityId::from_bytes(parent[..16].try_into().map_err(|_| bad())?).map_err(|_| bad())?;
-        let raw =
-            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or_else(missing)?;
+        let raw = rows.row(store, txn, &id)?.ok_or_else(missing)?;
         let h = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine handoff header"))?;
         if h.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -246,7 +318,18 @@ pub(crate) fn verified_handoff_chain(
     tip: &ClaimHistoryHandoff,
     fold: &AuthorityFold,
 ) -> Result<Vec<ClaimHistoryHandoff>> {
-    let chain = read_handoff_chain(store, txn, tip)?;
+    verified_handoff_chain_from(&StoreRows, store, txn, tip, fold)
+}
+
+/// [`verified_handoff_chain`] read through `rows`.
+pub(crate) fn verified_handoff_chain_from(
+    rows: &dyn ControlRows,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    tip: &ClaimHistoryHandoff,
+    fold: &AuthorityFold,
+) -> Result<Vec<ClaimHistoryHandoff>> {
+    let chain = read_handoff_chain_from(rows, store, txn, tip)?;
     let vault_id = fold.vault_id.ok_or_else(missing)?;
     for (index, current) in chain.iter().enumerate() {
         if current.vault_id != vault_id {
@@ -266,7 +349,7 @@ pub(crate) fn verified_handoff_chain(
                 PRIOR_HEAD_MISSING
             }));
         }
-        if !verify_handoff_signature(current) {
+        if !rows.handoff_signed(current) {
             return Err(Error::InvalidClaimBody("handoff-chain signature mismatch"));
         }
     }
@@ -304,7 +387,18 @@ pub(crate) fn resolved_machine_history(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<ClaimTransitionProjection> {
-    let (projection, carriers) = machine_history(store, txn, fold, target)?;
+    resolved_machine_history_from(&StoreRows, store, txn, fold, target)
+}
+
+/// [`resolved_machine_history`] read through `rows`.
+pub(crate) fn resolved_machine_history_from(
+    rows: &dyn ControlRows,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+) -> Result<ClaimTransitionProjection> {
+    let (projection, carriers) = machine_history(rows, store, txn, fold, target)?;
     // A carrier awaiting its owner's answer leaves the history incomplete, as
     // one that has not arrived does: no approval projects from it yet.
     for id in carriers {
@@ -329,7 +423,7 @@ pub(crate) fn machine_history_for_restriction(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<ClaimTransitionProjection> {
-    machine_history(store, txn, fold, target).map(|(projection, _)| projection)
+    machine_history(&StoreRows, store, txn, fold, target).map(|(projection, _)| projection)
 }
 
 /// Whether a local write of `incoming` to `target` is a restriction staged on

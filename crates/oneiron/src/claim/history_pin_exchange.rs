@@ -31,6 +31,10 @@
 //! branch, keep the stored pin ([`PinExchangeOutcome::Conflict`]); nothing
 //! picks by arrival, hash, time or challenge.
 //!
+//! Each advance reads the target's controls through what the last one
+//! carried (`history_advance`, FIX 4296): a landed row reads only what is
+//! new, and every outcome stays as a whole read gives it.
+//!
 //! CALLS (L02, open): "FIX 3821 own-receive pin", "FIX 3821 no transport
 //! gate", "FIX 3821 one-step tip adoption".
 
@@ -38,18 +42,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::authority::ROLE_OWNER;
+use crate::authority::{AuthorityFold, ROLE_OWNER};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ClaimError, Error, Result};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-use super::history_projection::{
-    Succession, machine_history_rows_at, pin_key, verify_handoff_signature,
-};
+use super::history_advance::{CarriedHistory, carried_history};
+use super::history_projection::{ControlRows, Succession, machine_history_rows_at, pin_key};
 use super::history_store::{
-    MACHINE_HANDOFF_PREDICATE, indexed_machine_history_target, machine_history_ids_for_target,
-    machine_history_indexed, machine_history_kind, machine_history_scope_bytes,
+    MACHINE_HANDOFF_PREDICATE, indexed_machine_history_target, machine_history_indexed,
+    machine_history_kind, machine_history_scope_bytes,
 };
 use super::{ClaimHistoryHandoff, ClaimHistoryHandoffPin};
 
@@ -99,11 +102,12 @@ fn own_receive_challenge(packet: &ClaimHistoryHandoff) -> [u8; 32] {
 }
 
 /// What this vault keeps in memory for its machine histories: the
-/// freshness challenges it issued and the answers it accepted (FIX 4294).
-/// Never persisted.
+/// freshness challenges it issued and the answers it accepted (FIX 4294),
+/// and what each advance read for the next (FIX 4296). Never persisted.
 #[derive(Debug, Default)]
 pub(crate) struct MachineHistoryRuntime {
     pub(crate) freshness: std::sync::Mutex<super::history_pin_freshness::FreshnessLedger>,
+    pub(crate) advance: std::sync::Mutex<super::history_advance::AdvanceCarry>,
 }
 
 /// The `CorruptedIndex` reasons the history readers give for a resident
@@ -136,19 +140,20 @@ fn settle(error: Error, target: EntityId) -> Result<PinExchangeOutcome> {
     }
 }
 
-/// The target's resident handoff packets by content hash: each a decoded
-/// `machine.handoff` control whose id is its content hash and whose one
-/// birth is `target`. The index is a navigation hint, so any other row it
-/// names is passed over here; the adoption core reads the chosen chain
-/// strictly.
+/// The target's resident handoff packets by content hash, read through
+/// `rows`: each a decoded `machine.handoff` control whose id is its content
+/// hash and whose one birth is `target`. The index is a navigation hint, so
+/// any other row it names is passed over here; the adoption core reads the
+/// chosen chain strictly.
 fn resident_handoffs(
+    rows: &dyn ControlRows,
     store: &Store,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> Result<BTreeMap<[u8; 32], ClaimHistoryHandoff>> {
     let mut packets = BTreeMap::new();
-    for id in machine_history_ids_for_target(store, txn, target)? {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+    for id in rows.index_ids(store, txn, target)? {
+        let Some(raw) = rows.row(store, txn, &id)? else {
             continue;
         };
         if !EntityMetadataHeader::parse(&raw)
@@ -273,7 +278,9 @@ impl Vault {
         } else {
             return Ok(PinExchangeOutcome::NotMachineHistory);
         };
-        let outcome = self.advance_own_machine_history_in_txn(txn, target)?;
+        let outcome = self
+            .exchange_in_txn(txn, target, Some(*id))
+            .or_else(|error| settle(error, target))?;
         if matches!(
             outcome,
             PinExchangeOutcome::Conflict(_) | PinExchangeOutcome::Refused(_)
@@ -295,25 +302,42 @@ impl Vault {
     /// failure is an `Err`, so a raw row never fails its ingest because its
     /// history cannot be adopted yet. L03's FIX 3820 ancestor fetch calls
     /// this after each fetched round.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn advance_own_machine_history_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         target: EntityId,
     ) -> Result<PinExchangeOutcome> {
-        self.exchange_in_txn(txn, target)
+        self.exchange_in_txn(txn, target, None)
             .or_else(|error| settle(error, target))
     }
 
+    /// The exchange for `target`, reading its controls through what the
+    /// last advance carried, extended by the `landed` control if it is one
+    /// (FIX 4296); the read is kept for the next advance.
     fn exchange_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         target: EntityId,
+        landed: Option<EntityId>,
     ) -> Result<PinExchangeOutcome> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let Some(vault_id) = fold.vault_id else {
             return Ok(PinExchangeOutcome::Pending(target));
         };
-        let mut packets = resident_handoffs(&self.store, txn, target)?;
+        let carried = carried_history(&self.store, txn, target, landed)?;
+        self.exchange_carried_in_txn(txn, target, &fold, vault_id, &carried)
+    }
+
+    fn exchange_carried_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        target: EntityId,
+        fold: &AuthorityFold,
+        vault_id: [u8; 32],
+        carried: &CarriedHistory,
+    ) -> Result<PinExchangeOutcome> {
+        let mut packets = resident_handoffs(carried, &self.store, txn, target)?;
         let stored = match self.store.vault_meta.get(txn, &pin_key(target))? {
             Some(raw) => {
                 let packet = ClaimHistoryHandoff::decode(&raw).map_err(|_| invalid())?;
@@ -337,7 +361,7 @@ impl Vault {
                         .roster
                         .get(&packet.signer)
                         .is_some_and(|root| !root.revoked && root.roles & ROLE_OWNER != 0)
-                    && verify_handoff_signature(packet)
+                    && carried.handoff_signed(packet)
             })
             .map(|(hash, _)| *hash)
             .collect();
@@ -400,7 +424,7 @@ impl Vault {
         }
         // Scope from the verified signed birth; the previous hash and heads
         // from the previous packet of the verified chain.
-        let rows = machine_history_rows_at(&self.store, txn, target, &tip)?;
+        let rows = machine_history_rows_at(carried, &self.store, txn, target, &tip)?;
         if rows.birth.vault_id != vault_id || rows.birth.target != target {
             return Ok(PinExchangeOutcome::Refused(target));
         }
@@ -432,6 +456,7 @@ impl Vault {
             &tip,
             &pin,
             Succession::OwnReceive,
+            carried,
         )?;
         savepoint.commit()?;
         Ok(outcome)

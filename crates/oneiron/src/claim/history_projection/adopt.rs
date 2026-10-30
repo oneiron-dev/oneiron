@@ -20,6 +20,7 @@ impl Vault {
             packet,
             pin,
             Succession::Strict,
+            &StoreRows,
         )?;
         txn.commit()?;
         Ok(verified)
@@ -28,7 +29,8 @@ impl Vault {
     /// The one adoption core, in the caller's writer: verify `packet`'s
     /// whole chain and closure against `pin`, check it succeeds the stored
     /// pin as `succession` says, store it, and heal the live CLAIM row under
-    /// it. On an error the caller drops whatever this staged.
+    /// it. The history's controls are read through `source`. On an error the
+    /// caller drops whatever this staged.
     pub(crate) fn adopt_machine_history_handoff_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -36,10 +38,11 @@ impl Vault {
         packet: &ClaimHistoryHandoff,
         pin: &ClaimHistoryHandoffPin<'_>,
         succession: Succession,
+        source: &dyn ControlRows,
     ) -> Result<VerifiedClaimHistoryHandoff> {
         // The candidate's own chain names the rows: its whole history, not
         // its delta and not the old pin's.
-        let rows = machine_history_rows_at(&self.store, txn, target, packet)?;
+        let rows = machine_history_rows_at(source, &self.store, txn, target, packet)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let original = super::super::decode_claim_body(&rows.birth.initial_body, true)?;
         let exact = packet.births.len() == 1
@@ -61,7 +64,8 @@ impl Vault {
             // The chain's shape already proved itself above: a wrong chain
             // refused there. An absent ancestor or authority not yet held
             // waits; a bad signature or vault refuses (FIX 3823).
-            let chain = match verified_handoff_chain(&self.store, read, handoff, &fold) {
+            let chain = match verified_handoff_chain_from(source, &self.store, read, handoff, &fold)
+            {
                 Ok(chain) => chain,
                 Err(error) if chain_awaits(&error) => return HandoffStanding::MissingParents,
                 Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
@@ -129,7 +133,7 @@ impl Vault {
         self.store.vault_meta.put(txn, &pin_key(target), &bytes)?;
         // The live claim id is a derived view. Heal a stale or missing LWW
         // snapshot under the SAME authenticated pin before publishing it.
-        let projection = resolved_machine_history(&self.store, txn, &fold, target)?;
+        let projection = resolved_machine_history_from(source, &self.store, txn, &fold, target)?;
         let projected = project_machine_claim(&projection);
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &target)?
         else {
