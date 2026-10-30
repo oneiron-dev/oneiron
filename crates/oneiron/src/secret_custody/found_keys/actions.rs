@@ -17,11 +17,11 @@ use crate::memory::{MemoryResult, SafeDeleteReason};
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
 };
-use crate::secret_custody::{put_secret_custody_in_txn, read_secret_custody_meta_in_txn};
 use crate::secret_custody::reveal::{
     not_active, resolve_handle_in_txn, reveal_bound, reveal_connection, unknown,
 };
 use crate::secret_custody::types::SecretCustodyStatus;
+use crate::secret_custody::{put_secret_custody_in_txn, read_secret_custody_meta_in_txn};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, Vault, live_entity_row_in_txn};
@@ -254,7 +254,12 @@ impl Vault {
             )));
         }
         self.with_write_txn_grouped(|txn| {
-            live_owner_in_txn(self, owner, txn, "only the vault owner re-enters a kept value")?;
+            live_owner_in_txn(
+                self,
+                owner,
+                txn,
+                "only the vault owner re-enters a kept value",
+            )?;
             let found = Located::find_in_txn(&self.store, txn, handle)?;
             let settled = match &found.key().settled {
                 Some(settled) if settled.action == FoundKeyAction::NotASecret => settled.clone(),

@@ -41,6 +41,7 @@ mod budget_ids;
 mod config;
 mod factory;
 mod inference;
+mod inference_admission;
 mod inference_device;
 mod inference_worker;
 mod pass;
@@ -60,13 +61,24 @@ pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };
 pub use self::inference::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
+pub use self::inference_admission::{
+    ADMISSION_WAIT_LIMIT, AUTO_PROFILE_SUBSTITUTION, AdmissionSnapshot, AdmissionStop,
+    BACKGROUND_FAIRNESS, BackgroundFairness, CANCEL_RELEASE_LIMIT, DEFAULT_DEADLINE,
+    DEFAULT_WORK_CLASS, DEVICE_HEADROOM_MIB, DeviceAdmission, DeviceGrant, ExecutorRegistration,
+    GrantId, LoadGrant, PRESSURE_ACTION_ORDER, PressureAction, PressureDecision, PressureState,
+    QUEUE_ORDER, QueueOrder, RESIDENT_FRESHNESS, ResidentFreshness, TicketId,
+    UNKNOWN_MEMORY_POLICY, UNLOAD_EXTERNAL, UNMEDIATED_SHARED_DEVICE, UnknownMemoryPolicy,
+    UnmediatedPolicy, WorkRequest, WorkTicket, WorkerQueueStatus,
+};
 pub use self::inference_device::{
     DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource,
+    TryReserveOutcome, WorkEnvelope,
 };
 pub use self::inference_worker::{
     DEFAULT_WORKER_IDLE_STOP, InferenceWorker, LaunchFailure, LauncherFuture, RunningWorker,
-    WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL, WORKER_STOP_GRACE,
-    WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerUnavailable,
+    UnloadOutcome, WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL,
+    WORKER_STOP_GRACE, WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy,
+    WorkerUnavailable,
 };
 pub use self::program_factory::ProgramExecutorFactory;
 pub use self::run::{WakeSupervisor, WakeSupervisorReport};

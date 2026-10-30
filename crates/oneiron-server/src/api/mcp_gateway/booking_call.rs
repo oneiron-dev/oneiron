@@ -171,8 +171,7 @@ pub(super) fn invocation_owner(
     server: &SyncServer,
     params: Option<&Value>,
 ) -> Result<String, McpGatewayError> {
-    if let Some(holder) =
-        super::person_call::tool_holder(mode, headers, connection, server, params)
+    if let Some(holder) = super::person_call::tool_holder(mode, headers, connection, server, params)
     {
         return Ok(holder.to_hex());
     }

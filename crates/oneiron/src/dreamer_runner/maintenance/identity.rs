@@ -108,8 +108,6 @@ const MAX_CANDIDATES: usize = 63;
 /// Context words one mention keeps.
 const MAX_TERMS: usize = 16;
 const MIN_TERM_CHARS: usize = 4;
-/// Bytes of text around a mention its ask keeps for the decision.
-const EXCERPT_BYTES: usize = 480;
 /// How long a failed decision waits before the host tries again.
 const RETRY_SECS: u64 = 3_600;
 /// The rationale on a someone-new answer's `assert_distinct` event.
@@ -172,7 +170,8 @@ pub struct IdentityAsk {
     pub provisional: Option<EntityId>,
     /// The words around the mention, as a hint keeps them.
     pub context: Vec<String>,
-    /// The text around the mention, for the decision.
+    /// The complete source message, for the decision; `start..end` selects
+    /// the mention.
     pub excerpt: String,
     pub reason: IdentityAskReason,
     pub opened_at: u64,

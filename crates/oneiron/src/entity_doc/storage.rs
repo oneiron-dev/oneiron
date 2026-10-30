@@ -228,6 +228,16 @@ pub(super) fn persist_scanned(
     if remark {
         super::lift::remark_entity_text_in_txn(vault, txn, entity, &text)?;
     }
+    // A live edit wakes the questions watching the unit or its RESTS_ON
+    // sources, as a batch write does; the door wakes the pump after commit.
+    crate::llm::decision::questions::project_arrivals_in_txn(
+        store,
+        txn,
+        &std::collections::BTreeSet::from([*entity]),
+    )?;
+    if crate::llm::decision::questions::unit_watched_in_txn(store, txn, entity)? {
+        crate::batch::queue_proactivity_change(vault, txn);
+    }
     Ok(())
 }
 

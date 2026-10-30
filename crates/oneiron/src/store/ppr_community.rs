@@ -10,22 +10,23 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::ports::{DeletionMarker, EdgeStoreInventory, EntityStoreRead, TombstoneStoreRead};
 use crate::ppr::read_graph_version;
 use crate::ppr_community::{
     CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
     CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
 };
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
 
 use super::Store;
 
-// Hard allocation/scan ceilings, not experimental ranking defaults. Fail closed
-// before cloning a corrupt row or allocating an unbounded projection.
-pub(super) const MAX_COMMUNITY_NODES: usize = 100_000;
-const MAX_COMMUNITY_EDGES: usize = 1_000_000;
-pub(super) const MAX_COMMUNITY_CACHE_BYTES: usize = 64 * 1024 * 1024;
+// A large vault is not a corrupt vault: scans read whole and only raise
+// their advisory check past its row, and cache bytes only ask through the
+// CommunityCacheBytes row. Strict decode, version/hash/backlink checks and
+// the atomic publish below stay.
 pub(super) const COMMUNITY_META_SUFFIX: &str = "meta";
 
 /// Typed door for the `ppr_community_cache:v0:` family: `meta`, `node:hex32`
@@ -56,15 +57,17 @@ impl Store {
                 .checked_add(key.len())
                 .and_then(|n| n.checked_add(value.len()))
                 .ok_or(Error::CorruptedIndex("ppr community cache size"))?;
-            if rows.len() > MAX_COMMUNITY_NODES * 3
-                || bytes > MAX_COMMUNITY_CACHE_BYTES
-                || key.len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32
-                || value.len() > MAX_COMMUNITY_NODES * 16
-            {
+            // Exact key shape: the prefix plus `meta`, `node:` or `members:`
+            // and a 32-hex id. Anything else is corruption, whatever its size.
+            if key.len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32 {
                 return Err(Error::CorruptedIndex("ppr community cache bounds"));
             }
             rows.push((key, value));
         }
+        self.limit_watch.measure(
+            EngineLimit::CommunityCacheBytes,
+            u64::try_from(bytes).unwrap_or(u64::MAX),
+        );
         if rows.is_empty() {
             return Ok(None);
         }
@@ -79,7 +82,7 @@ impl Store {
             .and_then(|bytes| bytes.try_into().ok())
             .map(u64::from_le_bytes)
             .ok_or(Error::CorruptedIndex("ppr community cache metadata"))?;
-        CommunitySnapshot::decode_rows(&rows, version, MAX_COMMUNITY_NODES)
+        CommunitySnapshot::decode_rows_unbounded(&rows, version)
             .map(Some)
             .map_err(cache_error)
     }
@@ -108,9 +111,6 @@ impl Store {
         snapshot
             .validate(read_graph_version(self, txn)?)
             .map_err(cache_error)?;
-        if snapshot.nodes.len() > MAX_COMMUNITY_NODES {
-            return Err(Error::CorruptedIndex("ppr community cache bounds"));
-        }
         let rows = snapshot.encode_rows().map_err(cache_error)?;
         let bytes = rows
             .iter()
@@ -119,15 +119,14 @@ impl Store {
                     .and_then(|n| n.checked_add(value.len()))
             })
             .ok_or(Error::CorruptedIndex("ppr community cache size"))?;
-        if bytes > MAX_COMMUNITY_CACHE_BYTES {
-            return Err(Error::CorruptedIndex("ppr community cache bounds"));
-        }
+        self.limit_watch.measure(
+            EngineLimit::CommunityCacheBytes,
+            u64::try_from(bytes).unwrap_or(u64::MAX),
+        );
         let mut old_keys = Vec::new();
         for entry in CACHE.iter_from(self, &*txn, &[])? {
             let (suffix, _) = entry?;
-            if old_keys.len() > MAX_COMMUNITY_NODES * 3
-                || CACHE.key_bytes(&suffix).len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32
-            {
+            if CACHE.key_bytes(&suffix).len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32 {
                 return Err(Error::CorruptedIndex("ppr community cache bounds"));
             }
             old_keys.push(suffix);
@@ -204,23 +203,25 @@ impl Store {
         config: &PprCommunityConfig,
     ) -> Result<(CommunitySnapshot, CommunityRefreshReport)> {
         crate::config::validate_ppr_community(config)?;
+        // Both scans read whole, however large the vault: past its row each
+        // raises one advisory check and reads on. Rows are counted before
+        // the liveness filters below.
         let mut entities = BTreeSet::new();
-        for (scanned, entry) in self.port_entity_raw_records(txn)?.enumerate() {
-            if scanned >= MAX_COMMUNITY_NODES {
-                return Err(Error::CorruptedIndex("ppr community graph bounds"));
-            }
+        let mut entity_count = ScanCount::start(self, txn, EngineScan::TypeIndexRows, &[])?;
+        for entry in self.port_entity_raw_records(txn)? {
+            entity_count.row();
             let (id, raw) = entry?;
             if !self.ppr_community_live_entity_in_txn(txn, &id, &raw)? {
                 continue;
             }
             entities.insert(id);
         }
+        entity_count.defer(self);
         let mut edges = Vec::new();
         // Scan outgoing rows once; reading the inverse index would double weight.
-        for (scanned, entry) in self.port_edge_rows_raw(txn)?.enumerate() {
-            if scanned >= MAX_COMMUNITY_EDGES {
-                return Err(Error::CorruptedIndex("ppr community graph bounds"));
-            }
+        let mut edge_count = ScanCount::start(self, txn, EngineScan::VaultEdgeRows, &[])?;
+        for entry in self.port_edge_rows_raw(txn)? {
+            edge_count.row();
             let (key, value) = entry?;
             let edge = parse_strict_edge_record(&key, &value)?;
             if entities.contains(&edge.source) && entities.contains(&edge.target) {
@@ -233,6 +234,7 @@ impl Store {
                 });
             }
         }
+        edge_count.defer(self);
         let entities: Vec<_> = entities.into_iter().collect();
         compute_communities(
             &CommunityGraphInput {

@@ -233,7 +233,7 @@ async fn residence_directives(
     const VERB: &str = "vault.residence.directives";
     let owner = owner_proof(auth, server, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::residence_directives_as_owner(server.vault(), &owner, &input)
     })
     .await
