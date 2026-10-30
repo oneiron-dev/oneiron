@@ -63,40 +63,61 @@ fn author(store: &Store, txn: &heed::RoTxn<'_>, body: &[u8]) -> Result<Option<En
 }
 
 pub(crate) fn pin_record(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
-    if read(&vault.store, txn, id)?.is_some() {
+    pin_record_in_txn(&vault.store, txn, id)
+}
+
+/// [`pin_record`] on the store alone, for a door that holds no vault.
+fn pin_record_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    if read(store, txn, id)?.is_some() {
         return Ok(());
     }
-    let Some(row) = vault.store.port_entity_record(txn, id)? else {
+    let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(());
     };
     if row.entity_type != ENTITY_TYPE_TURN {
         return Ok(());
     }
-    let rooms = edge_ids(&vault.store, txn, id, EdgeKind::ChildOf, false, 2)?;
+    let rooms = edge_ids(store, txn, id, EdgeKind::ChildOf, false, 2)?;
     let Some(room) = rooms.first().copied() else {
         return Ok(());
     };
     if rooms.len() != 1
-        || vault
-            .store
+        || store
             .port_entity_record(txn, &room)?
             .is_none_or(|owner| owner.entity_type != ENTITY_TYPE_CONVERSATION)
     {
         return Ok(());
     }
-    let parents = edge_ids(&vault.store, txn, id, EdgeKind::Parent, false, 2)?;
+    let parents = edge_ids(store, txn, id, EdgeKind::Parent, false, 2)?;
     if parents.len() > 1 {
         return Err(invalid("multiple room parents"));
     }
     let pin = RecordPin {
         room,
         parent: parents.first().copied(),
-        session: crate::compaction::turn_session_membership_in_txn(&vault.store, txn, id)?,
+        session: crate::compaction::turn_session_membership_in_txn(store, txn, id)?,
         thread: super::topology::record_kind(&row.body)?
             == Some(super::topology::RecordKind::Thread),
-        author: author(&vault.store, txn, &row.body)?,
+        author: author(store, txn, &row.body)?,
     };
-    PINS.put(&vault.store, txn, id, &pin)
+    PINS.put(store, txn, id, &pin)
+}
+
+/// Pins withdrawn record `id`'s topology content-free before its body goes
+/// (FIX 931), in the withdrawal's transaction: its body pin becomes the
+/// withdrawn pin, its room, parent, session and byline are pinned while its
+/// body and edges still read, and its thread's cached projection goes stale.
+/// A soft capture: nothing is torn down and no HEAD moves, since the row
+/// keeps its header and its edges.
+#[cfg(feature = "sync")]
+pub(crate) fn capture_withdrawn_record_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    super::admission::withdraw_body_pin(store, txn, id)?;
+    pin_record_in_txn(store, txn, id)?;
+    super::reply::invalidate_thread_meta(store, txn, *id)
 }
 
 /// Every erased child `parent` keeps, however many; the walk reading them

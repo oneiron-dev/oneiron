@@ -54,17 +54,19 @@ pub use pack_export::{
 };
 mod proposal;
 mod regen;
+mod scope;
 pub use activation::{
     LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
 };
 pub use proposal::{
-    LENS_LIST_MAX_PAGE, LENS_LIST_NARROWED_CARRIES_COMPILED, LENS_PROPOSAL_MAX_BYTES, LensListPage,
-    LensListRequest, LensListRow, LensProposalState, LensProposeRequest, LensSlot,
+    LENS_LIST_MAX_PAGE, LENS_PROPOSAL_MAX_BYTES, LensListPage, LensListRequest, LensListRow,
+    LensProposalState, LensProposeRequest, LensSlot,
 };
 pub use regen::{
     LensRegenDecision, LensRegenEnactment, enact_lens_regeneration_embedded,
     regenerate_and_enact_lens_embedded,
 };
+pub use scope::LensScope;
 mod sdk;
 pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource, WeaveLensRequest};
 mod record_ref;

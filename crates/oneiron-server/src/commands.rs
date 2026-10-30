@@ -52,12 +52,19 @@ mod hook;
 #[cfg(unix)]
 mod local_servers;
 #[cfg(unix)]
-pub use self::hook::hook;
+pub use self::hook::{hook, hosted};
 
 /// `oneiron hook` binds through runtime files and queues through the import
 /// queue, both Unix-only: elsewhere it does nothing, and exits 0.
 #[cfg(not(unix))]
 pub fn hook(_: crate::cli::HookArgs) {}
+
+/// `oneiron hosted` publishes the selection `oneiron hook` binds, and the
+/// hook runs on Unix alone.
+#[cfg(not(unix))]
+pub fn hosted(_: crate::cli::HostedCommand) -> anyhow::Result<()> {
+    anyhow::bail!("`oneiron hosted` publishes what `oneiron hook` binds, on Unix alone")
+}
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 /// Below this the auth secret is weak MAC key material; warn, do not refuse.

@@ -6,6 +6,7 @@ use crate::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 
 use super::consts::{CONSULT_SETTLE_PAGE, TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED};
+use super::consult_assignee_wait::waits_for_assignee_fact;
 use super::consult_result::{CONSULT_EXPIRY_RECOVERY, ConsultDigestRoute, ConsultExpiryReport};
 use super::create_validation::consult_body_in_txn;
 use super::follow_up::{
@@ -25,11 +26,13 @@ impl Vault {
     /// compare-and-set to terminal `Expired` with a durable expiry artifact,
     /// then ONE ARCH-0046 digest per task, addressed to that task's own asker.
     ///
-    /// The expiry is an engine-caused lapse (`ConsultDeadlineElapsed`): the
-    /// deadline the asker set has passed, so the clock enacts the asker's own
-    /// will and no actor or authority is taken for it. Every expiry is
-    /// committed before any digest work starts, so a digest that cannot be
-    /// routed or scheduled never holds one back and never undoes one.
+    /// The expiry is an engine-caused lapse (`ConsultDeadlineElapsed`, or
+    /// `ConsultAssigneeMissing` for a consult whose ConsultAssignee fact never
+    /// landed): the deadline the asker set has passed, so the clock enacts the
+    /// asker's own will and no actor or authority is taken for it. Every
+    /// expiry is committed before any digest work starts, so a digest that
+    /// cannot be routed or scheduled never holds one back and never undoes
+    /// one.
     ///
     /// `resolve_digest` is the host's native route to one asker. A task whose
     /// asker has no route, or is not the task's create owner, keeps its digest
@@ -206,8 +209,20 @@ impl Vault {
             let Some(ttl) = body.ttl.filter(|ttl| ttl.deadline_at < now) else {
                 return Ok(None);
             };
-            let cause = TaskLapseCause::ConsultDeadlineElapsed {
-                deadline_at: ttl.deadline_at,
+            // A consult still waiting for its ConsultAssignee fact lapses
+            // with that cause; a fold that does not read is not a missing
+            // fact.
+            let missing = self
+                .task_authority_facts_in(&*wtxn, task_ref)
+                .is_ok_and(|facts| waits_for_assignee_fact(&body, &facts));
+            let cause = if missing {
+                TaskLapseCause::ConsultAssigneeMissing {
+                    deadline_at: ttl.deadline_at,
+                }
+            } else {
+                TaskLapseCause::ConsultDeadlineElapsed {
+                    deadline_at: ttl.deadline_at,
+                }
             };
             let result_ref = self.store.clock.entity_id()?;
             let artifact = canonical_bytes(&consult_expiry_artifact_value(

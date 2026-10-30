@@ -754,6 +754,18 @@ impl Vault {
         {
             return Ok(None);
         }
+        // FIX 11592: an agent try whose requester's authority was withdrawn
+        // ends unrun, on the TASK runner's turn; nothing is claimed here.
+        let dispatcher = crate::agent_dispatch::AgentDispatcher::new(self);
+        if crate::agent_dispatch::record_dispatch_input(&row).is_some_and(|input| {
+            dispatcher
+                .requester_withdrawn_in_txn(&txn, &input)
+                .is_some()
+        }) {
+            drop(txn);
+            dispatcher.end_withdrawn(id, lease_owner, now)?;
+            return Ok(None);
+        }
         let claimed = queue.claim_id_in_txn(
             &mut txn,
             id,

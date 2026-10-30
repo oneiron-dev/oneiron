@@ -4,6 +4,7 @@
 //! markers. A defer retains the actual request/update, its grant and principal.
 //! Transport payload, fabricated-window, and malformed-record bounds still apply.
 
+mod documents;
 pub(crate) mod erase;
 mod import_guard;
 mod ledger;

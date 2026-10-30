@@ -1,5 +1,7 @@
 //! Versioned questions, scoped answer receipts, and bound outcome labels.
 
+mod answer_landing;
+mod answer_scope;
 mod answers;
 mod arrival;
 mod artifact_refresh;
@@ -15,6 +17,7 @@ mod recipe;
 mod records;
 mod refresh;
 mod role_asks;
+mod saved_reader;
 mod standing;
 mod store;
 mod task_ask;
@@ -23,6 +26,7 @@ mod windows;
 #[cfg(test)]
 mod standing_tests;
 
+pub use answer_scope::question_answers_in_lane;
 pub use answers::question_answers;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
@@ -65,11 +69,13 @@ pub use refresh::{
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
 pub(crate) use role_asks::keep_artifact_unit_ask;
+pub(crate) use saved_reader::wake_artifact_reads;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
 pub use store::{
-    create_question, edit_question, pause_question, read_question, read_question_schedule,
+    create_question, create_question_with_lane, edit_question, edit_question_with_lane,
+    pause_question, read_question, read_question_schedule,
 };
 pub(crate) use task_ask::{TaskAnswerBinding, bind_task_answer_in_txn, validate_task_answer_unit};
 pub use windows::{

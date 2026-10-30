@@ -9,20 +9,27 @@
 //! adopting writer, or answers the ack when the target adopted it first.
 //! A source with no actor session opens the lane as its machine alone (FIX
 //! 6458), and a status says when the target fenced the handoff (FIX 6574).
+//!
+//! FIX 8875 stage 2: `.session` reads the key session the target offers for
+//! a handoff and `.keys` sends the handoff's erasable keys sealed to it,
+//! before the parts. `.retire` asks a holder of retired keys' copies to
+//! retire them, and `.retired` reads which of them it keeps no live copy of.
+//! The same lane, dialed to that holder, carries both.
 
 use std::time::Duration;
 
 use base64::Engine;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
+use super::rpc::HomeRefused;
 use super::{ResidenceRpc, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::PeerMachine;
 use crate::entity_id::EntityId;
 use crate::sync::client::{ResidenceHomeRoute, SyncClientConfig};
-use crate::sync::home_handoff::{HomeAck, decode_ack};
-use crate::sync::residence::sealed_digest_hex;
+use crate::sync::home_handoff::{HomeAck, KeySessionOffer, SentKey, decode_ack};
+use crate::sync::residence::{sealed_digest_from_hex, sealed_digest_hex};
 use crate::sync::transport::TransportError;
 
 /// Where the target says a handoff stands, from its persisted state.
@@ -69,6 +76,27 @@ struct CancelReply {
     fenced: Option<bool>,
     #[serde(default)]
     ack: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SessionReply {
+    ephemeral: String,
+    nonce: String,
+}
+
+#[derive(Deserialize)]
+struct KeysReply {
+    installed: u32,
+}
+
+#[derive(Deserialize)]
+struct RetireReply {
+    staged: u32,
+}
+
+#[derive(Deserialize)]
+struct RetiredReply {
+    retired: Vec<String>,
 }
 
 fn ack_from(text: &str) -> Result<HomeAck, TransportError> {
@@ -213,5 +241,121 @@ impl HandoffLane {
             (None, Some(true)) => Ok(Some(TargetCancel::Fenced)),
             (None, _) => Err(refused()),
         }
+    }
+
+    /// FIX 8875: one call whose answer waits on the target's durable writes:
+    /// it waits as long as a commit does, and later calls as before.
+    async fn durable_call(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Result<Value, HomeRefused>, TransportError> {
+        let timeout = self.rpc.timeout;
+        self.rpc.timeout = timeout.max(self.ack_timeout);
+        let answer = self.rpc.call(method, params).await;
+        self.rpc.timeout = timeout;
+        answer
+    }
+
+    /// FIX 8875: the key session the target offers for handoff `id`, sealed
+    /// to the bytes `digest` names: its session-ephemeral public key and
+    /// nonce; `None` when it refused.
+    pub(crate) async fn session(
+        &mut self,
+        id: &[u8; 32],
+        digest: &[u8; 32],
+    ) -> Result<Option<KeySessionOffer>, TransportError> {
+        let params = json!({"id": sealed_digest_hex(id), "digest": sealed_digest_hex(digest)});
+        let reply = match self
+            .rpc
+            .call("residence.home_handoff.session", params)
+            .await?
+        {
+            Ok(reply) => serde_json::from_value::<SessionReply>(reply).map_err(|_| refused())?,
+            Err(_) => return Ok(None),
+        };
+        let ephemeral = base64::engine::general_purpose::STANDARD
+            .decode(&reply.ephemeral)
+            .map_err(|_| refused())?;
+        let nonce = sealed_digest_from_hex(&reply.nonce).ok_or_else(refused)?;
+        Ok(Some(KeySessionOffer { ephemeral, nonce }))
+    }
+
+    /// FIX 8875: sends `keys`, sealed to the session the target offered for
+    /// handoff `id`; how many of them it holds now, or `None` when it
+    /// refused. Each key lands in a writer of its own there: this call waits
+    /// as long as a commit does, and the parts after it as before.
+    pub(crate) async fn keys(
+        &mut self,
+        id: &[u8; 32],
+        digest: &[u8; 32],
+        keys: &[SentKey],
+    ) -> Result<Option<u32>, TransportError> {
+        let keys: Vec<Value> = keys
+            .iter()
+            .map(|key| {
+                let sealed =
+                    base64::engine::general_purpose::STANDARD.encode(key.sealed.as_bytes());
+                json!({"key": key.key, "sealed": sealed})
+            })
+            .collect();
+        let params = json!({
+            "id": sealed_digest_hex(id),
+            "digest": sealed_digest_hex(digest),
+            "keys": keys,
+        });
+        match self
+            .durable_call("residence.home_handoff.keys", params)
+            .await?
+        {
+            Ok(reply) => Ok(Some(
+                serde_json::from_value::<KeysReply>(reply)
+                    .map_err(|_| refused())?
+                    .installed,
+            )),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// FIX 8875: asks this lane's machine, a holder of `keys`' copies, to
+    /// retire them: this node retired its own for an erase of their actors.
+    /// How many it named, or `None` when it refused.
+    pub(crate) async fn retire(&mut self, keys: &[String]) -> Result<Option<u32>, TransportError> {
+        let params = json!({"keys": keys});
+        match self
+            .durable_call("residence.home_handoff.retire", params)
+            .await?
+        {
+            Ok(reply) => Ok(Some(
+                serde_json::from_value::<RetireReply>(reply)
+                    .map_err(|_| refused())?
+                    .staged,
+            )),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// FIX 8875: those of `keys` this lane's machine keeps no live copy of,
+    /// by its own answer on a socket that proved it; `None` when it refused.
+    pub(crate) async fn retired(
+        &mut self,
+        keys: &[String],
+    ) -> Result<Option<Vec<String>>, TransportError> {
+        let params = json!({"keys": keys});
+        let reply = match self
+            .rpc
+            .call("residence.home_handoff.retired", params)
+            .await?
+        {
+            Ok(reply) => serde_json::from_value::<RetiredReply>(reply).map_err(|_| refused())?,
+            Err(_) => return Ok(None),
+        };
+        Ok(Some(
+            reply
+                .retired
+                .into_iter()
+                .filter(|key| keys.contains(key))
+                .collect(),
+        ))
     }
 }
