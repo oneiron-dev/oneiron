@@ -772,7 +772,7 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         proof: Option<&AuthenticatedOwner>,
     ) -> Result<WriteActor> {
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        let actor = self.write_actor();
         match proof {
             Some(proof) => {
                 if self.actor != proof.revalidate_person_in_txn(self.vault, txn)?

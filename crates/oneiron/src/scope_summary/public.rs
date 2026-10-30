@@ -111,7 +111,7 @@ impl Memory<'_> {
         };
         let request = super::ScopeSummaryRequest {
             target,
-            requester: WriteActor::new(self.actor(), self.actor_class()),
+            requester: self.write_actor(),
         };
         let queued = match &input.purpose {
             Some(purpose) => self.vault().request_scope_summary_for(&request, purpose)?,
@@ -247,7 +247,7 @@ impl Memory<'_> {
             &summary,
             &input.frontier,
             &input.keep,
-            WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
             &self.summary_authorization(),
             self.vault().now_recorded_at(),
         )?;
@@ -269,7 +269,7 @@ impl Memory<'_> {
     /// permitted anchored edits merge, and the others wait in one proposal.
     pub fn edit_summary(&self, input: &SummaryEditRequest) -> MemoryResult<SummaryProposalView> {
         let summary = self.summary_id(&input.summary_ref)?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let edits = input
             .edits
             .iter()
@@ -298,7 +298,7 @@ impl Memory<'_> {
         input: &SummaryPatchRequest,
     ) -> MemoryResult<SummaryMutationResult> {
         let summary = self.summary_id(&input.summary_ref)?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let edits = input
             .edits
             .iter()
@@ -346,7 +346,7 @@ impl Memory<'_> {
             ForkRequest {
                 entity: summary,
                 base: input.base.clone(),
-                actor: WriteActor::new(self.actor(), self.actor_class()),
+                actor: self.write_actor(),
                 edits: Vec::new(),
                 rewrite: Some(input.text.clone()),
             },
@@ -439,7 +439,7 @@ impl Memory<'_> {
             &side_id(&input.proposal_ref)?,
             verb,
             &self.summary_authorization(),
-            WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
             self.vault().now_recorded_at(),
         )?;
         self.read_summary_proposal(input)

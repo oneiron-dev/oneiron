@@ -14,7 +14,7 @@ use crate::context_board::{
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::skill_hub::{CallerPermissions, HoldsNothing};
-use crate::write_envelope::{WriteActor, WriteProvenance};
+use crate::write_envelope::WriteProvenance;
 
 /// The verb that undoes a fitted install: the owner's revoke.
 const UNDO_VERB: &str = "vault.packs.sections.revoke";
@@ -87,7 +87,7 @@ impl Memory<'_> {
         .map_err(MemoryError::from)?;
         let outcome = install_plugin_section_after_fit(
             vault,
-            WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
             provenance,
             PluginInstallTarget::from(&input.target),
             &input.manifest,

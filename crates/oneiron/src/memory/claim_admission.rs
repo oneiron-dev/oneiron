@@ -210,7 +210,7 @@ impl Memory<'_> {
         let at = self.vault.store.clock.now_recorded_at();
         let read: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
         let birth = RowBirth::written(
-            crate::write_envelope::WriteActor::new(self.actor, self.actor_class),
+            self.write_actor(),
             MadeByClass::of_source(self.claim_source(&input.source)?),
             "vault.claims.upsert",
             &inputs,

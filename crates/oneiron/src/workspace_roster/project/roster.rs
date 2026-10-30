@@ -6,7 +6,6 @@
 //! effect once she accepts. The invitation governs her join receipt and its
 //! participation evidence, not the seat the signed roster gives her.
 use super::*;
-use crate::WriteActor;
 use crate::memory::{Memory, MemoryResult};
 
 /// `vault.projects.roster.write`: an existing project's new signed record.
@@ -63,7 +62,7 @@ impl Memory<'_> {
         reset_vault: Option<u64>,
     ) -> MemoryResult<ProjectRosterWriteOutcome> {
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let written = vault.write_txn_door(crate::store::Callback::Audited, |txn| {
             if let Some(vault_id) = reset_vault {
                 if vault

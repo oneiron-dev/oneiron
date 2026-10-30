@@ -203,10 +203,7 @@ impl Memory<'_> {
         input: &DagRecordAppendInput,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<DagRecordAppendReceipt> {
-        let append = input.append_record(
-            WriteActor::new(self.actor(), self.actor_class()),
-            announcement,
-        )?;
+        let append = input.append_record(self.write_actor(), announcement)?;
         Ok(self.vault().append_dag_record(self, &append)?.into())
     }
 }
