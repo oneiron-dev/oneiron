@@ -24,6 +24,7 @@ use crate::edit_settle::{DeckExportHold, MadeByReader, NativeOutput, PendingProp
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::made_by::MadeBy;
+use crate::provenance::text_commit::TextCommitReceipt;
 use crate::temporal::TimeRange;
 use crate::typed_body::{BodyActor, edit_typed_body_in_txn};
 use crate::write_envelope::WriteActor;
@@ -89,8 +90,9 @@ impl Vault {
     /// Land an authoritative export: its bytes become the artifact's next blob
     /// version, recorded with the frontier it projects, and the deck rebinds to
     /// them (the same node identities, the exported native ids and
-    /// fingerprints, the joined allocation history) in the lander's commit; the
-    /// next export projects over them. When the head is not the version the
+    /// fingerprints, the joined allocation history) in the lander's commit,
+    /// whose frontier the record keeps too (FIX 12325); the next export
+    /// projects over them. When the head is not the version the
     /// deck projected over, the export forks from that version and the head
     /// stays beside it, named in the result (FIX 2700). A proposal export, an
     /// export whose profile's gate is closed now or whose projector is not the
@@ -142,12 +144,13 @@ impl Vault {
                 hash: *blake3::hash(&export.outcome.bytes).as_bytes(),
             };
             let writer = writer(OfficeBodyKind::Pptx, actor, made_by);
-            edit_typed_body_in_txn(self, wtxn, artifact, None, writer, |doc| {
+            let (_, rebind) = edit_typed_body_in_txn(self, wtxn, artifact, None, writer, |doc| {
                 doc::sync_to(doc, &body.deck)?;
                 doc::push_landed(doc, &retained)
             })?;
             let record = export_record(
                 (artifact, version.version, export.frontier.clone()),
+                Some(rebind_frontier(&rebind.receipt)),
                 export.base_version,
                 actor,
                 at,
@@ -230,7 +233,8 @@ impl Vault {
     /// The deck side of a kept deck export (FIX 2700), in the Keep's
     /// transaction once its version `version` landed: the export record, and
     /// the deck bound to `version` when it is still bound to `base`, the
-    /// version the export projected over. The binding is written at the
+    /// version the export projected over; the record then keeps the
+    /// frontier that binding left (FIX 12325). The binding is written at the
     /// export's frontier and merges into the head as a CRDT peer's would, so
     /// edits made since stay as they are and the next export projects them
     /// over the kept version. A deck bound to another version since, or one
@@ -259,6 +263,7 @@ impl Vault {
             });
         // The deck as the export projected it, bound to the kept version.
         let still_bound = (Some(bound.0), Some(bound.1)) == (base_version, base_hash);
+        let mut rebound = None;
         if let Some(made_by) = made_by
             && still_bound
             && let Ok((_, at_export)) =
@@ -272,13 +277,15 @@ impl Vault {
             };
             let base = (head.frontier != hold.frontier).then_some(hold.frontier.as_slice());
             let writer = writer(OfficeBodyKind::Pptx, actor, made_by);
-            edit_typed_body_in_txn(self, wtxn, artifact, base, writer, |doc| {
+            let (_, rebind) = edit_typed_body_in_txn(self, wtxn, artifact, base, writer, |doc| {
                 doc::sync_to(doc, &exported.deck)?;
                 doc::push_landed(doc, &retained)
             })?;
+            rebound = Some(rebind_frontier(&rebind.receipt));
         }
         let record = export_record(
             (artifact, version.version, hold.frontier.clone()),
+            rebound,
             base_version.unwrap_or(source.source_version),
             actor,
             at,
@@ -316,11 +323,20 @@ fn outcome_of(hold: &DeckExportHold) -> ExportOutcome {
     }
 }
 
+/// The frontier a rebinding commit left (FIX 12325): its last operation,
+/// whose history is the frontier it was written at and that one commit,
+/// even when it merged into a head that moved since. Each commit writes
+/// under a fresh peer, so its receipt's span ends at that operation.
+fn rebind_frontier(receipt: &TextCommitReceipt) -> Vec<u8> {
+    loro::Frontiers::from_id(loro::ID::new(receipt.peer, receipt.end - 1)).encode()
+}
+
 /// The export record of version `version` of `artifact`, projected at
-/// `frontier` over `source_version`: its lander, time, change count and
-/// effect receipts.
+/// `frontier` over `source_version`, with the frontier its rebinding left:
+/// its lander, time, change count and effect receipts.
 fn export_record(
     (artifact, version, frontier): (&EntityId, u64, Vec<u8>),
+    rebind_frontier: Option<Vec<u8>>,
     source_version: u64,
     actor: WriteActor,
     at: u64,
@@ -330,6 +346,7 @@ fn export_record(
         artifact: *artifact,
         version,
         frontier,
+        rebind_frontier,
         source_version,
         actor: BodyActor::Actor(actor.entity_ref()),
         author: actor.entity_ref().to_hex(),
