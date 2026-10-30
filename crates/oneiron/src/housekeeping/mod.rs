@@ -358,9 +358,10 @@ impl Vault {
     /// lease, a voice print, a critical confirm or a shared act's window, not
     /// before that sweep is next due (a failing sweep waits out its backoff),
     /// and the erasure sweep's due time while an obligation waits, and a left
-    /// env's owed body collection (FIX 2413). Cache and retention hygiene
-    /// never wake a vault. Reads one row per sweep and the schedule, never a
-    /// whole table, so a host can ask every time it stops the vault.
+    /// env's owed body collection (FIX 2413), and the earliest deadline of
+    /// the retained peer work (FIX 11183). Cache and retention hygiene never
+    /// wake a vault. Reads one row per sweep, the schedule and the retained
+    /// work queues, so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
         let states = schedule::read_states(self)?;
         let noted = {
@@ -380,6 +381,7 @@ impl Vault {
         if let Some(at) = sync_work::left_env_body_collect_due_at(self)? {
             owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
+        sync_work::push_retained_work_due_at(self, &mut owed)?;
         let mut earliest: Option<u64> = None;
         for (sweep, at) in owed {
             let Runner::Engine { every, .. } = sweep.runner() else {

@@ -69,7 +69,8 @@ impl SyncConnection {
 
     /// Publishes the mode the committed home and the owner's stored choice
     /// resolve to now, when it differs from the one this connection runs.
-    /// A change to All drops the opened read caches first.
+    /// A change to All publishes first and then drops the opened read
+    /// caches, so no reader sees Thin with its caches gone (FIX 11114).
     fn follow_home(&self, vault: &Vault) -> crate::error::Result<()> {
         let mode = crate::sync::residence::resolve_residence_mode(
             vault,
@@ -78,14 +79,19 @@ impl SyncConnection {
         if mode == *self.mode.borrow() {
             return Ok(());
         }
-        if mode == SyncResidenceMode::All {
-            crate::sync::residence::prune_thin_items(vault, u64::MAX)?;
-        }
         self.mode.send_if_modified(|running| {
             let changed = *running != mode;
             *running = mode;
             changed
         });
+        if mode == SyncResidenceMode::All
+            && let Err(error) = crate::sync::residence::prune_thin_items(vault, u64::MAX)
+        {
+            tracing::warn!(
+                %error,
+                "residence mode is All with its opened read caches left; the next switch drops them"
+            );
+        }
         Ok(())
     }
 }

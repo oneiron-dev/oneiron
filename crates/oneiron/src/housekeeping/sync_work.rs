@@ -3,8 +3,33 @@
 //! for its turn (FIX 7997, 8565). A build without the `sync` feature keeps
 //! no shared env and no retained peer work, so it owes none.
 
+use super::HousekeepingSweep;
 use crate::Vault;
 use crate::error::Result;
+
+/// Pushes the retained peer work's earliest deadline, when any waits, for
+/// the sweep that drains it (FIX 11183): the federation batches' and the
+/// maintenance ops' minima, read from the same rows the drain ends.
+#[cfg(feature = "sync")]
+pub(super) fn push_retained_work_due_at(
+    vault: &Vault,
+    owed: &mut Vec<(HousekeepingSweep, u64)>,
+) -> Result<()> {
+    let federation = crate::sync::federation_burst::earliest_retained_deadline(vault)?;
+    let maintenance = crate::sync::quota::earliest_retained_deadline(vault)?;
+    if let Some(at) = federation.into_iter().chain(maintenance).min() {
+        owed.push((HousekeepingSweep::GateDecisionRetention, at));
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "sync"))]
+pub(super) fn push_retained_work_due_at(
+    _vault: &Vault,
+    _owed: &mut Vec<(HousekeepingSweep, u64)>,
+) -> Result<()> {
+    Ok(())
+}
 
 /// When this left shared env's owed body collection is due, or `None` when
 /// it owes none.

@@ -9,7 +9,9 @@ pub use work::{
     MAINTENANCE_DRAIN_TURNS, MaintenanceRetainedReceipt, MaintenanceWorkState,
     maintenance_ingest_retained,
 };
-pub(crate) use work::{drain_retained_maintenance, erase_retained_in_txn};
+pub(crate) use work::{
+    drain_retained_maintenance, earliest_retained_deadline, erase_retained_in_txn,
+};
 
 const MAINTENANCE_INGEST_QUOTA_PREFIX: &[u8] = b"m:maintenance_ingest_quota:v1:";
 const MAINTENANCE_INGEST_QUOTA_CONFIG_KEY: &[u8] = b"m:maintenance_ingest_quota_config:v1";
