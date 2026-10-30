@@ -9,7 +9,9 @@
 //! revoke ended and no erase here fenced, so the owner reads it from
 //! whichever install serves him ([`Vault::export_secret_supplement`]). No
 //! install that keeps or relays it can open it: only the recipient machine
-//! the owner chose does.
+//! the owner chose does. A copy past one row rides in numbered parts, which
+//! the receiver joins before it judges the copy (FIX 12063,
+//! `sync::custody::export_output`).
 
 use super::OUTPUTS;
 use crate::Vault;
@@ -24,8 +26,8 @@ use crate::error::Result;
 const LABEL: &[u8] = b"oneiron/export-secret-output/v1\0";
 
 /// The most bytes one relayed row of a kept copy carries, as for a custody
-/// transition or input row. A longer copy stays with the installs that keep
-/// it, and is read from them.
+/// transition or input row. A longer copy rides in numbered parts (FIX
+/// 12063).
 #[cfg(feature = "sync")]
 pub(crate) const MAX_RELAYED_OUTPUT_BYTES: usize = 4 << 20;
 
@@ -107,27 +109,45 @@ impl KeptExportOutput {
             && self.named_by(fold)
     }
 
-    /// Whether a window's row of this copy is due to leave it: `fold` folds
-    /// its request refused, as no export secret request, or on a secret an
-    /// admitted revoke ended or `fenced` names, or folds a result for it that
-    /// does not name this copy. A row whose request or result this vault has
-    /// not folded yet stays.
+    /// Whether a window's row of this copy is due to leave it: its
+    /// request's rows are ([`Self::request_rows_done`]), or `fold` folds a
+    /// result for it that does not name this copy. A row whose request or
+    /// result this vault has not folded yet stays.
     #[cfg(feature = "sync")]
     pub(crate) fn row_done(
         &self,
         fold: &AuthorityFold,
         fenced: impl Fn(&EntityId) -> bool,
     ) -> bool {
-        if fold.refused_owner_work().contains(&self.request) {
+        Self::request_rows_done(fold, &self.request, fenced)
+            || (fold.owner_work_request(&self.request).is_some()
+                && fold.owner_work_result(&self.request).is_some()
+                && !self.named_by(fold))
+    }
+
+    /// Whether every window row of a copy for `request`, whole or one of its
+    /// parts (FIX 12063), is due to leave it whatever the copy: `fold` folds
+    /// the request refused, as no export secret request, or on a secret an
+    /// admitted revoke ended or `fenced` names. A request this vault has not
+    /// folded yet keeps its rows.
+    #[cfg(feature = "sync")]
+    pub(crate) fn request_rows_done(
+        fold: &AuthorityFold,
+        request: &AuthorityEntryHash,
+        fenced: impl Fn(&EntityId) -> bool,
+    ) -> bool {
+        if fold.refused_owner_work().contains(request) {
             return true;
         }
-        if fold.owner_work_request(&self.request).is_none() {
-            return false;
+        match fold.owner_work_request(request) {
+            None => false,
+            Some(folded) => match &folded.work {
+                OwnerWorkBody::ExportSecret(work) => {
+                    fold.custody_revoked(&work.secret) || fenced(&work.secret)
+                }
+                _ => true,
+            },
         }
-        let ended = self
-            .secret(fold)
-            .is_none_or(|secret| fold.custody_revoked(&secret) || fenced(&secret));
-        ended || (fold.owner_work_result(&self.request).is_some() && !self.named_by(fold))
     }
 }
 

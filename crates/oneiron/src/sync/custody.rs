@@ -455,12 +455,12 @@ fn apply_custody_rows(vault: &Vault, doc: &LoroDoc, key: &WindowKey, skip_held: 
             rows.push((map_key.to_owned(), bytes.to_vec()));
         }
     });
-    apply_carriers(vault, key.as_str(), rows, skip_held);
+    apply_carriers(vault, doc, key.as_str(), rows, skip_held);
 }
 
 /// Observer B for the custody map: each transition an import changed.
 pub(crate) fn materialize_custody_from_delta(
-    _doc: &LoroDoc,
+    doc: &LoroDoc,
     delta: &MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
@@ -476,7 +476,7 @@ pub(crate) fn materialize_custody_from_delta(
             _ => None,
         })
         .collect();
-    apply_carriers(vault, window_key, rows, false);
+    apply_carriers(vault, doc, window_key, rows, false);
     Some(Vec::new())
 }
 
@@ -485,9 +485,17 @@ pub(crate) fn materialize_custody_from_delta(
 /// record's latest when it supersedes the one held. Only a group of pieces
 /// that is then whole and stands as one has custody effects: its value
 /// sealed to this machine is opened and written through the custody door.
-/// Input rows go to [`keep_relayed_inputs`]. With `skip_held`, a piece this
-/// vault already holds byte for byte is left alone.
-fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, skip_held: bool) {
+/// Input rows go to [`keep_relayed_inputs`]; an export copy's rows join
+/// from `doc`, the window's document, when they come in parts (FIX 12063).
+/// With `skip_held`, a piece this vault already holds byte for byte is left
+/// alone.
+fn apply_carriers(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window: &str,
+    rows: Vec<(String, Vec<u8>)>,
+    skip_held: bool,
+) {
     let (inputs, rows): (Vec<_>, Vec<_>) = rows
         .into_iter()
         .partition(|(map_key, _)| map_key.starts_with(INPUT_ROW_PREFIX));
@@ -499,7 +507,7 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
     let (outputs, rows): (Vec<_>, Vec<_>) = rows
         .into_iter()
         .partition(|(map_key, _)| map_key.starts_with(export_output::EXPORT_OUTPUT_ROW_PREFIX));
-    export_output::keep_relayed_export_outputs(vault, window, outputs);
+    export_output::keep_relayed_export_outputs(vault, doc, window, outputs);
     if rows.is_empty() {
         return;
     }
