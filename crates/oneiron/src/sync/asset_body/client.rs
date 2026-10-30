@@ -3,6 +3,7 @@
 //! imports take the federated admission: a body frame there stays the
 //! unknown tag it was, and its upkeep sends none.
 
+use std::sync::PoisonError;
 use std::time::Instant;
 
 use futures_util::{Sink, SinkExt};
@@ -33,7 +34,10 @@ impl SyncClient {
         if self.config.federation_peer.is_some() {
             return Err(TransportError::UnknownTag(tag));
         }
-        let bodies = &mut self.asset_bodies;
+        let bodies = self
+            .asset_bodies
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
         with_manager_peer(&self.manager, |peer| {
             let mut out = bodies.handle_frame(peer, tag, payload)?;
             out.extend(bodies.poll(
@@ -42,7 +46,7 @@ impl SyncClient {
                 ASSET_BODY_FRAMES_PER_POLL,
                 MAX_DECODED_PAYLOAD_BYTES,
             )?);
-            Ok(out)
+            Ok::<_, TransportError>(out)
         })
     }
 
@@ -52,7 +56,10 @@ impl SyncClient {
         if self.config.federation_peer.is_some() {
             return Vec::new();
         }
-        let bodies = &mut self.asset_bodies;
+        let bodies = self
+            .asset_bodies
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
         let polled = with_manager_peer(&self.manager, |peer| {
             bodies.poll(
                 peer,

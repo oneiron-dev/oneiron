@@ -40,7 +40,7 @@ pub(super) fn handle(
             ASSET_BODY_FRAMES_PER_POLL,
             server.config.max_frame_size,
         )?);
-        Ok(out)
+        Ok::<_, TransportError>(out)
     })
     .map_err(|error| match error {
         TransportError::UnknownTag(tag) => ProtocolError::UnknownTag(tag),
@@ -95,7 +95,11 @@ fn with_peer<T>(
         window: &window,
         windows: &windows,
     };
-    f(&peer, &mut state.asset_bodies)
+    let bodies = state
+        .asset_bodies
+        .get_mut()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    f(&peer, bodies)
 }
 
 /// The windows this socket moves bodies for now.
