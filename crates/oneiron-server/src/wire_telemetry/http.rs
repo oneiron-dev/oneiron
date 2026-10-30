@@ -78,6 +78,9 @@ fn embedded_owner() -> Option<&'static str> {
 }
 
 pub(crate) fn start_window_receipts(server: &Arc<crate::server::SyncServer>) {
+    // The retrieval meters ride along: their worker has its own latch, so
+    // either may already run (FIX 11011).
+    crate::server::SyncServer::start_retrieval_meter_flush(server);
     // Router construction may happen before its runtime exists. The first
     // runtime-backed request retries this start without losing the flush latch.
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {

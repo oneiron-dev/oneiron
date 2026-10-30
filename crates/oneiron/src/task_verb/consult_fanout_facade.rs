@@ -14,6 +14,7 @@ use super::follow_up::{
     task_follow_up_marker,
 };
 use super::rate_limit::task_create_owner;
+use super::settlement_anchor::anchor_kept_review_in_txn;
 use super::terminal_state::{
     TaskExecutionState, TaskLapseCause, TaskTerminalDisposition, TaskTerminalRecord,
 };
@@ -252,6 +253,13 @@ impl Vault {
             self.batch_in()
                 .put_internal(&task_ref, ENTITY_TYPE_TASK, occurred, now, &encoded)
                 .apply(wtxn)?;
+            // A review the owner accepted before the TASK settled anchors the
+            // settlement; the lapse keeps no row of its own, so no settler
+            // gate stands beside the reviewer's (FIX 11806).
+            anchor_kept_review_in_txn(self, wtxn, task_ref, None)?;
+            // The routing projection counts this settlement on the folds whose
+            // runs worked this TASK before it settled (FIX 11807).
+            crate::edit_distance::routing::refold_task_outcomes_in_txn(self, wtxn, task_ref);
             // Announced after commit like every TASK put; the board
             // publisher routes the expiry to the asker.
             Ok(Some(result_ref))

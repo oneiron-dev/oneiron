@@ -31,10 +31,14 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
-use oneiron::llm::{WorkerDescriptor, WorkerFailure, WorkerReadiness, WorkerStatus};
+use oneiron::llm::{
+    InferenceCallReceipt, ResourceClass, WorkerDescriptor, WorkerFailure, WorkerFailureDetail,
+    WorkerKind, WorkerReadiness, WorkerStatus,
+};
 use tokio::sync::watch;
 
 use super::inference::{WorkerProbe, WorkerSpec};
+use super::inference_admission::{DeviceAdmission, LoadGrant};
 use super::inference_device::{DeclaredEnvelope, DeviceLedger, ResidentReport, ResidentSource};
 
 mod drive;
@@ -114,7 +118,8 @@ pub struct WorkerActivity {
 }
 
 impl WorkerActivity {
-    fn is_idle(&self) -> bool {
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
         self.queued == 0 && self.active == 0
     }
 }
@@ -246,6 +251,12 @@ struct State {
     epoch: Option<String>,
     /// The incarnation an abort was asked for; it ends with no drain.
     abort: Option<u64>,
+    /// A pressure decision asked for a restartable idle unload.
+    unload_requested: bool,
+    /// The last physical call receipt and its qualifying epoch, retained after exit.
+    last_receipt: Option<(String, InferenceCallReceipt)>,
+    /// The latest sanitized lifecycle failure, including prequalification failures.
+    failure_detail: Option<WorkerFailureDetail>,
 }
 
 struct Inner {
@@ -254,6 +265,7 @@ struct Inner {
     probe: Arc<dyn WorkerProbe>,
     policy: WorkerPolicy,
     device: Option<(Arc<DeviceLedger>, DeclaredEnvelope)>,
+    admission: Mutex<Option<Arc<DeviceAdmission>>>,
     state: Mutex<State>,
     changed: watch::Sender<u64>,
 }
@@ -262,6 +274,15 @@ struct Inner {
 #[derive(Clone)]
 pub struct InferenceWorker {
     inner: Arc<Inner>,
+}
+
+/// The result of a pressure-requested, restartable idle unload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnloadOutcome {
+    Unloaded,
+    DeferredDemand,
+    ExternalKept,
+    NotRunning,
 }
 
 /// A held claim on one ready incarnation, from [`InferenceWorker::acquire`]
@@ -349,6 +370,18 @@ impl InferenceWorker {
         Self::new(spec, Some(launcher), probe, policy, device)
     }
 
+    /// Binds this managed worker to its device's admission queue. Existing
+    /// constructors leave it `None`, which preserves their current path.
+    pub fn with_admission(&self, admission: Arc<DeviceAdmission>) {
+        if self.inner.launcher.is_some() {
+            *self
+                .inner
+                .admission
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(admission);
+        }
+    }
+
     /// An external worker's supervisor: it probes, and does nothing else.
     #[must_use]
     pub fn external(spec: WorkerSpec, probe: Arc<dyn WorkerProbe>) -> Self {
@@ -374,6 +407,9 @@ impl InferenceWorker {
             probed: WorkerReadiness::Unchecked,
             epoch: None,
             abort: None,
+            unload_requested: false,
+            last_receipt: None,
+            failure_detail: None,
         };
         Self {
             inner: Arc::new(Inner {
@@ -382,6 +418,7 @@ impl InferenceWorker {
                 probe,
                 policy,
                 device,
+                admission: Mutex::new(None),
                 state: Mutex::new(state),
                 changed: watch::Sender::new(0),
             }),
@@ -391,6 +428,12 @@ impl InferenceWorker {
     #[must_use]
     pub fn spec(&self) -> &WorkerSpec {
         &self.inner.spec
+    }
+
+    /// The device-budget class this worker's kind serves.
+    #[must_use]
+    pub fn resource_class(&self) -> ResourceClass {
+        self.inner.resource_class()
     }
 
     /// Starts a stopped managed worker now, as an always-on worker starts at
@@ -509,6 +552,12 @@ impl InferenceWorker {
                 Phase::Failed { readiness, .. } => readiness.clone(),
             }
         };
+        let queue = self.inner.admission().and_then(|admission| {
+            admission
+                .snapshot()
+                .workers
+                .remove(&self.inner.spec.worker_id)
+        });
         WorkerStatus {
             worker_id: self.inner.spec.worker_id.clone(),
             model: self.inner.spec.model.clone(),
@@ -517,7 +566,14 @@ impl InferenceWorker {
             readiness,
             resident_mib: state.activity.and_then(|activity| activity.resident_mib),
             queue_depth: state.activity.map(|activity| activity.queued),
-            last_receipt: None,
+            last_receipt: state
+                .last_receipt
+                .as_ref()
+                .map(|(_, receipt)| receipt.clone()),
+            failure_detail: state.failure_detail.clone(),
+            host_queued: queue.as_ref().map(|queue| queue.queued),
+            host_active: queue.as_ref().map(|queue| queue.active),
+            paused: queue.as_ref().map(|queue| queue.paused),
         }
     }
 
@@ -525,6 +581,50 @@ impl InferenceWorker {
     /// read itself; the supervisor's own polls land here too.
     pub fn report(&self, activity: WorkerActivity) {
         self.inner.note_activity(Some(activity));
+    }
+
+    /// Retains one sanitized physical receipt and its epoch after the worker
+    /// exits. No status read probes the worker to obtain it.
+    pub fn record_receipt(&self, epoch: &str, receipt: InferenceCallReceipt) {
+        self.inner.lock().last_receipt = Some((epoch.to_owned(), receipt));
+        self.inner.notify();
+    }
+
+    /// Asks a ready managed worker to stop through the existing restartable
+    /// idle path. Demand or queued/active/paused admission work defers it;
+    /// an external worker is never touched.
+    pub async fn unload_if_idle(&self) -> UnloadOutcome {
+        if self.inner.launcher.is_none() {
+            return UnloadOutcome::ExternalKept;
+        }
+        {
+            let mut state = self.inner.lock();
+            if !state.driving || !matches!(state.phase, Phase::Ready(_)) {
+                return UnloadOutcome::NotRunning;
+            }
+            if state.leases > 0 || state.waiting > 0 || !self.inner.admission_idle() {
+                return UnloadOutcome::DeferredDemand;
+            }
+            state.unload_requested = true;
+        }
+        self.inner.notify();
+        loop {
+            let mut changes = self.inner.changed.subscribe();
+            {
+                let mut state = self.inner.lock();
+                if state.leases > 0 || state.waiting > 0 || !self.inner.admission_idle() {
+                    state.unload_requested = false;
+                    drop(state);
+                    self.inner.notify();
+                    return UnloadOutcome::DeferredDemand;
+                }
+                if matches!(state.phase, Phase::IdleStopped | Phase::Stopped) || !state.driving {
+                    state.unload_requested = false;
+                    return UnloadOutcome::Unloaded;
+                }
+            }
+            let _ = changes.changed().await;
+        }
     }
 
     /// Aborts the incarnation that qualified with `epoch`, if it is still
@@ -591,6 +691,28 @@ impl Inner {
             readiness,
             reason: Some(reason.to_owned()),
         }
+    }
+
+    fn admission(&self) -> Option<Arc<DeviceAdmission>> {
+        self.admission
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn resource_class(&self) -> ResourceClass {
+        match self.spec.kind {
+            WorkerKind::Embedder => ResourceClass::Embedder,
+            WorkerKind::Oneironer => ResourceClass::Encoder,
+            WorkerKind::VoxCpm2 => ResourceClass::Tts,
+            WorkerKind::Asr => ResourceClass::Asr,
+            WorkerKind::LlamaCpp | WorkerKind::Exl3 | WorkerKind::Unknown => ResourceClass::Chat,
+        }
+    }
+
+    fn admission_idle(&self) -> bool {
+        self.admission()
+            .is_none_or(|admission| admission.worker_idle(&self.spec.worker_id))
     }
 
     fn note_activity(&self, activity: Option<WorkerActivity>) {

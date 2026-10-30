@@ -510,6 +510,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/packs/activate",
+        summary: "The owner activates a hub Candidate held for its advisories, or for code that is organs only.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/packs/agent/world",
         summary: "The owner's answer to a travelling AgentPack held for its world (needs_world).",
         row: None,

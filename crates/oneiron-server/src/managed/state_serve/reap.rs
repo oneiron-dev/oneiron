@@ -108,18 +108,27 @@ impl ManagedState {
         // Counted BEFORE drain/export. A writer finishing after export must
         // not turn a stale exported ledger into a quiescent reply.
         let at_freeze = self.freeze_counted()?;
-        self.drain_export(at_freeze, true).await
+        self.drain_export(at_freeze, true, None).await
     }
 
     /// The drain and the export after a freeze that found `at_freeze`. With
     /// `drain_leases` false the lease table is not drained, and reads as not
-    /// drained.
+    /// drained. A drain still under way at `deadline` is cut there and reads
+    /// as not drained; the export then answers at once (FIX 11742). The
+    /// sweep's job ends with the cut, so later sweeps run.
     pub(super) async fn drain_export(
         &self,
         at_freeze: InFlightCounts,
         drain_leases: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<Prepared, ManagedError> {
-        let drained = drain_leases && self.drain_lease_table().await;
+        let drained = drain_leases
+            && match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, self.drain_lease_table())
+                    .await
+                    .unwrap_or(false),
+                None => self.drain_lease_table().await,
+            };
         let report = self.ledger.export_at_freeze(&self.server).await?;
         // The pages carry the entries, so they are bounds-checked before
         // they are served rather than after a supervisor has trusted them,

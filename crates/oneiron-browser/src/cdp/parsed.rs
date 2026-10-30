@@ -20,8 +20,9 @@ pub(super) struct Parsed {
 }
 
 /// One parsed reply's charge, given back as it drops: when its call took
-/// the reply, or when a reply no call waits for is taken apart.
-pub(super) struct Held {
+/// the reply, when a reply no call waits for is taken apart, or when the
+/// driver's own copies of one are dropped (FIX 11578).
+pub(crate) struct Held {
     parsed: Arc<Mutex<Parsed>>,
     bytes: usize,
 }
@@ -50,7 +51,14 @@ impl Pipe {
     /// threshold, until its call took it: none where this pipe booked no
     /// charge or the floor admits no more of it.
     pub(super) fn charge_parsed(&self, value: &Value) -> Option<Held> {
-        let bytes = footprint(value);
+        self.charge_retained(footprint(value))
+    }
+
+    /// Charges `bytes` a past-threshold reply's copies keep in the driver
+    /// (FIX 11578), until the returned hold drops: none where this pipe
+    /// booked no charge or the floor admits no more of them, and the
+    /// copies are kept all the same.
+    pub(crate) fn charge_retained(&self, bytes: usize) -> Option<Held> {
         let mut parsed = self.parsed.lock().unwrap_or_else(PoisonError::into_inner);
         let held = parsed.held.saturating_add(bytes);
         let charge = parsed.charge.as_mut()?;
@@ -63,6 +71,32 @@ impl Pipe {
             bytes,
         })
     }
+
+    /// Charges `bytes` of PNG a held screenshot keeps (FIX 11578), where
+    /// they prove a past-threshold reply: base64 grows bytes by four
+    /// thirds, so only a PNG whose reply the framing threshold reads past
+    /// is charged. None where this pipe booked no charge, the floor
+    /// admits no more, or the PNG fits an inline reply.
+    pub(crate) fn charge_media(&self, bytes: usize) -> Option<Held> {
+        if bytes.saturating_mul(4) / 3 < super::MAX_MESSAGE as usize {
+            return None;
+        }
+        self.charge_retained(bytes)
+    }
+}
+
+/// The bytes `items` hold, as `footprint` measures each value, with the
+/// room past them the driver keeps (FIX 11578).
+pub(crate) fn footprint_items(items: &Vec<Value>) -> usize {
+    let slot = std::mem::size_of::<Value>();
+    let spare = items
+        .capacity()
+        .saturating_sub(items.len())
+        .saturating_mul(slot);
+    items
+        .iter()
+        .map(footprint)
+        .fold(spare, usize::saturating_add)
 }
 
 /// The bytes `value` holds, walked with an explicit stack, as a deep one

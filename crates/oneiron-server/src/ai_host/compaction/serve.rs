@@ -53,6 +53,7 @@ impl ServedCompactionBackend {
                     schema: compaction_reply_schema(),
                 },
                 locality: self.locality,
+                host_keyless: false,
             },
             messages: vec![
                 LlmMessage {

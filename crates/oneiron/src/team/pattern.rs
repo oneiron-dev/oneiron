@@ -21,6 +21,7 @@ use crate::learning::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::{LoadedSkillPack, SkillRole};
+use crate::write_envelope::WriteActor;
 
 /// Pattern skills, by skill entity.
 const PATTERN_SKILL: SideTable<EntityId, PatternSkill, Named> =
@@ -135,7 +136,8 @@ pub struct PatternLaunchSpec {
 /// call, and returns the start the skill writes. The engine holds no writer
 /// while it runs.
 pub trait PatternLaunchRunner: Send + Sync {
-    /// The start `skill` writes for `plan`.
+    /// The start `skill` writes for `plan`. `payer` is the caller the run's
+    /// model call is metered to.
     ///
     /// # Errors
     ///
@@ -147,6 +149,7 @@ pub trait PatternLaunchRunner: Send + Sync {
         asked: &SpawnNeed,
         prompt: &str,
         plan: &TeamPlan,
+        payer: &WriteActor,
     ) -> Result<PatternLaunchSpec>;
 }
 

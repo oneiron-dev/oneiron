@@ -440,7 +440,11 @@ impl RunDesktop {
                 RunGuestFixture::default(),
                 &["/usr/local/bin/oneiron-desktop-guest".into()],
             )?;
-            *session = Some(DesktopSession::attach(&self.guest, transport)?);
+            *session = Some(DesktopSession::attach(
+                &self.guest,
+                transport,
+                crate::server::HandleLine::of(&decider.server).charge(),
+            )?);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         if !self.policy_set.swap(true, Ordering::AcqRel) {

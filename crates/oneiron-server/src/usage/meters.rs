@@ -178,6 +178,10 @@ pub struct MeterRollup {
     pub total: MeterTotal,
     /// The rows that name a detail, by it.
     pub by_detail: BTreeMap<String, MeterTotal>,
+    /// Rows the host's retrieval buffer dropped before they were written; the
+    /// total undercounts by this many.
+    #[serde(default)]
+    pub dropped: u64,
 }
 
 /// What recording one meter row did.
@@ -202,55 +206,129 @@ impl UsageLedger {
         let period = meter_period(row.occurred_at);
         let rollup_key = meter_rollup_key(&row.owner, &row.vault_id, metric, period);
         validate_key(&rollup_key)?;
+        self.vault.try_with_write_txn_grouped(|txn| {
+            self.record_meter_in_txn(txn, &row, &key, &rollup_key, period)
+        })
+    }
+
+    /// Records one flushed retrieval-buffer batch in ONE grouped write: every
+    /// row folds as [`Self::record_meter`] folds it, and every drop count joins
+    /// its scope's retrieval rollup. A row that fails validation or meets an
+    /// idempotency conflict is skipped with a warning and never fails the
+    /// batch; any other error fails the whole write, so the flush keeps its
+    /// batch for the next tick.
+    pub fn record_meters(
+        &self,
+        rows: &[MeterRow],
+        dropped: &[(String, String, u64)],
+        at: u64,
+    ) -> Result<(), UsageError> {
         self.vault
-            .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
-                let rollup = self
-                    .vault
-                    .sync_state_get_in_write_txn(txn, &rollup_key)?
-                    .map(|raw| rmp_serde::from_slice::<MeterRollup>(&raw))
-                    .transpose()?;
-                if let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? {
-                    let stored: StoredMeterRow = rmp_serde::from_slice(&raw)?;
-                    if stored.row != row {
-                        return Err(UsageError::IdempotencyConflict);
+            .try_with_write_txn_grouped(|txn| -> Result<(), UsageError> {
+                for row in rows {
+                    if let Err(error) = row.validate() {
+                        tracing::warn!(
+                            ?error,
+                            metric = row.metric.as_str(),
+                            "a buffered meter row failed validation; it is skipped"
+                        );
+                        continue;
                     }
-                    let rollup = rollup.ok_or(oneiron::Error::CorruptedIndex("meter rollup"))?;
-                    return Ok(MeterRecordResult {
-                        recorded: false,
-                        replayed: true,
-                        rollup,
-                    });
+                    let metric = row.metric.as_str();
+                    let key = meter_key(&row.owner, &row.vault_id, metric, &row.idempotency_key);
+                    let period = meter_period(row.occurred_at);
+                    let rollup_key = meter_rollup_key(&row.owner, &row.vault_id, metric, period);
+                    if let Err(error) = validate_key(&rollup_key) {
+                        tracing::warn!(
+                            ?error,
+                            metric = row.metric.as_str(),
+                            "a buffered meter row names a scope that does not fit; it is skipped"
+                        );
+                        continue;
+                    }
+                    match self.record_meter_in_txn(&mut *txn, row, &key, &rollup_key, period) {
+                        Ok(_) => {}
+                        Err(UsageError::IdempotencyConflict) => {
+                            tracing::warn!(
+                                key = %row.idempotency_key,
+                                "a buffered meter row conflicts with the recorded one; the first stands"
+                            );
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
-                let mut rollup = rollup.unwrap_or_else(|| MeterRollup {
-                    owner: row.owner.clone(),
-                    vault_id: row.vault_id.clone(),
-                    metric: row.metric,
-                    period_start: period,
-                    status: UsageRollupStatus::Current,
-                    total: MeterTotal::default(),
-                    by_detail: BTreeMap::new(),
-                });
-                fold_meter(&mut rollup, &row);
-                let stored = StoredMeterRow {
-                    row,
-                    recorded_at: now_secs(),
-                };
-                self.vault.sync_state_put_in_write_txn(
-                    txn,
-                    &key,
-                    &rmp_serde::to_vec_named(&stored)?,
-                )?;
-                self.vault.sync_state_put_in_write_txn(
-                    txn,
-                    &rollup_key,
-                    &rmp_serde::to_vec_named(&rollup)?,
-                )?;
-                Ok(MeterRecordResult {
-                    recorded: true,
-                    replayed: false,
-                    rollup,
-                })
+                for (owner, vault_id, count) in dropped {
+                    match add_dropped_in_txn(&self.vault, &mut *txn, owner, vault_id, *count, at) {
+                        Ok(()) => {}
+                        Err(error) if matches!(error, UsageError::InvalidField { .. }) => {
+                            tracing::warn!(
+                                ?error,
+                                "a buffered retrieval drop count failed validation; it is skipped"
+                            );
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                Ok(())
             })
+    }
+
+    /// The write one meter row runs inside the caller's write txn, shared by
+    /// [`Self::record_meter`] and [`Self::record_meters`]: the row goes under
+    /// its idempotency key and joins its day rollup, a replay changes nothing,
+    /// and another row under the same key is an idempotency conflict.
+    fn record_meter_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        row: &MeterRow,
+        key: &str,
+        rollup_key: &str,
+        period: u64,
+    ) -> Result<MeterRecordResult, UsageError> {
+        let rollup = self
+            .vault
+            .sync_state_get_in_write_txn(txn, rollup_key)?
+            .map(|raw| rmp_serde::from_slice::<MeterRollup>(&raw))
+            .transpose()?;
+        if let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, key)? {
+            let stored: StoredMeterRow = rmp_serde::from_slice(&raw)?;
+            if stored.row != *row {
+                return Err(UsageError::IdempotencyConflict);
+            }
+            let rollup = rollup.ok_or(oneiron::Error::CorruptedIndex("meter rollup"))?;
+            return Ok(MeterRecordResult {
+                recorded: false,
+                replayed: true,
+                rollup,
+            });
+        }
+        let mut rollup = rollup.unwrap_or_else(|| MeterRollup {
+            owner: row.owner.clone(),
+            vault_id: row.vault_id.clone(),
+            metric: row.metric,
+            period_start: period,
+            status: UsageRollupStatus::Current,
+            total: MeterTotal::default(),
+            by_detail: BTreeMap::new(),
+            dropped: 0,
+        });
+        fold_meter(&mut rollup, row);
+        let stored = StoredMeterRow {
+            row: row.clone(),
+            recorded_at: now_secs(),
+        };
+        self.vault
+            .sync_state_put_in_write_txn(txn, key, &rmp_serde::to_vec_named(&stored)?)?;
+        self.vault.sync_state_put_in_write_txn(
+            txn,
+            rollup_key,
+            &rmp_serde::to_vec_named(&rollup)?,
+        )?;
+        Ok(MeterRecordResult {
+            recorded: true,
+            replayed: false,
+            rollup,
+        })
     }
 
     /// Records the owner-vault daily storage measurement for the UTC day
@@ -300,6 +378,45 @@ impl UsageLedger {
             .map(|raw| rmp_serde::from_slice(&raw))
             .transpose()?)
     }
+}
+
+/// Adds `count` rows the retrieval buffer dropped before writing to the `owner`
+/// vault's RetrievalQueries rollup for the day `at` falls in, creating it as
+/// [`UsageLedger::record_meter`] does when it is missing.
+fn add_dropped_in_txn(
+    vault: &oneiron::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &str,
+    vault_id: &str,
+    count: u64,
+    at: u64,
+) -> Result<(), UsageError> {
+    validate_dimension("owner", owner, MAX_DIMENSION_LEN)?;
+    validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
+    let period = meter_period(at);
+    let rollup_key = meter_rollup_key(
+        owner,
+        vault_id,
+        OperationalMetric::RetrievalQueries.as_str(),
+        period,
+    );
+    validate_key(&rollup_key)?;
+    let mut rollup: MeterRollup = match vault.sync_state_get_in_write_txn(txn, &rollup_key)? {
+        Some(raw) => rmp_serde::from_slice(&raw)?,
+        None => MeterRollup {
+            owner: owner.to_owned(),
+            vault_id: vault_id.to_owned(),
+            metric: OperationalMetric::RetrievalQueries,
+            period_start: period,
+            status: UsageRollupStatus::Current,
+            total: MeterTotal::default(),
+            by_detail: BTreeMap::new(),
+            dropped: 0,
+        },
+    };
+    rollup.dropped = rollup.dropped.saturating_add(count);
+    vault.sync_state_put_in_write_txn(txn, &rollup_key, &rmp_serde::to_vec_named(&rollup)?)?;
+    Ok(())
 }
 
 /// Adds `row` to `rollup`. Every sum is checked before any is kept: one that

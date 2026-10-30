@@ -306,6 +306,7 @@ impl ModelSession {
                 tier: TierPrecedence::for_purpose(&purpose, ModelTierRef("eval-pinned".into())),
                 response_format: ResponseFormat::Text,
                 locality: ModelLocality::ThirdParty,
+                host_keyless: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, system),

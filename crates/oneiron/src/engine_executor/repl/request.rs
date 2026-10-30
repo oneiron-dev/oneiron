@@ -247,6 +247,7 @@ impl EngineNativeExecutor<'_> {
                 ),
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
+                host_keyless: false,
             },
             messages,
             tools: Vec::new(),

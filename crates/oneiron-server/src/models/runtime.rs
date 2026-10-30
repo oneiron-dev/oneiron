@@ -507,6 +507,7 @@ impl ModelRuntime {
             })
             .collect();
         worker_host::refresh(&mut status.workers);
+        worker_host::refresh_devices(&mut status.devices);
         // V2-R3: sealed snapshot parking, counts and outcomes only.
         status.snapshots = worker_host::snapshot_status();
         status

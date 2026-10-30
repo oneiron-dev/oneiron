@@ -1,4 +1,5 @@
 use super::*;
+use crate::HandleRetention;
 use serde::{Deserialize, Serialize};
 
 /// How the host starts desktop guests. Its bounds are the host's manifest rows.
@@ -75,10 +76,12 @@ pub enum PersonInput {
 
 impl DesktopSession {
     /// The engine selects and proves a backend before attaching the
-    /// desktop, as it does for a browser.
+    /// desktop, as it does for a browser. The answers the session holds are
+    /// charged to the host memory floor through `retention` (FIX 11579).
     pub fn attach(
         config: &DesktopGuest,
         transport: SessionTransport,
+        retention: Box<dyn HandleRetention>,
     ) -> Result<Self, BrowserError> {
         if transport.manifest.fence_unproven || transport.manifest.fence_proof.is_none() {
             return Err(BrowserError::Unavailable(
@@ -111,7 +114,7 @@ impl DesktopSession {
             captures: Captures::new(&token),
             token,
             media: VecDeque::new(),
-            pages: Observations::default(),
+            pages: Observations::charged(retention),
             wait_cap: config.wait_cap,
             takeover: Takeover::Agent,
             returned: None,

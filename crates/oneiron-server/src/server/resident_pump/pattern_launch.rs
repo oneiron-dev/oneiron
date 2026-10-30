@@ -161,6 +161,8 @@ impl PatternLaunchRunner for AgentPatternLaunchRunner {
         asked: &SpawnNeed,
         prompt: &str,
         plan: &TeamPlan,
+        // The agent's own scope line meters the run; the payer is not read.
+        _payer: &WriteActor,
     ) -> Result<PatternLaunchSpec> {
         let members = launch_members(skill, plan)?;
         self.held()?;
@@ -278,8 +280,15 @@ pub(super) fn leader_exposure(
     let Some(launch) = dispatcher.planned_launch_for_leader(leased.id)? else {
         return Ok(None);
     };
-    // An erase took the intent's pack (Engine 10-22): the run reads none.
+    // An erase took the intent's pack (Engine 10-22): the run reads none. A
+    // continued run's task, its source's fork, still holds the pack's text,
+    // and takes the tombstone over the span its source kept (FIX 11787).
     let Some(pack) = &launch.pack else {
+        if continues
+            && let Some(span) = dispatcher.planned_erased_pack_span_for_leader(leased.id)?
+        {
+            AgentDispatcher::tombstone_erased_pack_span(&mut config.task, &span);
+        }
         return Ok(None);
     };
     let body = skill_text(pack)?;

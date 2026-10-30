@@ -13,7 +13,7 @@
 //! an install record's digest is never a backend model digest.
 use std::path::{Path, PathBuf};
 
-use oneiron::llm::{CacheIdentity, WorkerKind};
+use oneiron::llm::{CacheIdentity, SchedulingCapability, WorkerKind};
 use rand_core::RngCore as _;
 use serde::Serialize;
 
@@ -90,6 +90,8 @@ pub(super) struct LaunchRecord {
     pub(super) llama_alias: Option<String>,
     pub(super) pins: CacheIdentity,
     pub(super) native_socket: Option<PathBuf>,
+    /// The scheduling wire the qualification hello advertised.
+    pub(super) scheduling: Option<SchedulingCapability>,
 }
 
 /// The current launch's record, shared by a worker's launcher, which fills

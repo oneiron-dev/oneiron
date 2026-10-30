@@ -9,8 +9,9 @@
 //! the hex id of the ask the TASK's owner answered, of the review or verdict
 //! decision, or of the typed pin's NOTE. A settlement keeps one settled row:
 //! an anchor that comes after it lands on that row, and a row that already
-//! names an anchor keeps it. A TASK no write has settled is anchored by
-//! nothing.
+//! names an anchor keeps it. A review the owner accepted before its TASK
+//! settled is kept for the TASK, and the write that settles it names that
+//! review on the row it keeps (FIX 11757).
 
 use std::collections::BTreeMap;
 
@@ -20,7 +21,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::MemoryError;
-use crate::store::GateDecisionRecord;
+use crate::side_table::{self, Named, SideTable};
+use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 
 use super::ask_types::{TaskAskEvidenceReason, TaskAskOptionId, TaskAskResult, TaskAskSource};
 use super::brief::decode_hex;
@@ -45,6 +47,13 @@ pub(crate) const SETTLEMENT_ANCHOR_WORLD_PROOF: &str = "world_proof";
 const SETTLED_CALL: &str = "report";
 /// The outcome of a review decision the owner approved.
 const APPROVED_OUTCOME: &str = "approved";
+
+/// TASK → the review decision its owner accepted while no write had settled
+/// it, which its settlement names. The first accepted review is kept, as a
+/// settled row keeps the first anchor it names, and it stays once the TASK
+/// settles, as its history.
+const ACCEPTED_REVIEWS: SideTable<EntityId, GateDecisionId, Named> =
+    SideTable::new(&side_table::TASK_ACCEPTED_REVIEW);
 
 /// The two fields naming `kind` at `reference` as a settlement's anchor.
 pub(super) fn anchor_fields(kind: &str, reference: &str) -> [(String, String); 2] {
@@ -100,35 +109,42 @@ pub(crate) fn anchor_settlement_in_txn(
     if let Some(id) =
         lifecycle_receipt::settled_in(vault, txn, task, terminal.finished_at).map_err(refused)?
     {
-        return lifecycle_receipt::anchor_in(vault, txn, &id, kind, reference).map_err(refused);
-    }
-    let memory = vault.memory(by, EdgeActorClass::Human);
-    if !memory.keeps_lifecycle() {
-        return Ok(());
-    }
-    let mut lifecycle = memory.lifecycle_record(
-        &TaskVia::Wire,
-        SETTLED_CALL,
-        terminal.disposition.as_str(),
-        Some(task),
-        job,
-        terminal.finished_at,
-    );
-    lifecycle.fields.extend(anchor_fields(kind, reference));
-    let id = lifecycle_receipt::receipt_id(
-        SETTLED_CALL,
-        &[task.as_bytes(), by.as_bytes(), reference.as_bytes()],
-    )
-    .map_err(refused)?;
-    lifecycle_receipt::stamp_record_in(vault, txn, &lifecycle, id.clone(), None)
+        lifecycle_receipt::anchor_in(vault, txn, &id, kind, reference).map_err(refused)?;
+    } else {
+        let memory = vault.memory(by, EdgeActorClass::Human);
+        if !memory.keeps_lifecycle() {
+            return Ok(());
+        }
+        let mut lifecycle = memory.lifecycle_record(
+            &TaskVia::Wire,
+            SETTLED_CALL,
+            terminal.disposition.as_str(),
+            Some(task),
+            job,
+            terminal.finished_at,
+        );
+        lifecycle.fields.extend(anchor_fields(kind, reference));
+        let id = lifecycle_receipt::receipt_id(
+            SETTLED_CALL,
+            &[task.as_bytes(), by.as_bytes(), reference.as_bytes()],
+        )
         .map_err(refused)?;
-    lifecycle_receipt::mark_settled_in(vault, txn, &id).map_err(refused)
+        lifecycle_receipt::stamp_record_in(vault, txn, &lifecycle, id.clone(), None)
+            .map_err(refused)?;
+        lifecycle_receipt::mark_settled_in(vault, txn, &id).map_err(refused)?;
+    }
+    // The routing projection counts this anchor on the folds whose runs
+    // worked this TASK before it settled (FIX 11807).
+    crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, task);
+    Ok(())
 }
 
 /// [`anchor_settlement_in_txn`] for an owner's review `decision`: approved,
 /// it anchors the settlement of `task`, which `job` ran when a try did, as
-/// the reviewing owner's. A rejection, or a decision that names no actor,
-/// anchors nothing.
+/// the reviewing owner's. Before any write has settled `task`, the TASK
+/// keeps the review instead, and its settlement names it
+/// ([`anchor_kept_review_in_txn`]). A rejection, or a decision that names no
+/// actor, anchors nothing.
 ///
 /// # Errors
 ///
@@ -150,6 +166,12 @@ pub(crate) fn anchor_accepted_review_in_txn(
     else {
         return Ok(());
     };
+    if task_verb_body_in(vault, txn, task)?.is_some_and(|body| body.terminal().is_none()) {
+        if !ACCEPTED_REVIEWS.contains(&vault.store, txn, &task)? {
+            ACCEPTED_REVIEWS.put(&vault.store, txn, &task, &decision.decision_id)?;
+        }
+        return Ok(());
+    }
     anchor_settlement_in_txn(
         vault,
         txn,
@@ -191,6 +213,41 @@ pub(crate) fn anchor_reviewed_run_in_txn(
         return Ok(());
     };
     anchor_accepted_review_in_txn(vault, txn, task, decision, Some(attempt))
+}
+
+/// Names the review the owner accepted of `task` before it settled as the
+/// anchor of its settlement, in the settling write `txn`, once that write
+/// has kept its own settled row, if it keeps one: the anchor lands on that
+/// row, and when there is none, the reviewing owner's anchoring keeps the
+/// settled row, naming `job` when a try settled the TASK. A row that
+/// already names an anchor keeps it. A TASK that kept no review, or whose
+/// kept decision is no longer kept or names no actor, anchors nothing. The
+/// kept review stays, as the TASK's history.
+///
+/// # Errors
+///
+/// As [`anchor_settlement_in_txn`].
+pub(super) fn anchor_kept_review_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    job: Option<AttemptId>,
+) -> Result<()> {
+    let Some(kept) = ACCEPTED_REVIEWS.get(&vault.store, txn, &task)? else {
+        return Ok(());
+    };
+    let Some(decision) = vault.store.gate_decision_in_txn(txn, kept)? else {
+        return Ok(());
+    };
+    anchor_accepted_review_in_txn(vault, txn, task, &decision, job)
+}
+
+/// Drops the review the erased TASK `id` kept for its settlement, in the
+/// transaction that erases it, with its lifecycle receipts
+/// ([`lifecycle_receipt::erase_in_txn`]); a no-op for any other entity.
+pub(super) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    ACCEPTED_REVIEWS.delete(store, txn, id)?;
+    Ok(())
 }
 
 fn refused(error: MemoryError) -> Error {

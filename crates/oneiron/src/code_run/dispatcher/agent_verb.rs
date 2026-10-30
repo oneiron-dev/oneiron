@@ -100,11 +100,13 @@ impl HostSelfDispatcher<'_> {
         };
         // A write carries the run's TASK creator, so a TASK it creates runs
         // inside the creator's lease tree (OF-532). `reveal.describe` judges
-        // grants with the run's project as `reveal` does (FIX 2359); a run
-        // whose binding cannot be read describes without one, as before.
+        // grants with the run's project as `reveal` does (FIX 2359), and
+        // `reveal.wait` finds the reveal its run asked under that project and
+        // run (FIX 2360); a run whose binding cannot be read calls without
+        // one, as before.
         let task_host = if call.verb.writes() {
             self.task_host_binding()?
-        } else if matches!(call.verb, AgentVerb::RevealDescribe) {
+        } else if matches!(call.verb, AgentVerb::RevealDescribe | AgentVerb::RevealWait) {
             self.task_host_binding().ok().flatten()
         } else {
             None
@@ -320,6 +322,38 @@ impl HostSelfDispatcher<'_> {
             }
             other => other,
         }
+    }
+
+    /// The guest's view of a granted `reveal.wait` a resumed turn program's
+    /// settled row answers (FIX 2360): its value read again through the door
+    /// under the lease `kept` names, as the call's view. The row keeps its
+    /// value-free answer. `None` for any other call or answer, or when the
+    /// door serves no replay or refuses it: the kept answer stands.
+    pub(crate) fn replay_reveal_view(
+        &self,
+        call: &SelfCall,
+        kept: &SelfDispatchOutcome,
+    ) -> Result<Option<Value>> {
+        let (SelfCall::AgentVerb(wait), SelfDispatchOutcome::AgentVerb(answer)) = (call, kept)
+        else {
+            return Ok(None);
+        };
+        let (true, Some(door)) = (wait.verb == AgentVerb::RevealWait, &self.agent_verbs) else {
+            return Ok(None);
+        };
+        let Some(lease) = crate::task_verb::sdk::kept_reveal_lease(&answer.output) else {
+            return Ok(None);
+        };
+        let origin = HostWriteOrigin::new(self.agent_verb_envelope(wait.verb, None)?)
+            .with_task_host(self.task_host_binding().ok().flatten())
+            .with_model_provider(self.model_provider())
+            .with_read_proof(self.program_proof().cloned())
+            .with_bound_run(self.bound_run);
+        let invocation = self.verb_invocation(call, None)?;
+        Ok(door
+            .replay_reveal(wait, lease, &origin, invocation)?
+            .ok()
+            .map(|answer| serde_json::json!({ "output": answer.output })))
     }
 
     /// A step past a write that did not meet its receipt can no longer close,

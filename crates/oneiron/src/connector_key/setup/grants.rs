@@ -99,10 +99,10 @@ impl Vault {
     /// Binds a registered connector key to a connection. The key must govern
     /// the connection's declared connector, be usable, and hold custody the
     /// connection names. Binding activates nothing: a Pending key still
-    /// needs its real qualification.
+    /// needs its real qualification. An agent binds in the owner's session.
     pub(crate) fn bind_pack_connection_key(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: PackSetupActor<'_>,
         pack: &str,
         content_hash: Option<&str>,
         connection: &str,
@@ -110,7 +110,7 @@ impl Vault {
     ) -> Result<PackSetupView> {
         let key_id = EntityId::from_hex(key)?;
         self.with_write_txn_grouped(|txn| {
-            let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
+            let principal = actor.principal_in_txn(self, txn, pack, content_hash)?;
             let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
             let mut session = self.require_pack_setup_in_txn(txn, &binding)?;
             let declared = declared_connection(&binding.setup.connections, connection)?;
@@ -162,8 +162,28 @@ impl Vault {
         connection: &str,
         verifier: &dyn PackConnectionVerifier,
     ) -> Result<PackSetupView> {
+        self.verify_pack_connection_as(
+            PackSetupActor::Owner(owner),
+            pack,
+            content_hash,
+            connection,
+            verifier,
+        )
+    }
+
+    /// [`Self::verify_pack_connection`] for `actor`: the owner on their own
+    /// proof, or an agent acting for the owner, which checks the connection
+    /// in the owner's session.
+    pub fn verify_pack_connection_as(
+        &self,
+        actor: PackSetupActor<'_>,
+        pack: &str,
+        content_hash: Option<&str>,
+        connection: &str,
+        verifier: &dyn PackConnectionVerifier,
+    ) -> Result<PackSetupView> {
         let (declared, basis, allowed_scopes) =
-            self.pack_connection_before_check(owner, pack, content_hash, connection)?;
+            self.pack_connection_before_check(actor, pack, content_hash, connection)?;
         let at = crate::unix_seconds_now();
         let check = PackConnectionCheck {
             pack,
@@ -187,8 +207,8 @@ impl Vault {
             },
         };
         let view =
-            self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(owner, pack, view)
+            self.record_pack_connection_check(actor, pack, content_hash, &declared, record)?;
+        self.qualify_checked_builtin(actor, pack, view)
     }
 
     /// Checks a connection whose bound connector key is Pending through the
@@ -210,8 +230,9 @@ impl Vault {
         plan: &QualificationPlan,
         oracle: &dyn GroundingOracle,
     ) -> Result<PackSetupView> {
+        let actor = PackSetupActor::Owner(owner);
         let (declared, basis, _) =
-            self.pack_connection_before_check(owner, pack, content_hash, connection)?;
+            self.pack_connection_before_check(actor, pack, content_hash, connection)?;
         let key = {
             let principal = owner.principal_ref_for_read(self)?.to_owned();
             let txn = self.store.env.read_txn()?;
@@ -255,8 +276,8 @@ impl Vault {
             },
         };
         let view =
-            self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(owner, pack, view)
+            self.record_pack_connection_check(actor, pack, content_hash, &declared, record)?;
+        self.qualify_checked_builtin(actor, pack, view)
     }
 
     /// A built-in pack qualifies on its checked setup (Engine ruling 10-17):
@@ -264,14 +285,14 @@ impl Vault {
     /// flow and the view shows it. Any other pack's view returns unchanged.
     fn qualify_checked_builtin(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: PackSetupActor<'_>,
         pack: &str,
         view: PackSetupView,
     ) -> Result<PackSetupView> {
         if !view.ready || !self.qualify_builtin_on_checked_setup(pack, &view.content_hash)? {
             return Ok(view);
         }
-        self.pack_setup(owner, pack, Some(&view.content_hash))
+        self.pack_setup_as(actor, pack, Some(&view.content_hash))
     }
 
     /// A connection of an Active pack runs only once checked: some owner's
@@ -414,7 +435,9 @@ impl Vault {
     }
 
     /// Every grant a run asks for that a setup connection serves needs one
-    /// such connection checked. A pack without setup, and a grant no
+    /// such connection checked, in a session that holds the owner's live
+    /// standing grant for a permission serving it: a pack acts only within
+    /// what its setup's owner allowed. A pack without setup, and a grant no
     /// connection serves, ask nothing more.
     pub(crate) fn require_pack_grants_verified(&self, pack: &str, grants: &[&str]) -> Result<()> {
         let txn = self.store.env.read_txn()?;
@@ -433,23 +456,30 @@ impl Vault {
             if serving.peek().is_none() {
                 continue;
             }
-            let mut ready = false;
+            let mut checked = None;
+            let mut allowed = false;
             'serving: for connection in serving {
                 for session in &sessions {
-                    if self
-                        .connection_state_in_txn(&txn, connection, session)?
-                        .ready
-                    {
-                        ready = true;
+                    let state = self.connection_state_in_txn(&txn, connection, session)?;
+                    if !state.ready {
+                        continue;
+                    }
+                    if grant_allowed(connection, &state, grant) {
+                        allowed = true;
                         break 'serving;
+                    }
+                    if checked.is_none() {
+                        checked = Some(connection);
                     }
                 }
             }
-            if !ready {
-                return Err(invalid(
-                    "a connection this run needs is not checked; run the pack's setup",
-                ));
+            if allowed {
+                continue;
             }
+            return Err(match checked {
+                Some(connection) => ungranted(grant, connection),
+                None => invalid("a connection this run needs is not checked; run the pack's setup"),
+            });
         }
         Ok(())
     }
@@ -534,13 +564,13 @@ impl Vault {
     /// allowed.
     fn pack_connection_before_check(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: PackSetupActor<'_>,
         pack: &str,
         content_hash: Option<&str>,
         connection: &str,
     ) -> Result<(PackSetupConnection, String, Vec<String>)> {
-        let principal = owner.principal_ref_for_read(self)?.to_owned();
         let txn = self.store.env.read_txn()?;
+        let principal = actor.principal_for_read(self, &txn, pack, content_hash)?;
         let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
         let session = self.require_pack_setup_in_txn(&txn, &binding)?;
         let declared = declared_connection(&binding.setup.connections, connection)?.clone();
@@ -576,14 +606,14 @@ impl Vault {
 
     fn record_pack_connection_check(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: PackSetupActor<'_>,
         pack: &str,
         content_hash: Option<&str>,
         declared: &PackSetupConnection,
         record: PackSetupCheckRecord,
     ) -> Result<PackSetupView> {
         self.with_write_txn_grouped(|txn| {
-            let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
+            let principal = actor.principal_in_txn(self, txn, pack, content_hash)?;
             let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
             let mut session = self.require_pack_setup_in_txn(txn, &binding)?;
             // A grant, credential or key that moved while the check ran makes
@@ -602,4 +632,37 @@ impl Vault {
             self.pack_setup_view_in_txn(txn, &binding, &session)
         })
     }
+}
+
+/// Whether `state`, a checked connection, holds the owner's live standing
+/// grant for one of its permissions that serves `grant`.
+fn grant_allowed(
+    connection: &PackSetupConnection,
+    state: &PackSetupConnectionState,
+    grant: &str,
+) -> bool {
+    connection
+        .permissions
+        .iter()
+        .filter(|permission| permission.grant.as_deref() == Some(grant))
+        .any(|permission| {
+            state
+                .permissions
+                .iter()
+                .any(|held| held.id == permission.id && held.granted)
+        })
+}
+
+/// The refusal of a run whose grant no live setup grant covers: it names
+/// the grant and the setup step that restores it.
+fn ungranted(grant: &str, connection: &PackSetupConnection) -> Error {
+    let permission = connection
+        .permissions
+        .iter()
+        .find(|permission| permission.grant.as_deref() == Some(grant))
+        .map_or("", |permission| permission.id.as_str());
+    Error::InvalidConfig(format!(
+        "pack setup: the owner has not allowed {grant} for this pack; allow the {permission} permission of the {} connection in the pack's setup, then check the connection again",
+        connection.id
+    ))
 }

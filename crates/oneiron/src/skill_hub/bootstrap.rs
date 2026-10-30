@@ -212,10 +212,12 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
     .with_role(
         // The CEO starter, the team-shape planner and the coordination
         // patterns are workflows: the leader path loads only workflows. The
-        // Coach's eval-authoring pass runs its skill as a procedure.
+        // Coach's eval-authoring pass runs its skill as a procedure, and so
+        // does the shipped skill improver.
         if name == "team-lead"
             || name == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
             || name == "eval-authoring"
+            || name == "skill-optimize"
             || PATTERNS
                 .iter()
                 .any(|(pattern_name, ..)| *pattern_name == name)

@@ -4,8 +4,9 @@
 //! intent takes its erased form, a text-free receipt: its row, parent,
 //! project, launch and team ids and its recorded times, state `erased` and
 //! whose erase it was, and no ask, digest, adapter key, placed stamp, plan,
-//! refusal, start, pack or exposure. An erased asker is forgotten with it;
-//! the content goes first, so the match is never lost before it.
+//! refusal, start, pack or exposure: of each leader run's exposure it keeps
+//! the span and its hash alone. An erased asker is forgotten with it; the
+//! content goes first, so the match is never lost before it.
 //!
 //! Every write of an intent passes the same fence, so a copy read before an
 //! erase, a late settle, freeze, launch, refusal or exposure among them,
@@ -27,7 +28,7 @@ use crate::error::Result;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::team::{PlannedIntentView, SpawnErasure};
+use crate::team::{ErasedPackSpan, PlannedIntentView, SpawnErasure};
 
 use super::{INTENTS, IntentName, IntentPhase, LaunchStand, PlannedIntent, PlannedLaunch};
 
@@ -86,7 +87,12 @@ impl PlannedIntent {
         self.refusal = None;
         self.pattern_launch = None;
         self.pattern_pack = None;
-        self.leader_exposures.clear();
+        // Each run's exposure leaves its span, text-free, so a continuation
+        // claimed after the erase still tombstones the text its fork holds.
+        for (run, exposure) in std::mem::take(&mut self.leader_exposures) {
+            self.erased_pack_spans
+                .insert(run, ErasedPackSpan::from(&exposure));
+        }
     }
 }
 
