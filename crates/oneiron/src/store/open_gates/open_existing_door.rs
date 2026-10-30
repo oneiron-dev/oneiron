@@ -185,6 +185,7 @@ impl Store {
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
             project_forks: crate::workspace_roster::ProjectForks::default(),
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
+            policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
