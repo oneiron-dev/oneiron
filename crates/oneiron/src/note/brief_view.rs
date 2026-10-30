@@ -157,13 +157,15 @@ impl Vault {
             listed,
         )?;
         if let Some(view) = rendered.value.as_mut() {
-            // A prompt only from the sources the viewer reads here (FIX 6054).
-            let (born_with, sources) =
+            // A prompt only from the sources the viewer reads here (FIX 6054),
+            // each listed among the view's producers (FIX 6310).
+            let (born_with, sources, read_sources) =
                 self.shared_brief_born_with(&share_id, &viewer, narrowing, &id, frame, read)?;
             view.born_with = born_with;
             if let Some(sources) = sources {
                 rendered.receipt.restrict_with(&sources);
             }
+            listed.extend(read_sources);
         }
         Ok(rendered)
     }

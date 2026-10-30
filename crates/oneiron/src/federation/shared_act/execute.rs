@@ -13,7 +13,8 @@ impl Vault {
     /// that receipt told and no one else (FIX 3216). With `slips`,
     /// the capability slips of anyone who lost a role are revoked with it,
     /// and the host signs an ownership change into the authority log as an
-    /// `OwnerHandover` naming the act and its receipt.
+    /// `OwnerHandover` naming the act and its receipt. Without `slips`, this
+    /// install's own live host issuer does both (FIX 5898).
     /// An export-first removal, once its executor and starter stand as live
     /// Owners holding the act's verb (FIX 3217), exports what its target
     /// could read before the writer opens, records that export's digest in
@@ -45,6 +46,10 @@ impl Vault {
                 .map(|frozen| (member, records.len() as u64, frozen, ids))
             })
             .transpose()?;
+        let own_issuer = match slips {
+            Some(_) => None,
+            None => self.load_host_slip_issuer().ok(),
+        };
         let mut txn = self.store.env.write_txn()?;
         let actor = executor.revalidate_person_in_txn(self, &txn)?;
         let act = self
@@ -84,6 +89,8 @@ impl Vault {
             });
         }
         let creation = check_vault(self, &txn, act.vault_id)?;
+        let own_issuer = self.executing_host_issuer_in_txn(&txn, own_issuer)?;
+        let slips = slips.or(own_issuer.as_ref());
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let owners = self.act_executors_in_txn(&txn, &act, actor, now)?;
         let receipt_id = self.store.clock.entity_id()?.to_hex();
@@ -234,7 +241,7 @@ impl Vault {
                 )?);
             }
         }
-        let mut export_records = None;
+        let mut export_records: Option<Vec<crate::EntityId>> = None;
         let export = export.take().map(|(member, records, archive, ids)| {
             export_records = Some(ids.into_iter().collect());
             let summary = SharedActExport {
@@ -259,6 +266,9 @@ impl Vault {
             None,
             now,
         )?;
+        if let Some(records) = &export_records {
+            self.keep_export_records_in_txn(&mut txn, &receipt.id, records)?;
+        }
         let delivery = match (&receipt.export, archive) {
             (Some(summary), Some((archive, positions))) => {
                 let copy = RemovalExportCopy {
@@ -293,5 +303,26 @@ impl Vault {
             delivery,
             export_records,
         })
+    }
+
+    /// The executing host's own issuer for a run given no slips (FIX 5898):
+    /// this install's host issuer, while it is a live host on the vault's
+    /// roster in this writer, so the handover still lands signed. Its
+    /// signature proves only that this host executed the completed act,
+    /// which stays the handover's authority (FIX 2222). None when this
+    /// install holds no live host issuer; the run then lands as before.
+    fn executing_host_issuer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        issuer: Option<HostSlipIssuer>,
+    ) -> Result<Option<HostSlipIssuer>> {
+        let Some(issuer) = issuer else {
+            return Ok(None);
+        };
+        let view = self.authority_view_readonly_in_txn(txn)?;
+        Ok((view.vault_id.is_some()
+            && !view.vault_root_is_conflicted()
+            && crate::authority::roster_has_live_owner(&view.roster, &issuer.public_key()))
+        .then_some(issuer))
     }
 }

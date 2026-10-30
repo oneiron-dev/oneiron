@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4380 declarations.
+Census: 1209 facade rows, 4383 declarations.
 Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -2165,7 +2165,7 @@ AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Can
 SpendState = Literal["open", "closed"]
 class SpendPayer(TypedDict):
     party: EntityId
-    granted_by: EntityId
+    granted_by: NotRequired[EntityId | None]
     at_ms: int
 class SpendScope(TypedDict):
     scope: SpendScopeId
@@ -3379,7 +3379,7 @@ class RetrievalReplayInputs(TypedDict):
     query_ref: NotRequired[str | None]
     config: Any
     corpus_snapshot_ref: NotRequired[str | None]
-RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
+RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector", "relevance"]
 class RetrievalScoreComponent(TypedDict):
     signal: RetrievalSignal
     rank: int
@@ -3487,6 +3487,7 @@ class RetrievalBlendWeights(TypedDict):
     salience: float
     confidence: float
     gravity: float
+    relevance: float
 class RetrievalBlendWeightDataWindow(TypedDict):
     run_count: int
     outcome_count: int
@@ -3501,7 +3502,7 @@ class RetrievalBlendWeightTableEntry(TypedDict):
     tuned_at: int
     provenance: dict[str, str]
     data_window: RetrievalBlendWeightDataWindow
-RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity"]
+RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity", "relevance"]
 RetrievalWeightOrigin = Literal["bootstrap", "learned", "owner_pin"]
 class RetrievalWeightRow(TypedDict):
     signal: RetrievalBlendSignal
@@ -3870,6 +3871,7 @@ class CallReceipt(TypedDict):
     actor_ref: str
     actor_class: str
     credential_ref: NotRequired[str | None]
+    carrier_machine: NotRequired[str | None]
     outcome: CallOutcome
     request_digest: str
     result_digest: NotRequired[str | None]
@@ -5044,11 +5046,27 @@ class UnifiedInboxGroupPage(TypedDict):
     groups: list[UnifiedInboxGroup]
     next: NotRequired[str | None]
 InboxGroupKind = Literal["dreamer", "shape"]
+class InboxGroupResolveTargetFallback(TypedDict):
+    kind: Literal["fallback"]
+class InboxGroupResolveTargetBan(TypedDict):
+    kind: Literal["ban"]
+    text: str
+class InboxGroupResolveTargetStyleRule(TypedDict):
+    kind: Literal["style_rule"]
+    text: str
+class InboxGroupResolveTargetCharterLine(TypedDict):
+    kind: Literal["charter_line"]
+    text: str
+class InboxGroupResolveTargetBriefUpdate(TypedDict):
+    kind: Literal["brief_update"]
+    text: str
+InboxGroupResolveTarget = InboxGroupResolveTargetFallback | InboxGroupResolveTargetBan | InboxGroupResolveTargetStyleRule | InboxGroupResolveTargetCharterLine | InboxGroupResolveTargetBriefUpdate
 class InboxGroupResolveRequest(TypedDict):
     kind: InboxGroupKind
     group_key: str
     verb: InboxBulkVerb
     verb_class: NotRequired[str | None]
+    target: NotRequired[InboxGroupResolveTarget | None]
 class InboxBundleResolution(TypedDict):
     group_key: str
     verb: InboxBulkVerb
@@ -10908,6 +10926,11 @@ ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle
 class ClaimSettlementRevert(TypedDict):
     verb: str
     claim_ref: str
+SettleWarningCode = Literal["vad_pending"]
+class SettleWarning(TypedDict):
+    code: SettleWarningCode
+    claim_ref: str
+    detail: str
 class ClaimSettlement(TypedDict):
     receipt_ref: str
     proposal_ref: str
@@ -10921,6 +10944,7 @@ class ClaimSettlement(TypedDict):
     revert: NotRequired[ClaimSettlementRevert | None]
     claim: ClaimView
     settled_at: int
+    warnings: NotRequired[list[SettleWarning]]
 class CraftCandidatesRequest(TypedDict):
     resident: NotRequired[str | None]
 class CraftCandidateView(TypedDict):
@@ -16184,7 +16208,7 @@ class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 class RetryableLlmErrorTransportFault(TypedDict):
     TransportFault: TransportFault
-RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
+RetryableLlmError = Literal["WorldRouteNotAdmitted", "ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
 BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError
@@ -21200,32 +21224,32 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
-class NoteEditReplaceSpan(TypedDict):
+class NoteProgramEditReplaceSpan(TypedDict):
     kind: Literal["replace_span"]
     start: NoteAnchor
     end: NoteAnchor
     text: str
-class NoteEditInsertAfter(TypedDict):
+class NoteProgramEditInsertAfter(TypedDict):
     kind: Literal["insert_after"]
     anchor: NoteAnchor
     text: str
-class NoteEditAppendToSection(TypedDict):
+class NoteProgramEditAppendToSection(TypedDict):
     kind: Literal["append_to_section"]
     end: NoteAnchor
     text: str
-class NoteEditWholeText(TypedDict):
+class NoteProgramEditWholeText(TypedDict):
     kind: Literal["whole_text"]
     text: str
     timeout_ms: int
     base: NotRequired[NoteVersion | None]
-class NoteEditRewrite(TypedDict):
+class NoteProgramEditRewrite(TypedDict):
     kind: Literal["rewrite"]
     text: str
-NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
+NoteProgramEdit = NoteProgramEditReplaceSpan | NoteProgramEditInsertAfter | NoteProgramEditAppendToSection | NoteProgramEditWholeText | NoteProgramEditRewrite
 class NoteForkRequest(TypedDict):
     note_ref: str
     base: NoteVersion
-    edit: NoteEdit
+    edit: NoteProgramEdit
     reason: NotRequired[str | None]
 class NoteForkRecordView(TypedDict):
     note_ref: str
@@ -21304,20 +21328,20 @@ class NoteEditorClosed(TypedDict):
     closed: bool
 class EditNoteRequest(TypedDict):
     note_ref: str
-    edit: NoteEdit
-class NoteEditOutcomeEdited(TypedDict):
+    edit: NoteProgramEdit
+class NoteProgramEditOutcomeEdited(TypedDict):
     outcome: Literal["edited"]
     head: EntityId
-class NoteEditOutcomeRewriteFork(TypedDict):
+class NoteProgramEditOutcomeRewriteFork(TypedDict):
     outcome: Literal["rewrite_fork"]
     fork: EntityId
-class NoteEditOutcomeProposedFork(TypedDict):
+class NoteProgramEditOutcomeProposedFork(TypedDict):
     outcome: Literal["proposed_fork"]
     fork: EntityId
-class NoteEditOutcomeReviewRequired(TypedDict):
+class NoteProgramEditOutcomeReviewRequired(TypedDict):
     outcome: Literal["review_required"]
     receipt: CommitReceipt
-NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
+NoteProgramEditOutcome = NoteProgramEditOutcomeEdited | NoteProgramEditOutcomeRewriteFork | NoteProgramEditOutcomeProposedFork | NoteProgramEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
 class NoteSeal(TypedDict):

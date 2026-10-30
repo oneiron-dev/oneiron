@@ -202,7 +202,7 @@ pub struct HubHookQualificationReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubHookReplay {
     pub hook: String,
-    pub entries: Vec<super::sdk::HookReplayRow>,
+    pub entries: Vec<super::HookReplayRow>,
     /// The test did not replay this hook in full: no entry, or an entry's
     /// inputs are gone. The verdict still stands.
     pub unreplayed: bool,
@@ -430,7 +430,7 @@ pub fn hub_hooks_bind_as_owner(
 pub fn hub_hooks_list_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    _input: &super::sdk::EmptyRequest,
+    _input: &super::EmptyRequest,
 ) -> MemoryResult<Vec<HubHookBindingRow>> {
     owner.revalidate(vault)?;
     Ok(vault
@@ -503,7 +503,7 @@ fn qualification_receipt(qualified: PackHookQualification) -> HubHookQualificati
                 entries: replay
                     .entries
                     .into_iter()
-                    .map(super::sdk::HookReplayRow::from)
+                    .map(super::HookReplayRow::from)
                     .collect(),
                 unreplayed: replay.unreplayed,
             })
@@ -516,5 +516,5 @@ pub fn hub_hooks_qualify_embedded(
     input: &HubHookQualifyRequest,
 ) -> MemoryResult<HubHookQualificationReceipt> {
     let _owner = memory.embedded_owner("vault.packs.hooks.qualify")?;
-    super::sdk::host_only(memory, "vault.packs.hooks.qualify", input)
+    super::host_only(memory, "vault.packs.hooks.qualify", input)
 }

@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -18,18 +17,43 @@ use oneiron::agent_dispatch::widen_doors::{
 
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/widen-proposals", get(list))
-        .route("/widen-proposals/approve", post(approve))
-        .route("/widen-proposals/decline", post(decline))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/widen-proposals",
+                summary: "The proposals, newest first.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/widen-proposals/approve",
+                summary: "Widens the parent's slice and enqueues the child.",
+                row: None,
+            },
+            post(approve),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/widen-proposals/decline",
+                summary: "Refuses the proposal for good.",
+                row: None,
+            },
+            post(decline),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/widen-proposals/approve`'s body

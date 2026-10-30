@@ -27,11 +27,19 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     memory
         .admit_export(None)
         .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+    let secrets_recipient = args
+        .secrets_recipient
+        .as_deref()
+        .map(|id| {
+            oneiron::EntityId::from_hex(id)
+                .map_err(|error| anyhow::anyhow!("--secrets-recipient {id}: {error}"))
+        })
+        .transpose()?;
     let options = oneiron::memory::ExportOptions {
         format: Some(args.format),
         include_secrets: Some(args.include_secrets),
         delivery: None,
-        secrets_recipient: None,
+        secrets_recipient,
     };
     // The archive is written to a file as it is built (FIX 2766), never held
     // whole: to `--out`, or to a spool under the vault's own staging
