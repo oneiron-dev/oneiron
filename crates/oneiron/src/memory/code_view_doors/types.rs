@@ -41,9 +41,17 @@ pub struct CodeViewReadRequest {
 pub struct CodeViewFile {
     pub path: String,
     pub content_hash_blake3: String,
-    /// The exact tested document identity and version vector, not a fabricated version ref.
-    pub frontier: crate::code_document::CodeDocumentFrontier,
-    pub text_sha256: String,
+    /// The exact tested document identity and version vector, not a fabricated version ref;
+    /// absent for an untouched blob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontier: Option<crate::code_document::CodeDocumentFrontier>,
+    /// The tested document text's SHA-256; absent for an untouched blob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_sha256: Option<String>,
+    /// The Git object of an untouched blob of a tested queue revision's tree (FIX 9940);
+    /// absent for a document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_oid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

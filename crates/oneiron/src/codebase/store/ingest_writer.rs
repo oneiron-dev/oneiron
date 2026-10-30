@@ -20,7 +20,8 @@ use super::{codebase_asset_entity_id, codebase_snapshot_entity_id};
 use crate::Vault;
 use crate::code_artifact::CodeArtifactBody;
 use crate::code_symbol::{
-    CodeSymbolSource, masked_repo_symbol_texts_in_txn, prepare_code_symbol_graph,
+    CodeSymbolSource, code_symbol_document_in_txn, masked_repo_symbol_texts_in_txn,
+    prepare_code_symbol_graph,
 };
 use crate::error::{CodeError, Error, Result};
 use crate::origin::secret_projection::index::RepoIndexMarks;
@@ -366,10 +367,17 @@ impl Vault {
                     .filter(|blob| retained_paths.contains(blob.path.as_str()))
                     .map(|blob| (blob.path.as_str(), blob.data.as_slice())),
             )?;
+            // Each source names the file document its symbols are spans on,
+            // as this writer reads it (FIX 7809).
+            let read: &RoTxn<'_> = wtxn;
             let symbol_sources = symbol_texts
                 .iter()
-                .map(|(path, text)| CodeSymbolSource::new(path, text))
-                .collect::<Vec<_>>();
+                .map(|(path, text)| {
+                    Ok(CodeSymbolSource::new(path, text).with_document(
+                        code_symbol_document_in_txn(&self.store, read, repo_ref, path)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),

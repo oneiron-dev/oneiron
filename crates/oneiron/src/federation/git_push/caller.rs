@@ -212,6 +212,17 @@ impl GitPushStamp {
         }
     }
 
+    /// Names [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY)
+    /// as the pusher where the stamp names `actor`, for a retained journal
+    /// row an erase reaches (FIX 8806); `true` when it did.
+    pub(crate) fn erase_principal(&mut self, actor: &EntityId) -> bool {
+        let named = self.principal == actor.to_hex();
+        if named {
+            crate::receipt::ERASED_CALL_IDENTITY.clone_into(&mut self.principal);
+        }
+        named
+    }
+
     pub(super) fn naming(mut self, grant: EntityId, repo: GitPushRepo, anchor: String) -> Self {
         self.grant = Some(grant.to_hex());
         self.repo = Some(repo);

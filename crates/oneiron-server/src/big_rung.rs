@@ -216,7 +216,10 @@ impl BigModel {
     /// The paired question this rung reads jointly now: the house read's
     /// latest, or none when the host binds none (FIX 11466).
     fn current_paired(&self) -> Option<DecisionQuestion> {
-        self.paired.read().unwrap_or_else(PoisonError::into_inner).clone()
+        self.paired
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub(crate) fn pin(&self) -> ProviderPin {
