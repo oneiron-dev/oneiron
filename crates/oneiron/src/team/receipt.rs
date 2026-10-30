@@ -275,7 +275,9 @@ impl TeamReceipt {
             .iter()
             .map(|critic| {
                 let executor = critic.executor.as_str();
-                let model = executor.rsplit_once('@').map_or(executor, |(model, _)| model);
+                let model = executor
+                    .rsplit_once('@')
+                    .map_or(executor, |(model, _)| model);
                 format!("{}@{model}", critic.lens.to_hex())
             })
             .collect();
