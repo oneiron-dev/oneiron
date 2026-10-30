@@ -155,7 +155,7 @@ impl BranchResources<'_> {
                 let body = decode_claim_body(&bytes, true)?;
                 Ok(body.world == scope.world
                     && facet(body.scope.as_ref())? == scope.facet
-                    && scope.relationship.is_none_or(|rel| body.rel == Some(rel))
+                    && (scope.relationship.is_none() || body.rel == scope.relationship)
                     // A claim awaiting its owner's confirmation ranks nothing.
                     && self.read.vault().claim_consolidation_eligible(
                         id,

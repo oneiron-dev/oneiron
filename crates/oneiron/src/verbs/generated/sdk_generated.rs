@@ -33646,7 +33646,7 @@ pub fn vault_remember(
         memory,
         "vault.remember",
         &input,
-        &["/subject_ref", "/world_ref", "/relationship_ref"],
+        &["/subject_ref", "/world_ref", "/relationship_ref/*"],
     )?;
     memory.claim_upsert(&input)
 }

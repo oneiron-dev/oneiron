@@ -187,7 +187,9 @@ pub struct ClaimInput {
     pub source: String,
     /// Optional world ref.
     pub world_ref: Option<String>,
-    pub relationship_ref: Option<String>,
+    /// Optional RELATIONSHIP refs: absent for all, `[]` for the explicit
+    /// empty set.
+    pub relationship_ref: Option<Vec<String>>,
     /// Optional scope map.
     pub scope: Option<WireJson>,
     /// Validity window start (Unix seconds).

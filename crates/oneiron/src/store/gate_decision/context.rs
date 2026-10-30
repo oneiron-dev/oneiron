@@ -60,8 +60,9 @@ pub struct GateClaimReadSelectors {
     pub principal: Option<EntityId>,
     /// Its sensitivity band, as its scope stamps it.
     pub sensitivity_band: Option<u8>,
-    /// The relationship the claim is scoped to.
-    pub relationship: Option<EntityId>,
+    /// The relationship key the claim is scoped to: `None` for all, else
+    /// its whole set (`[]` the explicit empty set).
+    pub relationship: crate::claim::RelationshipScope,
     /// Whether its scope marks it private.
     pub private: bool,
     /// Its opaque scope selector, as MessagePack.
@@ -339,7 +340,10 @@ impl GateDecisionReadContext {
             || self.position.as_ref().is_some_and(|position| {
                 position.claim.as_ref().is_some_and(|claim| {
                     claim.principal == Some(*id)
-                        || claim.relationship == Some(*id)
+                        || claim
+                            .relationship
+                            .as_ref()
+                            .is_some_and(|ids| ids.contains(id))
                         || claim.scope.as_deref().is_some_and(|bytes| {
                             contains(bytes, id.as_bytes())
                                 || contains(bytes, id.to_hex().as_bytes())

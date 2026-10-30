@@ -280,7 +280,7 @@ impl ConsolidationExecutor<'_> {
         let state = pack.state(anchor, partners, &mut labels);
         let mut scope = Scope {
             world: anchor.body.world,
-            relationship: anchor.body.rel,
+            relationship: anchor.body.rel.clone(),
             project: Some(anchor.body.scope_project),
             ..Scope::default()
         };

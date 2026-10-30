@@ -102,7 +102,7 @@ struct MemoryKey<'a> {
     subject: EntityId,
     input: &'a ClaimInput,
     world: Option<EntityId>,
-    relationship: Option<EntityId>,
+    relationship: crate::claim::RelationshipScope,
 }
 
 impl MemoryKey<'_> {

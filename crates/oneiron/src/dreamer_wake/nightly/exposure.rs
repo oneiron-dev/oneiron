@@ -105,7 +105,7 @@ fn exposure_in(vault: &Vault, txn: &heed::RoTxn<'_>, turn: EntityId) -> Result<O
                 space,
                 private: false,
                 ..
-            } => relationships.extend(space),
+            } => relationships.extend(space.into_iter().flatten()),
             _ => return Ok(None),
         }
     }

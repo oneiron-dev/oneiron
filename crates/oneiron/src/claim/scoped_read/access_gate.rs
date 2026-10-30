@@ -3,7 +3,7 @@ use super::ScopedRead;
 use super::agent_grants::{AskedFilter, HeldGrants};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
-use crate::claim::{ClaimBody, decode_claim_body};
+use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::federation::Scope;
@@ -31,10 +31,10 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     private.unwrap_or(false)
 }
 
-/// The relationship a claim is scoped to and whether it is private, as
-/// relationship reads see them.
-pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
-    (body.rel, private_scope(body.scope.as_ref()))
+/// The relationship key a claim is scoped to (`all`, or its whole set) and
+/// whether it is private, as relationship reads see them.
+pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
+    (body.rel.clone(), private_scope(body.scope.as_ref()))
 }
 
 /// The relationship authority the row checks of one read share in its one
@@ -158,7 +158,7 @@ impl<'v> ScopedRead<'v> {
     pub(super) fn relationship_axes_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        space: Option<EntityId>,
+        space: RelationshipScope,
         private: bool,
         record: &Scope,
     ) -> Result<bool> {
@@ -317,11 +317,12 @@ pub(crate) enum RelationshipRead {
     /// (`false`).
     Decided(bool),
     /// The reader's memberships and grants decide, from the row's kind, the
-    /// relationship it is scoped to, whether it is private, and its record
-    /// position.
+    /// relationships it is scoped to (`None` for none named or `all`; a
+    /// CLAIM's whole set, a MESSAGE's or SUMMARY's one), whether it is
+    /// private, and its record position.
     Gated {
         kind: u8,
-        space: Option<EntityId>,
+        space: RelationshipScope,
         private: bool,
         record: Scope,
     },
@@ -342,12 +343,22 @@ impl RelationshipRead {
     pub(crate) fn allowed_by(&self, context: &AccessContext<'_>) -> bool {
         match self {
             Self::Decided(allowed) => *allowed,
+            // A scoped row reads through any one relationship of its set the
+            // reader may read; the explicit empty set names none.
             Self::Gated {
                 kind,
-                space,
+                space: None,
                 private,
                 record,
-            } => context.allows_at_snapshot(*kind, *space, *private, record),
+            } => context.allows_at_snapshot(*kind, None, *private, record),
+            Self::Gated {
+                kind,
+                space: Some(ids),
+                private,
+                record,
+            } => ids
+                .iter()
+                .any(|id| context.allows_at_snapshot(*kind, Some(*id), *private, record)),
         }
     }
 }
@@ -461,7 +472,7 @@ where
     };
     Ok(RelationshipRead::Gated {
         kind,
-        space,
+        space: crate::claim::relationship_scope_of(space),
         private,
         record,
     })

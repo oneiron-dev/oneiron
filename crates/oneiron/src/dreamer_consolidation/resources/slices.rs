@@ -111,7 +111,9 @@ impl BranchResources<'_> {
                                 transcript.push_str(&format!("conversation {conversation}\n"));
                             }
                             if at == 0 {
-                                transcript.push_str(&page.render(&mut labels, scope.relationship));
+                                transcript.push_str(
+                                    &page.render(&mut labels, scope.relationship.as_ref()),
+                                );
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);

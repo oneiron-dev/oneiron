@@ -372,9 +372,16 @@ pub(super) fn branch_gap_projection<T>(
         key: format!(
             "dreamer:gap-branch:v1:{}:{}:{}:",
             crate::entity_id::bytes_to_hex_lower(&branch.identity()),
-            scope
-                .relationship
-                .map_or_else(|| "none".to_owned(), |id| id.to_hex()),
+            scope.relationship.as_ref().map_or_else(
+                || "none".to_owned(),
+                |ids| format!(
+                    "[{}]",
+                    ids.iter()
+                        .map(EntityId::to_hex)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            ),
             scope
                 .project
                 .map_or_else(|| "none".to_owned(), |id| id.to_hex())
