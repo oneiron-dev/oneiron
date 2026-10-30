@@ -18,7 +18,7 @@ use crate::edit_distance::attribution::{
     AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::amendment_delta;
-use crate::edit_distance::{PROPOSAL_ARTIFACT, RetainedProposal, TextRead};
+use crate::edit_distance::{PROPOSAL_ARTIFACT, TextRead};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
@@ -266,10 +266,10 @@ fn clusters_from(
             if !minable.admits(&substitution) {
                 continue;
             }
-            let target = binding.as_ref().map_or_else(Default::default, |_| {
+            let target = binding.as_ref().map_or_else(Default::default, |row| {
                 super::policy::infer_target(
                     &policies,
-                    binding.expect("bound decision").principal,
+                    row.principal,
                     &judgment.scope,
                     &substitution.from,
                     &substitution.to,
@@ -362,11 +362,11 @@ fn clusters_from(
 ///   pair at all. A recorded-ops Δ names one artifact's window, a
 ///   reconstructed one each end's retained row, which is what the refs are
 ///   for.
-fn amendment_source<'a>(
+fn amendment_source(
     vault: &Vault,
     judgment: &AmendmentJudgment,
-    artifacts: &'a ArtifactIndex,
-) -> Result<Option<AmendmentSource<'a>>> {
+    artifacts: &ArtifactIndex,
+) -> Result<Option<AmendmentSource>> {
     let Some(evidence) = amendment_evidence(vault, &judgment.receipt_id)? else {
         return Ok(None);
     };
@@ -380,8 +380,8 @@ fn amendment_source<'a>(
     }))
 }
 
-/// Reads the artifact rows once per pass, each with its retained document
-/// opened, keyed by the artifact id a Δ's refs name.
+/// Reads the artifact rows once per pass, unopened, keyed by the artifact id
+/// a Δ's refs name. Each row opens only when a judgment resolves it.
 fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
     let rtxn = vault.store.env.read_txn()?;
     let mut index = ArtifactIndex {
@@ -393,9 +393,7 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
     for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, &rtxn, &[])? {
         let (artifact, stored) = entry?;
         rows.row();
-        index
-            .records
-            .insert(artifact, RetainedProposal::open(stored));
+        index.records.insert(artifact, stored);
     }
     rows.finish(vault);
     Ok(index)
@@ -419,7 +417,7 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
 ///
 /// A change text the retained document no longer holds yields no pair. A
 /// field-diff Δ resolves to no text at all (see [`amendment_source`]).
-fn substitutions(ends: &SourceEnds<'_>) -> Vec<Substitution> {
+fn substitutions(ends: &SourceEnds) -> Vec<Substitution> {
     match ends {
         SourceEnds::Recorded(artifact) => artifact
             .record

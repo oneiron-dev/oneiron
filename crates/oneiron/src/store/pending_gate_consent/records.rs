@@ -80,16 +80,6 @@ pub(crate) struct OwnerAnswerObligationRecord {
     /// owner a fresh one.
     #[serde(rename = "replacement_body_hash")]
     pub(crate) item: [u8; 32],
-    /// Whether a peer revision that lands over this claim lands demoted: set
-    /// when a peer overwrote a confirm this device attached, cleared by a
-    /// fresh local one. An earlier invalidation row has no field and reads
-    /// as set.
-    #[serde(default = "peer_revisions_demoted_by_default")]
-    pub(crate) demotes_peer_revisions: bool,
-}
-
-const fn peer_revisions_demoted_by_default() -> bool {
-    true
 }
 
 pub(super) fn encode_pending_gate_consent(record: &PendingGateConsentRecord) -> Result<Vec<u8>> {

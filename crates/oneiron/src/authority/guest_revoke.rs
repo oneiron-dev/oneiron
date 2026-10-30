@@ -276,9 +276,13 @@ impl Vault {
         issuer: &HostSlipIssuer,
         grant_ref: EntityId,
     ) -> Result<GuestRevokeOutcome> {
-        self.with_write_txn_grouped(|txn| {
+        let outcome = self.with_write_txn_grouped(|txn| {
             self.revoke_guest_access_in_txn(txn, owner, issuer, grant_ref)
-        })
+        })?;
+        if !outcome.revoked_slips.is_empty() {
+            self.store.notify_credential_revocations();
+        }
+        Ok(outcome)
     }
 
     /// [`Self::revoke_guest_access`] in the caller's writer: the whole
@@ -337,8 +341,9 @@ impl Vault {
         // minted under the grant and merges later is tombstoned there too
         // (FIX 1978).
         self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipGrantRevoke { grant_ref })?;
-        // The withdrawal stays known here, in this writer (FIX-LIST 5107).
-        super::mark_withdrawn_grant_in_txn(&self.store, txn, grant_ref)?;
+        // The withdrawal stays known here and reaches its peers, in this
+        // writer (FIX-LIST 5107, 10772).
+        super::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
         apply_ops(
             &self.store,
             &self.config,

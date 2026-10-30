@@ -8,7 +8,11 @@
 //! second send: the commit there is `observed_published`; the leased tip
 //! there is `rejected` after the mirror's own refusal, else
 //! `outcome_unknown`; anything else is `remote_moved`. A branch that cannot
-//! be read leaves the request dispatching until a later call reads it.
+//! be read leaves the request dispatching until a later call reads it. A
+//! claimed request is settled by another call only once the mirror's push
+//! hold, which its push's child inherits, is free (FIX 7045).
+
+use std::path::Path;
 
 use base64::Engine as _;
 
@@ -18,18 +22,15 @@ use super::types::{
     OriginPublishRemote, OriginPublishRequestView, OriginPublishState,
 };
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GitOid, GitPublishPushOutcome, GitRefName, GitRemoteTip, GitWire, GitWireRepo,
+    try_lock_repository,
 };
 use crate::origin::mirror::ORIGIN_MIRROR_PUSH_EFFECTOR;
+use crate::origin::mirror_run::mirror_hold_dir;
 use crate::origin::publication::OriginKeepRefKind;
-
-/// How long after its claim a dispatching request is left to its own push
-/// before another call settles it from the mirror: the push's own runtime
-/// bound (ten minutes) and a minute more. A push still running is never
-/// raced, and none is sent again (CALLS "FIX 6866 dispatch settle wait").
-pub const ORIGIN_PUBLISH_DISPATCH_SETTLE_SECS: u64 = 11 * 60;
 
 /// The longest redacted cause a refusal carries.
 const MAX_DETAIL_BYTES: usize = 256;
@@ -51,7 +52,11 @@ impl Vault {
     }
 
     /// The request's one push: exactly `commit` to `name`, leased on
-    /// `expected`.
+    /// `expected`, in a child that inherits the mirror's push hold `hold`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one exact push binds its repository, mirror, branch, commit, lease and hold"
+    )]
     pub(super) fn push_publish_once(
         &self,
         wire: &GitWire<'_>,
@@ -60,10 +65,19 @@ impl Vault {
         name: &GitRefName,
         commit: &GitOid,
         expected: Option<&GitOid>,
+        hold: &Path,
     ) -> Result<GitPublishPushOutcome> {
         let mut answer = Err(Error::InvariantViolation("publish push never ran"));
         self.with_publish_credential(destination, &mut |header| {
-            answer = wire.push_publish(handle, &destination.url, name, commit, expected, header);
+            answer = wire.push_publish(
+                handle,
+                &destination.url,
+                name,
+                commit,
+                expected,
+                hold,
+                header,
+            );
         })?;
         answer
     }
@@ -119,21 +133,40 @@ impl Vault {
         self.settle_from_mirror(scope, handle, view, rejected, Some(detail))
     }
 
-    /// A dispatching request whose claim is older than the push's bound,
-    /// settled from the mirror; a younger one is answered as it stands.
+    /// A dispatching request settled from the mirror once its push has
+    /// ended: the mirror's push hold is free. The dispatch held it from its
+    /// claim to its push's end and the push's child inherited it, so a free
+    /// hold proves no push of it still runs, a child orphaned by its host's
+    /// death included. While another holds it, the request is answered as
+    /// it stands; none is sent again.
     pub(super) fn settle_stale_dispatch(
         &self,
         scope: &PublishScope<'_>,
         view: OriginPublishRequestView,
     ) -> Result<OriginPublishRequestView> {
-        let claimed = view.dispatched.as_ref().map_or(0, |act| act.at);
-        if self.now_recorded_at().saturating_sub(claimed) < ORIGIN_PUBLISH_DISPATCH_SETTLE_SECS {
+        let commit = GitOid::parse_hex(view.commit.clone())?;
+        let Some(handle) = self.publish_handle(scope, &commit)? else {
             return Ok(view);
-        }
-        let Ok(handle) = scope.handle_at(&GitOid::parse_hex(view.commit.clone())?) else {
+        };
+        let Some(_held) = try_lock_repository(&mirror_hold_dir(&handle)?)? else {
             return Ok(view);
         };
         self.settle_from_mirror(scope, &handle, &view, false, None)
+    }
+
+    /// A proven handle for a request's IO: pinned at its commit, else, once
+    /// a restore took the commit, at any commit the repository publishes
+    /// (FIX 7011), so a claim is still settled and its pin still released.
+    /// `None` while neither is here.
+    fn publish_handle(
+        &self,
+        scope: &PublishScope<'_>,
+        commit: &GitOid,
+    ) -> Result<Option<GitWireRepo>> {
+        if let Ok(handle) = scope.handle_at(commit) {
+            return Ok(Some(handle));
+        }
+        self.mirror_handle(&scope.wire, scope.repo_id, &scope.root)
     }
 
     /// Reads the branch and settles the claimed request from what it holds.
@@ -172,7 +205,7 @@ impl Vault {
         &self,
         scope: &PublishScope<'_>,
         handle: &GitWireRepo,
-        request_id: crate::entity_id::EntityId,
+        request_id: EntityId,
         commit: &GitOid,
     ) -> Result<()> {
         self.pin_origin_object(
@@ -186,13 +219,65 @@ impl Vault {
         .map(drop)
     }
 
+    /// The census's sweep of this plane's pins in one repository: an exact
+    /// request's pin whose row is gone or settled, and an automatic plan's
+    /// pin whose plan is not open (`mirror_plan_pins`). The caller holds the
+    /// repository's coordinator. A sweep that fails only warns: a pin left
+    /// behind keeps an object, never loses one.
+    pub(crate) fn sweep_orphan_publish_pins(
+        &self,
+        git: &GitWire<'_>,
+        repo_id: EntityId,
+        repo: &GitWireRepo,
+        learned_at: u64,
+    ) {
+        if let Err(error) = self.sweep_orphan_publish_request_pins(git, repo_id, repo, learned_at) {
+            tracing::warn!(kind = ?error.kind(), "orphaned publish request pins were not swept");
+        }
+        if let Err(error) = self.sweep_settled_mirror_plan_pins(git, repo_id, repo, learned_at) {
+            tracing::warn!(kind = ?error.kind(), "settled mirror plan pins were not swept");
+        }
+    }
+
+    /// Drops each exact publish request pin of one repository whose request
+    /// row is gone (a crash between the pin and the row) or settled (a
+    /// release that did not run) (FIX 7009). A request holds the
+    /// repository's coordinator from its pin to its row, and the caller holds
+    /// it here, so no pin of a request still being recorded goes. A row that
+    /// cannot be read keeps its pin.
+    fn sweep_orphan_publish_request_pins(
+        &self,
+        git: &GitWire<'_>,
+        repo_id: EntityId,
+        repo: &GitWireRepo,
+        learned_at: u64,
+    ) -> Result<()> {
+        let kind = OriginKeepRefKind::PublishRequest;
+        for (oid, owner) in self.origin_keep_owners_of_kind(repo_id, kind)? {
+            let Ok(request_id) = EntityId::from_hex(&owner) else {
+                continue;
+            };
+            let live = match self.publish_request(repo_id, request_id) {
+                Ok(Some(view)) => !view.state.is_terminal(),
+                Ok(None) => false,
+                Err(_) => true,
+            };
+            if !live {
+                self.unpin_origin_object(git, repo, kind, &owner, &oid, learned_at)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Releases a settled request's pin. A release that cannot run leaves a
     /// keep-ref behind, never a missing object, so it only warns.
     pub(super) fn release_publish_pin(&self, view: &OriginPublishRequestView) {
         let released = (|| {
             let scope = self.publish_scope(&view.repo)?;
             let commit = GitOid::parse_hex(view.commit.clone())?;
-            let handle = scope.handle_at(&commit)?;
+            let handle = self
+                .publish_handle(&scope, &commit)?
+                .ok_or(Error::EntityNotFound)?;
             self.unpin_origin_object(
                 &scope.wire,
                 &handle,

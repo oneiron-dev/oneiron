@@ -646,7 +646,7 @@ impl crate::Vault {
                 continue;
             }
             let body = decode_claim_body(body_bytes, true)?;
-            if !keeps(&body) {
+            if !keeps(&body) || !self.claim_critical_confirm_settled(&claim_id)? {
                 continue;
             }
             candidates.push(CandidateClaim { id: claim_id, body });
@@ -673,7 +673,9 @@ impl crate::Vault {
                     continue;
                 };
                 let body = decode_claim_body(bytes, true)?;
-                if keeps(&body) {
+                // A claim whose owner answer came due between the two reads
+                // stays out (FIX 9603).
+                if keeps(&body) && self.claim_critical_confirm_settled(&row.id)? {
                     candidates.push(CandidateClaim { id: row.id, body });
                 }
             }
