@@ -5679,7 +5679,7 @@ export type MediaServed = "full" | "no_image_reader" | "audio_unsupported" | "no
 /** `oneiron::llm::decision::media_ref::DecisionMedia` */
 export type DecisionMedia = { name: string; reference: DecisionMediaRef; served: MediaServed }
 /** `oneiron::edit_roundtrip::slides_review::SlideJudgment` */
-export type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; comment: string; labels: SlideReviewLabels }
+export type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; ceiling: DecisionRung; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; comment: string; labels: SlideReviewLabels }
 /** `oneiron_docedit::pptx_comments::model::PptxCommentAction` */
 export type PptxCommentAction = { add: { target: PptxCommentTarget; text: string } } | { reply: { text: string } } | { resolve: { resolved: boolean } }
 /** `oneiron::edit_roundtrip::pptx::package::PptxCommentPatch` */
