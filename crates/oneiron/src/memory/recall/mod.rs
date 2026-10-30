@@ -706,6 +706,7 @@ impl Memory<'_> {
         execution: &RecallExecution<'_>,
         pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
+        let l15_admitted_setup = crate::stage_timing::stage("recall.admitted_setup");
         // ONE route and ONE registration door for the whole assembly. The
         // context pack registers a PROVISIONAL run and finalizes it in a
         // second write, so a target re-derived between them could stage into
@@ -883,6 +884,7 @@ impl Memory<'_> {
         } else {
             Vec::new()
         };
+        drop(l15_admitted_setup);
 
         let (
             items,
@@ -1027,6 +1029,7 @@ impl Memory<'_> {
                 };
                 String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
             });
+            let l15_hydrate = crate::stage_timing::stage("recall.hydrate");
             let mut items = Vec::new();
             for entity in pack.results.iter().take(limit) {
                 if let Some(fallback) = door_answered() {
@@ -1058,6 +1061,8 @@ impl Memory<'_> {
                 }
             }
             let total = items.len() as u64;
+            drop(l15_hydrate);
+            crate::stage_timing::record("count.hydrated_items", total);
 
             (
                 items,
@@ -1070,6 +1075,7 @@ impl Memory<'_> {
             )
         };
 
+        let l15_assemble = crate::stage_timing::stage("recall.assemble");
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         let mut pack = MemoryPack {
             scope_honesty: ScopeHonesty::default(),
@@ -1106,6 +1112,7 @@ impl Memory<'_> {
             ready.mark_cut();
             on_cut(ready);
         }
+        drop(l15_assemble);
         if let Some(worlds) = &worlds {
             pack.scope_honesty =
                 self.out_of_scope_worlds(&census, &mut pack.narrowing, worlds, execution.deadline)?;
