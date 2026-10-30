@@ -6,6 +6,8 @@ use super::*;
 pub(super) struct OldRecord {
     pub(super) body_changed: bool,
     pub(super) consolidation_dirty: bool,
+    /// Whether the row was stored before this put (FIX 11925).
+    pub(super) stored_before: bool,
     pub(super) previous_skill_record: Option<crate::skill::SkillRecord>,
     pub(super) optimizer_birth_marker: Option<crate::side_table::StagedRow>,
 }
@@ -22,6 +24,7 @@ pub(super) fn apply_old_record(
 ) -> Result<OldRecord> {
     let mut body_changed = true;
     let mut consolidation_dirty = true;
+    let mut stored_before = false;
     let mut previous_skill_record = None;
     // ONE-1449 MATERIAL-6 R1: the optimizer-birth marker this create must
     // either match or be born with. Computed by the SKILL create arm below
@@ -33,6 +36,7 @@ pub(super) fn apply_old_record(
     if let Some(old_record) =
         crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &fixed.id)?
     {
+        stored_before = true;
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         previous_skill_record = super::super::decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
@@ -219,6 +223,7 @@ pub(super) fn apply_old_record(
     Ok(OldRecord {
         body_changed,
         consolidation_dirty,
+        stored_before,
         previous_skill_record,
         optimizer_birth_marker,
     })
