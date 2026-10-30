@@ -31,8 +31,13 @@ pub(super) struct TextLimits {
     pub(super) docx: oneiron_docedit::ArchiveLimits,
 }
 
-/// The text under `locator` in `bytes`, or `None` when the spot cannot be read.
-pub(super) fn anchor_text(bytes: &[u8], locator: &Locator, limits: &TextLimits) -> Option<String> {
+/// The text under `locator` in `bytes`, or `Ok(None)` when the spot cannot
+/// be read. A resource refusal is the engine's error (FIX 10587).
+pub(super) fn anchor_text(
+    bytes: &[u8],
+    locator: &Locator,
+    limits: &TextLimits,
+) -> crate::Result<Option<String>> {
     match locator {
         Locator::Xlsx { sheet, range } => xlsx_range_text(bytes, sheet, *range, limits),
         Locator::Docx {
@@ -40,18 +45,32 @@ pub(super) fn anchor_text(bytes: &[u8], locator: &Locator, limits: &TextLimits) 
             char_start,
             char_end,
         } => {
-            let blocks = docx_blocks(bytes, limits)?;
-            let (_, text) = blocks.iter().find(|(id, _)| id == para_path)?;
-            char_slice(text, *char_start, *char_end)
+            let Some(blocks) = docx_blocks(bytes, limits)? else {
+                return Ok(None);
+            };
+            let Some((_, text)) = blocks.iter().find(|(id, _)| id == para_path) else {
+                return Ok(None);
+            };
+            Ok(char_slice(text, *char_start, *char_end))
         }
         Locator::Pptx { slide, shape_id } => {
-            let deck = deck_view(bytes, limits)?;
-            let slide = deck
-                .slides
-                .get(usize::try_from(*slide).ok()?.checked_sub(1)?)?;
+            let Some(deck) = deck_view(bytes, limits)? else {
+                return Ok(None);
+            };
+            let Ok(number) = usize::try_from(*slide) else {
+                return Ok(None);
+            };
+            let Some(index) = number.checked_sub(1) else {
+                return Ok(None);
+            };
+            let Some(slide) = deck.slides.get(index) else {
+                return Ok(None);
+            };
             if shape_id == "slide" {
                 let texts: Vec<String> = slide.shapes.iter().filter_map(shape_text).collect();
-                return (!texts.is_empty()).then(|| texts.join(&PARAGRAPH_SEPARATOR.to_string()));
+                return Ok(
+                    (!texts.is_empty()).then(|| texts.join(&PARAGRAPH_SEPARATOR.to_string()))
+                );
             }
             let wanted = guid_key(shape_id);
             let mut matches = slide.shapes.iter().filter(|shape| {
@@ -61,31 +80,34 @@ pub(super) fn anchor_text(bytes: &[u8], locator: &Locator, limits: &TextLimits) 
                     .is_some_and(|guid| guid_key(guid) == wanted)
                     || shape.id.is_some_and(|id| id.to_string() == *shape_id)
             });
-            let shape = matches.next()?;
+            let Some(shape) = matches.next() else {
+                return Ok(None);
+            };
             if matches.next().is_some() {
-                return None;
+                return Ok(None);
             }
-            shape_text(shape)
+            Ok(shape_text(shape))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
 /// Every place in `bytes` that holds exactly `text`, in document order. A
 /// sheet offers same-shaped ranges, a Word document every exact run of the
-/// words, a deck every shape whose whole text is the words.
+/// words, a deck every shape whose whole text is the words. A resource
+/// refusal is the engine's error (FIX 10587).
 pub(super) fn find_text(
     bytes: &[u8],
     format: OfficeFormat,
     text: &str,
     limits: &TextLimits,
-) -> Vec<Locator> {
+) -> crate::Result<Vec<Locator>> {
     if text.trim().is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut found = match format {
-        OfficeFormat::Xlsx => find_in_sheets(bytes, text, limits),
-        OfficeFormat::Docx => docx_blocks(bytes, limits)
+        OfficeFormat::Xlsx => find_in_sheets(bytes, text, limits)?,
+        OfficeFormat::Docx => docx_blocks(bytes, limits)?
             .map(|blocks| {
                 blocks
                     .iter()
@@ -97,7 +119,7 @@ pub(super) fn find_text(
                     .collect()
             })
             .unwrap_or_default(),
-        OfficeFormat::Pptx => deck_view(bytes, limits)
+        OfficeFormat::Pptx => deck_view(bytes, limits)?
             .map(|deck| {
                 deck.slides
                     .iter()
@@ -118,7 +140,7 @@ pub(super) fn find_text(
             .unwrap_or_default(),
     };
     found.truncate(MAX_OFFERS);
-    found
+    Ok(found)
 }
 
 /// Moves a Word span across one paragraph's edit. The text both sides share
@@ -160,32 +182,65 @@ pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Opt
     (new_start < new_end).then(|| (new_start as u64, new_end as u64))
 }
 
-/// The body paragraphs of a Word document: block id and visible text.
-pub(super) fn docx_blocks(bytes: &[u8], limits: &TextLimits) -> Option<Vec<(String, String)>> {
-    // Both DOCX reads run in the host's memory (FIX 10651).
+/// The body paragraphs of a Word document: block id and visible text. Both
+/// DOCX reads run in the host's memory (FIX 10651), and a resource refusal is
+/// the engine's error (FIX 10587), never `None`.
+pub(super) fn docx_blocks(
+    bytes: &[u8],
+    limits: &TextLimits,
+) -> crate::Result<Option<Vec<(String, String)>>> {
     let resources = crate::office_body::document_resources();
-    resources.docx(|| {
-        oneiron_docedit::preflight_with_limits(bytes, limits.docx).ok()?;
-        let document = oneiron_docedit::Document::parse(bytes).ok()?;
-        Some(
-            document
-                .read()
-                .blocks
-                .into_iter()
-                .map(|block| (block.id.to_string(), block.text))
-                .collect(),
-        )
-    })
+    let parsed = resources.docx(|| {
+        oneiron_docedit::preflight_with_limits(bytes, limits.docx)?;
+        oneiron_docedit::Document::parse(bytes)
+    });
+    let document = match parsed {
+        Ok(document) => document,
+        Err(error) => {
+            if let Some(refusal) = oneiron_docedit::docx_resource(&error) {
+                return Err(crate::office_body::document_refused(refusal));
+            }
+            return Ok(None);
+        }
+    };
+    Ok(Some(
+        document
+            .read()
+            .blocks
+            .into_iter()
+            .map(|block| (block.id.to_string(), block.text))
+            .collect(),
+    ))
 }
 
-fn deck_view(bytes: &[u8], limits: &TextLimits) -> Option<oneiron_docedit::deck::DeckView> {
-    let package = Package::open(
+/// The deck's typed view. A resource refusal is the engine's error
+/// (FIX 10587), never `None`.
+fn deck_view(
+    bytes: &[u8],
+    limits: &TextLimits,
+) -> crate::Result<Option<oneiron_docedit::deck::DeckView>> {
+    let package = match Package::open(
         bytes,
         limits.package,
         &crate::office_body::document_resources(),
-    )
-    .ok()?;
-    oneiron_docedit::deck::DeckView::read(&package).ok()
+    ) {
+        Ok(package) => package,
+        Err(error) => {
+            if let Some(refusal) = error.resource() {
+                return Err(crate::office_body::document_refused(refusal));
+            }
+            return Ok(None);
+        }
+    };
+    match oneiron_docedit::deck::DeckView::read(&package) {
+        Ok(view) => Ok(Some(view)),
+        Err(error) => {
+            if let Some(refusal) = error.resource() {
+                return Err(crate::office_body::document_refused(refusal));
+            }
+            Ok(None)
+        }
+    }
 }
 
 fn shape_text(shape: &oneiron_docedit::deck::ShapeView) -> Option<String> {
@@ -229,19 +284,27 @@ fn char_occurrences(haystack: &str, needle: &str) -> Vec<(u64, u64)> {
 
 /// Each sheet's cells that `wanted` picks, as a person sees them (a
 /// formula's saved result under the cell's number format), in workbook
-/// order. The workbook is read under the live package ceilings.
+/// order. The workbook is read under the live package ceilings. A resource
+/// refusal is the engine's error (FIX 10587), never `None`.
 fn sheet_texts(
     bytes: &[u8],
     limits: &TextLimits,
     wanted: &dyn Fn(&str, &CellRef) -> bool,
-) -> Option<Vec<(String, BTreeMap<CellRef, String>)>> {
-    let book = read_xlsx_cells(
+) -> crate::Result<Option<Vec<(String, BTreeMap<CellRef, String>)>>> {
+    let book = match read_xlsx_cells(
         bytes,
         limits.package,
         &crate::office_body::document_resources(),
-    )
-    .ok()?;
-    Some(
+    ) {
+        Ok(book) => book,
+        Err(error) => {
+            if let Some(refusal) = error.resource() {
+                return Err(crate::office_body::document_refused(refusal));
+            }
+            return Ok(None);
+        }
+    };
+    Ok(Some(
         book.sheets
             .iter()
             .map(|sheet| {
@@ -261,7 +324,7 @@ fn sheet_texts(
                 (sheet.name.clone(), cells)
             })
             .collect(),
-    )
+    ))
 }
 
 fn xlsx_range_text(
@@ -269,12 +332,16 @@ fn xlsx_range_text(
     sheet: &str,
     range: A1Range,
     limits: &TextLimits,
-) -> Option<String> {
-    let (_, cells) = sheet_texts(bytes, limits, &|name, cell| {
+) -> crate::Result<Option<String>> {
+    let Some(sheets) = sheet_texts(bytes, limits, &|name, cell| {
         name == sheet && in_range(cell, range)
     })?
-    .into_iter()
-    .find(|(name, _)| name == sheet)?;
+    else {
+        return Ok(None);
+    };
+    let Some((_, cells)) = sheets.into_iter().find(|(name, _)| name == sheet) else {
+        return Ok(None);
+    };
     let rows: Vec<String> = (range.row_start..=range.row_end)
         .map(|row| {
             (range.col_start..=range.col_end)
@@ -289,7 +356,7 @@ fn xlsx_range_text(
         })
         .collect();
     let text = rows.join(&ROW_SEPARATOR.to_string());
-    (!text.trim().is_empty()).then_some(text)
+    Ok((!text.trim().is_empty()).then_some(text))
 }
 
 fn in_range(cell: &CellRef, range: A1Range) -> bool {
@@ -297,8 +364,13 @@ fn in_range(cell: &CellRef, range: A1Range) -> bool {
         && (range.row_start..=range.row_end).contains(&cell.row)
 }
 
-/// Same-shaped ranges whose cells read exactly as the snapshot.
-fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> Vec<Locator> {
+/// Same-shaped ranges whose cells read exactly as the snapshot. A resource
+/// refusal is the engine's error (FIX 10587), never an empty offer list.
+fn find_in_sheets(
+    bytes: &[u8],
+    text: &str,
+    limits: &TextLimits,
+) -> crate::Result<Vec<Locator>> {
     let rows: Vec<Vec<&str>> = text
         .split(ROW_SEPARATOR)
         .map(|row| row.split(CELL_SEPARATOR).collect())
@@ -306,10 +378,10 @@ fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> Vec<Locator>
     let height = u32::try_from(rows.len()).unwrap_or(u32::MAX);
     let width = u32::try_from(rows.first().map_or(0, Vec::len)).unwrap_or(u32::MAX);
     if height == 0 || width == 0 || rows.iter().any(|row| row.len() != width as usize) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let Some(sheets) = sheet_texts(bytes, limits, &|_, _| true) else {
-        return Vec::new();
+    let Some(sheets) = sheet_texts(bytes, limits, &|_, _| true)? else {
+        return Ok(Vec::new());
     };
     let mut out = Vec::new();
     for (sheet, cells) in sheets {
@@ -341,38 +413,51 @@ fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> Vec<Locator>
                     range,
                 });
                 if out.len() >= MAX_OFFERS {
-                    return out;
+                    return Ok(out);
                 }
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// The units the existing office readers can address, in document order.
 /// This reads the same blocks, displayed cells and slide-scoped shape identities
 /// as anchor_text; unsupported artifact kinds have no implied adapter here.
+/// A resource refusal is the engine's error (FIX 10587), never `None`.
 pub(super) fn unit_texts(
     bytes: &[u8],
     format: OfficeFormat,
     limits: &TextLimits,
-) -> Option<Vec<(Locator, Option<String>)>> {
+) -> crate::Result<Option<Vec<(Locator, Option<String>)>>> {
     match format {
-        OfficeFormat::Docx => docx_blocks(bytes, limits)?
-            .into_iter()
-            .map(|(path, text)| {
-                let end = text.chars().count() as u64;
-                let locator = Locator::docx(path, 0, end).ok()?;
-                Some((locator, (end > 0).then_some(text)))
-            })
-            .collect(),
+        OfficeFormat::Docx => {
+            let Some(blocks) = docx_blocks(bytes, limits)? else {
+                return Ok(None);
+            };
+            Ok(blocks
+                .into_iter()
+                .map(|(path, text)| {
+                    let end = text.chars().count() as u64;
+                    let locator = Locator::docx(path, 0, end).ok()?;
+                    Some((locator, (end > 0).then_some(text)))
+                })
+                .collect())
+        }
         OfficeFormat::Xlsx => {
-            let book = read_xlsx_cells(
+            let book = match read_xlsx_cells(
                 bytes,
                 limits.package,
                 &crate::office_body::document_resources(),
-            )
-            .ok()?;
+            ) {
+                Ok(book) => book,
+                Err(error) => {
+                    if let Some(refusal) = error.resource() {
+                        return Err(crate::office_body::document_refused(refusal));
+                    }
+                    return Ok(None);
+                }
+            };
             let mut units = Vec::new();
             for sheet in &book.sheets {
                 for cell in &sheet.cells {
@@ -381,15 +466,19 @@ pub(super) fn unit_texts(
                         row: cell.row,
                     }
                     .to_a1();
-                    let locator = Locator::xlsx(sheet.name.clone(), &address).ok()?;
+                    let Ok(locator) = Locator::xlsx(sheet.name.clone(), &address) else {
+                        return Ok(None);
+                    };
                     let text = cell_display_text(&book, cell);
                     units.push((locator, (!text.trim().is_empty()).then_some(text)));
                 }
             }
-            Some(units)
+            Ok(Some(units))
         }
         OfficeFormat::Pptx => {
-            let deck = deck_view(bytes, limits)?;
+            let Some(deck) = deck_view(bytes, limits)? else {
+                return Ok(None);
+            };
             let mut units = Vec::new();
             for (index, slide) in deck.slides.iter().enumerate() {
                 for shape in &slide.shapes {
@@ -412,12 +501,14 @@ pub(super) fn unit_texts(
                                 || candidate.id.is_some_and(|id| id.to_string() == identity)
                         })
                         .count();
-                    let locator = Locator::pptx(index as u64 + 1, identity).ok()?;
+                    let Ok(locator) = Locator::pptx(index as u64 + 1, identity) else {
+                        return Ok(None);
+                    };
                     let quote = (matches == 1).then(|| shape_text(shape)).flatten();
                     units.push((locator, quote));
                 }
             }
-            Some(units)
+            Ok(Some(units))
         }
     }
 }
