@@ -22,8 +22,8 @@ mod row_births;
 mod snapshot_ops;
 mod vocabulary;
 mod withdrawn_cutoffs;
-pub use budget::RecoveryBudgetOverrun;
 pub(super) use budget::ByteBudget;
+pub use budget::RecoveryBudgetOverrun;
 #[cfg(test)]
 pub(super) use budget::held_bytes;
 pub use capture::capture_canonical_window;
