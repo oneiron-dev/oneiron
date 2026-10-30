@@ -5,10 +5,13 @@
 //!
 //! * **Nothing is precomputed.** [`build_prep_pack`] assembles from live vault
 //!   state at the moment the host says the wake fired. No prep artifact is
-//!   stored, indexed, or reused: this module opens no write door at all, so a
-//!   pack built yesterday cannot be surfaced today. Evidence that landed after
-//!   the wake was planned but before it fired is in; evidence that lands after
-//!   the fire instant is out, because the assembly is scoped by learned time.
+//!   indexed or reused: this module opens no write door at all. The lens a
+//!   due wake renders is stored only as the owner's INBOX card
+//!   ([`crate::calendar::inbox_card`]), which leaves the inbox once its
+//!   meeting moves, ends or goes, so a pack built yesterday cannot be surfaced
+//!   today. Evidence that landed after the wake was planned but before it
+//!   fired is in; evidence that lands after the fire instant is out, because
+//!   the assembly is scoped by learned time.
 //! * **Precedence is fixed, recency is not.** Prior commitments outrank recent
 //!   threads, which outrank dossier delta — [`PrepSectionKind`] declares that
 //!   order and derives `Ord` from it. Newer lower-ranked material never
@@ -52,6 +55,7 @@ mod lens;
 mod pack;
 mod wake;
 
+pub(in crate::calendar) use self::home_node::live_prep_event;
 pub use self::home_node::{PrepHomeNodeJob, run_due_home_node_prep};
 pub use self::lens::{PrepLensCopy, render_prep_lens};
 pub(crate) use self::pack::build_prep_pack_scoped;
@@ -60,6 +64,7 @@ pub use self::pack::{
     build_prep_pack,
 };
 pub use self::wake::{
-    DEFAULT_PREP_LEAD_SECS, PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND, PrepEvent, PrepPolicy,
-    PrepWake, plan_prep_wake, prep_is_eligible, prep_wake_id,
+    CHECK_IN_RE_ASK_LOCAL_HOUR, DEFAULT_PREP_LEAD_SECS, PREP_WAKE_REASON_TAG,
+    PREP_WAKE_SCHEDULE_KIND, PrepEvent, PrepPolicy, PrepWake, plan_check_in_re_ask, plan_prep_wake,
+    prep_is_eligible, prep_wake_id,
 };
