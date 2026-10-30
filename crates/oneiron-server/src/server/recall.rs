@@ -327,7 +327,12 @@ impl SyncServer {
             // among its caller's deadline jobs until its work ends; past the
             // row it runs on and raises the row's check.
             let job = budget.map(|_| self.vault.admit_deadline_job(actor));
+            let l15_spawned = Instant::now();
             let task = tokio::task::spawn_blocking(move || {
+                oneiron::stage_timing::record(
+                    "server.blocking_wait",
+                    u64::try_from(l15_spawned.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                );
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
                 let memory = reader(&server.vault, actor, class, proof.as_ref())

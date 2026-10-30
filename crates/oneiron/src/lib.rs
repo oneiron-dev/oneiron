@@ -42,6 +42,7 @@ pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
 pub mod slim;
+pub mod stage_timing;
 pub mod store;
 pub(crate) mod sweep;
 pub mod temporal;
