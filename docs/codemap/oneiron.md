@@ -660,6 +660,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/tests.rs` | test | m | — | — | — |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 10 crate-vis | — | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
 | `src/batch/secret_scan/wordlist.rs` | src | s | 1 crate-vis | — | BIP39 English word list (bitcoin/bips bip-0039), sorted for shape checks |
+| `src/batch/session_delete.rs` | src | s | 1 crate-vis | — | A room's delete of a row only it staged (FIX 10763) |
 | `src/batch/short_id.rs` | src | s | 1 fn · 10 crate-vis | — | — |
 | `src/batch/tests/authority_log.rs` | test | L | — | — | Authority log, first-seen fold, eviction and identity topology |
 | `src/batch/tests/facet_taint_session.rs` | test | m | — | — | Facet-of validation, taint guard, session apply and live-overlay exclusion |
@@ -1270,7 +1271,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/consent_wait/ledger.rs` | src | s | 2 crate-vis | — | A wait's receipts as the consent Gate ledger holds them (DOOR-079 PR 2) |
 | `src/code_run/consent_wait/mod.rs` | src | s | 3 re-export · 4 crate-vis | — | Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03) |
 | `src/code_run/consent_wait/replay.rs` | src | m | 7 crate-vis | — | The parked run's side of a code consent wait (DOOR-079 1b) |
-| `src/code_run/consent_wait/settle.rs` | src | m | 3 fn · 13 crate-vis | — | The answer and the settlement (DOOR-079 1a) |
+| `src/code_run/consent_wait/settle.rs` | src | m | 3 fn · 12 crate-vis | — | The answer and the settlement (DOOR-079 1a) |
 | `src/code_run/consent_wait/types.rs` | src | m | 4 struct · 3 enum · 3 fn · 22 crate-vis | CodeConsentAnswerInput, CodeConsentBrowserAction, CodeConsentChoice, CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView | The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row… |
 | `src/code_run/contribution.rs` | src | m | 4 struct · 2 enum · 2 trait · 4 fn · 1 re-export · 1 crate-vis | ContributionForkModel, ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ForkScoring, ForkTreatment, ReplayAnchor, ScoredFork | The matched-fork contribution runner (FIX 3028, FIX 2870, ARCH-0037 #lineage-credit, ARCH-0053): one sampled… |
 | `src/code_run/contribution/admission.rs` | src | s | 1 enum · 2 crate-vis | ForkMismatch | What a submitted pair's stored forks prove (FIX 3610, FIX 2870): the A side records a contribution check as… |
@@ -1952,7 +1953,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dispatch_byoa/host_claim.rs` | src | s | 3 fn | — | A run host's own claim of a CLI attempt (FIX 4552): a host that runs the official CLIs on the person's own… |
 | `src/dispatch_byoa/mod.rs` | src | s | 1 mod · 16 re-export · 2 crate-vis | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
 | `src/dispatch_byoa/official_seats.rs` | src | L | 14 struct · 5 enum · 1 trait · 23 fn · 5 const | ClaudeAgentSdkSeatAdapter, ClaudeCodeSeatAdapter, CodexSeatAdapter, DispatchOfficialSeat, DrySeatDecision, DrySeatFallback, GrokApiKeySeatAdapter, OfficialSeatAdapter +12 | Official subscription seats (OF-375): the owner's own vendor login, reached only through the vendor's… |
-| `src/dispatch_byoa/owner_doors.rs` | src | s | 4 struct · 1 enum · 2 fn | RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView, RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt | The owner's runner seat quota doors (FIX 7451): `vault.runners.seats.quotas` reads the named seats' quotas… |
+| `src/dispatch_byoa/owner_doors.rs` | src | m | 6 struct · 3 enum · 3 fn | RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView, RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt, RunnerWorkResumeChoice, RunnerWorkResumeRequest, RunnerWorkResumeView +1 | The owner's runner seat doors: `vault.runners.seats.quotas` reads the named seats' quotas as their captures… |
 | `src/dispatch_byoa/provider.rs` | src | s | 5 struct · 1 trait · 5 fn · 3 const | ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter, DreamerProviderInput, OpenCodeRunner, ProviderAdapterRegistry | Named propose-only Dreamer runners over the existing foreign CLI sandbox |
 | `src/dispatch_byoa/record.rs` | src | s | 3 crate-vis | — | The small records the runner seat route keeps beside its attempts (OF-137): a bound work's hops… |
 | `src/dispatch_byoa/repo_binding.rs` | src | m | 1 struct · 7 crate-vis | ByoaRepoBinding | A BYOA CLI attempt's checkout custody (FIX 6867, G1 PR3b; ASK 2 approved; CALL "FIX 6867 stale capture") |
@@ -2521,6 +2522,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/tests.rs` | test | L | — | — | ARTL-3 pipeline tests |
 | `src/edit_roundtrip/xml.rs` | src | s | 12 crate-vis | — | Namespace-aware OPC and worksheet XML reads for the edit gate |
 | `src/edit_settle/carry.rs` | src | L | 2 struct · 3 enum · 4 fn · 7 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
+| `src/edit_settle/carry/live.rs` | src | s | 8 crate-vis | — | The live-body half of a held answer proposal's split (FIX 2115) |
 | `src/edit_settle/codec.rs` | src | m | 7 crate-vis | — | Row and anchor codec |
 | `src/edit_settle/keys.rs` | src | s | 4 const · 48 crate-vis | — | Pinned ledger keys and receipt fields |
 | `src/edit_settle/mod.rs` | src | s | 7 re-export · 3 crate-vis | — | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
@@ -3336,6 +3338,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/arrival.rs` | src | m | 16 crate-vis | — | Outcome arrival projection in the materializing transaction |
 | `src/llm/decision/questions/artifact_refresh.rs` | src | m | 3 struct · 1 enum · 2 fn · 3 re-export · 3 crate-vis | ArtifactAskRecord, ArtifactAskStanding, ArtifactRefreshBatch, ArtifactRefreshFailure | Standing artifact questions (ARCH-0076, OF-506): a question whose adapter is [`ARTIFACT_ADAPTER`] asks each… |
 | `src/llm/decision/questions/artifact_refresh/history.rs` | src | s | 1 fn · 2 crate-vis | — | FIX 2337: every ask a standing artifact question makes is kept, one by one, in the question's ask log… |
+| `src/llm/decision/questions/artifact_refresh/live.rs` | src | s | 2 crate-vis | — | FIX 2115: an edit to a live body never exported moves no version, so a standing artifact question pins each… |
 | `src/llm/decision/questions/artifact_refresh/manual.rs` | src | s | 1 fn | — | FIX 3085: `vault.questions.refresh` on a standing artifact question asks its artifacts by hand, now, beside… |
 | `src/llm/decision/questions/artifact_refresh/unit_receipts.rs` | src | s | 1 enum · 2 crate-vis | ArtifactUnitReceipt | FIX 9913: every unit an artifact ask left without an answer keeps its receipt in the question's ask log… |
 | `src/llm/decision/questions/ask_history.rs` | src | m | 15 crate-vis | — | One commit-ordered log of a question's asks (FIX 2337, FIX 1585): each graph answer receipt a question… |
@@ -3660,7 +3663,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/result_attachment.rs` | src | s | 2 struct · 3 fn · 1 const · 4 crate-vis | MessageResultAttachment, MessageResultSource | The typed result a MESSAGE carries in place of an answer too large to say (FIX 365): a bounded preview of… |
 | `src/memory/result_doors/mod.rs` | src | s | 3 fn · 1 re-export | — | Retained result doors |
 | `src/memory/result_doors/types.rs` | src | s | 18 struct · 6 enum | ResultBodyKind, ResultBodyStatus, ResultByteSelection, ResultCard, ResultEffectRecord, ResultLineCursor, ResultLineSelection, ResultOccurrenceManifest +16 | Typed projections of retained result manifests and the existing reader |
-| `src/memory/room_turn.rs` | src | s | 1 struct · 14 fn · 4 crate-vis | RoomTurnHandle | A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope |
+| `src/memory/room_turn.rs` | src | s | 1 struct · 15 fn · 4 crate-vis | RoomTurnHandle | A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope |
 | `src/memory/run_review/mod.rs` | src | m | 11 struct · 7 enum · 2 fn | RevertRunOutcome, RevertRunRequest, RunAnsweredBy, RunChangeOutcome, RunChangeVerdict, RunCompensation, RunNotUndone, RunNotUndoneReason +10 | Typed cross-kind review settlements and run compensation (ARCH-0040) |
 | `src/memory/run_review/revert.rs` | src | s | 1 fn | — | Owner revert of a run's reviewed changes, with their compensation |
 | `src/memory/run_review/settle.rs` | src | s | — | — | Owner settlement of a run review (ARCH-0040), split by whole item |
@@ -3770,7 +3773,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/stream/api.rs` | src | s | 8 fn | — | MESSAGE doors adapt typed calls to the existing witness and stream programs |
 | `src/memory/witness/stream/api_types.rs` | src | s | 12 struct · 4 enum | AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest, MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions +8 | Typed public MESSAGE lifecycle inputs, projected by the verb table |
 | `src/memory/witness/stream/completion.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | MessageCompletion | Whether a MESSAGE's reply is complete, derived from its latest stream receipt |
-| `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 7 fn · 1 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
+| `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
 | `src/memory/witness/stream/lifecycle/terminal.rs` | src | s | 1 crate-vis | — | A stream's terminal write, its host gate, and the retirement of a Retry its own proof refuses |
 | `src/memory/witness/stream/lifecycle/terminal/continuation.rs` | src | s | 2 crate-vis | — | A continuation's terminal: its prose links, read before its writer, and its one write |
 | `src/memory/witness/stream/lifecycle/terminal/new_message.rs` | src | s | 1 crate-vis | — | A new message's terminal: its witness, with a Retry proven again in the same write |
@@ -3927,7 +3930,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/office_body/doors.rs` | src | m | 17 fn · 10 crate-vis | — | Vault doors for office body import, edits, forks and export |
 | `src/office_body/fork.rs` | src | s | 3 struct · 2 enum · 1 fn · 1 crate-vis | BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff | Three-way reads of a fork against the live body (ARCH-0077, "Machine work as fork and diff"): base is the… |
 | `src/office_body/holder_ask.rs` | src | s | 1 crate-vis | — | Holder asks for office proposals (DEC-0006: "The rest wait together as one review bundle, offered to every… |
-| `src/office_body/mod.rs` | src | s | 12 re-export · 6 crate-vis | — | Live office body records and Vault doors |
+| `src/office_body/live_units.rs` | src | m | 1 struct · 12 crate-vis | LivePin | A live body's position when an ask read its artifact, and the units an edit never exported changed since… |
+| `src/office_body/mod.rs` | src | s | 13 re-export · 7 crate-vis | — | Live office body records and Vault doors |
 | `src/office_body/pptx.rs` | src | m | 3 struct · 7 fn · 3 re-export · 9 crate-vis | PptxBody, PptxExport, PptxReview | The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door… |
 | `src/office_body/pptx/doc.rs` | src | m | 10 crate-vis | — | The PPTX body inside its Loro document, schema 1 (ARCH-0077, "One deck, one document") |
 | `src/office_body/pptx/doc/chart.rs` | src | s | 3 crate-vis | — | A chart frame's chart in the body's `charts` root, keyed by the frame's identity (ARCH-0077: "Ordered… |
@@ -4170,7 +4174,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_consent/connector_call.rs` | src | s | 1 const · 1 re-export · 12 crate-vis | — | The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare… |
 | `src/outbound_consent/connector_call/rows.rs` | src | s | 1 fn · 1 crate-vis | — | The rows a connector call's passes pick (FIX 5455): the listing a call and its resume answer beside their… |
 | `src/outbound_consent/connector_call_asks.rs` | src | m | 1 fn · 4 crate-vis | — | The owner ask a held connector call queues (ONE-2510) |
-| `src/outbound_consent/connector_call_code.rs` | src | m | 3 fn · 9 crate-vis | — | A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds |
+| `src/outbound_consent/connector_call_code.rs` | src | m | 3 fn · 10 crate-vis | — | A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds |
 | `src/outbound_consent/connector_call_consent.rs` | src | s | 1 fn · 4 crate-vis | — | FIX 990: the owner's `always ask` setting on an admitted connector call |
 | `src/outbound_consent/connector_call_delivery.rs` | src | s | 5 fn | — | Connector-call resume, the pending listing, delivery acknowledgement and the caller's status read |
 | `src/outbound_consent/connector_call_dispatch.rs` | src | s | 4 crate-vis | — | A connector dispatch's outcome mapped to a call step and its reason codes |
@@ -6090,7 +6094,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/open/mod.rs` | src | L | 13 fn · 9 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
 | `src/vault/places.rs` | src | s | 5 fn | — | Geographic entity doors consume PlaceStore, never concrete database handles |
 | `src/vault/raw_writes.rs` | src | s | 1 struct · 5 fn | RawEntityPut | The raw storage writes a bound caller makes (OF-063, FIX 3387) |
-| `src/vault/raw_writes/session.rs` | src | m | 7 fn · 3 crate-vis | — | A bound raw handle inside the off-record session it names (FIX 8119, 8603), and the verified caller's… |
+| `src/vault/raw_writes/session.rs` | src | m | 7 fn · 4 crate-vis | — | A bound raw handle inside the off-record session it names (FIX 8119, 8603), and the verified caller's… |
 | `src/vault/raw_writes/session/composed_reads.rs` | src | s | 8 fn | — | The reads a bound raw handle makes inside its session's room beyond one row and its edges (FIX 10759): text… |
 | `src/vault/read_fixture.rs` | src | s | 3 fn | — | Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures |
 | `src/vault/reader_table.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | ReaderTableShortfall | The LMDB reader table a vault's environment got, against what it asked for |
@@ -6193,7 +6197,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1241 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1243 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 15 struct · 1 enum · 15 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +8 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
