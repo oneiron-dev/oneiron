@@ -729,6 +729,11 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
+        // FIX 12323: a facade route takes the live caller its receipt layer
+        // resolved for this same request.
+        if let Some(auth) = crate::api::resolved_facade_caller(parts, server) {
+            return Ok(auth);
+        }
         Self::for_request(parts, server).await.map_err(Into::into)
     }
 }
