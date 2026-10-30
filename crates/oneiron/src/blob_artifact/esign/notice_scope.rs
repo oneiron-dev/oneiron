@@ -19,12 +19,10 @@
 //! The housekeeping notice worker (FIX 6219, `notice_unattended`) runs the
 //! same door path with no caller: as the notices' recorded principal, its
 //! recorded send act and standing judged again in each of those snapshots.
-use super::model::invalid;
+use super::lane_scope::{self, EsignScope};
 use super::notice_unattended::UnattendedNotices;
 use crate::attempt_queue::AttemptRecord;
-use crate::authority::VerifiedSlip;
-use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::federation::Scope;
+use crate::claim::ScopedRead;
 use crate::memory::{Memory, MemoryResult};
 use crate::outbound::{OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult};
 use crate::{EntityId, Result, Vault};
@@ -70,19 +68,10 @@ impl Memory<'_> {
     /// A narrowed credential whose read lane does not open, as every read
     /// verb refuses it.
     pub(super) fn notice_scope(&self) -> MemoryResult<NoticeScope<'_>> {
-        // A whole-vault guest view a later pact narrowing reached past is
-        // judged by its lane (FIX 9117).
-        match self.presented_credential() {
-            Some(proof)
-                if !bounded_by_whole_vault(proof)
-                    || !self.vault().guest_view_current(proof.claims())? =>
-            {
-                Ok(NoticeScope::Credential(
-                    self.read_lane(ClaimReadStatus::Recorded)?,
-                ))
-            }
-            _ => Ok(NoticeScope::Unrestricted),
-        }
+        Ok(match self.esign_scope()? {
+            EsignScope::Unrestricted => NoticeScope::Unrestricted,
+            EsignScope::Credential(lane) => NoticeScope::Credential(lane),
+        })
     }
 }
 
@@ -116,14 +105,11 @@ impl NoticeScope<'_> {
     ) -> MemoryResult<T> {
         match self {
             Self::Unrestricted => memory.with_verified_actor_write_txn(write),
-            Self::Credential(lane) => memory.with_actor_content_write_txn_as(
-                crate::WriteActor::new(memory.actor(), memory.actor_class()),
-                |content| {
-                    content.update_artifact(document, |txn| {
-                        reaches_in(lane, txn, document)?;
-                        write(txn)
-                    })
-                },
+            Self::Credential(lane) => lane_scope::write_artifact(
+                lane,
+                memory,
+                NOTICE_SCOPE_TARGET.record(document),
+                write,
             ),
             Self::Unattended(notices) => memory.with_verified_actor_write_txn(|txn| {
                 notices.stands_in(txn)?;
@@ -160,40 +146,22 @@ impl NoticeScope<'_> {
     }
 }
 
-/// Whether `proof` bounds its records by the whole vault, as the row's
-/// admission required of every caller before FIX 6220
-/// (`require_unrestricted_record_scope`): no record or channel caveat, and
-/// every axis but its verbs at the top.
-fn bounded_by_whole_vault(proof: &VerifiedSlip) -> bool {
-    let mut required = Scope::top();
-    required.verbs = proof.scope().verbs.clone();
-    proof.claims().records.is_empty()
-        && proof.claims().channels.is_empty()
-        && required.is_narrowing_of(proof.scope())
-}
-
 /// Whether `lane` reads the record [`NOTICE_SCOPE_TARGET`] names for
 /// `document` in `txn`, as a ref its caller names resolves, the lane's owner
 /// standing proved again in that snapshot.
 /// # Errors
 /// The read's own failure.
 fn reaches(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<bool> {
-    let target = NOTICE_SCOPE_TARGET.record(document);
-    let policy = lane.live_policy_manifest_in(txn)?;
-    lane.is_ref_readable_with_policy_in(txn, &policy, &target)
+    lane_scope::reaches(lane, txn, NOTICE_SCOPE_TARGET.record(document))
 }
 
 /// [`reaches`], a document out of the lane's reach refused as [`unreached`].
 fn reaches_in(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<()> {
-    if reaches(lane, txn, document)? {
-        Ok(())
-    } else {
-        Err(unreached())
-    }
+    lane_scope::reaches_in(lane, txn, NOTICE_SCOPE_TARGET.record(document))
 }
 
 /// The refusal of a signing document a narrowed credential's lane does not
 /// reach: the answer a document that is no signing document gets.
 pub(super) fn unreached() -> crate::Error {
-    invalid("unknown signing document")
+    lane_scope::unreached()
 }
