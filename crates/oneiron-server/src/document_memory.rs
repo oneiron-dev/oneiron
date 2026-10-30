@@ -15,13 +15,18 @@
 //! machine's live reading carries what the work then really allocates. A
 //! checkpoint stops the work only at a deadline its caller gave the
 //! operation; the host adds none.
+//!
+//! A hold the work drops once its bytes are allocated hands them to that
+//! live reading. Where the machine's memory cannot be read live, nothing
+//! would carry them, so the dropped hold's bytes stay leased, named
+//! allocated, until the operation itself ends (FIX 10589).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::office_body::{DocumentMemory, RESERVE_STEP, ResourcePort, ResourceRefusal};
 
-use crate::machine::{MachineMemory, MemoryRefusal};
+use crate::machine::{MachineMemory, MemoryLease, MemoryRefusal};
 
 /// The server's machine memory line, as document operations reserve from it.
 pub(crate) struct DocumentFloor {
@@ -33,6 +38,7 @@ pub(crate) struct DocumentFloor {
 impl DocumentMemory for DocumentFloor {
     fn operation(&self, deadline: Option<Instant>) -> Arc<dyn ResourcePort> {
         Arc::new(DocumentLease {
+            allocated: Arc::new(Mutex::new(self.memory.empty_lease())),
             memory: self.memory.clone(),
             wait: self.wait,
             deadline,
@@ -47,6 +53,31 @@ struct DocumentLease {
     /// A deadline the operation's caller gave it, when it has one: fixed
     /// for the whole operation, never renewed by a nested read.
     deadline: Option<Instant>,
+    /// The bytes of the operation's dropped holds, kept leased until the
+    /// operation ends where no live reading carries them (FIX 10589).
+    allocated: Arc<Mutex<MemoryLease>>,
+}
+
+/// One reservation's lease, as the work holds it. Dropped, its bytes go back
+/// to the line where the live reading then carries them, and otherwise move
+/// into the operation's allocated lease (FIX 10589).
+struct DocumentHold {
+    lease: Option<MemoryLease>,
+    allocated: Arc<Mutex<MemoryLease>>,
+}
+
+impl Drop for DocumentHold {
+    fn drop(&mut self) {
+        let Some(lease) = self.lease.take() else {
+            return;
+        };
+        if oneiron_contracts::limit_ask::available_memory_bytes().is_none() {
+            self.allocated
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .absorb_allocated(lease);
+        }
+    }
 }
 
 impl DocumentLease {
@@ -70,7 +101,10 @@ impl ResourcePort for DocumentLease {
             leased => leased,
         };
         match leased {
-            Ok(lease) => Ok(Box::new(lease)),
+            Ok(lease) => Ok(Box::new(DocumentHold {
+                lease: Some(lease),
+                allocated: Arc::clone(&self.allocated),
+            })),
             Err(MemoryRefusal::Floor { available, .. }) => Err(ResourceRefusal::MemoryFloor {
                 needed: measured,
                 available,
