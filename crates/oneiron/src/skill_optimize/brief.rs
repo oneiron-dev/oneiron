@@ -402,7 +402,7 @@ fn policy_dials(
         .files
         .into_iter()
         .find(|file| file.path == REVIEWER_POLICY_FILE)?;
-    match serde_json::from_slice(&policy.content).ok()? {
+    match serde_json::from_slice::<serde_json::Value>(&policy.content).ok()? {
         serde_json::Value::Object(entries) => Some(entries),
         _ => None,
     }
