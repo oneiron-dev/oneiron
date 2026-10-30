@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4381 declarations.
+Census: 1209 facade rows, 4382 declarations.
 Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -328,6 +328,7 @@ class DiaryEntryReceipt(TypedDict):
     record: NotRequired[RecordRef | None]
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
+    include_used: NotRequired[bool]
 class DiaryReadRecord(TypedDict):
     read: EntityId
     reader: EntityId
@@ -5328,6 +5329,7 @@ class PackInstallReceipt(TypedDict):
     agent: NotRequired[str | None]
     installed_at: int
     notices: NotRequired[list[WorldRecipientNotice]]
+    owner_activated: NotRequired[list[PackCandidateReason]]
 class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]
@@ -5656,6 +5658,9 @@ class HookSelector(TypedDict):
     render_class: NotRequired[HookRenderClass]
 class HookAuthorOwner(TypedDict):
     kind: Literal["owner"]
+class HookAuthorAgent(TypedDict):
+    kind: Literal["agent"]
+    agent: str
 class HookAuthorForeignActor(TypedDict):
     kind: Literal["foreign_actor"]
     actor_kind: str
@@ -5663,7 +5668,7 @@ class HookAuthorForeignActor(TypedDict):
     hub: str
     grant: str
     actor: str
-HookAuthor = HookAuthorOwner | HookAuthorForeignActor
+HookAuthor = HookAuthorOwner | HookAuthorAgent | HookAuthorForeignActor
 class PackHookBinding(TypedDict):
     version: int
     code: str
@@ -5735,6 +5740,7 @@ class HookReplayRow(TypedDict):
 class HubHookReplay(TypedDict):
     hook: str
     entries: list[HookReplayRow]
+    unreplayed: bool
 class HubHookQualificationReceipt(TypedDict):
     put: PackPutReceipt
     replays: list[HubHookReplay]
@@ -6381,11 +6387,17 @@ class PackSetupStoreSecret(TypedDict):
     connection: str
     name: str
     effector: str
+class PackSetupOwnerAsk(TypedDict):
+    seq: int
+    door: str
+    connection: str
+    permissions: list[str]
 class PackSetupReceipt(TypedDict):
     setup: PackSetupView
     cards: list[Any]
     text: str
     store_secret: NotRequired[PackSetupStoreSecret | None]
+    owner_ask: NotRequired[PackSetupOwnerAsk | None]
 class PackSetupAnswerSecretStored(TypedDict):
     answer: Literal["secret_stored"]
     connection: str
@@ -11121,7 +11133,7 @@ DisclosureCeilingSet = TypedDict("DisclosureCeilingSet", {"connection": str, "cl
 class RevealAsksRequest(TypedDict):
     pending: NotRequired[bool]
     limit: NotRequired[int | None]
-RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None]})
+RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None], "cause": NotRequired[str | None], "scope": NotRequired[str | None]})
 class RevealAskView(TypedDict):
     receipt: RevealReceipt
     state: str
@@ -11146,7 +11158,7 @@ class RevealPending(TypedDict):
     reveal: str
 class RevealWaitRequest(TypedDict):
     reveal: str
-RevealDecision = Literal["pending", "granted", "denied", "expired"]
+RevealDecision = Literal["pending", "granted", "denied", "expired", "unavailable"]
 class RevealWaitAnswer(TypedDict):
     decision: RevealDecision
     value: NotRequired[str | None]
