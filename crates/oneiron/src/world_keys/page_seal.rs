@@ -10,7 +10,7 @@
 //!   `.<vault dir name>.page-seal`, owner-only. Like the gate decision keys it
 //!   is never inside the vault and never in a checkpoint image. It holds only
 //!   sealed envelopes and public facts, as a sealed artifact does.
-//! - The mirror is rewritten from the vault on each sealed open, once the
+//! - The mirror is made current from the vault on each sealed open, once the
 //!   vault has a wrap, and around each wrap change ([`WrapTransition`]):
 //!   before it commits, the mirror holds the committed wraps and the ones it
 //!   adds; after, the committed wraps. An unlock from the mirror is admitted
@@ -55,11 +55,13 @@ use crate::Vault;
 use crate::error::{Error, Result, SecretError};
 
 mod creation;
+mod mirror_rewrite;
 mod read_only;
 mod sealed_swap;
 use self::creation::{begin_creation, finish_creation};
 pub(crate) use self::creation::discard_creation_record;
 pub use self::creation::{refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation};
+use self::mirror_rewrite::write_mirror_if_changed;
 pub(crate) use self::read_only::{page_seal_open_error, read_sealed, seal_read_only};
 pub use self::sealed_swap::SealedSwap;
 
@@ -637,7 +639,7 @@ impl Vault {
     }
 
     /// Rewrites the page-seal mirror from the vault's key state, when its
-    /// pages are sealed and it has a wrap.
+    /// pages are sealed, it has a wrap, and the mirror holds other bytes.
     fn sync_page_custody(&self) -> Result<()> {
         let Some(seal) = self.sealed_page_seal()? else {
             return Ok(());
@@ -658,7 +660,7 @@ impl Vault {
             }
             None => return Ok(()),
         };
-        write_mirror(self.store.env.path(), &Mirror::of(seal, carried))?;
+        write_mirror_if_changed(self.store.env.path(), &Mirror::of(seal, carried))?;
         finish_creation(self.store.env.path(), seal)
     }
 
