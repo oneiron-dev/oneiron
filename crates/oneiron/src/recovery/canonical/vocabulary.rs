@@ -357,4 +357,9 @@ pub struct CanonicalSnapshot {
     /// by map key. Absent when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub withdrawn_cutoffs: Vec<CanonicalCutoff>,
+    /// The window's by-reference ASSET body references (FIX 5489), by owner
+    /// id, each binding the exact carrier `entity_blobs` holds for it.
+    /// Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_body_refs: Vec<CanonicalAssetBodyRef>,
 }
