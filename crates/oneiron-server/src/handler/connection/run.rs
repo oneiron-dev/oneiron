@@ -12,6 +12,7 @@ use super::super::app_tier::{
 };
 use super::super::conn_state::ConnState;
 use super::super::ephemeral::late_join_presence;
+use super::super::leaf_keys::{LEAF_KEY_TICK, LeafKeySocket, relay_tick};
 use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
@@ -125,6 +126,9 @@ pub(super) async fn handle_connection(
         machine = ?conn_state.peer_machine(server.vault()),
         "socket machine"
     );
+    // A proven machine's socket carries custody carrier leaf keys while it
+    // lives (FIX 11785).
+    let _leaf_key_socket = LeafKeySocket::register(&server, conn_id, machine, &direct_tx);
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -132,6 +136,8 @@ pub(super) async fn handle_connection(
     );
     let mut app_tick = tokio::time::interval(Duration::from_millis(25));
     let mut asset_body_tick = tokio::time::interval(super::super::asset_bodies::ASSET_BODY_POLL);
+    let mut leaf_key_tick = tokio::time::interval(LEAF_KEY_TICK);
+    leaf_key_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // Verb RPCs answer off this loop, which serves the socket meanwhile; their
     // answers queue on `direct_tx`. A call still running when the loop ends
     // runs to its end below.
@@ -170,6 +176,7 @@ pub(super) async fn handle_connection(
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
             _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
             _ = asset_body_tick.tick(), if direct_rx.is_empty() => ConnEvent::AssetBodies,
+            _ = leaf_key_tick.tick(), if direct_rx.is_empty() => ConnEvent::LeafKeys,
         };
 
         let next_message = match event {
@@ -185,6 +192,10 @@ pub(super) async fn handle_connection(
             }
             ConnEvent::AssetBodies => {
                 super::super::asset_bodies::poll(&server, &mut conn_state, &direct_tx);
+                continue;
+            }
+            ConnEvent::LeafKeys => {
+                relay_tick(&server, conn_id, &conn_state);
                 continue;
             }
             ConnEvent::AppDelivery => {
@@ -576,174 +587,8 @@ pub(super) async fn handle_connection(
                     },
                 };
                 if let Err(e) = handle_result {
-                    match &e {
-                        // FIX 5550: an app-tier frame on a protocol older
-                        // than its tier is a refused call: receipted, then
-                        // the 4007 close it always sent.
-                        ProtocolError::RpcVersionMismatch => {
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::CLOSE_RPC_VERSION_MISMATCH,
-                                "app-tier admission refused",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::RpcNoPrincipal => {
-                            transport
-                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                                    code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
-                                    reason: Utf8Bytes::from_static("app-tier admission refused"),
-                                })))
-                                .await;
-                            break;
-                        }
-                        // FIX 5310: each refusal below is its connection's
-                        // receipt, then the close it always sent, or, where
-                        // it sent none, its protocol close code.
-                        ProtocolError::ReplacementUnsupported => {
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::VERSION_MISMATCH,
-                                "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::WaitedOut => {
-                            tracing::warn!(
-                                conn_id,
-                                reason = "waited_out",
-                                "document waited for its turn past its deadline — closing"
-                            );
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::TRY_AGAIN_LATER,
-                                "waited for its turn past its deadline: nothing was applied",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::InvalidPayload(msg) => {
-                            tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::DECODE_ERROR,
-                                "invalid payload",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::UnknownTag(tag) => {
-                            tracing::warn!(conn_id, tag, "unknown tag — closing");
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::UNKNOWN_TAG,
-                                "unknown tag",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::VvDecode(_) => {
-                            // Fail-closed: a malformed VV is a protocol
-                            // violation, never answered with a full export.
-                            tracing::warn!(
-                                conn_id,
-                                reason = "version_vector_decode_failed",
-                                "version vector decode failure — closing"
-                            );
-                            // FIX 5550: receipted, then closed as a decode
-                            // error.
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::DECODE_ERROR,
-                                "version vector does not decode",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::FrameTooLarge { size, max } => {
-                            tracing::warn!(conn_id, size, max, "frame too large — closing");
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::FRAME_TOO_LARGE,
-                                "frame too large",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::LoroImport(_) => {
-                            tracing::warn!(
-                                conn_id,
-                                reason = "loro_import_failed",
-                                "loro import error — closing"
-                            );
-                            // FIX 5550: receipted, then closed as a decode
-                            // error (CALLS "rootparity sync import close").
-                            super::super::protocol_close::refuse_frame(
-                                &mut transport,
-                                &server,
-                                close_codes::DECODE_ERROR,
-                                "update does not import",
-                                None,
-                            )
-                            .await;
-                            break;
-                        }
-                        // FIX 5570: the server's own export fault is no
-                        // refused frame: no receipt, closed 1011.
-                        ProtocolError::ExportFailed(_) => {
-                            tracing::error!(
-                                conn_id,
-                                reason = "server_export_failed",
-                                "server export failure — closing"
-                            );
-                            internal_fault_close(&mut transport, close_codes::EXPORT_FAULT_REASON)
-                                .await;
-                            break;
-                        }
-                        // FIX 5850: nor is its own fault reading the state a
-                        // window update's admission judges it by.
-                        ProtocolError::AdmissionReadFailed(_) => {
-                            tracing::error!(
-                                conn_id,
-                                reason = "admission_read_failed",
-                                "server admission read failure — closing"
-                            );
-                            internal_fault_close(
-                                &mut transport,
-                                close_codes::ADMISSION_FAULT_REASON,
-                            )
-                            .await;
-                            break;
-                        }
-                        ProtocolError::Persistence(_) => {
-                            // Fail-closed: the server could not durably
-                            // persist sync state — do not keep relaying on a
-                            // connection whose updates would vanish on
-                            // restart.
-                            tracing::error!(
-                                conn_id,
-                                reason = "sync_persistence_failed",
-                                "sync persistence failure — closing"
-                            );
-                            break;
-                        }
-                    }
+                    super::dispatch_error::close_on(&mut transport, &server, conn_id, &e).await;
+                    break;
                 }
             }
             Err(ProtocolError::UnknownTag(tag)) => {

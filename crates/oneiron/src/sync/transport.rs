@@ -24,11 +24,17 @@ pub use asset_bodies::{
     encode_asset_body_want,
 };
 mod codec;
+mod leaf_keys;
 pub use codec::{
     CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, LinkBytes, MAX_CODEC_INNER_BYTES,
     MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket, codec_ids,
     decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, encode_http_body,
     process_link_bytes,
+};
+pub use leaf_keys::{
+    LEAF_KEY_RETRY, TAG_LEAF_KEY_ANSWER, TAG_LEAF_KEY_FAILURE, TAG_LEAF_KEY_REQUEST,
+    decode_leaf_key_answer, decode_leaf_key_failure, decode_leaf_key_request,
+    encode_leaf_key_answer, encode_leaf_key_failure, encode_leaf_key_request, leaf_key_request_hex,
 };
 mod unsplit_frame;
 pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
