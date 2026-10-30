@@ -40,14 +40,18 @@ pub(crate) fn is_observed_preference(source: Option<ClaimSource>, predicate: &st
 #[derive(Clone, Copy)]
 enum SupersedeClose<'a> {
     Direct(Option<crate::WriteActor>),
-    Granted(Option<&'a crate::llm::BoundedAutoChecker>),
+    /// A deferred grant's close: its checker, and the settlement door's
+    /// verified actor, which the close names (FIX 11039).
+    Granted {
+        checker: Option<&'a crate::llm::BoundedAutoChecker>,
+        actor: Option<crate::WriteActor>,
+    },
 }
 
 impl SupersedeClose<'_> {
     fn actor(self) -> Option<crate::WriteActor> {
         match self {
-            Self::Direct(actor) => actor,
-            Self::Granted(_) => None,
+            Self::Direct(actor) | Self::Granted { actor, .. } => actor,
         }
     }
 }
@@ -456,8 +460,9 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
+        actor: Option<crate::WriteActor>,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
-        let close = SupersedeClose::Granted(checker);
+        let close = SupersedeClose::Granted { checker, actor };
         self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close)
     }
 
@@ -479,7 +484,7 @@ impl Vault {
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
         let staged = super::deferred::load(self, &*wtxn, new_id)?;
-        if matches!(close, SupersedeClose::Granted(_)) {
+        if matches!(close, SupersedeClose::Granted { .. }) {
             let Some(super::deferred::DeferredAction::Supersede { old, .. }) =
                 staged.map(|row| row.action)
             else {
@@ -565,7 +570,7 @@ impl Vault {
                 now,
             )?;
         let decision = match (close, binding) {
-            (SupersedeClose::Granted(Some(checker)), Some(binding)) => self
+            (SupersedeClose::Granted { checker: Some(checker), .. }, Some(binding)) => self
                 .apply_checked_deferred_closure_in_txn(
                     wtxn, ops, binding, transition, &old_body, checker,
                 )?,

@@ -146,7 +146,7 @@ impl Vault {
                     true,
                     Some(actor),
                 )?;
-                self.complete_deferred_claim_in_txn(wtxn, &id, false, now)?;
+                self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
                 // An approved task proposal lands its TASK in this txn.
                 crate::task_verb::settle_task_proposal_in_txn(self, wtxn, id, Some(actor), now)?;
                 // An approved curator finding applies with it (FIX 5423).
