@@ -1165,6 +1165,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_message_streams_refused(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.message_streams.refused")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.message_streams.refused", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_messages_durability(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.messages.durability")?;
         let output = py

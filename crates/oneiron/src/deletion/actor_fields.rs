@@ -23,7 +23,9 @@ const IDENTITY_OPS: ActorScrub = Vault::scrub_identity_op_actor_in_txn;
 const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_claim_actor_in_txn;
 
 /// An actor's stamp tokens are claims, not a side table: each is hard-erased,
-/// so every commit message and receipt naming it names no one (FIX 10930).
+/// so every commit message, receipt and document entry naming it names no
+/// one (FIX 10930, 11964). One a held record's document names stays until the
+/// hold lifts (FIX 11965).
 const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_tokens_in_txn;
 
 /// Runs in the purge's transaction: the identity ops first, then origin's
@@ -164,8 +166,9 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
 /// A legal hold's release, in its own transaction (FIX 6280): the births a
 /// hold kept from an erased actor's scrub, and their window carriers, go
 /// once nothing holds their rows, a carrier whose birth never landed here
-/// too (FIX 6386), and so do the stamp tokens a hold kept (FIX 10930, 11040);
-/// no other scrub runs again. The `dt:` markers and the
+/// too (FIX 6386), and so do the stamp tokens a hold kept, a held record's
+/// document's among them (FIX 10930, 11040, 11965); no other scrub runs
+/// again. The `dt:` markers and the
 /// holds as they now stand say what is owed. A vault that keeps no hold row,
 /// standing or released, owes nothing: only a hold keeps a birth past its
 /// actor's scrub, and a released one keeps its row for 24 months, well past

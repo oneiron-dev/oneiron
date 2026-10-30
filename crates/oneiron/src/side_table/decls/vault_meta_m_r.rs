@@ -508,6 +508,10 @@ side_tables! {
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
     PROVENANCE_ACTOR_STAMP_TOKEN: VaultMeta b"provenance:actor_stamp_token:v1:" Raw
         => crate::provenance::erase_actor_stamp_cache_in_txn;
+    /// Which records' documents name a stamp token (FIX 11965), so an actor erase's hold check
+    /// finds a held record's tokens without a history walk; a record's erase drops its rows.
+    /// Key: id16 (record) + id16 (token); value: empty.
+    PROVENANCE_ACTOR_STAMP_TOKEN_USE: VaultMeta b"provenance:actor_stamp_token_use:v1:" Raw;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16

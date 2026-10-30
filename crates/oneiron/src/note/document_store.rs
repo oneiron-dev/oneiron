@@ -221,7 +221,8 @@ impl Vault {
     /// Viewer-facing code must use the scope-checked brief/lens render doors.
     pub fn note_document(&self, id: EntityId) -> Result<NoteDocumentView> {
         let txn = self.store.env.read_txn()?;
-        load(self, &txn, id)?.view()
+        // Its authorship's stamp tokens read as their actors (FIX 11964).
+        super::operations::resolved_view_in_txn(self, &txn, load(self, &txn, id)?.view()?)
     }
 
     /// [`Self::note_document`] with the keys the lift marked in its texts
@@ -236,6 +237,7 @@ impl Vault {
     ) -> Result<(NoteDocumentView, crate::batch::secret_scan::LiftedKeys)> {
         let txn = self.store.env.read_txn()?;
         let view = load(self, &txn, id)?.view()?;
+        let view = super::operations::resolved_view_in_txn(self, &txn, view)?;
         let mut texts = vec![view.markdown.as_str()];
         texts.extend(view.title.as_deref());
         for pin in &view.pins {
@@ -389,7 +391,7 @@ impl Memory<'_> {
                     &doc,
                     &super::NoteAuthorship {
                         operation: self.vault().new_entity_id()?,
-                        actor: super::NoteActor::Actor(self.actor()),
+                        actor: super::NoteActor::Actor(stamp.token),
                         actor_class: self.actor_class().gate_actor_class().to_owned(),
                         grant: None,
                         command_hash: *blake3::hash(&body).as_bytes(),

@@ -200,7 +200,7 @@ impl Memory<'_> {
     }
 }
 
-fn stream_error(error: MessageStreamError) -> MemoryError {
+pub(super) fn stream_error(error: MessageStreamError) -> MemoryError {
     use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND};
     match error {
         MessageStreamError::Memory(error) => *error,

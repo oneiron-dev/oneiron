@@ -78,8 +78,8 @@ pub(super) fn invalid(message: &str) -> MemoryError {
 
 impl LiveVoiceSessions {
     /// Binds the write gate each later session holds an admission from:
-    /// managed serve's, which a vault frozen for reap refuses. The first
-    /// binding stands.
+    /// managed serve's reap freeze, or plain serve's deletion gate. The
+    /// first binding stands.
     pub(crate) fn admit_with(&self, admit: HousekeepingAdmission) {
         let _ = self.admit.set(admit);
     }
@@ -90,7 +90,8 @@ impl LiveVoiceSessions {
         self.admit.get().is_some()
     }
 
-    /// One session's admission, or `None` from a vault frozen for reap.
+    /// One session's admission, or `None` where the host's gate refuses
+    /// one: a managed vault frozen for reap, or a deleted vault (FIX 12053).
     fn admission(&self) -> Option<Box<dyn Send>> {
         match self.admit.get() {
             Some(admit) => admit(),
@@ -103,7 +104,7 @@ impl LiveVoiceSessions {
     /// The session `session_ref` names, for the credential that opened it.
     /// Naming it starts its idle clock again, and a session that released
     /// its admission takes one again first; a vault frozen for reap refuses
-    /// with the typed pause.
+    /// with the typed pause, as a deleted vault does (FIX 12053).
     pub(crate) fn get(
         &self,
         auth: &CoreAuth,
@@ -242,7 +243,8 @@ pub(crate) async fn start_public(
         .ok_or_else(|| invalid("live voice needs configured models.voice and media routes"))?;
     // Held by the session until its task ends, first taken and last dropped,
     // as a private call holds its own: a session in flight keeps a managed
-    // vault from reading quiescent, and a frozen one opens none.
+    // vault from reading quiescent, and a frozen one opens none, as a
+    // deleted vault opens none (FIX 12053).
     let admission = server.live_voice.admission().ok_or_else(writes_frozen)?;
     let shutdown = ManagedShutdown::new();
     let PreparedCall {

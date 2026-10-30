@@ -239,7 +239,11 @@ impl Vault {
         {
             return Err(invalid("invalid sheet ask selection"));
         }
-        let base_live = self.office_body_pin(artifact)?;
+        // A workbook with a live body is read there at its head, pinned with
+        // it; the answer cell is read on the version the answer lands on
+        // (FIX 11981).
+        let live = self.live_head_cells(artifact, request.sheet)?;
+        let base_live = live.as_ref().map(|(pin, _)| pin.clone());
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Xlsx)?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let in_rows = |row: u32| (rows.start.row..=rows.end.row).contains(&row);
@@ -249,6 +253,7 @@ impl Vault {
             (read_col && (in_rows(cell.row) || Some(cell.row) == header_row))
                 || (cell.col == answer_col && in_rows(cell.row))
         })?;
+        let shown = live.as_ref().map_or(&cells, |(_, live)| live);
         let columns: Vec<u32> = (rows.start.col..=rows.end.col)
             .filter(|col| *col != answer_col)
             .collect();
@@ -257,7 +262,7 @@ impl Vault {
                 columns
                     .iter()
                     .filter_map(|col| {
-                        let text = cells.get(&CellRef { col: *col, row }).and_then(cell_text)?;
+                        let text = shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
                         Some((super::address::column_to_letters(*col), Value::String(text)))
                     })
                     .collect()
@@ -284,13 +289,14 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "answer_cell_formula".into(),
+                    judged_live: base_live.clone(),
                 });
                 continue;
             }
             let read: Map<String, Value> = columns
                 .iter()
                 .filter_map(|col| {
-                    let text = cells.get(&CellRef { col: *col, row }).and_then(cell_text)?;
+                    let text = shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
                     Some((super::address::column_to_letters(*col), Value::String(text)))
                 })
                 .collect();
@@ -298,6 +304,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: None,
+                    judged_live: base_live.clone(),
                 });
                 continue;
             }
@@ -310,6 +317,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "evidence_budget".into(),
+                    judged_live: base_live.clone(),
                 });
                 continue;
             };
@@ -320,6 +328,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision.clone()),
+                    judged_live: base_live.clone(),
                 });
             }
             answers.push(SheetCellAnswer {

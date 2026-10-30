@@ -592,6 +592,8 @@ pub(super) fn retain_fork(
         &id.to_hex(),
         &doc.shallow_snapshot(&req.base)?,
     )?;
+    // The tokens its own commits name, under its entity (FIX 11965).
+    super::token_uses::record_fork_uses_in_txn(&vault.store, txn, &req.entity, doc, &req.base)?;
     bundle.forks.push(record);
     super::proposal_lineage::freeze(&mut bundle, opener_lineage);
     ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, txn, &key, &bundle)?;

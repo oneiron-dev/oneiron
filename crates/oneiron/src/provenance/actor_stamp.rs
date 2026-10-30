@@ -3,7 +3,9 @@
 //! A commit message that names its writer names an opaque per-vault token in
 //! the actor's place: the generic stamp's `actor=<token>.<class>`, its
 //! receipt's `made_by.process.actor`, a proposal artifact's stamp and
-//! receipt, a NOTE's stamp, and a reference-refusal receipt's `actor`. One
+//! receipt, a NOTE's stamp, and a reference-refusal receipt's `actor`. So
+//! does document state that names a writer (FIX 11964): an entity
+//! document's birth actor and a NOTE's live authorship entries. One
 //! `actor.stamp_token` CLAIM resolves a token: its id is the token, its
 //! subject the actor and its value the actor's class. The claim replicates
 //! through the CLAIM substrate as a peer binding does, so every device of
@@ -14,8 +16,8 @@
 //! names one then names a token nothing resolves, and readers show no one.
 //! No history is rewritten. A token whose claim is absent here (erased,
 //! purged, or not yet synced) resolves to no one. A legal hold that keeps a
-//! reference-refusal receipt naming a token keeps that token's claim until
-//! it lifts.
+//! reference-refusal receipt naming a token, or a record whose document
+//! names it ([`uses`], FIX 11965), keeps that token's claim until it lifts.
 //!
 //! A writer finds its actor's token through this device's cache
 //! ([`ACTOR_STAMP_TOKEN`]); a miss mints a token claim and its cache row in
@@ -27,6 +29,7 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_STAMP_TOKEN,
@@ -34,12 +37,18 @@ use crate::claim::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::receipt::{ReceiptKind, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_RECEIPT_RECORD};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+
+mod uses;
+pub(crate) use uses::{
+    erase_actor_stamp_uses_in_txn, record_actor_stamp_uses_in_txn, tokens_named_since,
+};
 
 /// This device's cache from an actor to its stamp token. Key: id16 (actor);
 /// value: id16 (token).
@@ -156,6 +165,39 @@ pub(crate) fn resolve_actor_stamp(vault: &Vault, token: &EntityId) -> Result<Opt
     resolve_actor_stamp_in_txn(vault, &rtxn, token)
 }
 
+/// [`resolve_actor_stamp_in_txn`] for a reader that holds the store, not the
+/// vault (FIX 11964): the token's stored claim row, read through `store`
+/// under the same readable-row gate, and `None` once this vault's own marker
+/// says its actor is hard-erased.
+///
+/// # Errors
+///
+/// Storage errors, or a stored CLAIM that does not decode.
+pub(crate) fn resolve_actor_stamp_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    token: &EntityId,
+) -> Result<Option<WriteActor>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, token)? else {
+        return Ok(None);
+    };
+    let is_claim = EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
+    if !is_claim || !crate::ports::raw_readable_in_txn(store, txn, token, &raw)? {
+        return Ok(None);
+    }
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(None);
+    };
+    let Some(actor) = stamped_actor(&crate::claim::decode_claim_body(body, true)?) else {
+        return Ok(None);
+    };
+    if store.port_deletion_marked(txn, DeletionMarker::HardDelete, &actor.entity_ref())? {
+        return Ok(None);
+    }
+    Ok(Some(actor))
+}
+
 /// The actor a token claim names: its subject, in the class its value names.
 /// `None` for another predicate, a row that is not this vault's own
 /// observation (an imported or generated copy vouches for no one, as a peer
@@ -187,11 +229,11 @@ fn stamped_actor(body: &ClaimBody) -> Option<WriteActor> {
 /// Erasing `actor` (FIX 10930): each `actor.stamp_token` claim naming it is
 /// hard-erased in the erase's own transaction, its tombstone staged so the
 /// vault's other devices purge their copy, and every stamp naming its token
-/// names no one from then on. A token a legal hold keeps (its claim held, or
-/// a held reference-refusal receipt naming it, FIX 11040) stays until the
-/// hold lifts: [`release_held_actor_stamps_in_txn`] erases it then. The
-/// cache row goes with the declared table's scrub
-/// ([`erase_actor_stamp_cache_in_txn`]).
+/// names no one from then on. A token a legal hold keeps (its claim held, a
+/// held reference-refusal receipt naming it, FIX 11040, or a held record
+/// whose document names it, FIX 11965) stays until the hold lifts:
+/// [`release_held_actor_stamps_in_txn`] erases it then. The cache row goes
+/// with the declared table's scrub ([`erase_actor_stamp_cache_in_txn`]).
 ///
 /// # Errors
 ///
@@ -301,14 +343,17 @@ struct ReceiptCarrier {
     receipt: ReceiptRecord,
 }
 
-/// The tokens a held reference-refusal receipt names (FIX 11040), read from
-/// every RECEIPT_RECORD a standing legal hold keeps. A vault that keeps no
-/// hold row holds none. A carrier that does not decode names no token.
+/// The tokens a legal hold keeps through what names them: a held
+/// reference-refusal receipt (FIX 11040), read from every RECEIPT_RECORD a
+/// standing legal hold keeps, and a held record's document, read from the
+/// token-use index (FIX 11965). A vault that keeps no hold row holds none. A
+/// carrier that does not decode names no token.
 fn held_tokens_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
     let mut held = BTreeSet::new();
     if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {
         return Ok(held);
     }
+    held.extend(uses::tokens_of_held_documents_in_txn(&vault.store, txn)?);
     let mut records = Vec::new();
     for id in vault
         .store
