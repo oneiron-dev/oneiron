@@ -276,9 +276,11 @@ impl RunBrowser {
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
-        // Each classified send reads the grants again (FIX 4613); the sends
-        // a budget paid stay on the session every door shares (FIX 4615).
-        driver.set_press_grants(Box::new(VaultPressGrants(Arc::clone(&self.vault))));
+        // Each classified send reads the grants again (FIX 4613), those
+        // whose scope covers this caller's sends (FIX 10422); the sends a
+        // budget paid stay on the session every door shares (FIX 4615).
+        let grants = VaultPressGrants::new(&self.vault, &decider.asker, self.run_id);
+        driver.set_press_grants(Box::new(grants));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (CUA E6): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));

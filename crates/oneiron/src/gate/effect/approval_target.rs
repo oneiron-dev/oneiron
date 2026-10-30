@@ -31,6 +31,9 @@
 //! included), whose spent press is kept the same way, and a channel-identity
 //! lifecycle intent, which applies in the Gate's own writer and keeps no
 //! Pending row: its retry replays the request's recorded receipt instead.
+//!
+//! FIX 10422 adds one classified send of a run's browser, whose press is
+//! composed from its facts (`crate::consent::browser_approve_once_digest`).
 
 use crate::calendar::CalendarInvitePayload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -133,6 +136,43 @@ pub(crate) enum ApprovalTarget {
     /// route (FIX 6424 part 3, CALLS `FIX 6424 channel-identity request
     /// nonce`).
     ChannelIdentityLifecycle(ChannelIdentityLifecycleFacts),
+    /// One classified send of a run's browser (FIX 10422).
+    Browser(BrowserSendTarget),
+}
+
+/// The facts one browser send pins (FIX 10422): the actor's class, the run,
+/// the call it belongs to and its stable position there, the act, the
+/// project and audience it sends in, the page and the read of it the row
+/// came from, the row's locator, and the digest of the act's own input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BrowserSendTarget {
+    pub(crate) actor_class: &'static str,
+    pub(crate) run: EntityId,
+    pub(crate) attempt: EntityId,
+    pub(crate) ordinal: u64,
+    pub(crate) verb: String,
+    pub(crate) project: Option<EntityId>,
+    pub(crate) audience: Option<String>,
+    pub(crate) page: Option<String>,
+    pub(crate) revision: Option<String>,
+    pub(crate) target: String,
+    pub(crate) operands_digest: [u8; 32],
+}
+
+impl BrowserSendTarget {
+    fn hash(&self, hasher: &mut blake3::Hasher) {
+        field(hasher, self.actor_class);
+        field(hasher, &self.run.to_hex());
+        field(hasher, &self.attempt.to_hex());
+        field(hasher, &self.ordinal.to_string());
+        field(hasher, &self.verb);
+        optional(hasher, self.project.map(|id| id.to_hex()).as_deref());
+        optional(hasher, self.audience.as_deref());
+        optional(hasher, self.page.as_deref());
+        optional(hasher, self.revision.as_deref());
+        field(hasher, &self.target);
+        field(hasher, &bytes_to_hex_lower(&self.operands_digest));
+    }
 }
 
 /// The facts one scoped-MCP call pins (Engine 10-20 17:4x, ruling 7): its
@@ -495,6 +535,10 @@ impl ApprovalTarget {
             }
             Self::ChannelIdentityLifecycle(facts) => {
                 field(&mut hasher, "channel_identity_lifecycle");
+                facts.hash(&mut hasher);
+            }
+            Self::Browser(facts) => {
+                field(&mut hasher, "browser");
                 facts.hash(&mut hasher);
             }
         }
