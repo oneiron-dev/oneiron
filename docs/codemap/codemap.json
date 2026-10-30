@@ -98264,6 +98264,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DescendantFence",
+      "NamespaceFact",
+      "OrganIsolation"
+     ],
+     "path": "src/isolation.rs",
+     "purpose": "What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the…",
+     "surface": {
+      "enum": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/landing.rs",
      "purpose": "An organ's results onto the artifact family's one landing (ARCH-0078 \"A proposal landing\"): each export file…",
@@ -98462,19 +98477,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DescendantFence",
-      "NamespaceFact",
-      "OrganIsolation"
-     ],
+     "notable": [],
      "path": "src/sandbox.rs",
      "purpose": "What the host does to an organ process between fork and exec",
      "surface": {
-      "crate-vis": 5,
-      "enum": 2,
-      "struct": 1
+      "crate-vis": 5
      }
     },
     {
@@ -98702,6 +98711,13 @@
      "layout": "file+dir",
      "purpose": "The organ host: install, call, unload, revoke"
     },
+    "isolation": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the…"
+    },
     "landing": {
      "files": 1,
      "impl_vault": false,
@@ -98775,7 +98791,7 @@
     "sandbox": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "What the host does to an organ process between fork and exec"
     },
@@ -98810,7 +98826,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 38,
+   "source_files": 39,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -98950,7 +98966,8 @@
      "purpose": "A structural check of a MessagePack frame before it is decoded",
      "surface": {
       "const": 2,
-      "crate-vis": 3
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -112378,7 +112395,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
