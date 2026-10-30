@@ -163,14 +163,15 @@ fn projector_index_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> CommResult<Co
 #[derive(Default)]
 pub(super) struct RecordedEventProjection {
     index: Option<CommProjectorIndex>,
-    /// The source events projected so far and the heads their rules wrote.
+    /// The source events projected so far and the rows their steps wrote:
+    /// the heads and the gates they consumed.
     written: BTreeSet<EntityId>,
 }
 
 impl RecordedEventProjection {
     /// Projects `event_id`, a `kind` source event this write recorded,
     /// through the pass's own step in a savepoint of `wtxn`, and notes the
-    /// event and the heads its rule writes. An event the pass leaves waiting
+    /// event and the rows its step writes. An event the pass leaves waiting
     /// (its party not here yet, or a refusal) rolls the savepoint back and
     /// stays pending for the housekeeping pass; a storage failure fails the
     /// write.
@@ -182,7 +183,7 @@ impl RecordedEventProjection {
         kind: CommEventKind,
     ) -> CommResult<()> {
         self.written.insert(event_id);
-        let heads = if rule_reads_index(kind) {
+        let rows = if rule_reads_index(kind) {
             let mut index = match self.index.take() {
                 Some(index) => index,
                 None => projector_index_in_txn(vault, &*wtxn)?,
@@ -194,11 +195,11 @@ impl RecordedEventProjection {
             let mut unread = CommProjectorIndex::default();
             project_in_savepoint(vault, wtxn, event_id, &mut unread)?
         };
-        self.written.extend(heads);
+        self.written.extend(rows);
         Ok(())
     }
 
-    /// The source events projected and the heads their rules wrote.
+    /// The source events projected and the rows their steps wrote.
     pub(super) fn into_written(self) -> BTreeSet<EntityId> {
         self.written
     }
@@ -217,19 +218,19 @@ fn project_in_savepoint(
     wtxn: &mut heed::RwTxn<'_>,
     event_id: EntityId,
     index: &mut CommProjectorIndex,
-) -> CommResult<Vec<EntityId>> {
+) -> CommResult<BTreeSet<EntityId>> {
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     match project_event_in_txn(vault, &mut savepoint, event_id, index) {
-        Ok(mut delta) => {
+        Ok(delta) => {
             savepoint.commit()?;
-            let heads = std::mem::take(&mut delta.heads);
+            let rows = delta.written_rows(event_id);
             index.apply_committed(delta);
-            Ok(heads)
+            Ok(rows)
         }
         Err(CommError::Engine(error)) if storage_failure(&error) => Err(CommError::Engine(error)),
         Err(_) => {
             index.forget_accounted_txn();
-            Ok(Vec::new())
+            Ok(BTreeSet::new())
         }
     }
 }
@@ -462,7 +463,8 @@ pub(super) fn put_source_event_in_txn(
 
 /// Projects one source event in its own write transaction, returning the index
 /// changes the commit made true. `try_with_write_txn` yields `Ok` only after the
-/// commit, so the caller can never fold in a delta that was rolled back.
+/// commit, so the caller can never fold in a delta that was rolled back. The
+/// rows the step wrote go to the live-window mirror when the write commits.
 pub(super) fn project_event(
     vault: &Vault,
     event_id: EntityId,
@@ -470,7 +472,12 @@ pub(super) fn project_event(
 ) -> CommResult<ProjectorIndexDelta> {
     // A write group of its own, so the index can tell its own commit from
     // any other writer's (`CommProjectorIndex::begin_event_txn`).
-    vault.try_with_write_txn(|wtxn| project_event_in_txn(vault, wtxn, event_id, index))
+    vault.try_with_write_txn(|wtxn| {
+        let delta = project_event_in_txn(vault, wtxn, event_id, index)?;
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(vault, wtxn, delta.written_rows(event_id));
+        Ok(delta)
+    })
 }
 
 /// [`project_event`]'s step in `wtxn`: the pass and the in-write projection
@@ -526,6 +533,7 @@ fn project_event_in_txn(
                         (occurred_at, kind == CommEventKind::ThreadLeft),
                     )),
                     heads: Vec::new(),
+                    source_stamped: false,
                 }
             }
             _ => ProjectorIndexDelta::default(),
@@ -547,7 +555,7 @@ fn project_event_in_txn(
         thread_ref: thread_ref.as_deref(),
         occurred_at,
     };
-    let delta = if projected {
+    let mut delta = if projected {
         match peer_stop_projection_in_txn(vault, &*wtxn, &event)? {
             // Still in flight: the event keeps holding and waits.
             None => return Ok(ProjectorIndexDelta::default()),
@@ -568,6 +576,7 @@ fn project_event_in_txn(
             projected: true,
         };
         put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
+        delta.source_stamped = true;
     }
     if pending_stop {
         release_pending_stop_in_txn(&vault.store, wtxn, &event_id)?;
@@ -754,6 +763,7 @@ fn apply_projector_rule_in_txn(
                     consumed_gate_ids,
                     projected_thread_transition: None,
                     heads: Vec::new(),
+                    source_stamped: false,
                 })
             }
         }
