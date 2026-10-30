@@ -208,6 +208,7 @@ impl AttemptQueue<'_> {
             next.run_id.as_deref(),
             next.id.as_bytes(),
         )?;
+        crate::attempt_queue::index::put_created_in_txn(self.store, wtxn, &next)?;
 
         // Only the newest pending member of a dedupe chain owns the advisory
         // index, so the entry moves off the now-terminal source. The chain
@@ -333,6 +334,9 @@ impl AttemptQueue<'_> {
                     )?;
                     record.active_pause = Some(AttemptPause::Person);
                     record.updated_at = input.now;
+                    crate::attempt_queue::index::delete_annotation_hold_in_txn(
+                        self.store, wtxn, record.id,
+                    )?;
                     AttemptInterventionEffect::Paused
                 }
                 AttemptState::Paused => AttemptInterventionEffect::AlreadyPaused,
@@ -352,6 +356,11 @@ impl AttemptQueue<'_> {
                     record.active_pause = Some(pause);
                     record.lease_owner = None;
                     record.updated_at = input.now;
+                    if matches!(pause, AttemptPause::Annotation { .. }) {
+                        crate::attempt_queue::index::put_annotation_hold_in_txn(
+                            self.store, wtxn, record.id,
+                        )?;
+                    }
                     AttemptInterventionEffect::Paused
                 }
                 state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
@@ -376,6 +385,9 @@ impl AttemptQueue<'_> {
                     record.active_pause = None;
                     record.lease_owner = None;
                     record.updated_at = input.now;
+                    crate::attempt_queue::index::delete_annotation_hold_in_txn(
+                        self.store, wtxn, record.id,
+                    )?;
                     let ready_key = ready_key(ready_at(&record), record.id);
                     self.store
                         .attempt_ready
@@ -406,6 +418,9 @@ impl AttemptQueue<'_> {
                     record.backoff_until = None;
                     record.last_error = None;
                     record.updated_at = input.now;
+                    crate::attempt_queue::index::delete_annotation_hold_in_txn(
+                        self.store, wtxn, record.id,
+                    )?;
                     self.delete_dedupe_entry_for_record(wtxn, &record)?;
                     // A queued/paused cancel can follow a pack load or resident
                     // binding; stamp while the cancellation is still atomic.
