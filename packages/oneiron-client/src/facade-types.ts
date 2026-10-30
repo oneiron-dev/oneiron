@@ -4074,8 +4074,10 @@ export type BypassScope = { project: EntityId } | { thread: EntityId }
 export type BypassExtent = { scope: BypassScope; floor_version: number }
 /** `oneiron::consent::registry::ConsentRegistryDelegation` */
 export type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach }
+/** `oneiron_authority::federation::repo_scope::RepoAccessBounds` */
+export type RepoAccessBounds = { repo: EntityId; project: EntityId; refs: string[]; readable?: string[]; editable?: string[] }
 /** `oneiron::consent::registry::ConsentRegistryAgentGrant` */
-export type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; confers: boolean }
+export type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; confers: boolean }
 /** `oneiron::consent::registry::ConsentRegistryRow` */
 export type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null }
 /** `oneiron::consent::registry::ConsentRegistry` */
@@ -5362,8 +5364,6 @@ export type DreamingModeInput = "own" | "inherit" | "off"
 export type AgentDreamingView = { agent_def_ref: EntityId; version: string; mode?: DreamingModeInput | null; effective_mode: DreamingModeInput; dreaming_model?: string | null }
 /** `oneiron::verbs::standing::AgentDreamingSetRequest` */
 export type AgentDreamingSetRequest = { agent_def_ref: EntityId; expected_version: string; new_version: string; mode: DreamingModeInput; dreaming_model?: string | null }
-/** `oneiron_authority::federation::repo_scope::RepoAccessBounds` */
-export type RepoAccessBounds = { repo: EntityId; project: EntityId; refs: string[]; readable?: string[]; editable?: string[] }
 /** `oneiron::verbs::agent_grant::AgentGrantMintRequest` */
 export type AgentGrantMintRequest = { agent: EntityId; authority_scope: Scope; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null }
 /** `oneiron::verbs::agent_grant::AgentGrantView` */

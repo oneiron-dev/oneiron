@@ -32211,6 +32211,22 @@ pub struct ConsentRegistryDelegation {
     pub comm: CommReach,
 }
 
+/// `oneiron_authority::federation::repo_scope::RepoAccessBounds`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoAccessBounds {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "refs")]
+    pub refs: Vec<String>,
+    #[serde(rename = "readable", default, skip_serializing_if = "Option::is_none")]
+    pub readable: Option<Vec<String>>,
+    #[serde(rename = "editable", default, skip_serializing_if = "Option::is_none")]
+    pub editable: Option<Vec<String>>,
+}
+
 /// `oneiron::consent::registry::ConsentRegistryAgentGrant`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConsentRegistryAgentGrant {
@@ -32224,6 +32240,12 @@ pub struct ConsentRegistryAgentGrant {
         skip_serializing_if = "Option::is_none"
     )]
     pub expires_at: Option<u64>,
+    #[serde(
+        rename = "repo_bounds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repo_bounds: Option<RepoAccessBounds>,
     #[serde(rename = "confers")]
     pub confers: bool,
 }
@@ -42230,22 +42252,6 @@ pub struct AgentDreamingSetRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub dreaming_model: Option<String>,
-}
-
-/// `oneiron_authority::federation::repo_scope::RepoAccessBounds`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct RepoAccessBounds {
-    #[serde(rename = "repo")]
-    pub repo: String,
-    #[serde(rename = "project")]
-    pub project: String,
-    #[serde(rename = "refs")]
-    pub refs: Vec<String>,
-    #[serde(rename = "readable", default, skip_serializing_if = "Option::is_none")]
-    pub readable: Option<Vec<String>>,
-    #[serde(rename = "editable", default, skip_serializing_if = "Option::is_none")]
-    pub editable: Option<Vec<String>>,
 }
 
 /// `oneiron::verbs::agent_grant::AgentGrantMintRequest`.
