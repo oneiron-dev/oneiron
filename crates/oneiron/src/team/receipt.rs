@@ -137,6 +137,28 @@ pub struct TeamOutcome {
     pub anchor: Anchor,
     pub success: bool,
     pub at: u64,
+    /// The critics whose persisted reviews of the team's deliverable the
+    /// outcome settled (OF-420), as the settler read them. `None` is unknown
+    /// (a settler that read none); empty, no critic reviewed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critics: Option<Vec<TeamCritic>>,
+}
+
+/// One critique of a team's deliverable that the team's outcome settled
+/// (OF-420): the review holding it and the critic that gave it, named as
+/// the critique's reliability cell names that critic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamCritic {
+    /// The review's verdict claim.
+    pub review: EntityId,
+    pub artifact_id: String,
+    /// The lens's stored skill.
+    pub lens: EntityId,
+    /// The critic's executor at revision: `model@revision`, or a person's
+    /// own id.
+    pub executor: String,
+    /// What the critique said of the deliverable.
+    pub verdict: crate::critic::CritiqueVerdict,
 }
 
 /// One team run.
@@ -236,6 +258,32 @@ impl TeamReceipt {
     #[must_use]
     pub fn executor_mix(&self) -> String {
         model_mix(&self.models)
+    }
+
+    /// The one critic the settled outcome names (OF-420), the value the
+    /// TrustedCritic decision reads: `<lens skill hex>@<model>`, the
+    /// executor's final `@revision` stripped as the winning model's is. None
+    /// when the outcome names no critic or more than one: a panel is not one
+    /// critic's win.
+    #[must_use]
+    pub fn trusted_critic(&self) -> Option<String> {
+        let critics: std::collections::BTreeSet<String> = self
+            .outcome
+            .as_ref()?
+            .critics
+            .as_ref()?
+            .iter()
+            .map(|critic| {
+                let executor = critic.executor.as_str();
+                let model = executor.rsplit_once('@').map_or(executor, |(model, _)| model);
+                format!("{}@{model}", critic.lens.to_hex())
+            })
+            .collect();
+        let mut critics = critics.into_iter();
+        match (critics.next(), critics.next()) {
+            (Some(critic), None) => Some(critic),
+            _ => None,
+        }
     }
 }
 
