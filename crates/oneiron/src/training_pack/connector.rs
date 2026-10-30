@@ -12,7 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 
-use super::custody::{keep_checkpoint, read_pin};
+use super::custody::{keep_checkpoint, verify_pin};
 use super::{
     CandleParityCheck, CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck,
     PinnedCheckpoint, ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin,
@@ -358,7 +358,7 @@ impl Vault {
             // Re-read stored files before accepting custody; producer hash mismatches
             // remain on the failed check, rather than dropping the evidence.
             for file in training.files.iter().chain(&exported.files) {
-                read_pin(self, txn, &file.content)?;
+                verify_pin(self, txn, &file.content)?;
             }
             // The connector's result is the files it handed back (FIX 5760).
             let returned = training
