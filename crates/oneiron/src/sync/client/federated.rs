@@ -484,7 +484,9 @@ impl SyncClient {
     /// facet stamps it sent ahead of their rows, records the rows whose door
     /// judges a peer's row apart from this vault's own, imports it, then
     /// releases each stamp whose row that import's entity door birthed from
-    /// the peer's bytes. Under a pact-bound grant (`delivery`), each row the
+    /// the peer's bytes. A row whose carrier its window binds by reference
+    /// waits for its body: its stamps wait under the peer, and its body is
+    /// owed on this lane (FIX 12118). Under a pact-bound grant (`delivery`), each row the
     /// import writes is attributed to the pact and its epoch as it is written
     /// (FIX 321), or, after a crash, as forward rematerialization writes it
     /// (FIX 3498). Each part imports into its own window, the update's own
@@ -536,10 +538,63 @@ impl SyncClient {
         })?;
         part.keep_born_with(&self.vault)
             .map_err(map_federated_admission_err)?;
+        let waiting: std::collections::BTreeSet<_> = part
+            .births()
+            .iter()
+            .filter(|(id, blob)| {
+                !born.contains(id)
+                    && crate::sync::asset_body::references::bound_in(&window.doc, id, blob)
+                        .is_some()
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        part.hold_waiting_births(&self.vault, key, grant, &waiting)
+            .map_err(map_federated_admission_err)?;
         let released = part
             .release(&self.vault, key, &born)
             .map_err(map_federated_admission_err)?;
-        self.import_released_stamps(window_key, released)
+        self.import_released_stamps(window_key, released)?;
+        let rows: Vec<_> = part.delivered().keys().copied().collect();
+        if let Err(error) = self.owe_admitted_bodies(key, &window.doc, &rows) {
+            tracing::warn!(%error, window = window_key, "federated asset bodies not owed");
+        }
+        Ok(())
+    }
+
+    /// Releases the stamps the federation peer's held lane keeps on each row
+    /// a received body birthed here, `births` (FIX 12118): the row's birth
+    /// applied once its body landed. The release is this vault's own update,
+    /// as an import's is. One that fails is logged, and its stamps stay held.
+    pub(in crate::sync) fn release_body_births(
+        &mut self,
+        births: Vec<(WindowKey, crate::EntityId)>,
+    ) {
+        let Some(peer) = self.config.federation_peer.as_ref().map(|peer| peer.principal()) else {
+            return;
+        };
+        for (window, row) in births {
+            let carrier = self.manager.window(&window).and_then(|loaded| {
+                crate::sync::loro_support::map_get_bytes(
+                    &loaded.doc.get_map("entities"),
+                    &row.to_hex(),
+                )
+            });
+            let Some(carrier) = carrier else {
+                continue;
+            };
+            let released = crate::sync::selector::release_landed_stamps(
+                &self.vault,
+                &window,
+                peer,
+                (row, carrier),
+            )
+            .map_err(map_federated_admission_err)
+            .and_then(|released| self.import_released_stamps(window.as_str(), released));
+            if let Err(error) = released {
+                let row = row.to_hex();
+                tracing::warn!(%error, %window, %row, "federated body birth kept its stamps");
+            }
+        }
     }
 
     /// Imports the facet stamps a birth released, then discards their held

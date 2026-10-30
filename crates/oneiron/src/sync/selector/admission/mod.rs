@@ -34,7 +34,7 @@ pub(in crate::sync) use self::revalidate::{
     revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
 };
 use self::routing::Routes;
-pub(in crate::sync) use self::state::staged_births;
+pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
 
 /// Role carried by a member/guest federation import path.
@@ -259,6 +259,9 @@ fn admit_window_update(
     for (part, part_key) in routes.keys.iter().enumerate() {
         let admitted = create_admission_doc(part_key, update, role, guest)?;
         copy_admitted_entities(vault, &policy, &remote, &admitted, grading, &routes, part)?;
+        // A body reference rides beside the exact carrier admission kept, so
+        // the body follows it by reference (FIX 12118).
+        crate::sync::asset_body::references::copy_refs_within(&remote, &admitted)?;
         let edges = routes.edges_of(&remote, part)?;
         let early = copy_admitted_edges(
             vault,

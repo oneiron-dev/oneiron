@@ -353,6 +353,7 @@ impl WindowManager {
                 &HashMap::new(),
                 || true,
                 SEALED_KIT_REPLACEMENT_BYTE_BOUND,
+                None,
             )?;
             drop(window);
             // A restore leaves no window open.

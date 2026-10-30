@@ -15,6 +15,10 @@ pub(super) struct ConnState {
     limit_asked: bool,
     /// Only windows rechecked under a live bound grant can exchange full VVs.
     pub(super) promoted_windows: std::collections::HashMap<WindowKey, SyncSelector>,
+    /// The filtered copy of each window this federation socket was last
+    /// sent, with the selector that admitted it: the rows whose by-reference
+    /// bodies it is served (FIX 12118).
+    pub(super) admitted_windows: HashMap<WindowKey, (SyncSelector, loro::LoroDoc)>,
     /// Each promoted window's baseline: the home's version when this socket promoted it. A
     /// vector behind it never receives older history. It only rises.
     pub(super) promotion_baselines: std::collections::HashMap<WindowKey, loro::VersionVector>,
@@ -69,6 +73,7 @@ impl ConnState {
             subscribed_windows: SubscribedWindows::default(),
             limit_asked: false,
             promoted_windows: std::collections::HashMap::new(),
+            admitted_windows: HashMap::new(),
             promotion_baselines: std::collections::HashMap::new(),
             documents: std::collections::HashMap::new(),
             owner_documents: std::collections::HashMap::new(),
