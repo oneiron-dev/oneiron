@@ -52,6 +52,14 @@ fn decode(bytes: &[u8]) -> Result<RoomTurn> {
     if bytes.len() > MAX_ROW_BYTES {
         return Err(refused("too large"));
     }
+    decode_held(bytes)
+}
+
+/// Decodes a turn row a window holds or this vault emitted, whatever its
+/// size (FIX 8882): the mirror writes rows past [`MAX_ROW_BYTES`], so the
+/// mirror's extension and every erase read them whole. Peer bytes pass the
+/// bound first ([`decode`]).
+fn decode_held(bytes: &[u8]) -> Result<RoomTurn> {
     serde_json::from_slice(bytes).map_err(|_| refused("not a turn row"))
 }
 
@@ -130,7 +138,7 @@ pub(crate) fn mirror_room_turn(
     };
     let map = doc.get_map(ROOM_TURNS_MAP);
     let hex = id.to_hex();
-    let row = match map_get_bytes(&map, &hex).and_then(|carried| decode(&carried).ok()) {
+    let row = match map_get_bytes(&map, &hex).and_then(|carried| decode_held(&carried).ok()) {
         Some(mut carried) => {
             let mut grew = false;
             if turn.actor == ERASED_CALL_IDENTITY && carried.actor != turn.actor {
@@ -234,7 +242,7 @@ pub(crate) fn scrub_deleted_room_turns(
     let map = doc.get_map(ROOM_TURNS_MAP);
     let mut rows = Vec::new();
     map_for_each_bytes(&map, |map_key, bytes| {
-        if let Ok(turn) = decode(bytes)
+        if let Ok(turn) = decode_held(bytes)
             && let Ok(room) = EntityId::from_hex(&turn.room_id)
         {
             rows.push((map_key.to_owned(), room, turn));

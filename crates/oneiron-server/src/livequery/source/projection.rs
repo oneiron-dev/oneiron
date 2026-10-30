@@ -38,7 +38,11 @@ impl LiveQuerySource for BoundSource {
         let filter: ViewFilter =
             serde_json::from_value(view.filter.clone().unwrap_or_else(|| json!({})))
                 .map_err(|_| AppError::bad_request("invalid scoped view filter", Some("filter")))?;
-        let limit = facade_limit(filter.limit, 100)?;
+        let limit = match channel {
+            // Read in scoped pages with a continuation: any count (FIX 8859).
+            Channel::Receipts | Channel::PendingConsent => facade_count(filter.limit, 100)?,
+            _ => facade_limit(filter.limit, 100)?,
+        };
         if channel != Channel::View
             && (view.facet.is_some()
                 || view.query.is_some()
@@ -117,15 +121,20 @@ impl LiveQuerySource for BoundSource {
                 serde_json::to_value(view_result(pack.items, *pack.narrowing))
             }
             Channel::Receipts => {
-                let rows = oneiron::sync::bridge::scoped_subscription_receipts(
-                    server.vault(),
-                    self.auth
-                        .principal_ref()
-                        .ok_or_else(AppError::unauthorized)?,
-                    view.world_ref.as_deref(),
-                    self.auth.destination(),
-                    limit,
-                )
+                let actor = self
+                    .auth
+                    .principal_ref()
+                    .ok_or_else(AppError::unauthorized)?;
+                let rows = scoped_pages(limit, |page, after| {
+                    oneiron::sync::bridge::scoped_subscription_receipts(
+                        server.vault(),
+                        actor,
+                        view.world_ref.as_deref(),
+                        self.auth.destination(),
+                        page,
+                        after,
+                    )
+                })
                 .map_err(|_| AppError::internal_server_error("scoped receipts read failed"))?;
                 // A row names its claim: the view follows the claim, and a
                 // delivery off this device re-admits it.
@@ -136,15 +145,20 @@ impl LiveQuerySource for BoundSource {
                 serde_json::to_value(rows)
             }
             Channel::PendingConsent => {
-                let rows = oneiron::sync::bridge::scoped_subscription_pending(
-                    server.vault(),
-                    self.auth
-                        .principal_ref()
-                        .ok_or_else(AppError::unauthorized)?,
-                    view.world_ref.as_deref(),
-                    self.auth.destination(),
-                    limit,
-                )
+                let actor = self
+                    .auth
+                    .principal_ref()
+                    .ok_or_else(AppError::unauthorized)?;
+                let rows = scoped_pages(limit, |page, after| {
+                    oneiron::sync::bridge::scoped_subscription_pending(
+                        server.vault(),
+                        actor,
+                        view.world_ref.as_deref(),
+                        self.auth.destination(),
+                        page,
+                        after,
+                    )
+                })
                 .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?;
                 for row in &rows {
                     dependencies.insert(format!("e:{}", row.claim_ref));

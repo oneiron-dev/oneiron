@@ -5952,6 +5952,8 @@ pub struct TaskStatusView {
     pub last_receipt: Option<String>,
     #[serde(rename = "workflow", default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<TaskWorkflowStatus>,
+    #[serde(rename = "waiting", default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
     #[serde(rename = "observed")]
     pub observed: String,
 }
