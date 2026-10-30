@@ -33,6 +33,7 @@ pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_text_in_txn,
     mark_carrier_texts_in_txn,
 };
+pub(super) use self::mask::MaskedFiles;
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::mask_origin_in_txn;
 pub(crate) use self::mask::retained_repo::read::project_marked_retained_repo_blob;
@@ -42,7 +43,7 @@ pub(crate) use self::mask::retained_repo::{
 };
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
-    admit_typed, admitted_from, from_named_tree, named_tree,
+    admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
     BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
