@@ -118,7 +118,7 @@ pub(crate) use self::control::input::{
     keep_input_in_txn, keep_witness_in_txn,
 };
 pub(crate) use self::control::{
-    ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
+    ActiveChange, EraseOwnerAct, Material, custody_work_executor, drop_revoked_copies_in_txn,
     erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
