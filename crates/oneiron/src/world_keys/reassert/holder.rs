@@ -219,12 +219,12 @@ impl HolderRead {
             return Ok(false);
         }
         // FIX 11865: the writer joins a wide frontier first and wraps on
-        // the fold read back (FIX 8497), so a plan too wide here is wide
-        // only where the writer still cannot proceed: where its own join
-        // predicate names no join (its room included, never recomputed
-        // here), as when the row's own non-main parents alone fill the
-        // record (FIX 11868). A row the door writes first is unwritten, so
-        // its join asks with this snapshot's head, which it descends from.
+        // the fold read back (FIX 8497), its world's side leaves too when
+        // they alone fill the record (FIX 11868), so a plan too wide here
+        // is wide only where the writer still cannot proceed: where its own
+        // join predicate names no join (its room included, never recomputed
+        // here). A row the door writes first is unwritten, so its join asks
+        // with this snapshot's head, which it descends from.
         let row = match chain {
             ChainHead::Row(row) => row,
             ChainHead::Planned => match self.chain_head() {
@@ -234,7 +234,7 @@ impl HolderRead {
                 ChainHead::Planned => None,
             },
         };
-        let join = KeyFrontier::wide_heads_in_txn(&vault.store, txn, &self.fold, self.world, row)?;
+        let join = KeyFrontier::wide_in_txn(&vault.store, txn, &self.fold, self.world, row)?;
         Ok(join.is_none())
     }
 }

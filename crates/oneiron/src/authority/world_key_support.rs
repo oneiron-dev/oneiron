@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::{Signer, SigningKey};
 
-pub(crate) use self::frontier::KeyFrontier;
+pub(crate) use self::frontier::{KeyFrontier, WideFrontier};
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
