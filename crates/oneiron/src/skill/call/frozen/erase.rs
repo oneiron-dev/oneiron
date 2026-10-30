@@ -6,10 +6,18 @@ use super::{CASES, CaseCaller, FrozenCall, delete_case_in_txn, index};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::{self, Named, SideTable};
+use crate::skill::helper::CallableGateVerdict;
 use crate::store::Store;
 
 /// How an erased actor's id reads in a frozen case's texts.
 const ERASED_SPELLING: &str = "erased";
+
+/// The helper gate's standing verdict, keyed by the skill entity id (bound
+/// as `GATE_VERDICT` in `skill::helper`): an erased skill's row goes with
+/// its cases (FIX 12186). Any other entity's erase finds no row here.
+const GATE_VERDICT: SideTable<EntityId, CallableGateVerdict, Named> =
+    SideTable::new(&side_table::SKILL_CALLABLE_GATE);
 
 /// Keeps every frozen case naming erased actor `actor` in its erased form,
 /// under its own key, so the case still counts: a case made for it names no
@@ -51,10 +59,13 @@ pub(crate) fn erase_callable_case_actor_in_txn(
 
 /// The frozen cases an erased record reaches, at both delete doors (one line
 /// of `deletion::derived_rows`):
-/// - an erased skill's own cases go, by its id16 prefix;
+/// - an erased skill's own cases go, by its id16 prefix, with its gate
+///   verdict (FIX 12186);
 /// - a case whose known source rows name `id` goes;
 /// - a case whose sources are unknown goes when its receipt names `id` as
-///   its job, trigger, trace or a field. Its actor is the actor scrub's.
+///   its job, trigger, trace or a field — or, while its receipt is not
+///   sealed yet, when its live attempt's read set names `id` (FIX 12187).
+///   Its actor is the actor scrub's.
 ///
 /// The cases' index finds the last two by key (FIX 12180): no other case is
 /// read, and each receipt is read once, however many cases it holds.
@@ -67,6 +78,9 @@ pub(crate) fn erase_callable_cases_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    // The skill tear takes its gate verdict with its cases: an exact id16
+    // key, so any other entity's erase is a no-op here.
+    GATE_VERDICT.delete(store, wtxn, id)?;
     for key in CASES.scan_keys(store, wtxn, id.as_bytes())? {
         delete_case_in_txn(store, wtxn, &key)?;
     }
@@ -76,14 +90,18 @@ pub(crate) fn erase_callable_cases_in_txn(
     index::forget_source_in_txn(store, wtxn, id)?;
     let spelled = id.to_hex();
     for (receipt, keys) in index::receipt_cases_in_txn(store, wtxn)? {
-        let named = crate::receipt::attempt_pack_receipt_in_txn(store, wtxn, &receipt)?
-            .is_some_and(|receipt| {
+        let named = match crate::receipt::attempt_pack_receipt_in_txn(store, wtxn, &receipt)? {
+            Some(sealed) => {
                 let names = |text: &str| text.to_ascii_lowercase().contains(&spelled);
-                receipt.job_ref.as_deref().is_some_and(names)
-                    || receipt.trigger_ref.as_deref().is_some_and(names)
-                    || receipt.policy_trace.iter().any(|step| names(step.as_str()))
-                    || receipt.fields.values().any(|value| names(value.as_str()))
-            });
+                sealed.job_ref.as_deref().is_some_and(names)
+                    || sealed.trigger_ref.as_deref().is_some_and(names)
+                    || sealed.policy_trace.iter().any(|step| names(step.as_str()))
+                    || sealed.fields.values().any(|value| names(value.as_str()))
+            }
+            // No sealed receipt yet: the attempt may still be running, so
+            // its live read set names the row instead.
+            None => live_attempt_names_source(store, wtxn, &receipt, id)?,
+        };
         if named {
             for key in keys {
                 delete_case_in_txn(store, wtxn, &key)?;
@@ -91,6 +109,34 @@ pub(crate) fn erase_callable_cases_in_txn(
         }
     }
     Ok(())
+}
+
+/// Whether the live attempt `receipt` names — still running, its pack
+/// receipt not sealed yet — read the erased row (FIX 12187): its recorded
+/// read set. `false` when the receipt names no attempt row, as before.
+fn live_attempt_names_source(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    receipt: &str,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(attempt) = receipt_attempt(receipt) else {
+        return Ok(false);
+    };
+    let queue = crate::attempt_queue::AttemptQueue::from_store(store);
+    let Some(record) = queue.get_in_txn(txn, attempt)? else {
+        return Ok(false);
+    };
+    Ok(record.source_rows().is_some_and(|rows| rows.contains(id)))
+}
+
+/// The attempt a pack receipt id names (`attempt:` + its hex), when it is one.
+fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
+    let (_, hex) = receipt.rsplit_once(':')?;
+    let attempt =
+        crate::attempt_queue::AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes())
+            .ok()?;
+    (crate::receipt::attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)
 }
 
 /// Every frozen case. A row that no longer decodes names nothing either
