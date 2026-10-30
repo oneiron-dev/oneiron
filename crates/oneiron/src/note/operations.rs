@@ -130,7 +130,9 @@ pub(super) fn record_birth_authorship(
     doc: &NoteDocument,
     record: &NoteAuthorship,
 ) -> crate::Result<()> {
-    insert_authorship(doc, record, &record.actor.to_wire())
+    // The commit names no one, as the birth's own stamp does (FIX 10930);
+    // the record keeps the author.
+    insert_authorship(doc, record, &super::NoteActor::Erased.to_wire())
 }
 
 /// Inserts `record` and commits it under the engine stamp naming `named`.
