@@ -178,16 +178,20 @@ impl Package {
                     .ok_or(Error::Edit("edited package size overflow"))
             },
         )?;
-        let budget =
-            self.limits
-                .part_bytes
-                .min(self.limits.expanded_bytes.checked_sub(other_size).ok_or(
-                    Error::capacity_hit(
-                        Dimension::ExpandedBytes,
-                        other_size,
-                        self.limits.expanded_bytes,
-                    ),
-                )?);
+        if other_size > self.limits.expanded_bytes {
+            return Err(Error::capacity_hit(
+                Dimension::ExpandedBytes,
+                other_size,
+                self.limits.expanded_bytes,
+            ));
+        }
+        // The edited part's budget keeps both ceilings, so its hit names the
+        // one that binds (FIX 10654).
+        let budget = xml::PartBudget {
+            part_bytes: self.limits.part_bytes,
+            expanded_bytes: self.limits.expanded_bytes,
+            others: other_size,
+        };
         let part = xml::ValidatedXmlPart::parse(&old, &self.resources)?;
         let new = part.replace_text(path, expected, value, budget)?.0;
         self.commit_replacement(index, old, new)
@@ -363,12 +367,27 @@ impl Package {
             .filter_map(|entry| entry.replacement.as_ref())
             .fold(0usize, |sum, data| sum.saturating_add(data.len()));
         let added = self.added_archive_bytes()?;
-        // An estimate past the added records, whose bytes are measured.
+        // Every byte the output carries over is measured (FIX 10656): the
+        // source, less each removed entry's records and each replaced
+        // entry's old payload and data descriptor, and the added records.
+        // The replacements' compressed copies are the estimate.
+        let carried = self.entries.iter().fold(
+            wide(self.source.len()).saturating_add(wide(added)),
+            |sum, entry| {
+                if entry.removed {
+                    sum.saturating_sub(wide(entry.local.len() + entry.central.len()))
+                } else if entry.replacement.is_some() {
+                    sum.saturating_sub(wide(entry.trailer.saturating_sub(entry.data.start)))
+                } else {
+                    sum
+                }
+            },
+        );
         let _hold = self.resources.reserve_estimate(
             wide(self.source.len())
                 .saturating_add(wide(replaced).saturating_mul(2))
                 .saturating_add(wide(added)),
-            wide(added),
+            carried,
         )?;
         let mut out = Vec::with_capacity(self.source.len());
         let mut offsets = vec![0u32; self.entries.len()];
