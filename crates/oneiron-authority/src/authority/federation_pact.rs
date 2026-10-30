@@ -7,7 +7,7 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{FederationDirectionScope, FederationPactScope};
+use crate::federation::{FederationDirectionScope, FederationPactScope, ScopeAxis};
 
 use super::*;
 
@@ -144,17 +144,19 @@ pub struct FederationPactState {
     pub peer_owner_key: AuthorityKey,
     /// Current pact consent epoch.
     pub pact_epoch: u64,
-    /// Dual-signed scope commitment for the current ceiling.
+    /// Dual-signed scope commitment for the current ceiling. A pact that
+    /// ended keeps it, the one trace of its scope.
     pub scope_digest: [u8; 32],
-    /// Dual-signed ceiling scope pair.
+    /// Dual-signed ceiling scope pair; ⊥ in both directions once the pact
+    /// ends ([`Self::erase_scope`]).
     pub pact_scope: FederationPactScope,
     /// OUR outbound overlay, always ⊑ our half of the ceiling: the ceiling
-    /// met with every standing narrowing below.
+    /// met with every standing narrowing below. ⊥ once the pact ends.
     pub effective_scope: FederationDirectionScope,
     /// Each standing narrowing of our outbound half, by the entry that made it
     /// (FIX 7933). A party's later narrowing supersedes its own earlier ones;
     /// concurrent ones all stand and meet. Another party's stays until a
-    /// dual-signed re-pact clears them all.
+    /// dual-signed re-pact clears them all. Empty once the pact ends.
     pub narrowings: std::collections::BTreeMap<AuthorityEntryHash, FederationNarrowing>,
     /// Every narrowing a later one by its own party saw: it never stands
     /// again, whichever branch still carries it.
@@ -163,6 +165,31 @@ pub struct FederationPactState {
     pub successor_vault_id: Option<AuthorityVaultId>,
     /// Epoch at which the pact went terminal.
     pub terminal_epoch: Option<u64>,
+}
+
+impl FederationPactState {
+    /// Drops the plaintext scope of a pact that ended (FIX 7907): the
+    /// ceiling, the effective overlay and every standing narrowing become ⊥,
+    /// so the fold keeps only the keyed `scope_digest` of what the pact
+    /// shared. The fold calls it at every terminal transition; a terminal
+    /// pact confers nothing, so no reader loses a scope it could use.
+    pub fn erase_scope(&mut self) {
+        self.pact_scope = FederationPactScope {
+            lo_to_hi: bottom_direction_scope(),
+            hi_to_lo: bottom_direction_scope(),
+        };
+        self.effective_scope = bottom_direction_scope();
+        self.narrowings.clear();
+    }
+}
+
+/// The direction scope that shares nothing: ⊥ on every axis.
+fn bottom_direction_scope() -> FederationDirectionScope {
+    FederationDirectionScope {
+        worlds: ScopeAxis::Bottom,
+        facets: ScopeAxis::Bottom,
+        bands: ScopeAxis::Bottom,
+    }
 }
 
 /// One standing narrowing of a pact's outbound half (FIX 7933).

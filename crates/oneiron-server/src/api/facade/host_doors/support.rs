@@ -12,6 +12,7 @@ use oneiron::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
     ProducerRows,
 };
+use oneiron::skill_attribution::RunWriteToken;
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
@@ -59,9 +60,9 @@ pub(super) fn artifact_asker(
 /// `sources`, the rows the call is read from (FIX 11311). A banked voice
 /// withdrawn or re-recorded while it rendered, on the rung that answered, is
 /// not handed back; nor is a call that found the voice withdrawn everywhere
-/// while it waited (FIX 1746). An owner's call known by `replay` answers a
-/// repeat from its first answer, unpaid (FIX 2962); a run's call, on its
-/// own line, is never replayed.
+/// while it waited (FIX 1746). An owner's call known by `replay` and a run's
+/// call known by its step key each answer a repeat from the first answer,
+/// unpaid (FIX 2962, FIX 2245).
 pub(super) async fn rendered(
     server: &SyncServer,
     operation: AiOperation,
@@ -74,7 +75,11 @@ pub(super) async fn rendered(
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match run {
-        Some(run) => media.run_admitted(run, request, voices.as_ref()).await,
+        Some(run) => {
+            media
+                .run_admitted(run, request, voices.as_ref(), replay)
+                .await
+        }
         None => {
             media
                 .run_replayed(request, voices.as_ref(), None, sources, None, replay)
@@ -276,15 +281,55 @@ tokio::task_local! {
     /// (Docs #3016): [`credential_listing`]'s fresh handle keeps it, so a
     /// generated program's call never reads as a person's.
     static CALLING_ORIGIN: oneiron::memory::HostWriteOrigin;
+    /// The leased run the call in flight writes for (FIX 10748): each
+    /// blocking hop opens its write envelope on its own thread
+    /// ([`clock_ingress::run_blocking`]), so the DerivedFrom edges its
+    /// writes leave are witnessed as that run's.
+    static CALLING_RUN_WRITES: Option<RunWriteToken>;
 }
 
 /// Runs `call` as the code run `origin` binds: every handle
-/// [`credential_listing`] builds inside it carries that origin.
+/// [`credential_listing`] builds inside it carries that origin, and its
+/// writes are made for the leased run the origin seals, if any.
 pub(crate) async fn with_calling_origin<F: std::future::Future>(
     origin: oneiron::memory::HostWriteOrigin,
     call: F,
 ) -> F::Output {
-    CALLING_ORIGIN.scope(origin, call).await
+    let run_writes = RunWriteToken::of_origin(&origin);
+    CALLING_ORIGIN
+        .scope(origin, CALLING_RUN_WRITES.scope(run_writes, call))
+        .await
+}
+
+/// Runs `call` with its writes made for the leased run `run_writes` names,
+/// lending no origin to its handles (FIX 10748): an action's verb row writes
+/// as its own caller, and only the derivations it leaves are the run's.
+pub(in crate::api::facade) async fn with_calling_run_writes<F: std::future::Future>(
+    run_writes: Option<RunWriteToken>,
+    call: F,
+) -> F::Output {
+    CALLING_RUN_WRITES.scope(run_writes, call).await
+}
+
+/// The leased run the call in flight writes for, for a blocking hop to open
+/// on its own thread. `None` outside any.
+pub(in crate::api::facade) fn calling_run_writes() -> Option<RunWriteToken> {
+    CALLING_RUN_WRITES.try_with(Clone::clone).ok().flatten()
+}
+
+/// `call`, which the call in flight spawns, under that call's calling origin
+/// and run writes: no task-local crosses a spawn.
+pub(in crate::api::facade) fn carrying_calling_run<F: std::future::Future>(
+    call: F,
+) -> impl std::future::Future<Output = F::Output> {
+    let origin = CALLING_ORIGIN.try_with(Clone::clone).ok();
+    let call = CALLING_RUN_WRITES.scope(calling_run_writes(), call);
+    async move {
+        match origin {
+            Some(origin) => CALLING_ORIGIN.scope(origin, call).await,
+            None => call.await,
+        }
+    }
 }
 
 /// `read` off the runtime on the credential's own handle as `caller`, at

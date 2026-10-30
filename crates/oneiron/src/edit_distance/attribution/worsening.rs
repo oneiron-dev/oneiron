@@ -3,7 +3,7 @@
 //!
 //! Every outcome that lands on a subject's `learning.edit_cost` cell is
 //! checked here, in a savepoint of the write that lands it, for the three
-//! worsening signals canon names per subject and scope. Each is read from
+//! worsening signals canon names per subject, project and scope. Each is read from
 //! receipts and the measured cells alone:
 //!
 //! - **edit-cost climbing**: the cell's own head against the head it
@@ -29,7 +29,9 @@ use std::collections::BTreeSet;
 
 use super::cells::learning_scope;
 use super::taxonomy::{AmendmentClass, AmendmentJudgment};
-use super::triage::{TriageSubject, WorseningSignal, escalate_in_txn, packet_in_txn};
+use super::triage::{
+    TriageSubject, WorseningSignal, escalate_in_txn, escalation_held_in_txn, packet_in_txn,
+};
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -53,12 +55,13 @@ const REJECTION_RUN_LENGTH: usize = 3;
 const AMENDED_OUTCOME: &str = "amended";
 const REJECTED_OUTCOME: &str = "rejected";
 
-/// One outcome a subject's cell holds: when it landed, its receipt, and its
-/// label.
+/// One outcome a subject's cell holds: when it landed, its receipt, its
+/// label, and the project its cell counts in (`None`, the vault's).
 pub(super) struct CellOutcome {
     pub(super) at: u64,
     pub(super) receipt: String,
     label: Option<String>,
+    pub(super) project: Option<EntityId>,
 }
 
 impl CellOutcome {
@@ -118,6 +121,43 @@ pub(crate) fn observe_rejection_in_txn(
     });
 }
 
+/// Escalates `skill`'s open reliability floor crossing in `scope` and
+/// `project` (`None`, the vault's), as a packet fired by amendment receipt
+/// `trigger` at `at`: the reliability pass's second join (FIX 11635), for a
+/// crossing that pass itself just minted, which the charge-side check ran
+/// too early to see. In a savepoint of the caller's write, which it never
+/// fails. The escalation dedups on the crossing's proposal, so the next
+/// charge's check writes nothing new.
+pub(super) fn observe_floor_crossing_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    scope: &str,
+    project: Option<EntityId>,
+    trigger: &str,
+    at: u64,
+) {
+    in_savepoint(vault, txn, trigger, |savepoint| {
+        let Some(signal) = floor_crossing_in_txn(vault, savepoint, skill)? else {
+            return Ok(());
+        };
+        if escalation_held_in_txn(vault, savepoint, skill, scope, project, &signal)? {
+            return Ok(());
+        }
+        let packet = packet_in_txn(
+            vault,
+            savepoint,
+            *skill,
+            TriageSubject::Skill,
+            scope,
+            project,
+            at,
+            signal,
+        )?;
+        escalate_in_txn(vault, savepoint, &packet)
+    });
+}
+
 /// Runs `check` in a savepoint of `txn` that commits only when all of it
 /// lands; an error drops the savepoint alone and logs one WARN.
 fn in_savepoint(
@@ -161,12 +201,23 @@ fn escalate_cell_in_txn(
         fired.extend(floor_crossing_in_txn(vault, txn, &cell.subject)?);
     }
     for signal in fired {
+        if escalation_held_in_txn(
+            vault,
+            txn,
+            &cell.subject,
+            &judgment.scope,
+            judgment.project,
+            &signal,
+        )? {
+            continue;
+        }
         let packet = packet_in_txn(
             vault,
             txn,
             cell.subject,
             kind,
             &judgment.scope,
+            judgment.project,
             judgment.at,
             signal,
         )?;
@@ -185,6 +236,16 @@ fn escalate_run_in_txn(
     trigger: &str,
 ) -> Result<()> {
     let mut outcomes = outcomes_in_txn(vault, txn, subject, scope)?;
+    // The run is the trigger's own project's: two projects' rejections in one
+    // scope are two runs (FIX 11627).
+    let Some(project) = outcomes
+        .iter()
+        .find(|outcome| outcome.receipt == trigger)
+        .map(|outcome| outcome.project)
+    else {
+        return Ok(());
+    };
+    outcomes.retain(|outcome| outcome.project == project);
     outcomes.sort_by(|a, b| (a.at, &a.receipt).cmp(&(b.at, &b.receipt)));
     let run: Vec<&CellOutcome> = outcomes
         .iter()
@@ -209,7 +270,9 @@ fn escalate_run_in_txn(
         length: u32::try_from(run.len()).unwrap_or(u32::MAX),
         newest: newest.receipt.clone(),
     };
-    let packet = packet_in_txn(vault, txn, *subject, kind, scope, newest.at, signal)?;
+    let packet = packet_in_txn(
+        vault, txn, *subject, kind, scope, project, newest.at, signal,
+    )?;
     escalate_in_txn(vault, txn, &packet)
 }
 
@@ -241,6 +304,7 @@ pub(super) fn outcomes_in_txn(
                 at: evidence.at,
                 receipt,
                 label: outcome_label(evidence),
+                project: row.cell.project,
             });
         }
     }

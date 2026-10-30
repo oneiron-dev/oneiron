@@ -2,6 +2,9 @@
 //! Entry: MediaRuntime::run.
 //! Types and private call/job helpers stay in the parent; this module owns the listed impls.
 
+use oneiron::agent_dispatch::SpendScopeId;
+use oneiron::llm::media::MediaReplayKey;
+
 use super::{
     Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer, MediaJobState,
     MediaRequest, MediaResponse, MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission,
@@ -27,9 +30,17 @@ impl Drop for MediaRuntime {
                 continue;
             };
             if self.unkept_program_job(ticket) {
+                let charges = job.charges();
                 job.settle_failed();
+                // What its settle charged reaches the scope that funds it
+                // (FIX 11496).
+                if charges {
+                    self.book_job_scope(ticket);
+                }
                 continue;
             }
+            // A hand-off charges nothing, so no scope books it: the runtime
+            // that takes the job up books its end (FIX 11496).
             if let Some(permit) = job.permit.take()
                 && let Err(denied) = permit.hand_off_media()
             {
@@ -85,19 +96,34 @@ impl MediaRuntime {
 
     /// One call to its answer on `run`, the line its caller admitted it on
     /// (FIX 3194): a pumped agent run's own, which it spends on as it does
-    /// its other model calls, never the media meter.
+    /// its other model calls, never the media meter. A run's call known by
+    /// its step key answers a repeat in its attempt from what the first
+    /// was given (FIX 2245).
     pub(crate) async fn run_admitted(
         &self,
         run: &RunAdmission,
         request: MediaRequest,
         voices: Option<&RungVoices>,
+        replay: Option<MediaReplayKey>,
     ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        let key = replay.as_ref().filter(|_| voices.is_none());
+        if let Some(key) = key
+            && let Some(answer) = self.replay_answer(key)
+        {
+            return answer;
+        }
+        let kept = key.map(|_| request.clone());
         let ladder = self.ladder(&request)?;
         match ladder.media(run, request, None, voices).await? {
-            MediaAnswer::Done(response) => Ok(response),
+            MediaAnswer::Done(response) => {
+                if let (Some(key), Some(kept)) = (key, &kept) {
+                    self.keep_replay_answer(key, kept, &response, None, None);
+                }
+                Ok(response)
+            }
             // Only a job operation is submitted.
             MediaAnswer::Job(mut job) => {
                 job.settle_failed();
@@ -127,30 +153,72 @@ impl MediaRuntime {
     /// 780, FIX 6083): a program's run's own. The job's permit is held on
     /// that line until the job ends, and its end, its cancel and its take-up
     /// after a restart settle there, never on the media meter. Its row keeps
-    /// the run's name and payer, and is stamped as [`Self::submit`]'s is.
+    /// the run's name and payer, and `scope`, the spend scope that funds it
+    /// when one does (FIX 11496), and is stamped as [`Self::submit`]'s is.
     pub(crate) async fn submit_run_admitted(
         &self,
         run: &RunAdmission,
+        scope: Option<SpendScopeId>,
         request: MediaRequest,
         actor: Option<oneiron::EntityId>,
+        replay: Option<MediaReplayKey>,
     ) -> LlmResult<MediaTicket> {
         if !request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
+        }
+        // A scope funds a job only on a runtime that keeps it (FIX 11496).
+        if scope.is_some() {
+            self.scoped_store()?;
         }
         let operation = request.operation;
         let stamps = submit_stamps(actor, &request);
         let sent = self.store.as_ref().map(|_| request.clone());
         let ladder = self.ladder(&request)?;
+        let id = match &replay {
+            Some(key) => format!("{}{}", super::replay::JOB_TICKET, key.memo_id()),
+            None => super::replay::fresh_ticket(),
+        };
+        // A repeat under its step key answers the first's ticket, and
+        // nothing is sent again (FIX 2245).
+        let claimed = replay.is_some();
+        if claimed && let Some(model) = self.claim_submit(&id, &request.model, true) {
+            return Ok(MediaTicket {
+                job: id,
+                model: model.to_string(),
+                operation,
+            });
+        }
         // A media call's one deadline is its caller's (FIX 8134), as
         // `submit`'s walk.
         let deadline = crate::models::CallDeadline::Open;
         let walked = ladder.media_by(run, request, None, None, deadline);
-        let MediaAnswer::Job(job) = walked.await? else {
+        let answer = match walked.await {
+            Ok(answer) => answer,
+            Err(error) => {
+                if claimed {
+                    self.unclaim(&id, false);
+                }
+                // What its settled rungs charged reaches its scope (FIX 11496).
+                self.book_failed_submit(scope.as_ref(), run);
+                return Err(error);
+            }
+        };
+        let MediaAnswer::Job(job) = answer else {
+            if claimed {
+                self.unclaim(&id, false);
+            }
+            self.book_failed_submit(scope.as_ref(), run);
             return Err(FatalLlmError::EmptyResponse.into());
         };
-        let id = super::replay::fresh_ticket();
+        // A scoped job is booked from its own guard: its walk's settled
+        // rungs now, before its row is kept, and its end when its permit
+        // settles (FIX 11496).
+        if let Some(scope) = &scope {
+            self.hold_scoped(&id, scope.clone(), run.clone());
+        }
         let line = JobLine {
             run: run.run().to_owned(),
+            scope,
         };
         let ticket = MediaTicket {
             job: id.clone(),
@@ -212,10 +280,16 @@ impl MediaRuntime {
             drop(held);
             return self.ended(id);
         }
+        let charges = held.charges();
         let state = held.poll().await;
         if let Ok(ended) = &state
             && ended.ended()
         {
+            // Its end settled its permit: what that charged reaches the
+            // scope that funds it before its end is written (FIX 11496).
+            if charges {
+                self.book_job_scope(id);
+            }
             return self.complete_kept_job(id, ended);
         }
         state

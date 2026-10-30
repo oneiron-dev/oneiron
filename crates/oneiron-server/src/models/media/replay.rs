@@ -24,7 +24,7 @@ use super::{
 };
 
 /// What a job's ticket begins with.
-const JOB_TICKET: &str = "job_";
+pub(super) const JOB_TICKET: &str = "job_";
 
 /// What a replayed call's kept answer begins with: no job a poll reaches.
 const REPLAY_TICKET: &str = "memo_";
@@ -170,30 +170,60 @@ impl MediaRuntime {
         actor: Option<oneiron::EntityId>,
         replay: Option<MediaReplayKey>,
     ) -> LlmResult<MediaResponse> {
-        let (Some(key), None, Some(store)) = (&replay, voices, &self.store) else {
+        let (Some(key), None) = (&replay, voices) else {
             return self.run_in(request, voices, payer, sources).await;
         };
+        if let Some(answer) = self.replay_answer(key) {
+            return answer;
+        }
+        let kept = request.clone();
+        let response = self.run_in(request, None, payer.clone(), sources).await?;
+        self.keep_replay_answer(key, &kept, &response, actor, payer);
+        Ok(response)
+    }
+
+    /// The answer the call `key` knows keeps for its repeats, when one
+    /// answers: the first's answer while it is fresh, or that an erase
+    /// took it. None when nothing kept answers, or nothing is kept.
+    pub(super) fn replay_answer(&self, key: &MediaReplayKey) -> Option<LlmResult<MediaResponse>> {
+        let store = self.store.as_ref()?;
         let id = format!("{REPLAY_TICKET}{}", key.memo_id());
         match store.get(&id) {
-            Some(KeptJob::Erased) => return Err(FatalLlmError::ResponseErased.into()),
+            Some(KeptJob::Erased) => Some(Err(FatalLlmError::ResponseErased.into())),
             Some(KeptJob::Row(row)) if row.erased => {
-                return Err(FatalLlmError::ResponseErased.into());
+                Some(Err(FatalLlmError::ResponseErased.into()))
             }
             Some(KeptJob::Row(JobRow {
                 ended: Some(MediaJobState::Done { response }),
                 replay_until_s: Some(until),
                 ..
-            })) if until > now_s() => return Ok(response),
-            _ => {}
+            })) if until > now_s() => Some(Ok(response)),
+            _ => None,
         }
-        let kept = request.clone();
-        let response = self.run_in(request, None, payer.clone(), sources).await?;
+    }
+
+    /// Keeps `response` as the answer the call `key` knows, for its repeats:
+    /// stamped with `actor` and its request's subject, as a job's row is,
+    /// unpaid, answered until it expires. A write the vault refuses keeps
+    /// nothing, and the call still answers.
+    pub(super) fn keep_replay_answer(
+        &self,
+        key: &MediaReplayKey,
+        request: &MediaRequest,
+        response: &MediaResponse,
+        actor: Option<oneiron::EntityId>,
+        payer: Option<PayerPerson>,
+    ) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let id = format!("{REPLAY_TICKET}{}", key.memo_id());
         let row = JobRow {
             model: response.model.clone(),
-            operation: kept.operation,
+            operation: request.operation,
             provider_job: None,
-            stamps: submit_stamps(actor, &kept),
-            request: kept,
+            stamps: submit_stamps(actor, request),
+            request: request.clone(),
             ended: Some(MediaJobState::Done {
                 response: response.clone(),
             }),
@@ -207,12 +237,11 @@ impl MediaRuntime {
         if let Err(error) = store.put(&id, row) {
             tracing::warn!(%error, "a media call's answer was not kept for its repeats");
         }
-        Ok(response)
     }
 
     /// Holds `id` as a submit going out now, unless it is held here already
     /// or, when `keyed`, kept: then the model its ticket names.
-    fn claim_submit(&self, id: &str, model: &ModelId, keyed: bool) -> Option<ModelId> {
+    pub(super) fn claim_submit(&self, id: &str, model: &ModelId, keyed: bool) -> Option<ModelId> {
         let mut jobs = self.lock_jobs();
         if let Some(held) = jobs.get(id) {
             return Some(match held {
@@ -242,7 +271,7 @@ impl MediaRuntime {
 
     /// Lets go of the submit `id` that went out and started no job: its
     /// intent row, when kept, goes too, so a repeat goes out afresh.
-    fn unclaim(&self, id: &str, intent: bool) {
+    pub(super) fn unclaim(&self, id: &str, intent: bool) {
         let mut jobs = self.lock_jobs();
         if intent
             && let Some(store) = &self.store
@@ -293,31 +322,53 @@ impl MediaRuntime {
 
     /// Sends kept job `id`'s submit again under its key, to a wire that
     /// dedupes by it, so the job its first submit started is learned and
-    /// taken up on a fresh permit (FIX 2248). A send that fails leaves it to
-    /// its next poll; one that starts no job ends it as lost.
+    /// taken up on a fresh permit (FIX 2248). A job a spend scope funds is
+    /// sent on a fresh guard of that scope's own, as its take-up runs
+    /// ([`Self::job_run`]), and what that guard used is booked on the scope
+    /// when its permit settles (FIX 11726); any other goes on the media
+    /// meter. A send that fails leaves it to its next poll, its scope booked
+    /// with what the send charged; one that starts no job ends it as lost.
     pub(super) async fn resubmit_kept(&self, id: &str, row: JobRow) -> LlmResult<MediaJobState> {
         if self.claim_submit(id, &row.model, false).is_some() {
             return Ok(MediaJobState::Queued);
         }
-        let sent = self.walk(
-            row.request.clone(),
-            None,
-            row.payer.clone(),
-            None,
-            Some(id.to_owned()),
-        );
-        let answer = match sent {
-            Ok(walk) => walk.await,
-            Err(error) => Err(error),
+        let answer = if row.line.as_ref().is_some_and(|line| line.scope.is_some()) {
+            match self
+                .job_run(id, &row)
+                .and_then(|run| Ok((self.ladder(&row.request)?, run)))
+            {
+                Ok((ladder, run)) => {
+                    let run = run.submit_keyed(Some(id.to_owned()));
+                    let deadline = crate::models::CallDeadline::Open;
+                    ladder
+                        .media_by(&run, row.request.clone(), None, None, deadline)
+                        .await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            let sent = self.walk(
+                row.request.clone(),
+                None,
+                row.payer.clone(),
+                None,
+                Some(id.to_owned()),
+            );
+            match sent {
+                Ok(walk) => walk.await,
+                Err(error) => Err(error),
+            }
         };
         let job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
                 self.lock_jobs().remove(id);
+                self.book_job_scope(id);
                 return Ok(self.lost(id, row));
             }
             Err(error) => {
                 self.lock_jobs().remove(id);
+                self.book_job_scope(id);
                 return Err(error);
             }
         };

@@ -137,6 +137,10 @@ pub(crate) struct McpCodeModeVerbs {
     run_id: oneiron::EntityId,
     /// This run's browser and desktop.
     guests: RunGuests,
+    /// The `execute_code` call's attempt collector, taken where the door is
+    /// built: each verb runs on a spawned task, and a live-run hold made
+    /// there reaches the call's receipt only through this (FIX 10938).
+    collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
 }
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to
@@ -307,6 +311,9 @@ struct VaultLibrary {
     /// The admission job its filing files for (CUA E8b): placed by rule
     /// alone, and kept against the job in the filing's write.
     admission: Option<oneiron::browser_library::ProgramAdmissionFiling>,
+    /// The envelope its filings' anchor claims are written under (FIX
+    /// 10513); none where its caller keeps no filing claim.
+    filing: Option<oneiron::WriteEnvelope>,
 }
 
 /// The fresh browser a proposal's replay runs on (CUA E1): a new guest for

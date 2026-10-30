@@ -1,14 +1,17 @@
 //! A secret read from stdin (FIX 1490). From a terminal, the command asks
 //! for it on stderr and turns the terminal's echo off until the read ends,
 //! however it ends, so the secret never shows on the screen or in its
-//! scrollback. A signal that ends the process mid-read (Ctrl-C) turns the
-//! echo back on before it ends it. From a pipe or a file it is read as
-//! given, as before. The caller reads into its own wiped buffer; nothing is
-//! copied here.
+//! scrollback. A signal (Unix) or a console control event (Windows) that
+//! ends the process mid-read (Ctrl-C) turns the echo back on before it ends
+//! it. From a pipe or a file it is
+//! read as given, as before. The caller reads into its own wiped buffer;
+//! nothing is copied here.
 
 use std::io::{self, Read};
 #[cfg(unix)]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 /// How much of a terminal's input one secret is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,13 +76,24 @@ impl<R: Read> Read for OneLine<R> {
     }
 }
 
-/// The echo bits a hidden read turned off, and whether one is under way:
-/// what a signal that ends the process turns back on, since it runs no
-/// `Drop` ([`restore_echo_then_end`]).
+/// The echo bits a hidden read turned off: what a signal that ends the
+/// process turns back on, since it runs no `Drop`
+/// ([`restore_echo_then_end`]).
 #[cfg(unix)]
 static ECHO_BITS: AtomicU64 = AtomicU64::new(0);
-#[cfg(unix)]
+
+/// Whether a hidden read is under way: what an ending signal (Unix) or a
+/// console control event (Windows) restores, since neither runs `Drop`.
+#[cfg(any(unix, windows))]
 static ECHO_HIDDEN: AtomicBool = AtomicBool::new(false);
+
+/// The console a hidden read quieted, and the mode it had: what a console
+/// control event puts back when it ends the process, since that runs no
+/// `Drop` ([`restore_echo_then_end`]).
+#[cfg(windows)]
+static ECHO_CONSOLE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static ECHO_SAVED_MODE: AtomicU32 = AtomicU32::new(0);
 
 /// The signals whose default action ends the process while a read is
 /// hidden: Ctrl-C, Ctrl-\, a hangup and a termination.
@@ -193,11 +207,98 @@ extern "C" fn restore_echo_then_end(signal: libc::c_int) {
     }
 }
 
-/// No terminal echo control off Unix: stdin is read as given.
-#[cfg(not(unix))]
+/// Stdin's console with its echo turned off, turned back on when dropped,
+/// and by [`restore_echo_then_end`] when a console control event ends the
+/// process first (FIX 11387, FIX 11719).
+#[cfg(windows)]
+struct EchoOff {
+    console: windows_sys::Win32::Foundation::HANDLE,
+    saved: u32,
+}
+
+#[cfg(windows)]
+impl EchoOff {
+    /// Turns echo off when stdin is a console; `None` for a pipe or a file.
+    fn on_terminal() -> io::Result<Option<Self>> {
+        use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, TRUE};
+        use windows_sys::Win32::System::Console::{
+            ENABLE_ECHO_INPUT, GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE,
+            SetConsoleCtrlHandler, SetConsoleMode,
+        };
+        // SAFETY: `GetStdHandle` reads the process's standard input handle
+        // and touches no memory of ours.
+        let console = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        if console == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let mut saved: u32 = 0;
+        // SAFETY: `GetConsoleMode` writes the mode it is handed and nothing
+        // else; a pipe or a file is no console, so it fails and stdin is
+        // read as given.
+        if unsafe { GetConsoleMode(console, &mut saved) } == 0 {
+            return Ok(None);
+        }
+        ECHO_CONSOLE.store(console as usize, Ordering::SeqCst);
+        ECHO_SAVED_MODE.store(saved, Ordering::SeqCst);
+        ECHO_HIDDEN.store(true, Ordering::SeqCst);
+        // From here the guard puts the mode and the handler back.
+        let guard = Self { console, saved };
+        // SAFETY: `SetConsoleCtrlHandler` registers the routine it is
+        // handed and touches no memory of ours.
+        unsafe {
+            SetConsoleCtrlHandler(Some(restore_echo_then_end), TRUE);
+        }
+        // SAFETY: `SetConsoleMode` reads the mode it is handed and nothing else.
+        if unsafe { SetConsoleMode(console, saved & !ENABLE_ECHO_INPUT) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Some(guard))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for EchoOff {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::FALSE;
+        use windows_sys::Win32::System::Console::{SetConsoleCtrlHandler, SetConsoleMode};
+        // SAFETY: `SetConsoleMode` reads the mode it is handed and nothing else.
+        unsafe {
+            SetConsoleMode(self.console, self.saved);
+        }
+        ECHO_HIDDEN.store(false, Ordering::SeqCst);
+        // SAFETY: `SetConsoleCtrlHandler` unregisters the routine it is
+        // handed and touches no memory of ours.
+        unsafe {
+            SetConsoleCtrlHandler(Some(restore_echo_then_end), FALSE);
+        }
+    }
+}
+
+/// A console control event arrived while a read was hidden: put the
+/// console's mode back, then decline the event so its default action ends
+/// the process, as the Unix handler re-raises its signal. Runs on the
+/// system's control thread; only the mode write and atomic loads.
+#[cfg(windows)]
+unsafe extern "system" fn restore_echo_then_end(_event: u32) -> i32 {
+    use windows_sys::Win32::Foundation::{FALSE, HANDLE};
+    use windows_sys::Win32::System::Console::SetConsoleMode;
+    if ECHO_HIDDEN.load(Ordering::SeqCst) {
+        let console = ECHO_CONSOLE.load(Ordering::SeqCst) as HANDLE;
+        let saved = ECHO_SAVED_MODE.load(Ordering::SeqCst);
+        // SAFETY: `SetConsoleMode` reads the mode it is handed and nothing
+        // else; the handle is stdin's console while a read is hidden.
+        unsafe {
+            SetConsoleMode(console, saved);
+        }
+    }
+    FALSE
+}
+
+/// No terminal echo control off Unix and Windows: stdin is read as given.
+#[cfg(not(any(unix, windows)))]
 struct EchoOff;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl EchoOff {
     fn on_terminal() -> io::Result<Option<Self>> {
         Ok(None)

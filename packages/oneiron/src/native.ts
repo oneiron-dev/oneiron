@@ -77,8 +77,13 @@ vaultIdentityMention(input: unknown): unknown
 vaultShapeRead(input: unknown): unknown
 vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown
+vaultShapePlanCard(input: unknown): unknown
+vaultShapeItemsReceipt(input: unknown): unknown
+vaultShapeGroups(input: unknown): unknown
+vaultShapeGroupsResolve(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
+selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
@@ -174,7 +179,10 @@ vaultRetrievalPolicyEvaluate(input: unknown): unknown
 vaultRetrievalPolicyAdmit(input: unknown): unknown
 vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
+vaultExportTransferRead(input: unknown): unknown
+vaultExportTransferRelease(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+selfActor(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
@@ -208,6 +216,7 @@ vaultCampaignProgramUpdate(input: unknown): unknown
 vaultCampaignProgramArchive(input: unknown): unknown
 vaultTurnProgramsArm(input: unknown): unknown
 vaultTurnProgramsDisarm(input: unknown): unknown
+vaultTurnProgramsRebind(input: unknown): unknown
 selfSavedQueryCreate(input: unknown): unknown
 selfSavedQueryRead(input: unknown): unknown
 selfSavedQueryUpdate(input: unknown): unknown
@@ -233,6 +242,7 @@ vaultWeaveOwnerDigestRender(input: unknown): unknown
 vaultInboxConcernsReview(input: unknown): unknown
 vaultInboxLens(input: unknown): unknown
 vaultInboxGroups(input: unknown): unknown
+vaultInboxGroupsResolve(input: unknown): unknown
 vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
@@ -332,6 +342,8 @@ vaultMeshBindMachine(input: unknown): unknown
 vaultMeshSetAlpnGrant(input: unknown): unknown
 vaultMeshRevokeMachine(input: unknown): unknown
 vaultMeshDial(input: unknown): unknown
+vaultOutboxDivergedList(input: unknown): unknown
+vaultOutboxDivergedAnswer(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
@@ -474,6 +486,7 @@ vaultCoachTrainingOffersCandidatesPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
+vaultCoachTrainingOffersSources(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
@@ -576,6 +589,7 @@ vaultSecretsLiftHistory(input: unknown): unknown
 vaultSecretsRegister(input: unknown): unknown
 vaultSecretsRotate(input: unknown): unknown
 vaultSecretsRewrap(input: unknown): unknown
+vaultSecretsRevoke(input: unknown): unknown
 vaultSecretsCustodyGet(input: unknown): unknown
 vaultSecretsCustodySubmit(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
@@ -688,6 +702,7 @@ vaultCodeImportsGet(input: unknown): unknown
 vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
+vaultCodeOriginMirrorPlan(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
 vaultCodeOriginMirrorStrategy(input: unknown): unknown
 vaultCodeOriginMirrorClear(input: unknown): unknown
@@ -1186,6 +1201,10 @@ vaultIdentityResolve(input: unknown): unknown
 vaultIdentityEventsGet(input: unknown): unknown
 vaultIdentityProposalsResolve(input: unknown): unknown
 vaultIdentityProposalsForPair(input: unknown): unknown
+vaultCustodyMembersDrainBegin(input: unknown): unknown
+vaultCustodyMembersDrainCommit(input: unknown): unknown
+vaultCustodyMembersDrainFolder(input: unknown): unknown
+vaultCustodyMembersReenrol(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

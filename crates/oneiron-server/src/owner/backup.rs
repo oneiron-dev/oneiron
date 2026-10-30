@@ -150,7 +150,7 @@ fn vault_label(vault_path: &Path) -> String {
 }
 
 /// One backup file.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, schemars::JsonSchema)]
 pub(crate) struct BackupRecord {
     pub(crate) file: String,
     pub(crate) path: PathBuf,
@@ -164,7 +164,7 @@ pub(crate) struct BackupRecord {
 }
 
 /// What `backup` did.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BackupOutcome {
     pub(crate) backup: BackupRecord,
     /// BLAKE3 of the checkpoint image; a rehearsal reports the same id.
@@ -376,6 +376,61 @@ pub(crate) fn prune(
     };
     handoff::check_backlog(vault, &plan.backlog_checked, &pending);
     Ok(pruned)
+}
+
+/// Deletes every backup of a vault its Owners deleted once the marker's
+/// `backup_retain_until` has passed on the vault's clock (OF-163, FIX 1931);
+/// returns their names. `None` while that has not happened: no marker, or a
+/// deadline still ahead, when the schedule backs up and prunes as before.
+/// A standing legal hold defers the drop as it holds [`prune`]: the holds
+/// are read again and each unlink and directory sync runs while the vault's
+/// writer is held. Neither `keep`, a held prune nor a handoff pin keeps one:
+/// the Owners' deletion let them go, and their stage acks go with them. The
+/// caller holds the backup lock.
+pub(crate) fn prune_deleted_vault_backups(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+) -> anyhow::Result<Option<Vec<String>>> {
+    let Some(deletion) = vault.shared_vault_deletion()? else {
+        return Ok(None);
+    };
+    if vault.now_recorded_at() < deletion.backup_retain_until {
+        return Ok(None);
+    }
+    if vault.legal_hold_keeps_backups()? {
+        return Ok(Some(Vec::new()));
+    }
+    let records = list(plan)?;
+    let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
+        let mut dropped = Vec::new();
+        if holds.keeps_backups() {
+            return Ok(dropped);
+        }
+        for record in records {
+            match std::fs::remove_file(&record.path) {
+                Ok(()) => {
+                    checkpoint_fact::remove(&plan.dir, &record.file);
+                    dropped.push(record.file);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if !dropped.is_empty() {
+            sync_dir(&plan.dir)?;
+        }
+        Ok(dropped)
+    })??;
+    for file in &gone {
+        if let Err(error) = vault.release_backup_copy(&plan.dir.join(file)) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a deleted vault's backup body holder was not released; its bodies stay kept"
+            );
+        }
+    }
+    handoff::sweep_orphan_stage_acks(plan);
+    Ok(Some(gone))
 }
 
 /// Live entity counts by registered kind, zero kinds omitted.

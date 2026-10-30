@@ -31,10 +31,9 @@ pub(super) async fn facade_call_receipt(
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
     // The handler reads these same bytes. A body past the facade's limit
     // reaches it empty and is refused there as malformed, as it was before.
-    let bytes = axum::body::to_bytes(body, FACADE_MAX_BODY_BYTES)
-        .await
-        .unwrap_or_default();
-    let request = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+    // A custody value's body is wiped and redacted here (FIX 11442).
+    let (bytes, request) =
+        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
     // FIX 4280: a call serving a room NOTE to a caller verified in its room
     // keeps none either, judged on arrival, before a close drops its hold.
     let anonymous = anonymous
@@ -52,9 +51,16 @@ pub(super) async fn facade_call_receipt(
     // OF-568: what the call reads, captured before it runs. OF-568 L4: the
     // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
-    let (mut response, attempt) =
-        call_receipt::attempt_witnessed(next.run(Request::from_parts(parts, Body::from(bytes))))
-            .await;
+    // FIX 10938: a row an action runs in process runs inside its own hold.
+    let outer = parts
+        .extensions
+        .get::<call_receipt::HeldOuterAttempt>()
+        .map(|held| held.0);
+    let (mut response, attempt) = call_receipt::attempt_witnessed_inside(
+        outer,
+        next.run(Request::from_parts(parts, Body::from(bytes))),
+    )
+    .await;
     let mut refusal = response.extensions_mut().remove::<FacadeApiError>();
     let status = response.status();
     let mut result_digest = None;

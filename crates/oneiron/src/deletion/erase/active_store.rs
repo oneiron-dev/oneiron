@@ -67,10 +67,9 @@ impl Vault {
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         // Its scope outlives the row, for the tombstone's export (FIX 10161).
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, request_id);
-        // An erased pack source halts the catalog routes bound to it (FIX 6034).
-        if erase {
-            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
-        }
+        // A deleted or erased pack source halts the catalog routes bound to
+        // it (FIX 6034, 6086).
+        self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased world takes its keys with it (fix 7); a deleted one
         // keeps them, so it restores from old bundles.
         if erase {
@@ -100,6 +99,20 @@ impl Vault {
                 id.as_bytes(),
                 self.store.clock.now_recorded_at(),
                 true,
+            )?;
+            crate::runtime_hooks::scrub_hook_source_in_txn(
+                self,
+                wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
+            // A privacy erase retires the owner's checkpoint payload
+            // leaves; every other delete keeps them (KS7-4).
+            crate::deletion::checkpoint_payload::settle_checkpoint_payloads_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                request_id,
             )?;
         }
         // Capture before tear: a project's signed history outlives its row.
@@ -170,9 +183,18 @@ impl Vault {
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
         let note_removed = crate::note::erase::purge(self, wtxn, id)?;
-        ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
-        if had_graph_mutation {
+        if erase {
+            // Engine 00:43 for parked L01: destructive erase removes the derived
+            // payloads, never just their freshness marker, and always advances
+            // the graph version once, even for an isolated row.
+            ppr::purge_ppr_for_erase_in_txn(&self.store, wtxn, id, &neighbors)?;
+            self.store.clear_ppr_community_cache_in_txn(wtxn)?;
             ppr::increment_graph_version(&self.store, wtxn)?;
+        } else {
+            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
+            if had_graph_mutation {
+                ppr::increment_graph_version(&self.store, wtxn)?;
+            }
         }
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
@@ -210,12 +232,27 @@ impl Vault {
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         // Its scope outlives the body (see the purge); its tombstone's capture binds it.
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
-        // An erased pack source halts the catalog routes bound to it (FIX 6034).
+        // A deleted or erased pack source halts the catalog routes bound to
+        // it (FIX 6034, 6086).
+        self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased custody record is fenced before its body is scrubbed (KS-6
         // part 2).
         if erase {
-            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
             self.fence_erased_credential_in_txn(wtxn, id)?;
+            crate::runtime_hooks::scrub_hook_source_in_txn(
+                self,
+                wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
+            // An erase's scrub settles the owner's checkpoint payload leaves
+            // by the reason its door reserved (KS7-4).
+            crate::deletion::checkpoint_payload::settle_checkpoint_payloads_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                None,
+            )?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;

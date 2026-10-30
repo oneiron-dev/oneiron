@@ -289,6 +289,21 @@ impl ManagedOwnerSession {
     }
 }
 
+/// The member a held MCP socket serves (FIX 1302 stage 2): the person his
+/// supervisor signed the socket's upgrade for (`ManagedPersonAction`). Not
+/// [`ManagedPersonHolder`], which signs one request and its exact body: this
+/// signs no later body. It names whose socket a call came on, and each call
+/// reaches the member doors alone, where the engine judges him again.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedPersonSession(pub(crate) oneiron::EntityId);
+
+impl ManagedPersonSession {
+    /// The member whose socket this is.
+    pub(crate) fn holder(&self) -> oneiron::EntityId {
+        self.0
+    }
+}
+
 /// The listener a request reached: the API's, or the artifact origin's,
 /// which serves artifact reads alone.
 #[derive(Clone, Copy)]
@@ -334,7 +349,8 @@ fn owner_attestable(surface: Surface, method: &Method, path: &str) -> bool {
 /// (WILL-PLAN L14 row 01): `GET /api/search/vector`, `/api/search/text`,
 /// `/api/entity/{id}`, `/api/edges/{id}`, `/api/core/discover`,
 /// `/api/booking/{page_token}/agent-instructions`, `/v1/llm/defaults`,
-/// `/v1/ai/waves/{attempt}` and `/v1/ai/video/{job}`, each with its HEAD
+/// `/v1/llm/defaults/proposals`, `/v1/ai/waves/{attempt}` and
+/// `/v1/ai/video/{job}`, each with its HEAD
 /// (FIX 9496); `POST /v1/core/pairing/links`, `/v1/core/slips/revoke`,
 /// `/v1/core/org-admin/{org}/policy`, the four
 /// `/api/booking/{page_token}/{availability|book|reschedule|cancel}` and
@@ -349,7 +365,11 @@ fn console_attestable(method: &Method, path: &str) -> bool {
     if super::attested_routes::registered_method_matches(method, Method::GET.as_str()) {
         matches!(
             path,
-            "/api/search/vector" | "/api/search/text" | "/api/core/discover" | "/v1/llm/defaults"
+            "/api/search/vector"
+                | "/api/search/text"
+                | "/api/core/discover"
+                | "/v1/llm/defaults"
+                | "/v1/llm/defaults/proposals"
         ) || between("/api/entity/", "")
             || between("/api/edges/", "")
             || between("/api/booking/", "/agent-instructions")

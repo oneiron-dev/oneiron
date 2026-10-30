@@ -118,17 +118,21 @@ pub enum OriginKeepRefKind {
     /// An exact publish request (FIX 6866) holds the commit it will push
     /// until it settles.
     PublishRequest,
+    /// An open automatic mirror push plan (FIX 7173) holds each object it
+    /// still sends until it settles.
+    MirrorWork,
 }
 
 impl OriginKeepRefKind {
     /// Every kind, in the order the shared-count law walks them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Publication,
         Self::Change,
         Self::Conflict,
         Self::Recovery,
         Self::Snapshot,
         Self::PublishRequest,
+        Self::MirrorWork,
     ];
 
     /// The pinned on-disk spelling.
@@ -141,6 +145,7 @@ impl OriginKeepRefKind {
             Self::Recovery => "recovery",
             Self::Snapshot => "snapshot",
             Self::PublishRequest => "publish_request",
+            Self::MirrorWork => "mirror_work",
         }
     }
 

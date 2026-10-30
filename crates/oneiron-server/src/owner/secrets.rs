@@ -28,9 +28,10 @@ use zeroize::{Zeroize, Zeroizing};
 
 use super::{OwnerError, OwnerResult};
 
-/// The largest body read: a name, its bindings and one base64 value, far
-/// above any key or certificate.
-const BODY_LIMIT: usize = 1 << 20;
+/// The first buffer a body is read into when it declares no smaller size:
+/// a name, its bindings and one base64 value, far above any key or
+/// certificate. A larger body grows past it (FIX 11144).
+const BODY_START: usize = 1 << 20;
 
 /// The ref a manifest is read at when the request names none.
 const DEFAULT_MANIFEST_REF: &str = "refs/heads/main";
@@ -42,8 +43,9 @@ const DEFAULT_MANIFEST_REF: &str = "refs/heads/main";
 /// Read by [`RotateSecret::read`] rather than an extractor, because every
 /// buffer that holds the value or its encoding has to be wiped on every path,
 /// a refused request included. Above the transport there are three: the
-/// frames the body hands over, the one buffer they are copied into, and the
-/// decoded value. Parsing borrows from the second and copies nothing.
+/// frames the body hands over, the buffer they are copied into (each one it
+/// grows out of wiped as it is left), and the decoded value. Parsing borrows
+/// from the second and copies nothing.
 pub(crate) struct RotateSecret {
     /// The secret's custody name.
     name: String,
@@ -68,6 +70,32 @@ struct RotateFields<'a> {
     /// secret's live permits when empty.
     #[serde(default)]
     recipients: Vec<String>,
+}
+
+/// The wire shape of [`RotateFields`], for the OpenAPI schema only (FIX 11656):
+/// `POST /v1/owner/secrets/rotate`'s body. Never read at runtime; the wiping
+/// reader parses the body.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the rotate body's wire shape")]
+struct RotateSecretBody {
+    name: String,
+    /// The new value as standard base64.
+    value_base64: String,
+    /// The install that holds the secret and rotates it, as 32 hex; this
+    /// install when absent.
+    #[serde(default)]
+    holder: Option<String>,
+    /// The installs permitted to hold the new value, as 32 hex each; the
+    /// secret's live permits when empty.
+    #[serde(default)]
+    recipients: Vec<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/rotate`'s body (FIX 11656):
+/// [`RotateSecretBody`].
+pub(crate) fn rotate_secret_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RotateSecretBody>()
 }
 
 /// The holder and recipients a body names, as machine ids.
@@ -99,6 +127,60 @@ impl RotateSecret {
             name: secret_name(fields.name)?,
             value,
             plan: custody_plan(fields.holder, fields.recipients)?,
+        })
+    }
+}
+
+/// One kept value re-entered (FIX 7404): a found key's handle and the value
+/// the owner ruled no secret, as standard base64. Read like [`RotateSecret`],
+/// and for the same reason.
+pub(crate) struct ReenterKeptValue {
+    pub(crate) handle: String,
+    pub(crate) value: Zeroizing<Vec<u8>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReenterFields<'a> {
+    handle: String,
+    /// Raw, as in [`RotateFields`].
+    #[serde(borrow)]
+    value_base64: &'a RawValue,
+}
+
+/// The wire shape of [`ReenterFields`], for the OpenAPI schema only:
+/// `POST /v1/owner/secrets/found/re-enter`'s body. Never read at runtime;
+/// the wiping reader parses the body.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the re-enter body's wire shape")]
+struct ReenterKeptValueBody {
+    /// The found key's handle, such as `sc12`.
+    handle: String,
+    /// The kept value as standard base64.
+    value_base64: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/found/re-enter`'s body:
+/// [`ReenterKeptValueBody`].
+pub(crate) fn reenter_kept_value_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReenterKeptValueBody>()
+}
+
+impl ReenterKeptValue {
+    pub(crate) async fn read(body: Body) -> OwnerResult<Self> {
+        let body = OwnedBody::read(body).await?;
+        let fields: ReenterFields<'_> =
+            serde_json::from_slice(&body.0).map_err(|_| invalid_body())?;
+        let value = decode_value(fields.value_base64)?;
+        if value.is_empty() {
+            return Err(OwnerError::Invalid(
+                "a re-entered kept value needs a value".into(),
+            ));
+        }
+        Ok(Self {
+            handle: fields.handle,
+            value,
         })
     }
 }
@@ -172,7 +254,7 @@ struct RegisterFields<'a> {
     recipients: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct BindingFields {
     effector: String,
@@ -183,7 +265,7 @@ struct BindingFields {
     tier_ceiling: Option<u8>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ManifestFields {
     repo: String,
@@ -250,6 +332,41 @@ impl RegisterSecret {
     }
 }
 
+/// The wire shape of [`RegisterFields`], for the OpenAPI schema only (FIX 11656):
+/// `POST /v1/owner/secrets/register`'s body. Never read at runtime; the wiping
+/// reader parses the body.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the register body's wire shape")]
+struct RegisterSecretBody {
+    name: String,
+    /// `custody-portable`, `custody-device-bound` or `cross-vault`.
+    class: String,
+    /// The custody ladder's rung: 0 doored, 1 leased, 2 local-registered.
+    rung: u8,
+    #[serde(default)]
+    device_only: bool,
+    #[serde(default)]
+    bindings: Vec<BindingFields>,
+    #[serde(default)]
+    manifest: Option<ManifestFields>,
+    /// The value as standard base64.
+    value_base64: String,
+    /// A portable secret's holder, as 32 hex; this install when absent.
+    #[serde(default)]
+    holder: Option<String>,
+    /// The installs permitted to hold a portable secret, as 32 hex each;
+    /// its holder alone when empty.
+    #[serde(default)]
+    recipients: Vec<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/register`'s body (FIX 11656):
+/// [`RegisterSecretBody`].
+pub(crate) fn register_secret_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RegisterSecretBody>()
+}
+
 fn rung(grade: u8) -> OwnerResult<CustodyTier> {
     CustodyTier::from_u8(grade).ok_or_else(|| {
         OwnerError::Invalid("a rung is 0 (doored), 1 (leased) or 2 (local-registered)".into())
@@ -276,34 +393,43 @@ impl std::fmt::Debug for RotateSecret {
     }
 }
 
-/// The body in the one buffer this request owns, wiped when it drops. It is
-/// sized before the first byte arrives and never grows: growing would move
-/// the bytes and free the old allocation unwiped.
+/// The body in a buffer this request owns, wiped when it drops. It is sized
+/// before the first byte arrives, to the declared size up to [`BODY_START`].
+/// A body past it is read on, never refused (FIX 11144): the bytes move to a
+/// larger buffer and the one they leave is wiped before it is freed, since a
+/// `Vec` that grew itself would free its old allocation unwiped.
 struct OwnedBody(Vec<u8>);
 
 impl OwnedBody {
     async fn read(body: Body) -> OwnerResult<Self> {
-        let room = match body.size_hint().upper() {
-            None => BODY_LIMIT,
-            Some(declared) => usize::try_from(declared)
-                .ok()
-                .filter(|declared| *declared <= BODY_LIMIT)
-                .ok_or_else(invalid_body)?,
-        };
+        let room = body
+            .size_hint()
+            .upper()
+            .and_then(|declared| usize::try_from(declared).ok())
+            .map_or(BODY_START, |declared| declared.min(BODY_START));
         let mut owned = Self(Vec::with_capacity(room));
         let mut frames = body.into_data_stream();
         while let Some(frame) = frames.next().await {
             let frame = frame.map_err(|_| invalid_body())?;
-            let fits = frame.len() <= owned.0.capacity() - owned.0.len();
-            if fits {
-                owned.0.extend_from_slice(&frame);
-            }
+            owned.make_room(frame.len());
+            owned.0.extend_from_slice(&frame);
             wipe_frame(frame);
-            if !fits {
-                return Err(invalid_body());
-            }
         }
         Ok(owned)
+    }
+
+    /// Room for `more` bytes past the body read so far, without the buffer
+    /// ever growing in place: a full buffer is copied into one at least twice
+    /// its size, and the one it leaves is wiped.
+    fn make_room(&mut self, more: usize) {
+        let needed = self.0.len().saturating_add(more);
+        if needed <= self.0.capacity() {
+            return;
+        }
+        let mut grown = Vec::with_capacity(needed.max(self.0.capacity().saturating_mul(2)));
+        grown.extend_from_slice(&self.0);
+        let mut left = std::mem::replace(&mut self.0, grown);
+        wipe(&mut left);
     }
 }
 
@@ -361,7 +487,7 @@ pub(crate) mod wiped {
 
 /// What a custody change recorded for the owner's other machines,
 /// value-free (WILL L04 row 04).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct CustodyReply {
     /// The custody request's shared receipt; absent when nothing was
     /// recorded.
@@ -399,7 +525,7 @@ impl From<SecretCustodyWork> for CustodyReply {
 
 /// A rotation or revoke's reply: the receipt this install wrote, when it
 /// wrote one, and what the custody request says.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct CustodyRotated {
     #[serde(flatten)]
     pub(crate) receipt: Option<Rotated>,
@@ -409,7 +535,7 @@ pub(crate) struct CustodyRotated {
 /// What the rotation or revoke changed: the generation moved, never the
 /// value. `kind` is the receipt's own (`rotated` or `revoked`, FIX 1753), so
 /// a revoke reads as one without its route.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Rotated {
     pub(crate) receipt_id: String,
     pub(crate) name: String,
@@ -421,7 +547,7 @@ pub(crate) struct Rotated {
 
 /// What the registration stored: the record's metadata and its manifest
 /// copy, never the value.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Registered {
     pub(crate) secret_id: String,
     pub(crate) name: String,
@@ -436,11 +562,23 @@ pub(crate) struct Registered {
 }
 
 /// A stored binding, its rung on the wire's 0–2 grade.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct RegisteredBinding {
     pub(crate) effector: String,
     pub(crate) tier_ceiling: u8,
     pub(crate) scopes: Vec<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/register`'s answer (FIX 11656):
+/// [`Registered`].
+pub(crate) fn registered_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Registered>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/rotate`'s and
+/// `POST /v1/owner/secrets/revoke`'s answer (FIX 11656): [`CustodyRotated`].
+pub(crate) fn custody_rotated_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CustodyRotated>()
 }
 
 pub(crate) fn register(
@@ -527,7 +665,7 @@ impl From<oneiron::secret_rotation::RotationReceipt> for Rotated {
 
 /// Reads a revoke request, `{"name"}`, into the secret's custody name. It
 /// carries no value, but the body goes through [`OwnedBody`] all the same,
-/// under the same limit as the others.
+/// read as the others are.
 pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -537,6 +675,21 @@ pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
     let body = OwnedBody::read(body).await?;
     let fields: RevokeFields = serde_json::from_slice(&body.0).map_err(|_| invalid_body())?;
     secret_name(fields.name)
+}
+
+/// The wire shape `read_revoke` reads, for the OpenAPI schema only (FIX 11656):
+/// `POST /v1/owner/secrets/revoke`'s `{"name"}` body. Never read at runtime.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the revoke body's wire shape")]
+struct RevokeSecretBody {
+    name: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/revoke`'s body (FIX 11656):
+/// [`RevokeSecretBody`].
+pub(crate) fn revoke_secret_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevokeSecretBody>()
 }
 
 /// Revokes a secret on the owner's behalf (OF-422): the record goes terminal
@@ -578,7 +731,7 @@ pub(crate) fn rewrap(
 }
 
 /// What the owner's kit push of a secret's custody did (OF-422).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct AnchorSigned {
     pub(crate) name: String,
     /// Whether a transition was written. None is for a record that stays on

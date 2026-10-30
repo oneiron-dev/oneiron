@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/answer.rs` | src | s | 6 struct · 2 enum · 2 fn | BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp, TakeoverRecord, WindowSwitch, WindowSwitchCause | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
-| `src/capture.rs` | src | s | 11 crate-vis | — | Repeat screenshots (AB-004) |
+| `src/capture.rs` | src | s | 13 crate-vis | — | Repeat screenshots (AB-004) |
 | `src/cdp.rs` | src | m | 15 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/cdp/deep.rs` | src | s | 3 crate-vis | — | A CDP message nested past serde_json's recursion limit (FIX 6963): a `DOM.getDocument` at `depth: -1` of a… |
 | `src/cdp/overrun.rs` | src | m | 14 crate-vis | — | A message past the pipe's framing threshold, and one it cannot read (FIX 6851, FIX 7988, FIX 6860, FIX 7410) |
@@ -21,7 +21,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cdp/recorder.rs` | src | m | 20 crate-vis | — | The road a demonstration's page events take to the host (CUA E9): the recorder's own binding, never the… |
 | `src/cdp/requests.rs` | src | s | 7 crate-vis | — | Each paused request's custody (FIX 7122), on the routing of both transports |
 | `src/cdp/state.rs` | src | m | 21 crate-vis | — | What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each… |
-| `src/cdp/storage.rs` | src | s | 7 crate-vis | — | What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the… |
+| `src/cdp/storage.rs` | src | s | 8 crate-vis | — | What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the… |
 | `src/cdp/websocket.rs` | src | m | 1 crate-vis | — | CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT) |
 | `src/cdp/websocket/gate.rs` | src | s | 3 crate-vis | — | The frame gate between a Lightpanda guest's bytes and its WebSocket (FIX 6851, FIX 7988). tungstenite cannot… |
 | `src/contract.rs` | src | m | 1 trait · 1 fn | BrowserDriver | — |
@@ -52,15 +52,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/driver/verbs.rs` | src | m | — | — | — |
 | `src/engine.rs` | src | s | 1 enum · 3 fn | BrowserEngine | The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt… |
 | `src/fact.rs` | src | s | 3 struct · 2 enum | ActionFact, ActionTarget, DialogAnswerFailure, NoEffectReason, ViewportPoint | What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page… |
-| `src/field.rs` | src | m | 8 struct · 4 enum · 1 trait · 2 fn · 1 const · 4 crate-vis | FieldSpec, FieldTextReason, FieldWrite, FieldWriteError, FieldWriter, FieldWritten, NoWriter, TextCheck +5 | A Fill step's text (CUA E6, DESIGN-2 §4 "Field text = A"): what one field takes, resolved in code before any… |
+| `src/field.rs` | src | s | 1 struct · 2 enum · 2 fn · 2 re-export · 1 crate-vis | FieldTextReason, TextProvenance, TextSource | A Fill step's text (CUA E6, DESIGN-2 §4 "Field text = A"): what one field takes, resolved in code before any… |
+| `src/field/run.rs` | src | m | 2 crate-vis | — | A Fill step running (moved out of `field` whole): its text resolved in order and typed, its generation, its… |
+| `src/field/spec.rs` | src | s | 2 struct · 2 crate-vis | FieldSpec, TextReference | What a Fill step types (moved out of `field` whole): the step's text sources and their check before the… |
+| `src/field/write.rs` | src | s | 5 struct · 2 enum · 1 trait · 1 const | FieldWrite, FieldWriteError, FieldWriter, FieldWritten, NoWriter, TextCheck, TextCheckReply, TextVerdict | The host's field writer (moved out of `field` whole): one model call that writes a field's text, and the… |
 | `src/lib.rs` | src | m | 1 enum · 1 fn · 1 const · 1 mod · 27 re-export | BrowserError | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
-| `src/library.rs` | src | m | 6 struct · 2 enum · 1 trait · 4 fn · 6 re-export · 12 crate-vis | LibraryRunInput, LibraryRunOutput, ProposeInput, ProposeOutput, SecretArg, WorkflowCheck, WorkflowLibrary, WorkflowProgram +1 | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
+| `src/library.rs` | src | s | 9 re-export · 7 crate-vis | — | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
 | `src/library/admission.rs` | src | s | 3 struct · 4 enum · 1 fn | AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal, WorkflowSeed | What an admission checks past the two pages, and what the library keeps of it (CUA E1): the held-out values… |
 | `src/library/cards.rs` | src | s | 8 struct | LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, RetiredCard | The library's cards (OF-598): a program as a planner reads it, and the inputs and answers of `find`… |
 | `src/library/draft.rs` | src | m | 7 struct · 3 enum · 1 fn · 1 crate-vis | DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput, DraftPage, DraftStep, PressedThrough +2 | A draft of a proposal from a run's own steps (CUA E7; DESIGN-2 §3 "The agent"), at the Rule tier: no model… |
 | `src/library/durable.rs` | src | s | 2 crate-vis | — | A draft as solved-run evidence keeps it (CUA E8a; OF-560 secret custody): no secret's value, and no handle… |
-| `src/library/live_run.rs` | src | m | 2 struct · 1 enum · 4 fn · 3 crate-vis | FiledWorkflow, LibraryRunMode, RunOutcome | A library run (CUA E2): strict, where only a rule answers its routine steps and a step only a model could… |
-| `src/library/secret_slots.rs` | src | m | 1 struct · 15 crate-vis | SecretParam | A program's secret slots (FIX 8028, OF-560; ARCH-0069 secret custody): a program never holds a secret, nor… |
+| `src/library/live_run.rs` | src | m | 4 struct · 2 enum · 4 fn · 3 crate-vis | FiledWorkflow, LibraryRunInput, LibraryRunMode, LibraryRunOutput, RunOutcome, SecretArg | A library run (CUA E2): strict, where only a rule answers its routine steps and a step only a model could… |
+| `src/library/program.rs` | src | s | 1 struct · 1 trait · 4 fn | WorkflowLibrary, WorkflowProgram | A library program's shape and where programs are kept: the program itself, the [`WorkflowLibrary`] door, and… |
+| `src/library/propose.rs` | src | m | 3 struct · 1 enum · 6 crate-vis | ProposeInput, ProposeOutput, WorkflowCheck, WorkflowProof | A proposal's checks (pure move out of `library`): the proposal and proof shapes, the solved-page check on… |
+| `src/library/secret_slots.rs` | src | m | 1 struct · 16 crate-vis | SecretParam | A program's secret slots (FIX 8028, OF-560; ARCH-0069 secret custody): a program never holds a secret, nor… |
 | `src/library/targets.rs` | src | s | 2 crate-vis | — | The elements a batch step names (CUA E6 split): a program names them by locator, and its proposal's handles… |
 | `src/mcp.rs` | src | s | 5 crate-vis | — | MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader… |
 | `src/observation.rs` | src | s | 5 struct · 1 fn · 3 crate-vis | HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound | The observation contract both drivers answer (AB-001, AB-002) |
@@ -76,7 +81,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 13 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
 | `src/secret_fields.rs` | src | m | 1 struct · 2 enum · 11 crate-vis | RowSecret, SecretKind, SecretNote | One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card… |
 | `src/session.rs` | src | m | 2 struct · 5 re-export · 6 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
-| `src/session/demonstration.rs` | src | m | 2 fn · 11 crate-vis | — | `demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs… |
+| `src/session/demonstration.rs` | src | m | 3 fn · 11 crate-vis | — | `demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs… |
 | `src/session/draft.rs` | src | s | 4 crate-vis | — | `library.draft` on a browser session (CUA E7): the session's own history (`trail`) as draft steps, its open… |
 | `src/session/fresh.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | FreshGuest | The fresh guest a proposal's replay runs on (CUA E1): admission's second check runs on a browser of its own… |
 | `src/session/guest.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | BrowserGuestStarter, StartedGuest | A session's engine guest (FIX 6680, BROWSER-SPLIT PR3): the browser guest, its lease and manifest, and the… |
@@ -85,7 +90,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session/press.rs` | src | s | 1 trait · 3 fn · 6 crate-vis | PressGrants | The press each effect class's sends run under (FIX 4613, 4615, 8009) |
 | `src/session/request.rs` | src | s | 2 fn · 2 crate-vis | — | The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination… |
 | `src/session/site.rs` | src | s | 1 fn · 8 crate-vis | — | The session's site skills (CUA E10, `crate::site`): the host's loader, the last open's matches waiting for… |
-| `src/session/solved.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 const | CapturedSolvedSpan, SolvedSnapshotGap | A solved run's span as evidence keeps it (CUA E8a; DESIGN-2 "The Coach"): the checks the caller names are… |
+| `src/session/solved.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const | CapturedSolvedSpan, SolvedSnapshotGap | A solved run's span as evidence keeps it (CUA E8a; DESIGN-2 "The Coach"): the checks the caller names are… |
 | `src/session/storage.rs` | src | m | 25 crate-vis | — | The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of… |
 | `src/session/switch.rs` | src | m | 7 crate-vis | — | The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b), under the seat lock the call already… |
 | `src/session/trail.rs` | src | s | 17 crate-vis | — | The session's one history (CUA E7): each effect's receipt and each step that stopped, in order, on the… |

@@ -18,6 +18,7 @@ impl McpCodeModeVerbs {
             served: std::sync::Mutex::new(Vec::new()),
             run_id,
             guests: RunGuests::new(server, run_id),
+            collector: crate::api::call_receipt::attempt_collector(),
         }
     }
 
@@ -158,13 +159,20 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         };
         // What the answer holds (a deck preview's renderer) comes back with
         // it, kept until the answer is handed to the run (FIX 8238).
-        self.runtime.spawn(HELD_IMAGE.scope(held, async move {
+        let answered = HELD_IMAGE.scope(held, async move {
             let executed = crate::api::answer_hold::keeping(execute_code_mode_verb(
                 &server, &actor, verb, input, run,
             ))
             .await;
             let _ = sender.send(executed);
-        }));
+        });
+        // A live-run hold the verb makes names its attempt on the
+        // `execute_code` call's receipt (FIX 10938).
+        self.runtime
+            .spawn(crate::api::call_receipt::with_attempt_collector(
+                self.collector.clone(),
+                answered,
+            ));
         let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: "engine_error".to_owned(),
@@ -263,6 +271,12 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             return Ok(None);
         }
         self.credential_lane().map(Some)
+    }
+
+    /// The host turn's hooks read on the credential's lane, as the run's
+    /// own search does (FIX 9841). A keyless reply stays keyless.
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.credential_lane().ok()
     }
 
     /// A read a session-bound run serves through the room (WILL L11-01)
@@ -396,7 +410,7 @@ pub(super) async fn run_code_mode_verb(
     let origin = run.origin.clone();
     // A media call spends on the run's own line, as its steps do (FIX 780).
     let line = media_line(server, tool.name, run.run_id);
-    let (output, ..) = crate::api::facade::host_doors::with_calling_origin(
+    let (output, ..) = crate::api::facade::host_doors::support::with_calling_origin(
         origin,
         crate::api::facade::host_doors::with_calling_line(
             line,

@@ -60,7 +60,7 @@ impl DefaultSkillHub {
 
 /// The model catalog ref as an owner reads it: its policy and pin, the
 /// revisions seen and trusted, and the installed pack's receipt.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub struct ModelCatalogSync {
     pub sync_policy: &'static str,
     pub pin_type: &'static str,

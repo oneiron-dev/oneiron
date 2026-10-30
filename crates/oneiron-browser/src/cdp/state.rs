@@ -87,6 +87,9 @@ pub(super) struct Pages {
     /// The top-level documents each watched page committed so far, and
     /// its moves within one, by page target (FIX 9412).
     commits: HashMap<String, u64>,
+    /// The snapshot read bound each page session's exit read was
+    /// installed with (FIX 11580), by page session.
+    pub(super) exit_bounds: HashMap<String, usize>,
 }
 
 /// An armed seed document.
@@ -335,6 +338,7 @@ impl Pipe {
         }
         self.forget_documents(session);
         if let Ok(mut pages) = self.pages.lock() {
+            pages.exit_bounds.remove(session);
             pages.frames.remove(session);
             pages.attached.remove(session);
             pages.oopifs.remove(session);

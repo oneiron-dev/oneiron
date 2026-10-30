@@ -39,6 +39,7 @@ use crate::task_verb::highway::{
 use crate::task_verb::highway_accept::{HostFence, Lane, lane_of, require_live_standard};
 use crate::task_verb::lifecycle_receipt;
 use crate::task_verb::runner_done::workflow_done_question;
+use crate::task_verb::settlement_anchor::anchor_kept_review_in_txn;
 use crate::task_verb::wire_decode::task_verb_body_in;
 use crate::task_verb::{
     HostBinding, RunnerDoneAnswer, RunnerDoneQuestion, TaskCallReceipt, TaskExecutionState,
@@ -562,6 +563,9 @@ fn close_in(
         if let Some(id) = &receipt.receipt_ref {
             lifecycle_receipt::mark_settled_in(vault, txn, id)?;
         }
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement.
+        anchor_kept_review_in_txn(vault, txn, end.task, Some(end.wrapper.id))?;
     }
     Ok(receipt)
 }

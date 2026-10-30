@@ -14,13 +14,13 @@ use crate::scan_check::{EngineScan, ScanCount};
 #[cfg(test)]
 use super::publication_codec::OriginPublicationRow;
 use super::publication_codec::{
-    CAS_BACKFILL, CAS_INTENT, CasIntentKey, KEEP_OWNER, PUBLICATIONS, VISIBLE_REF,
+    CAS_BACKFILL, CAS_INTENT, CasIntentKey, KEEP_OWNER, PUBLICATIONS, VISIBLE_REF, keep_owner_key,
     keep_owner_oid_scan_prefix, origin_keep_ref_name, visible_ref_key,
 };
 use super::publication_types::{
-    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, OriginCensusDisposition, OriginPublicationAnswer,
-    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
-    OriginPublicationStatus,
+    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, OriginCensusDisposition, OriginKeepRefKind,
+    OriginPublicationAnswer, OriginPublicationReceipt, OriginPublicationRecord,
+    OriginPublicationRequest, OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // Journal access
@@ -315,6 +315,49 @@ impl Vault {
     ) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         VISIBLE_REF.contains(&self.store, &rtxn, &visible_ref_key(&repo_id, ref_name))
+    }
+
+    /// Every logical owner of `kind` in one repository, as `(object, owner
+    /// key)`. The scan is whole: it never refuses for its length (rule 5).
+    pub(in crate::origin) fn origin_keep_owners_of_kind(
+        &self,
+        repo_id: EntityId,
+        kind: OriginKeepRefKind,
+    ) -> Result<Vec<(GitOid, String)>> {
+        let (owners, count) = {
+            let rtxn = self.store.env.read_txn()?;
+            let mut count = ScanCount::start(
+                &self.store,
+                &rtxn,
+                EngineScan::KeepOwnerRows,
+                repo_id.as_bytes(),
+            )?;
+            let mut owners = Vec::new();
+            for row in KEEP_OWNER.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
+                count.row();
+                let (key, _) = row?;
+                if key.kind == kind.as_str() {
+                    owners.push((GitOid::parse_hex(&key.oid)?, key.owner_key));
+                }
+            }
+            (owners, count)
+        };
+        count.finish(self);
+        Ok(owners)
+    }
+
+    /// Whether `owner_key` of `kind` still keeps one object in one
+    /// repository.
+    pub(in crate::origin) fn origin_keep_owner_held(
+        &self,
+        repo_id: EntityId,
+        oid: &GitOid,
+        kind: OriginKeepRefKind,
+        owner_key: &str,
+    ) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let key = keep_owner_key(&repo_id, oid, kind, owner_key);
+        KEEP_OWNER.contains(&self.store, &rtxn, &key)
     }
 
     /// How many logical owners still reference one object in one repository.

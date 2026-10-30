@@ -1,6 +1,7 @@
 //! The host doors of the owner's custody rows (WILL L04 row 04, FIX 4993):
 //! `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
-//! `vault.secrets.custody.get` and `vault.secrets.custody.submit`.
+//! `vault.secrets.revoke`, `vault.secrets.custody.get` and
+//! `vault.secrets.custody.submit`.
 //! `host_doors` re-exports them, so the generated HTTP facade handler and
 //! the MCP dispatcher call them by the name every host door has. Each takes
 //! the vault owner's proof as `/v1/owner` takes it (`owner_routes::owner`),
@@ -17,8 +18,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{
     SecretCustodyGetRequest, SecretCustodyReply, SecretCustodySubmitRequest,
-    SecretCustodyViewReply, SecretRegisterReply, SecretRegisterRequest, SecretRewrapRequest,
-    SecretRotateReply, SecretRotateRequest, register_secret_as, rewrap_secret_as, rotate_secret_as,
+    SecretCustodyViewReply, SecretRegisterReply, SecretRegisterRequest, SecretRevokeReply,
+    SecretRevokeRequest, SecretRewrapRequest, SecretRotateReply, SecretRotateRequest,
+    register_secret_as, revoke_secret_as, rewrap_secret_as, rotate_secret_as,
     secret_custody_get_as, submit_sealed_custody_as,
 };
 
@@ -38,7 +40,7 @@ async fn as_custody_owner<T: Send + 'static>(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || act(server.vault(), &owner))
+    let answer = super::clock_ingress::run_blocking(move || act(server.vault(), &owner))
         .await
         .unwrap_or_else(|_| Err(internal(verb)));
     (answer, Vec::new())
@@ -52,6 +54,13 @@ pub(crate) async fn vault_secrets_register(
     surface: ActSurface,
     input: SecretRegisterRequest,
 ) -> Listed<SecretRegisterReply> {
+    // The value its dispatch lifted before the hooks ran, put back after the
+    // redacted args decoded: a wiped HTTP body's (FIX 11442), or a decoded
+    // transport's (FIX 11665). An input no dispatch lifted carries its own.
+    let mut input = input;
+    if let Some(secret) = super::secret_body::current_secret() {
+        input.value_base64 = (*secret).clone();
+    }
     as_custody_owner(
         server,
         auth,
@@ -68,6 +77,13 @@ pub(crate) async fn vault_secrets_rotate(
     surface: ActSurface,
     input: SecretRotateRequest,
 ) -> Listed<SecretRotateReply> {
+    // The value its dispatch lifted before the hooks ran, put back after the
+    // redacted args decoded: a wiped HTTP body's (FIX 11442), or a decoded
+    // transport's (FIX 11665). An input no dispatch lifted carries its own.
+    let mut input = input;
+    if let Some(secret) = super::secret_body::current_secret() {
+        input.value_base64 = (*secret).clone();
+    }
     as_custody_owner(server, auth, "vault.secrets.rotate", move |vault, owner| {
         rotate_secret_as(vault, owner, surface, input)
     })
@@ -83,6 +99,19 @@ pub(crate) async fn vault_secrets_rewrap(
 ) -> Listed<SecretCustodyReply> {
     as_custody_owner(server, auth, "vault.secrets.rewrap", move |vault, owner| {
         rewrap_secret_as(vault, owner, surface, input)
+    })
+    .await
+}
+
+/// `vault.secrets.revoke`: the record goes terminal; no value travels.
+pub(crate) async fn vault_secrets_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    surface: ActSurface,
+    input: SecretRevokeRequest,
+) -> Listed<SecretRevokeReply> {
+    as_custody_owner(server, auth, "vault.secrets.revoke", move |vault, owner| {
+        revoke_secret_as(vault, owner, surface, input)
     })
     .await
 }
@@ -110,6 +139,14 @@ pub(crate) async fn vault_secrets_custody_submit(
     surface: ActSurface,
     input: SecretCustodySubmitRequest,
 ) -> Listed<SecretCustodyReply> {
+    // The sealed input its dispatch lifted before the hooks ran, put back
+    // after the redacted args decoded: a wiped HTTP body's (FIX 11668), or a
+    // decoded transport's (FIX 11665). An input no dispatch lifted carries
+    // its own.
+    let mut input = input;
+    if let Some(secret) = super::secret_body::current_secret() {
+        input.input_base64 = (*secret).clone();
+    }
     as_custody_owner(
         server,
         auth,

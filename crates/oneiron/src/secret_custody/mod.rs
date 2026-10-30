@@ -73,6 +73,7 @@ mod control;
 mod doors;
 mod floor;
 mod found_keys;
+pub(crate) mod holder_export;
 mod known_values;
 mod masked_files;
 mod owner_door;
@@ -137,8 +138,8 @@ pub use self::found_keys::{
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
-    note_found_keys_in_txn, raise_found_key_notices_in_txn, ruled_no_secret_in_txn,
-    settle_found_key_in_txn,
+    found_key_notices_due_in_txn, note_found_keys_in_txn, raise_found_key_notices_in_txn,
+    ruled_no_secret_in_txn, settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};

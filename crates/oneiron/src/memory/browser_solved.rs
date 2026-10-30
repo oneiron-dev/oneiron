@@ -17,8 +17,8 @@ use super::{HostWriteOrigin, Memory, MemoryResult};
 use crate::authority::InvocationSlipBinding;
 use crate::browser_library::{
     SOLVED_RUN_PREDICATE, SavedBrowserCaller, SolvedCaptureGap, SolvedCaptureReceipt,
-    SolvedRunCapture, SolvedRunEvidence, SolvedRunScope, index_capture_in_txn,
-    refresh_witness_in_txn,
+    SolvedRunCapture, SolvedRunEvidence, SolvedRunScope, WORKFLOW_FILING_PREDICATE,
+    index_capture_in_txn, refresh_witness_in_txn,
 };
 use crate::{ClaimApprovalStatus, ClaimCandidate, ClaimSubject, Error, TimeRange};
 
@@ -38,6 +38,30 @@ impl Memory<'_> {
             self.actor_class,
             reference,
         )?)
+    }
+
+    /// The envelope a browser filing's anchor claim is written under
+    /// (FIX 10513): this caller's, bound to the host origin its call came
+    /// in on, as its solved-run evidence's is. An off-record caller
+    /// keeps no filing claim, as it captures no evidence: none.
+    ///
+    /// # Errors
+    ///
+    /// An origin that is not this caller's.
+    pub fn browser_filing_envelope(
+        &self,
+        origin: HostWriteOrigin,
+    ) -> MemoryResult<Option<crate::WriteEnvelope>> {
+        if self.off_record_session.is_some() {
+            return Ok(None);
+        }
+        let bound = self.clone().with_host_origin(origin);
+        let source = bound.claim_source("generated")?;
+        Ok(Some(bound.claim_envelope(
+            source,
+            WORKFLOW_FILING_PREDICATE,
+            ClaimApprovalStatus::Auto,
+        )?))
     }
 
     /// Keeps `capture`, a solved run this caller's call reached, as its
@@ -85,9 +109,19 @@ impl Memory<'_> {
         let envelope =
             bound.claim_envelope(source, SOLVED_RUN_PREDICATE, ClaimApprovalStatus::Auto)?;
         let now = self.vault.store.clock.now_recorded_at();
-        bound.with_verified_actor_write_txn(|txn| {
-            if self.vault.get_raw_in(txn, &evidence.id)?.is_some() {
-                refresh_witness_in_txn(self.vault, txn, &evidence.id, &caller)?;
+        // The scoped content door (FIX 10512): the claim birth folds this
+        // actor's live authority per position, and its index rows ride as
+        // that claim's support, so a scoped shared-vault member captures
+        // what the old full-grant door refused.
+        bound.with_actor_content_write_txn(|content| {
+            if self
+                .vault
+                .get_raw_in(content.read(), &evidence.id)?
+                .is_some()
+            {
+                content.update_claim(evidence.id, |txn| {
+                    refresh_witness_in_txn(self.vault, txn, &evidence.id, &caller)
+                })?;
                 return Ok(SolvedCaptureReceipt::Captured {
                     id: evidence.id,
                     group,
@@ -100,20 +134,20 @@ impl Memory<'_> {
                 rmpv::Value::from(value),
                 1.0,
             );
-            self.vault
-                .batch_in()
-                .claim_candidate(
-                    &evidence.id,
-                    candidate,
-                    &envelope,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-                .apply(txn)?;
-            index_capture_in_txn(self.vault, txn, &evidence, &caller)?;
+            content.stage_claim_support(evidence.id, |_| Ok(()))?;
+            content.apply_batch(self.vault.batch_in().claim_candidate(
+                &evidence.id,
+                candidate,
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            ))?;
+            content.finish_claim_support(evidence.id, |txn| {
+                index_capture_in_txn(self.vault, txn, &evidence, &caller)
+            })?;
             Ok(SolvedCaptureReceipt::Captured {
                 id: evidence.id,
                 group,

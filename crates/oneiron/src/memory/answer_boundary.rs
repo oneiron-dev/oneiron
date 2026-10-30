@@ -111,5 +111,6 @@ fn answer_refusal(index: usize) -> RecordRefusal {
             "Cite only the short ids of the evidence the answer was composed from.".to_owned(),
         ],
         field,
+        legal_hold: None,
     }
 }

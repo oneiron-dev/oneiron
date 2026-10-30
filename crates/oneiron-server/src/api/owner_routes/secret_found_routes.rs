@@ -11,13 +11,16 @@
 //!   project or in none, until revoked;
 //! - not a secret: the value goes back where the mask left its handle, the
 //!   custody record is revoked, and the write door stops reading it as a hit
-//!   in that record.
+//!   in that record;
+//! - re-enter: a key ruled no secret whose custody key no longer opens its
+//!   kept value takes the value again (FIX 7404).
 //!
 //! Each act writes its receipt in the engine; nothing here reads a value.
 
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
@@ -26,12 +29,12 @@ use axum::routing::{get, post};
 use oneiron::secret_custody::{FoundKeyCard, FoundKeyCursor, FoundKeyNotice, FoundKeySettled};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
-use crate::api::query_params;
+use crate::api::{has_json_content_type, query_params};
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
-use crate::owner::{OwnerError, OwnerResult, entity_id};
+use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
 use crate::server::SyncServer;
 
 /// The most records one page lists; a larger limit is served a page at a
@@ -44,6 +47,24 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secrets/found/delete", post(delete))
         .route("/secrets/found/grant", post(grant))
         .route("/secrets/found/not-a-secret", post(not_a_secret))
+        .route("/secrets/found/re-enter", post(reenter))
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/found/delete`'s body (FIX 11611),
+/// shared with `POST /v1/owner/secrets/found/not-a-secret`: [`FoundKey`].
+pub(crate) fn found_key_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<FoundKey>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/found/grant`'s body (FIX 11611):
+/// [`GrantFoundKey`].
+pub(crate) fn grant_found_key_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GrantFoundKey>()
+}
+
+/// The OpenAPI schema of the three found-key answers (FIX 11611): [`SettledView`].
+pub(crate) fn found_key_settled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SettledView>()
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,7 +143,7 @@ impl From<FoundKeyCard> for KeyView {
 }
 
 /// What the owner did about a key, and its receipt.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SettledView {
     action: &'static str,
     by: Option<String>,
@@ -145,14 +166,14 @@ impl From<FoundKeySettled> for SettledView {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct FoundKey {
     /// The key's handle, such as `sc12`.
     handle: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct GrantFoundKey {
     handle: String,
@@ -265,6 +286,35 @@ async fn not_a_secret(
         Ok(server
             .vault()
             .rule_found_key_not_a_secret(&owner, surface, &request.handle)?
+            .into())
+    })
+    .await?;
+    Ok(Json(settled))
+}
+
+/// `POST /v1/owner/secrets/found/re-enter` with `{"handle", "value_base64"}`:
+/// the kept value of a key the owner ruled no secret, sealed again where its
+/// custody key no longer opens it, which every batch write to its record
+/// otherwise answers `credential_leaf_unreadable` for (FIX 7404). The ruling
+/// stands and is returned. The body is read after the owner door, by the
+/// same wiping reader as rotation's.
+async fn reenter(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<SettledView> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let request = secrets::ReenterKeptValue::read(body)
+        .await
+        .map_err(owner_error)?;
+    let settled = blocking(move || -> OwnerResult<SettledView> {
+        Ok(server
+            .vault()
+            .reenter_found_key_value(&owner, &request.handle, &request.value)?
             .into())
     })
     .await?;

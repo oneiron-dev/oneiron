@@ -13,6 +13,13 @@ impl Memory<'_> {
             return self.task_work_memory().tasks_ask_status(handle);
         }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        if let Some(status) = self.vault().verb_hook_state.session.status_ask(
+            self.vault(),
+            handle.group_ref,
+            self.actor(),
+        ) {
+            return status;
+        }
         let txn = self
             .vault()
             .store
@@ -162,6 +169,13 @@ impl Memory<'_> {
         self.with_verified_actor_write_txn(|txn| {
             // A world-privacy request waits by its own id (FIX 4706).
             if let Some(wait) = self.world_privacy_wait_in(txn, handle, step_key)? {
+                return Ok(wait);
+            }
+            // A code run that waits on a consult it executes parks on the
+            // consult's own wait for its ConsultAssignee fact.
+            if step_key.is_none()
+                && let Some(wait) = self.consult_assignee_wait_in(txn, handle.group_ref)?
+            {
                 return Ok(wait);
             }
             let Some(group) = self.ask_group_named_in(txn, handle.group_ref)? else {

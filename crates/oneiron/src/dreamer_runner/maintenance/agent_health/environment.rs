@@ -41,13 +41,13 @@ use crate::skill_attribution::{
 };
 use crate::{EntityId, Result, Vault};
 
-/// Domain of an amendment label's source id: one id per amendment receipt and
-/// label.
+/// Domain of an amendment label's source id: one id per settled cause row
+/// and label.
 const AMENDMENT_SOURCE_DOMAIN: &[u8] = b"oneiron:agent-health-amendment-cause:v1";
 
 /// One attribution label a card carries (OF-568 L10): a typed reference to
 /// the judge's retained label, never prose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthCauseSource {
     /// The retained label's immutable source id: the DIAGNOSTIC cites it.
@@ -83,10 +83,12 @@ impl HealthCauseSource {
     }
 
     /// One per label the amendment judge gave `record`, an amendment of the
-    /// attempt that sealed `receipt` (FIX 8264). The amendment ledger keeps
-    /// no cause row: the source id is spelled from the amendment receipt and
-    /// the label, and no displacement is known.
+    /// attempt that sealed `receipt` (FIX 8264). The label's source id is
+    /// spelled from the cause row's stored source and the label, so the
+    /// same settled labels fold onto the same card row; the displacement of
+    /// that row's judge rides with the record (FIX 11638).
     fn of_amendment(record: &AmendmentCauseRecord, receipt: &str) -> Result<Vec<Self>> {
+        let source = record.source.to_hex();
         record
             .shares
             .iter()
@@ -96,14 +98,14 @@ impl HealthCauseSource {
                 Ok(Self {
                     source: EntityId::derive(
                         AMENDMENT_SOURCE_DOMAIN,
-                        &[record.receipt.as_bytes(), label.as_bytes()],
+                        &[source.as_bytes(), label.as_bytes()],
                     )?,
                     receipt: receipt.to_owned(),
                     skill: record.skill,
                     label: label.to_owned(),
                     share: share.share,
                     judge_revision: record.judge.clone(),
-                    displaced_by: None,
+                    displaced_by: record.displaced_by.clone(),
                 })
             })
             .collect()

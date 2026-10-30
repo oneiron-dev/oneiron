@@ -47,6 +47,8 @@ struct ApiErrorBody {
     /// The refusal's stable reason codes, in order (FIX 7398).
     #[serde(default, rename = "reasonCodes")]
     reason_codes: Vec<String>,
+    #[serde(default)]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -55,12 +57,22 @@ struct ApiErrorBody {
 /// serialization rather than an upload the server's `DefaultBodyLimit` would
 /// reject at the far end after the bytes crossed the network.
 pub(super) fn serialize_request<Q: Serialize>(request: &Q) -> Result<Vec<u8>, MemoryError> {
-    let body = serde_json::to_vec(request).map_err(|error| {
+    within_ceiling(serialize_whole(request)?)
+}
+
+/// Serializes a request body whatever its length: a caller that sends a body
+/// past the ceiling to a route that spools it (FIX 11454) measures it itself.
+pub(super) fn serialize_whole<Q: Serialize>(request: &Q) -> Result<Vec<u8>, MemoryError> {
+    serde_json::to_vec(request).map_err(|error| {
         bad_request(
             format!("this request could not be serialized: {error}"),
             &["Check the request for non-finite numbers or non-serializable values."],
         )
-    })?;
+    })
+}
+
+/// `body`, when it is within the 64 MiB request ceiling.
+pub(super) fn within_ceiling(body: Vec<u8>) -> Result<Vec<u8>, MemoryError> {
     if body.len() > MAX_REMOTE_REQUEST_BYTES {
         return Err(bad_request(
             format!("the request body exceeds the {MAX_REMOTE_REQUEST_BYTES}-byte ceiling"),
@@ -178,6 +190,7 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         retry_after: envelope.error.retry_after,
         resets_at: envelope.error.resets_at,
         reason_codes: envelope.error.reason_codes,
+        legal_hold: envelope.error.legal_hold,
     })
 }
 

@@ -8,20 +8,23 @@ use oneiron_browser::{
 };
 
 use super::admission::{ProgramAdmissionFiling, note_filed_in_txn};
-use super::index::{index_failure_in_txn, index_filing_in_txn, index_retire_in_txn};
+use super::evidence::{WORKFLOW_FILING_PREDICATE, WorkflowFiling};
+use super::index::{index_failure_in_txn, index_filing_in_txn, index_retire_in_txn, record_group};
 #[cfg(doc)]
 use super::type_filter;
 use super::{
     DRIFT_REASON, FiledScope, Filing, LibraryActor, RETIRE_FILER_ONLY, RETIRED, RecentOutcome,
-    Retired, RetiredWorkflow, STRICT_MISSES_BEFORE_DRIFT, WORKFLOWS, WorkflowRecord,
-    WorkflowResolution, push_recent, strict_misses_after, superseded_by, superseded_reason,
+    Retired, RetiredWorkflow, STRICT_MISSES_BEFORE_DRIFT, WORKFLOWS, WORKFLOWS_BY_ID,
+    WorkflowRecord, WorkflowResolution, WorkflowSite, push_recent, strict_misses_after,
+    superseded_by, superseded_reason,
 };
 use crate::Vault;
 use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::learning::TypeRef;
 use crate::task_type::{PlacementDecisions, PlacementRequest, TaskTypeRef, place_type_ref};
+use crate::{ClaimCandidate, ClaimSubject, TimeRange};
 
 pub(super) fn site_key(site: &str) -> [u8; 32] {
     *blake3::hash(site.as_bytes()).as_bytes()
@@ -78,11 +81,38 @@ pub fn site_workflows(
 /// Storage errors.
 pub fn workflow(vault: &Vault, id: EntityId) -> Result<Option<WorkflowRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(WORKFLOWS
-        .scan(&vault.store, &rtxn)?
-        .into_iter()
-        .map(|(_, record)| record)
-        .find(|record| record.id == id))
+    let Some(site) = WORKFLOWS_BY_ID.get(&vault.store, &rtxn, &id)? else {
+        return Ok(None);
+    };
+    WORKFLOWS.get(&vault.store, &rtxn, &(site.site, id))
+}
+
+/// The names of `id`'s secret parameters, read in `txn`: empty when the
+/// program is not filed live. A TASK try's pin keeps them beside its
+/// arguments so its receipt masks their values (FIX 8348).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn secret_param_names_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Vec<String>> {
+    let Some(site) = WORKFLOWS_BY_ID.get(&vault.store, txn, &id)? else {
+        return Ok(Vec::new());
+    };
+    let record = WORKFLOWS.get(&vault.store, txn, &(site.site, id))?;
+    Ok(record
+        .map(|record| {
+            record
+                .program
+                .secret_params
+                .into_iter()
+                .map(|param| param.name)
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// The program a `supersedes` link names, as its site's library holds it.
@@ -169,6 +199,7 @@ pub fn file_workflow(
     supersedes: Option<EntityId>,
     filed_scope: Option<FiledScope>,
     admission: Option<&ProgramAdmissionFiling>,
+    anchor: Option<&crate::WriteEnvelope>,
 ) -> Result<Filing> {
     let same = serde_json::to_value(program).ok();
     // A filed program holds handles where this one may hold the secrets the
@@ -220,6 +251,8 @@ pub fn file_workflow(
             // The index reads the record as the side-row wall keeps it.
             WORKFLOWS.admit(vault, wtxn, &key, &mut record)?;
             WORKFLOWS.put(vault, wtxn, &key, &record)?;
+            WORKFLOWS_BY_ID.put(vault, wtxn, &record.id, &WorkflowSite { site: key.0 })?;
+            anchor_filing_in_txn(vault, wtxn, by, at, anchor, &record)?;
             index_filing_in_txn(vault, wtxn, prior.as_ref(), &record)?;
             if let Some(filing) = admission {
                 note_filed_in_txn(vault, wtxn, filing, record.id)?;
@@ -266,6 +299,8 @@ pub fn file_workflow(
         let key = (site_key(site), id);
         WORKFLOWS.admit(vault, wtxn, &key, &mut record)?;
         WORKFLOWS.put(vault, wtxn, &key, &record)?;
+        WORKFLOWS_BY_ID.put(vault, wtxn, &id, &WorkflowSite { site: key.0 })?;
+        anchor_filing_in_txn(vault, wtxn, by, at, anchor, &record)?;
         index_filing_in_txn(vault, wtxn, None, &record)?;
         if let Some(filing) = admission {
             note_filed_in_txn(vault, wtxn, filing, id)?;
@@ -276,6 +311,49 @@ pub fn file_workflow(
         }
         Ok(Filing::Filed { id, superseded })
     })
+}
+
+/// Keeps `record`'s filing anchor in its filing's write (FIX 10513):
+/// its `browser.workflow.filing` claim under the filing caller's
+/// `envelope`, where the record covers a group, so a reader of that
+/// coverage is granted it through this claim. No envelope, or no group,
+/// keeps no anchor, as filings did; an anchor already kept for this
+/// program and group stands.
+fn anchor_filing_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    by: EntityId,
+    at: u64,
+    envelope: Option<&crate::WriteEnvelope>,
+    record: &WorkflowRecord,
+) -> Result<()> {
+    let (Some(envelope), Some(key)) = (envelope, record_group(record)) else {
+        return Ok(());
+    };
+    let filing = WorkflowFiling::of(&key, record.id);
+    let id = filing.id()?;
+    if vault.get_raw_in(wtxn, &id)?.is_some() {
+        return Ok(());
+    }
+    let value =
+        serde_json::to_string(&filing).map_err(|_| Error::InvalidClaimBody("workflow filing"))?;
+    let candidate = ClaimCandidate::new(
+        WORKFLOW_FILING_PREDICATE,
+        ClaimSubject::Entity(by),
+        rmpv::Value::from(value),
+        1.0,
+    );
+    vault
+        .batch_in()
+        .claim_candidate(
+            &id,
+            candidate,
+            envelope,
+            TimeRange { start: at, end: at },
+            at,
+        )
+        .apply(wtxn)?;
+    Ok(())
 }
 
 /// Counts one library run of `id` from `by`'s call at `at`: whether it met
@@ -367,6 +445,7 @@ fn retire_in_txn(
 ) -> Result<RetiredWorkflow> {
     let id = record.id;
     WORKFLOWS.delete(&vault.store, wtxn, &(site_key(&record.site), id))?;
+    WORKFLOWS_BY_ID.delete(&vault.store, wtxn, &id)?;
     index_retire_in_txn(vault, wtxn, &record)?;
     let trace = RetiredWorkflow {
         record,
@@ -396,8 +475,7 @@ pub fn resolve_workflow_in_txn(
     id: &EntityId,
 ) -> Result<WorkflowResolution> {
     let Some(mut trace) = RETIRED.get(&vault.store, txn, id)? else {
-        let live = WORKFLOWS.scan(&vault.store, txn)?;
-        if live.iter().any(|(_, record)| record.id == *id) {
+        if WORKFLOWS_BY_ID.get(&vault.store, txn, id)?.is_some() {
             return Ok(WorkflowResolution::Active { id: *id });
         }
         return Ok(WorkflowResolution::Missing);

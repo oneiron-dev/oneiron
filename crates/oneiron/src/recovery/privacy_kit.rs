@@ -37,7 +37,9 @@ pub enum KitSecretKind {
 }
 
 /// Where the owner keeps one piece. There is no host, cloud or server variant.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PieceHome {
     /// The issuing machine, in its device-only key slot; never the vault store or sync.
@@ -67,7 +69,9 @@ impl PieceHome {
 }
 
 /// Where the owner keeps a recovery code. Only a file on a machine leaves with it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CodeKeeping {
     /// A file on one of the owner's machines.
@@ -83,7 +87,9 @@ pub enum CodeKeeping {
 }
 
 /// A machine that holds a piece.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum KitMachine {
     /// The issuing machine.
@@ -93,7 +99,9 @@ pub enum KitMachine {
 }
 
 /// What losing one machine leaves, judged from the homes at issue. Clients word it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum KitCoverage {
     /// Losing any one machine that holds a piece still leaves two pieces.
