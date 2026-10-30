@@ -338,6 +338,9 @@ impl Vault {
         }
         let started = Instant::now();
         let (text, corpus, page, hash, approval_digest, project_id, mut next) = {
+            // The page's body file, when it has one, is read in this
+            // snapshot: pinned before it opens.
+            let _bodies = self.pin_all_result_bodies();
             let txn = self.store.env.read_txn()?;
             let owner_actor = owner.revalidate_in_txn(self, &txn)?;
             if let Some((reader, _)) = read
@@ -618,7 +621,9 @@ impl Vault {
         asset: EntityId,
         owner: EntityId,
     ) -> Result<(String, String, String, String, String, EntityId)> {
+        // A filed page reads as its body, never the manifest its row keeps.
         let raw = self.get_raw_in(txn, &asset)?.ok_or(Error::EntityNotFound)?;
+        let raw = self.materialized_row_in_txn(txn, &asset, raw)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("docs asset header"))?;
         if header.entity_type != ENTITY_TYPE_ASSET {

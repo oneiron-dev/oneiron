@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::store::StagedAssetBody;
 use crate::workspace_roster::ProjectRole;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
@@ -163,6 +164,11 @@ pub(super) fn require_docs_corpus_project(
 
 fn encoded(value: &Value) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("docs encoding failed"))
+}
+/// The record one imported page's ASSET holds: its text beside the corpus,
+/// project, page and registry it was imported under.
+fn docs_asset_record(docs: &DocsExport, page: &DocsPage) -> Value {
+    json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"})
 }
 fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
     Ok(BatchOp::Put {
@@ -340,6 +346,8 @@ impl Vault {
     ) -> Result<()> {
         let (docs, summary, classifier, now) = (run.docs, run.summary, run.classifier, run.now);
         let digest_hex = run.digest.to_hex();
+        // Held until the writer below commits or aborts.
+        let staged = self.stage_docs_assets(docs, &prepared)?;
         let mut txn = self.store.env.write_txn()?;
         let actor = run.owner.revalidate_in_txn(self, &txn)?;
         require_docs_corpus_project(self, &txn, docs.project_id)?;
@@ -355,7 +363,9 @@ impl Vault {
         let mut births = Vec::new();
         let mut fingerprint_updates = Vec::new();
         let mut membership_updates = Vec::new();
-        for (page, segments, summaries, annotation, predicted) in prepared {
+        for ((page, segments, summaries, annotation, predicted), staged) in
+            prepared.into_iter().zip(&staged)
+        {
             let asset = stable_ref(
                 self,
                 &mut txn,
@@ -396,7 +406,19 @@ impl Vault {
                 },
                 now,
             )?;
-            ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
+            // The page's ASSET goes in through the asset body plane, ahead of
+            // the chunks derived from it.
+            self.require_docs_put_kind(&txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
+            self.put_asset_body_in_txn(
+                &mut txn,
+                &asset,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                staged,
+            )?;
             births.extend(
                 RowBirth::written(writer, MadeByClass::Stated, "docs.import", &[], &[], now)
                     .map(|birth| (asset, birth)),
@@ -611,20 +633,53 @@ impl Vault {
         Ok((segments, summaries, annotation, predicted))
     }
 
+    /// Stages each prepared page's ASSET record before its batch's writer
+    /// opens, in page order, for the writer to put through the asset body
+    /// plane: a record past the inline bound spills as it streams, and is a
+    /// body file only when the plane files it. Drop them once that writer
+    /// has committed or aborted.
+    fn stage_docs_assets(
+        &self,
+        docs: &DocsExport,
+        prepared: &[PreparedPage<'_>],
+    ) -> Result<Vec<StagedAssetBody>> {
+        // A body instance is minted outside every writer (KS-2A), and only
+        // while the plane files bodies.
+        let mint = if crate::store::ASSET_FILE_PLANE {
+            Some(self.store.body_mint()?)
+        } else {
+            None
+        };
+        prepared
+            .iter()
+            .map(|(page, ..)| {
+                let record = encoded(&docs_asset_record(docs, page))?;
+                // The values custody holds load only inside a writer, and
+                // this stages before one: none is passed.
+                self.stage_asset_body(record.as_slice(), None, None, mint.as_ref())
+            })
+            .collect()
+    }
+
     /// Refuses a docs extraction id another entity kind already occupies.
     fn validate_docs_put_kinds(&self, txn: &heed::RoTxn<'_>, ops: &[BatchOp]) -> Result<()> {
         for op in ops {
             if let BatchOp::Put {
                 id, entity_type, ..
             } = op
-                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
-                    .is_some_and(|raw| {
-                        crate::batch::EntityMetadataHeader::parse(&raw)
-                            .is_none_or(|header| header.entity_type != *entity_type)
-                    })
             {
-                return Err(invalid("docs extraction id occupied by another kind"));
+                self.require_docs_put_kind(txn, id, *entity_type)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Refuses `id` when an entity of another kind than `kind` holds it.
+    fn require_docs_put_kind(&self, txn: &heed::RoTxn<'_>, id: &EntityId, kind: u8) -> Result<()> {
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?.is_some_and(
+            |raw| EntityMetadataHeader::parse(&raw).is_none_or(|header| header.entity_type != kind),
+        ) {
+            return Err(invalid("docs extraction id occupied by another kind"));
         }
         Ok(())
     }
