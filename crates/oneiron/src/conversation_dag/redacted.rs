@@ -120,6 +120,80 @@ pub(crate) fn capture_withdrawn_record_in_txn(
     super::reply::invalidate_thread_meta(store, txn, *id)
 }
 
+/// Pins withdrawn Shell `id`'s topology content-free from the structural ids
+/// its received edges name (FIX 11803): `room`, the CONVERSATION its ChildOf
+/// names, and `parent`, the record its Parent names. A store that never held
+/// the body pinned nothing at the withdrawal
+/// ([`capture_withdrawn_record_in_txn`]), so its room readers place the Shell
+/// from these. A first pin needs the room, a CONVERSATION here, and takes the
+/// session its membership row names; a parent is kept only once it stands in
+/// that room here, and a later one fills a pin that has none. A pin that
+/// stands is otherwise left as it is. With no body there is no thread mark
+/// and no byline: the pin keeps the record kind and names no author.
+#[cfg(feature = "sync")]
+pub(crate) fn pin_received_shell_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    room: Option<EntityId>,
+    parent: Option<EntityId>,
+) -> Result<()> {
+    let pin = match read(store, txn, id)? {
+        Some(mut pin) => {
+            let Some(parent) = parent else {
+                return Ok(());
+            };
+            if pin.parent.is_some()
+                || room.is_some_and(|room| room != pin.room)
+                || !placed_in(store, txn, &parent, &pin.room)?
+            {
+                return Ok(());
+            }
+            pin.parent = Some(parent);
+            pin
+        }
+        None => {
+            let Some(room) = room else {
+                return Ok(());
+            };
+            if store
+                .port_entity_record(txn, &room)?
+                .is_none_or(|owner| owner.entity_type != ENTITY_TYPE_CONVERSATION)
+            {
+                return Ok(());
+            }
+            let parent = match parent {
+                Some(parent) if placed_in(store, txn, &parent, &room)? => Some(parent),
+                _ => None,
+            };
+            RecordPin {
+                room,
+                parent,
+                session: crate::compaction::turn_session_membership_in_txn(store, txn, id)?,
+                thread: false,
+                author: None,
+            }
+        }
+    };
+    PINS.put(store, txn, id, &pin)
+}
+
+/// Whether `record` stands in `room` here: its own ChildOf names that room,
+/// or, with none, the pin kept for it does.
+#[cfg(feature = "sync")]
+fn placed_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+    room: &EntityId,
+) -> Result<bool> {
+    let owners = edge_ids(store, txn, record, EdgeKind::ChildOf, false, 2)?;
+    if !owners.is_empty() {
+        return Ok(owners == [*room]);
+    }
+    Ok(read(store, txn, record)?.is_some_and(|pin| pin.room == *room))
+}
+
 /// Every erased child `parent` keeps, however many; the walk reading them
 /// counts them (rule 5).
 pub(crate) fn children(
