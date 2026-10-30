@@ -47080,6 +47080,13 @@ pub enum DeckStep {
         #[serde(rename = "values")]
         values: Vec<StepCell>,
     },
+    #[serde(rename = "release_media")]
+    ReleaseMedia {
+        #[serde(rename = "slide")]
+        slide: String,
+        #[serde(rename = "relationships")]
+        relationships: Vec<String>,
+    },
 }
 
 /// `oneiron_docedit::edit::transaction::DeckTransaction`.
@@ -60426,6 +60433,10 @@ pub enum ChartEdit {
         family: Option<ChartKind>,
         #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
         x: Option<Vec<Option<f64>>>,
+        #[serde(rename = "x_labels", default, skip_serializing_if = "Option::is_none")]
+        x_labels: Option<Vec<Option<String>>>,
+        #[serde(rename = "plot", default, skip_serializing_if = "Option::is_none")]
+        plot: Option<u32>,
         #[serde(
             rename = "categories",
             default,
@@ -60480,6 +60491,15 @@ pub enum ChartEdit {
         series: u64,
         #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
         x: Option<Vec<Option<f64>>>,
+        #[serde(rename = "x_labels", default, skip_serializing_if = "Option::is_none")]
+        x_labels: Option<Vec<Option<String>>>,
+    },
+    #[serde(rename = "set_series_plot")]
+    SetSeriesPlot {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "plot")]
+        plot: u32,
     },
     #[serde(rename = "set_series_bubble_size")]
     SetSeriesBubbleSize {
