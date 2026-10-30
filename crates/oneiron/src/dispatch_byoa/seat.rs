@@ -367,7 +367,9 @@ impl RunnerSeat {
 
 /// What a spent seat does with the work. The owner picks; the default spends
 /// nothing.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OnSeatSpent {
     /// Park the work until the seat is back. Spent credit waits for the owner.
@@ -382,7 +384,7 @@ pub enum OnSeatSpent {
 }
 
 /// The owner's ordered seats and what a spent one does.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunnerSeatPolicy {
     pub seats: Vec<RunnerSeat>,
     #[serde(default)]
