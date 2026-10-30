@@ -12,7 +12,7 @@ use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::HexId;
-use crate::{EdgeActorClass, EntityId, WriteActor};
+use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
 pub(super) const MAX_RECEIPT_PAYLOAD: usize = 8 * 1024 * 1024;

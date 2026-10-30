@@ -12,7 +12,7 @@ use crate::claim::{
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
-use crate::{EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{EdgeActorClass, EntityId, WriteEnvelope, WriteProvenance};
 
 mod facts;
 pub(in crate::calendar) use facts::meeting_event_in_txn;

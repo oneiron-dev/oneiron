@@ -4,9 +4,9 @@ use super::documents::{NOTE_PROPOSAL_DOC, live_doc, load_head};
 use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, land};
 use super::side_keys::HexPair;
 use super::{NoteFork, NoteVerdict, NoteVersion};
+use crate::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::HexId;
-use crate::{EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

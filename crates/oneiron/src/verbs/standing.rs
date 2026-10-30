@@ -10,7 +10,7 @@ use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consoli
 use crate::llm::ModelTierRef;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult};
 use crate::persona_snapshot::standing::{StandingBlockEdit, StandingBlockHandle};
-use crate::{EntityId, TimeRange, Vault, WriteActor};
+use crate::{EntityId, TimeRange, Vault};
 
 /// One configured standing block: its durable handle and floor.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

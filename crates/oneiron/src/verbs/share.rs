@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
 use crate::error::ErrorKind;
@@ -25,7 +26,6 @@ use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
-use crate::{EntityId, WriteActor};
 
 /// `vault.shares.create`'s input: the brief, its recipient, the most the view
 /// may show, and what born-with text travels.
