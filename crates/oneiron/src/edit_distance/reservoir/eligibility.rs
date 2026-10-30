@@ -213,10 +213,22 @@ fn refusal_in(
         RowCheck::Unreadable => return Ok(Some(PAIR_UNREADABLE)),
         RowCheck::Withheld => return Ok(Some(PAIR_WITHHELD)),
     }
-    let Some(source) = PROPOSAL_ARTIFACT
+    let (source, inputs) = PROPOSAL_ARTIFACT
         .get(&vault.store, rtxn, &artifact)?
-        .and_then(|stored| stored.record.source_turn_ref)
-    else {
+        .map(|stored| (stored.record.source_turn_ref, stored.record.made_by_inputs))
+        .unwrap_or((None, Vec::new()));
+    // Each MadeBy input goes through the same row check as the source (FIX
+    // 11350): an input that does not read holds the pair, exactly as an
+    // unreadable source does. Checked before the source, under the same reason
+    // codes, and even when the pair has no turn source.
+    for input in &inputs {
+        match row_check_in(vault, rtxn, readable, *input)? {
+            RowCheck::Passes(_) => {}
+            RowCheck::Absent | RowCheck::Unreadable => return Ok(Some(SOURCE_UNREADABLE)),
+            RowCheck::Withheld => return Ok(Some(SOURCE_WITHHELD)),
+        }
+    }
+    let Some(source) = source else {
         return Ok(None);
     };
     let entity_type = match row_check_in(vault, rtxn, readable, source)? {
@@ -479,10 +491,21 @@ fn ticked_source_in(
         RowCheck::Absent | RowCheck::Passes(_) => {}
         RowCheck::Unreadable | RowCheck::Withheld => return Ok(None),
     }
-    let Some(source) = PROPOSAL_ARTIFACT
+    let (source, inputs) = PROPOSAL_ARTIFACT
         .get(&vault.store, rtxn, &artifact)?
-        .and_then(|stored| stored.record.source_turn_ref)
-    else {
+        .map(|stored| (stored.record.source_turn_ref, stored.record.made_by_inputs))
+        .unwrap_or((None, Vec::new()));
+    // An unreadable MadeBy input keeps the pair out whatever the tick (FIX
+    // 11350), so it names no ticked source.
+    for input in &inputs {
+        if !matches!(
+            row_check_in(vault, rtxn, readable, *input)?,
+            RowCheck::Passes(_)
+        ) {
+            return Ok(None);
+        }
+    }
+    let Some(source) = source else {
         return Ok(None);
     };
     let RowCheck::Passes(entity_type) = row_check_in(vault, rtxn, readable, source)? else {
