@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use oneiron::authority::VerifiedSlip;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
-use oneiron::task_verb::sdk::{GuestDocumentEnvelope, GuestDocumentShareRequest};
+use oneiron::task_verb::sdk::{
+    ConnectProposalLanded, ConnectProposeRequest, GuestDocumentEnvelope, GuestDocumentShareRequest,
+};
 
 use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::{CoreAuth, CoreScope};
@@ -113,6 +115,35 @@ pub(crate) async fn vault_guests_export_envelope(
     .unwrap_or_else(|_| Err(internal(VERB)));
     match result {
         Ok((envelope, rows)) => (Ok(envelope), rows),
+        Err(error) => refused(error),
+    }
+}
+
+/// A Connect guest proposes one write of a record's text under its own live
+/// grant-bound credential, over HTTP or verb RPC (FIX 3684): the same proof
+/// its fetch takes, and the engine judges the write against its grant in the
+/// writer that lands one proposal in the owner's inbox. It writes nothing
+/// to the vault. The caller names every row it answers by ref, so it lists
+/// none.
+pub(crate) async fn vault_guests_propose(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ConnectProposeRequest,
+) -> Listed<ConnectProposalLanded> {
+    const VERB: &str = "vault.guests.propose";
+    let proof = match guest_document_reader(server, auth) {
+        Ok(proof) => proof,
+        Err(error) => return refused(error),
+    };
+    let server = Arc::clone(server);
+    let result = super::clock_ingress::run_blocking(move || {
+        oneiron::sync::selector::propose_as_connect_guest(server.vault(), &proof, &input)
+            .map_err(MemoryError::from)
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    match result {
+        Ok(landed) => (Ok(landed), Vec::new()),
         Err(error) => refused(error),
     }
 }

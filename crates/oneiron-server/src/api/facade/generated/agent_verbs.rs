@@ -422,6 +422,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         .route("/vault.guests.share", post(facade_route))
         .route("/vault.guests.export_envelope", post(facade_route))
+        .route("/vault.guests.propose", post(facade_route))
         .route("/vault.guests.reshare", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))

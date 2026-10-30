@@ -415,6 +415,7 @@ vaultTrustedContactsConcernPropose(input: unknown): unknown
 vaultTrustedContactsConcernDeliver(input: unknown): unknown
 vaultGuestsShare(input: unknown): unknown
 vaultGuestsExportEnvelope(input: unknown): unknown
+vaultGuestsPropose(input: unknown): unknown
 vaultGuestsReshare(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown

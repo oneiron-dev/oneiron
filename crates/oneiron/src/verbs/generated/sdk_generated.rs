@@ -1984,6 +1984,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.guests.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectProposeRequest,
+                >(),
+            ),
+            (
                 "vault.guests.reshare",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestDocumentShareRequest,
@@ -7259,6 +7265,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.trusted_contacts.concern.deliver",
     "vault.guests.share",
     "vault.guests.export_envelope",
+    "vault.guests.propose",
     "vault.guests.reshare",
     "vault.guests.revoke",
     "vault.guests.mint_slip",
@@ -8666,6 +8673,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.guests.export_envelope" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GuestDocumentEnvelope,
+        >(),
+        "vault.guests.propose" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectProposalLanded,
         >(),
         "vault.guests.reshare" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GuestDocumentEnvelope,
@@ -13164,6 +13174,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.guests.export_envelope" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.guests.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20217,6 +20234,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.export_envelope" => {
             let _input: crate::task_verb::sdk::GuestDocumentShareRequest = decode(value.clone())?;
         }
+        "vault.guests.propose" => {
+            let _input: crate::task_verb::sdk::ConnectProposeRequest = decode(value.clone())?;
+        }
         "vault.guests.reshare" => {
             let _input: crate::task_verb::sdk::GuestDocumentShareRequest = decode(value.clone())?;
         }
@@ -23948,6 +23968,7 @@ pub fn invoke(
         "vault.guests.export_envelope" => {
             encode(vault_guests_export_envelope(memory, decode(value)?)?)
         }
+        "vault.guests.propose" => encode(vault_guests_propose(memory, decode(value)?)?),
         "vault.guests.reshare" => encode(vault_guests_reshare(memory, decode(value)?)?),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
@@ -28975,6 +28996,12 @@ pub fn vault_guests_export_envelope(
     input: crate::task_verb::sdk::GuestDocumentShareRequest,
 ) -> MemoryResult<crate::task_verb::sdk::GuestDocumentEnvelope> {
     crate::task_verb::sdk::guest_document_host_only(memory, "vault.guests.export_envelope", &input)
+}
+pub fn vault_guests_propose(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectProposeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectProposalLanded> {
+    crate::task_verb::sdk::guest_document_host_only(memory, "vault.guests.propose", &input)
 }
 pub fn vault_guests_reshare(
     memory: &Memory<'_>,

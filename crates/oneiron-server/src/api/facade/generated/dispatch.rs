@@ -12147,6 +12147,37 @@ async fn vault_guests_export_envelope(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_guests_propose(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.guests.propose")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.guests.propose", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.guests.propose", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_guests_propose(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_guests_reshare(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -39325,6 +39356,7 @@ async fn call_verb_row(
         "vault.guests.export_envelope" => {
             Box::pin(vault_guests_export_envelope(server, call, input)).await
         }
+        "vault.guests.propose" => Box::pin(vault_guests_propose(server, call, input)).await,
         "vault.guests.reshare" => Box::pin(vault_guests_reshare(server, call, input)).await,
         "vault.guests.revoke" => Box::pin(vault_guests_revoke(server, call, input)).await,
         "vault.guests.mint_slip" => Box::pin(vault_guests_mint_slip(server, call, input)).await,
