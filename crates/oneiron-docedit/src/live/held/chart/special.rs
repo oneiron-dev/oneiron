@@ -152,21 +152,27 @@ pub(crate) fn evidence(tree: &XmlTree) -> Vec<Evidence> {
 /// stock plot's `c:ser` take its prices in their order (three high, low
 /// and close; four or more open first, a fifth and later one none), a
 /// placeholder's price left empty; and an of-pie plot's split points are
-/// the points of the set its first series draws at those indices. Each as
-/// the nth plot of its family, holding only these settings, with the
-/// category identities its first series draws.
+/// the points at those indices of each set its series draw (FIX 9375: one
+/// native split names the same indices in every series' set). Each as the
+/// nth plot of its family, holding only these settings, with the category
+/// identities its series draw, the first series' first.
 pub(crate) fn named(evidence: &[Evidence], bound: &SeriesBinding) -> Vec<(ChartPlot, Vec<NodeId>)> {
     evidence
         .iter()
         .map(|plot| {
-            let set = plot
+            let sets: Vec<&[NodeId]> = plot
                 .series
                 .iter()
                 .flatten()
-                .next()
-                .and_then(|&at| bound.categories.get(at))
-                .cloned()
-                .unwrap_or_default();
+                .filter_map(|&at| bound.categories.get(at).map(Vec::as_slice))
+                .collect();
+            let mut drawn = BTreeSet::new();
+            let set: Vec<NodeId> = sets
+                .iter()
+                .copied()
+                .flat_map(|set| set.iter().copied())
+                .filter(|id| drawn.insert(*id))
+                .collect();
             let mut out = ChartPlot::new(plot.kind, plot.nth);
             if plot.kind == ChartKind::Stock {
                 let ids: Vec<Option<NodeId>> = plot
@@ -183,9 +189,9 @@ pub(crate) fn named(evidence: &[Evidence], bound: &SeriesBinding) -> Vec<(ChartP
             if let Some(split) = &plot.split {
                 let mut seen = BTreeSet::new();
                 out.custom_split = Some(
-                    split
-                        .iter()
-                        .filter_map(|&at| set.get(at).copied())
+                    sets.iter()
+                        .copied()
+                        .flat_map(|set| split.iter().filter_map(move |&at| set.get(at).copied()))
                         .filter(|id| seen.insert(*id))
                         .collect(),
                 );
@@ -200,7 +206,7 @@ pub(crate) fn named(evidence: &[Evidence], bound: &SeriesBinding) -> Vec<(ChartP
 /// price order, each at its own price's place (a price the part's plot
 /// does not draw is one `wanted` leaves empty, its placeholder holding its
 /// place, FIX 9374), and each of-pie plot's split the same points of the
-/// set its first series draws.
+/// sets its series draw.
 pub(crate) fn same_named(tree: &XmlTree, bound: &SeriesBinding, wanted: &[ChartPlot]) -> bool {
     let held = named(&evidence(tree), bound);
     wanted.iter().all(|plot| {
