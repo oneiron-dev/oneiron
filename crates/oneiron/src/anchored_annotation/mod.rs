@@ -53,6 +53,7 @@ mod comment_parts;
 mod conversation;
 mod deck_anchor;
 mod docx_settle;
+mod failed_stamps;
 mod model;
 mod pptx_reanchor;
 mod pptx_settle;
