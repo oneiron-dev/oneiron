@@ -22,13 +22,15 @@
 //! at its source waits, typed, until it changes ([`source_check`]). A copy
 //! of a member the carrier never agreed on, kept as the member's origin
 //! retired the agreed version, waits, typed, for its owner to remove or keep
-//! it ([`diverged`]); the guest's lifecycle endpoint reads both states and
-//! takes his answers. Nothing
+//! it ([`diverged`]); a copy he kept moves aside and is listed there until
+//! he has it removed ([`aside`]). The guest's lifecycle endpoint reads these
+//! states and takes his answers. Nothing
 //! here carries a key or a credential, decides a business receipt, schedules
 //! or prunes a backup, ages anything out, or caps a file, a set or an
 //! outbox; a full disk or an absent host is a typed deferral that keeps the
 //! work on both ends and never stops the vault.
 
+mod aside;
 mod diverged;
 mod endpoint;
 mod guest;
@@ -112,6 +114,10 @@ struct Carrier {
     /// statuses and the owner's answers to its diverged copies; `None` on
     /// the host.
     board: Option<diverged::Board>,
+    /// The host's answers to the guest's keeps and removals of its
+    /// kept-aside copies, sent first in its next turn (FIX 11985, FIX 12010);
+    /// empty on the guest.
+    aside_answers: Vec<oneiron_vault_contract::vm_outbox::VmOutboxFrame>,
 }
 
 /// Why a kind waits on this end's carrier records, and when its next scan
@@ -149,6 +155,7 @@ impl Carrier {
             backup_wait: None,
             record_wait: HashMap::new(),
             board: None,
+            aside_answers: Vec::new(),
         }
     }
 

@@ -13,7 +13,8 @@
 //! None of them is a root operation on the engine's say-so but one: the
 //! owner's answer `remove` to a diverged copy, which removes only a copy the
 //! carrier itself recorded as kept unagreed after its origin retired it,
-//! while it still hashes to the digest he answered. A registered
+//! while it still hashes to the digest he answered, or a copy he kept, at
+//! the side name the carrier's own record keeps for it (FIX 11985). A registered
 //! directory is taken only inside the vault's encrypted storage, reached part
 //! by part without following a link, owned by the vault's UID, with its
 //! label's handoff policy installed; the companion then writes there only the
