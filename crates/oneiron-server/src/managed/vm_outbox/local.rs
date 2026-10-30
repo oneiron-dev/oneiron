@@ -418,11 +418,13 @@ pub(super) fn remove(root: &File, kind: VmOutboxKind, member: &str) -> std::io::
 }
 
 /// Moves `member` under `root` to its side name, a hidden sibling naming the
-/// copy's digest `held` (`.<leaf>.diverged-<held>`, the leaf cut to fit one
-/// name), and syncs its directory: the copy stays whole under its own name,
-/// out of the member's way, and no list, walk or producer takes it for a
-/// member (FIX 11736). A side name already there is never replaced. Returns
-/// the side name, or `None` when no file is at the member's name.
+/// copy's digest `held` ([`aside_name`]), and syncs its directory: the copy
+/// stays whole under its own name, out of the member's way, and no list,
+/// walk or producer takes it for a member (FIX 11736). A side name already
+/// there is never replaced; one that hashes to `held` holds the same bytes,
+/// so the twin at the member's name goes and the copy counts as aside
+/// (FIX 11985). Returns the side name, or `None` when no file is at the
+/// member's name.
 pub(super) fn move_aside(
     root: &File,
     member: &str,
@@ -433,9 +435,7 @@ pub(super) fn move_aside(
         Err(error) if is_gone(&error) => return Ok(None),
         Err(error) => return Err(error),
     };
-    let room = NAME_MAX.saturating_sub(1 + ASIDE_MARK.len() + held.len());
-    let kept = leaf.get(..leaf.len().min(room)).unwrap_or(leaf.as_str());
-    let aside = format!(".{kept}{ASIDE_MARK}{held}");
+    let aside = aside_leaf(&leaf, held);
     match rustix::fs::renameat_with(
         &dir,
         leaf.as_str(),
@@ -445,10 +445,48 @@ pub(super) fn move_aside(
     ) {
         Ok(()) => dir.sync_all()?,
         Err(Errno::NOENT) => return Ok(None),
+        Err(Errno::EXIST)
+            if open_file_at(&dir, &aside)
+                .and_then(|file| digest(&file))
+                .is_ok_and(|version| version.blake3 == held) =>
+        {
+            match rustix::fs::unlinkat(&dir, leaf.as_str(), AtFlags::empty()) {
+                Ok(()) | Err(Errno::NOENT) => dir.sync_all()?,
+                Err(error) => return Err(error.into()),
+            }
+        }
         Err(error) => return Err(error.into()),
     }
-    Ok(Some(match member.rsplit_once('/') {
-        Some((parent, _)) => format!("{parent}/{aside}"),
-        None => aside,
-    }))
+    Ok(Some(aside_name(member, held)))
+}
+
+/// Deletes `member`'s side copy hashing to `held` under `root`, and syncs
+/// its directory; one not there is gone already (FIX 11985).
+pub(super) fn remove_aside(root: &File, member: &str, held: &str) -> std::io::Result<()> {
+    let (dir, leaf) = match parent_of(root, member, None) {
+        Ok(found) => found,
+        Err(error) if is_gone(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    match rustix::fs::unlinkat(&dir, aside_leaf(&leaf, held).as_str(), AtFlags::empty()) {
+        Ok(()) => dir.sync_all(),
+        Err(Errno::NOENT) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The side name of `member`'s copy hashing to `held`, relative to its
+/// kind's root: `.<leaf>.diverged-<held>` beside the member, the leaf cut to
+/// fit one name.
+pub(super) fn aside_name(member: &str, held: &str) -> String {
+    match member.rsplit_once('/') {
+        Some((parent, leaf)) => format!("{parent}/{}", aside_leaf(leaf, held)),
+        None => aside_leaf(member, held),
+    }
+}
+
+fn aside_leaf(leaf: &str, held: &str) -> String {
+    let room = NAME_MAX.saturating_sub(1 + ASIDE_MARK.len() + held.len());
+    let kept = leaf.get(..leaf.len().min(room)).unwrap_or(leaf);
+    format!(".{kept}{ASIDE_MARK}{held}")
 }
