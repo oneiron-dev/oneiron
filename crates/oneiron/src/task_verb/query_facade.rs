@@ -214,6 +214,8 @@ impl Memory<'_> {
             },
             provenance: GateProvenanceHandles {
                 actor_entity_ref: Some(self.actor()),
+                // FIX 11921: the run this surface writes for, if any.
+                run_attempt: self.write_actor().run_attempt(),
                 ..GateProvenanceHandles::default()
             },
             verb: verb.to_owned(),
