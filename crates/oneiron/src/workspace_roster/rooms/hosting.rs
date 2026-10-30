@@ -28,6 +28,7 @@
 //! never an admission party.
 use super::participation::{agent_standing_in_txn, participant_in_txn, person_standing_in_txn};
 use super::*;
+use crate::EdgeActorClass;
 use crate::conversation::room_host_in_txn;
 use crate::error::{ClaimError, RecordError};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
@@ -35,7 +36,6 @@ use crate::side_table::Named;
 use crate::store::Store;
 use crate::workspace_roster::join_consent::JoinSubject;
 use crate::workspace_roster::join_receipt::{RosterActor, RosterErase, names_no_actor};
-use crate::{EdgeActorClass, WriteActor};
 
 /// How a member speaks in a room. Engine upkeep holds neither role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -479,7 +479,7 @@ impl Memory<'_> {
     pub fn rooms_host_pin(&self, pin: &RoomHostPin) -> MemoryResult<RoomStanding> {
         self.require_host_room(pin.room)?;
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let standing = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             if caller.actor_class() != EdgeActorClass::Human
@@ -533,7 +533,7 @@ impl Memory<'_> {
     pub fn rooms_host_hand(&self, hand: &RoomHostHand) -> MemoryResult<RoomStanding> {
         self.require_host_room(hand.room)?;
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         if hand.to == caller.entity_ref() {
             return Err(MemoryError::from(lacks(
                 "a host hands its duty to another agent",

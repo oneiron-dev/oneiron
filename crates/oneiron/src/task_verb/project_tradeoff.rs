@@ -335,7 +335,7 @@ impl Memory<'_> {
             ));
         }
         let vault = self.vault();
-        let agent = crate::write_envelope::WriteActor::new(self.actor(), self.actor_class());
+        let agent = self.write_actor();
         let route = self.pending_project_tradeoff_route(ask)?;
         let now = vault.store.clock.now_recorded_at();
         let verdict = crate::skill_optimize::settle_skill_tradeoff_ask_as_agent(

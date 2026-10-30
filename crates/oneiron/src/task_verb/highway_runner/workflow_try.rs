@@ -345,7 +345,7 @@ impl Memory<'_> {
                         "Report against the task your own attempt realizes.",
                     ));
                 }
-                let binder = WriteActor::new(self.actor(), self.actor_class());
+                let binder = self.write_actor();
                 let source = AgentDispatcher::new(vault)
                     .workflow_task_source_in_txn(txn, &record)?
                     .filter(|source| source.task == task_ref && source.bound_by == binder);

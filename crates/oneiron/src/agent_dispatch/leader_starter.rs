@@ -1,12 +1,15 @@
 //! CEO starter over existing TASK promises, project responsibility and skill loads.
 
 use rmpv::Value;
-use serde_json::Value as JsonValue;
+use serde::{Deserialize, Serialize};
 
+use super::planner::{ShapeQuote, SkillRevisionRef, TeamPlan};
+use super::types::SpawnNeed;
 use super::{AgentDispatcher, decode_agent_dispatch_input};
 use crate::EntityId;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::decision::ProviderPin;
 use crate::skill::{LoadedSkillPack, SkillRole};
 use crate::workspace_roster::{ProjectBudgetShare, ProjectEffective, ProjectGoalRecord};
 
@@ -71,17 +74,35 @@ pub struct LeaderStarter {
     pub pattern: Option<LoadedSkillPack>,
 }
 
+/// The CEO's top-shapes advice: the resolved plan, its ranked shapes, and the skills and executors it read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaderAdvice {
+    pub task_ref: String,
+    pub project_ref: String,
+    pub asked: SpawnNeed,
+    pub plan: TeamPlan,
+    pub why: Vec<String>,
+    pub shapes: Vec<ShapeQuote>,
+    #[serde(default)]
+    pub team_shape: Option<SkillRevisionRef>,
+    #[serde(default)]
+    pub rung_skill: Option<SkillRevisionRef>,
+    #[serde(default)]
+    pub rung_providers: Vec<ProviderPin>,
+}
+
 /// The team-shape planner owns its ladder, pins, estimates and plan schema.
 /// Advice is returned to the CEO; it neither launches agents nor assigns work.
-/// The JSON result preserves that planner's contract without defining a
-/// second team-plan format in the starter. The installed implementation is
-/// [`super::VaultLeaderTeamPlanner`], over the one live planner service.
+/// The [`LeaderAdvice`] result carries that planner's own plan and quote
+/// types without defining a second team-plan format in the starter. The
+/// installed implementation is [`super::VaultLeaderTeamPlanner`], over the
+/// one live planner service.
 pub trait LeaderTeamPlanner {
     fn top_shapes(
         &mut self,
         task: &LeaderTaskContext,
         team_shape: &LoadedSkillPack,
-    ) -> Result<JsonValue>;
+    ) -> Result<LeaderAdvice>;
 }
 
 fn invalid(reason: &'static str) -> Error {
@@ -176,7 +197,7 @@ impl AgentDispatcher<'_> {
         executor: &str,
         planner: &mut dyn LeaderTeamPlanner,
         at: u64,
-    ) -> Result<JsonValue> {
+    ) -> Result<LeaderAdvice> {
         let context = self.leader_task_context(leased)?;
         let team_shape = self.load_leader_workflow(leased, team_shape_skill, executor, at)?;
         planner.top_shapes(&context, &team_shape)
@@ -191,7 +212,7 @@ impl AgentDispatcher<'_> {
         executor: &str,
         planner: &mut dyn LeaderTeamPlanner,
         at: u64,
-    ) -> Result<JsonValue> {
+    ) -> Result<LeaderAdvice> {
         self.leader_top_shapes(leased, skills.team_shape, executor, planner, at)
     }
 

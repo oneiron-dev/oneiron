@@ -566,7 +566,7 @@ impl Memory<'_> {
             ));
         }
         self.require_offer_audience(draft.room, draft.branch)?;
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let vault = self.vault();
         // FIX 1794: the card a new one replaces rides with it.
         #[cfg(feature = "sync")]

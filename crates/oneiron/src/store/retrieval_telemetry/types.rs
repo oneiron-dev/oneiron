@@ -22,10 +22,10 @@ pub use oneiron_contracts::retrieval_telemetry::{
 
 pub(super) const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 
-pub(in crate::store) const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 1;
+pub(in crate::store) const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 2;
 
 pub(in crate::store) const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str =
-    "ret010d.reward_weighted_bandit.v1";
+    "oneiron.retrieval.blend_tuner.v2";
 
 const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
 
@@ -182,7 +182,7 @@ impl RetrievalPolicyPins {
         if total > 1.0 + f32::EPSILON {
             return Err(invalid("retrieval policy pins may not exceed total mass 1"));
         }
-        if self.pins.len() == 4 && (total - 1.0).abs() > 1e-6 {
+        if self.pins.len() == 5 && (total - 1.0).abs() > 1e-6 {
             return Err(invalid(
                 "retrieval policy pins over every signal must sum to 1",
             ));
@@ -202,6 +202,7 @@ impl RetrievalPolicyPins {
             RetrievalBlendSignal::Salience,
             RetrievalBlendSignal::Confidence,
             RetrievalBlendSignal::Gravity,
+            RetrievalBlendSignal::Relevance,
         ];
         let pinned_total: f32 = self.pins.iter().map(|pin| pin.value).sum();
         let remainder = (1.0 - pinned_total).max(0.0);
@@ -231,6 +232,7 @@ impl RetrievalPolicyPins {
             value(RetrievalBlendSignal::Salience),
             value(RetrievalBlendSignal::Confidence),
             value(RetrievalBlendSignal::Gravity),
+            value(RetrievalBlendSignal::Relevance),
         )
         .normalized()
     }
@@ -274,6 +276,7 @@ pub fn retrieval_weight_rows(
         RetrievalBlendSignal::Salience,
         RetrievalBlendSignal::Confidence,
         RetrievalBlendSignal::Gravity,
+        RetrievalBlendSignal::Relevance,
     ]
     .into_iter()
     .map(|signal| {

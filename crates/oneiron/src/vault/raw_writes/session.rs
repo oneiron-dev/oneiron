@@ -46,7 +46,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStore
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
 use crate::store::SessionStoreView;
 use crate::temporal::TimeRange;
-use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 
 mod composed_reads;
 
@@ -394,7 +394,7 @@ impl Memory<'_> {
             (rmpv::Value::from("door"), rmpv::Value::from("put")),
         ]);
         Ok(Some(WriteEnvelope::new(
-            WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
             body.source.unwrap_or(RAW_CLAIM_SOURCE),
             WriteProvenance::new(provenance)?,
             body.approval,
