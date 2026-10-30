@@ -205,8 +205,43 @@ pub(crate) fn read_folder(
     folder: &Path,
     counts: &mut NoteCounts,
 ) -> anyhow::Result<(Vec<Note>, Vec<NameOnlyFile>)> {
+    let (notes, name_only, _, _) = read_folder_inner(folder, counts, None)?;
+    Ok((notes, name_only))
+}
+
+/// [`read_folder`] for a rescan (FIX 1365): a file whose size and mtime both
+/// match `prior`'s record is not read, and its path is skipped. Beside the
+/// notes, the facts of every file read, by path, and the paths skipped.
+pub(crate) fn read_folder_rescan(
+    folder: &Path,
+    counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
+) -> anyhow::Result<(
+    Vec<Note>,
+    Vec<NameOnlyFile>,
+    HashMap<String, FileFacts>,
+    Vec<String>,
+)> {
+    read_folder_inner(folder, counts, prior)
+}
+
+/// [`read_folder`], skipping what `prior` records when it does: a file whose
+/// size and mtime both match its record keeps what the ledger holds of it,
+/// so neither its read nor its hash runs.
+fn read_folder_inner(
+    folder: &Path,
+    counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
+) -> anyhow::Result<(
+    Vec<Note>,
+    Vec<NameOnlyFile>,
+    HashMap<String, FileFacts>,
+    Vec<String>,
+)> {
     let mut notes = Vec::new();
     let mut name_only = Vec::new();
+    let mut facts = HashMap::new();
+    let mut skipped = Vec::new();
     super::walk_notes(folder, &mut |shown, file| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
@@ -219,6 +254,15 @@ pub(crate) fn read_folder(
             counts.hard_linked += 1;
             return Ok(());
         }
+        let read = FileFacts {
+            bytes: metadata.len(),
+            modified_at: written_at(&metadata),
+        };
+        if prior.is_some_and(|prior| prior.get(&path) == Some(&read)) {
+            skipped.push(path);
+            return Ok(());
+        }
+        facts.insert(path.clone(), read);
         let kind = if Path::new(&path)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
@@ -233,7 +277,7 @@ pub(crate) fn read_folder(
         if let Some((why, original)) = read_text(
             (path.clone(), PART_MARK),
             bytes,
-            written_at(&metadata),
+            read.modified_at,
             kind,
             counts,
             &mut notes,
@@ -241,16 +285,13 @@ pub(crate) fn read_folder(
             name_only.push(NameOnlyFile {
                 path,
                 why,
-                facts: FileFacts {
-                    bytes: metadata.len(),
-                    modified_at: written_at(&metadata),
-                },
+                facts: read,
                 original: Some(original),
             });
         }
         Ok(())
     })?;
-    Ok((notes, name_only))
+    Ok((notes, name_only, facts, skipped))
 }
 
 /// How a file's bytes hold its text.
