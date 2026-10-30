@@ -17,6 +17,10 @@
 //! - Every install keeps a relayed copy that stands on its fold, once,
 //!   rechecked in the writer that keeps it. Only the recipient machine opens
 //!   it; no install that keeps or relays it can.
+//! - A copy past one row rides in numbered parts by these same rules, and
+//!   is joined before it is judged (FIX 12063, `parts`).
+
+mod parts;
 
 use std::collections::BTreeSet;
 
@@ -46,6 +50,7 @@ fn output_row(request: &[u8; 32]) -> String {
 /// its prefix: what a checkpoint files as secret custody's.
 pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
     KeptExportOutput::decode(value).is_some_and(|kept| bytes_to_hex_lower(&kept.request) == row_key)
+        || parts::filed(row_key, value)
 }
 
 /// Admits one sealed copy under `row_key`, the map key after its prefix:
@@ -58,6 +63,9 @@ pub(super) fn admit_export_output(
 ) -> Result<()> {
     if bytes.len() > MAX_RELAYED_OUTPUT_BYTES {
         return Err(refused("export secret supplement past one row's bound"));
+    }
+    if let Some(admitted) = parts::admit_part(key, row_key, bytes) {
+        return admitted;
     }
     let kept = KeptExportOutput::decode(bytes)
         .ok_or_else(|| refused("malformed export secret supplement"))?;
@@ -98,11 +106,7 @@ pub(super) fn mirror_export_outputs(
         }
         let bytes = output.encode();
         if bytes.len() > MAX_RELAYED_OUTPUT_BYTES {
-            tracing::debug!(
-                window = %key,
-                bytes = bytes.len(),
-                "an export secret supplement past one row's bound stays with its keepers"
-            );
+            wrote |= parts::mirror_parts(doc, &output, &bytes)?;
             continue;
         }
         let map = doc.get_map(CUSTODY_MAP);
@@ -129,6 +133,7 @@ pub(super) fn mirror_export_outputs(
                 done.push(map_key.to_owned());
             }
         });
+        done.extend(parts::done_part_rows(&map, fold, fenced));
         for row in done {
             map_delete(&map, &row)?;
             wrote = true;
@@ -143,6 +148,7 @@ pub(super) fn mirror_export_outputs(
 /// that fails is logged and left.
 pub(super) fn keep_relayed_export_outputs(
     vault: &Vault,
+    doc: &LoroDoc,
     window: &str,
     rows: Vec<(String, Vec<u8>)>,
 ) {
@@ -161,6 +167,11 @@ pub(super) fn keep_relayed_export_outputs(
                 if *map_key == output_row(&output.request)
                     && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
                 {
+                    due.push(output);
+                }
+            }
+            for output in parts::joined_copies(doc, &rows) {
+                if relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)? {
                     due.push(output);
                 }
             }

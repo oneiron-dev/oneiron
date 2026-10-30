@@ -22,7 +22,8 @@
 //! owner imports (`crate::batch::export`'s secret supplement). The copy is
 //! kept with the second it was sealed at, and rides the window plane to the
 //! owner's other installs, each of which keeps it once it folds the result
-//! that names it (`relay`, FIX 11843).
+//! that names it (`relay`, FIX 11843); a copy past one row rides in
+//! numbered parts the receiver joins first (FIX 12063).
 
 mod relay;
 mod sealed;
