@@ -240,7 +240,7 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         let self_key = self.adapter.receiving_address_or_handle().to_owned();
         // On page text, how often the words stood in turns not the
         // counterparty's before the send.
-        let mut pre_send_page = None;
+        let pre_send_page: Option<usize>;
         let (pre_send_match_count, pre_send_ids) =
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
