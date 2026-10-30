@@ -2210,6 +2210,12 @@ can also hold records. You cannot lift it, and an erase you confirm waits until 
 the order whole, with its reference and terms, unless the order itself requires silence; then you
 see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
 
+An erase that still waits, on such an order or on a shared vault's veto window, is yours to
+withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
+answers each record `withdrawn`, `not_waiting`, or `under_way` when its delete has already begun
+and runs to its end. A withdrawn erase erases nothing, a hold the confirm lifted stays lifted, and
+each hold the confirm met logs `erase_withdrawn`.
+
 ## Erase a text's history
 
 `POST /v1/owner/history/erase` with `{"entity": "<hex>"}` (and optionally `"through"`, a base64

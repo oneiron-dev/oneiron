@@ -15595,6 +15595,41 @@ async fn vault_legal_holds_lift_and_erase(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_legal_holds_withdraw_erase(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.legal_holds.withdraw_erase")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.legal_holds.withdraw_erase", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.legal_holds.withdraw_erase", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_legal_holds_withdraw_erase(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_courtesy_delete_send(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -39504,6 +39539,9 @@ async fn call_verb_row(
         "vault.legal_holds.log" => Box::pin(vault_legal_holds_log(server, call, input)).await,
         "vault.legal_holds.lift_and_erase" => {
             Box::pin(vault_legal_holds_lift_and_erase(server, call, input)).await
+        }
+        "vault.legal_holds.withdraw_erase" => {
+            Box::pin(vault_legal_holds_withdraw_erase(server, call, input)).await
         }
         "vault.courtesy_delete.send" => {
             Box::pin(vault_courtesy_delete_send(server, call, input)).await

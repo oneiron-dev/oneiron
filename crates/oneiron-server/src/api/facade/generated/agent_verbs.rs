@@ -551,6 +551,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.legal_holds.list", post(facade_route))
         .route("/vault.legal_holds.log", post(facade_route))
         .route("/vault.legal_holds.lift_and_erase", post(facade_route))
+        .route("/vault.legal_holds.withdraw_erase", post(facade_route))
         .route("/vault.courtesy_delete.send", post(facade_route))
         .route("/vault.courtesy_delete.sent", post(facade_route))
         .route("/vault.courtesy_delete.incoming", post(facade_route))

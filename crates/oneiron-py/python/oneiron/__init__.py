@@ -3169,6 +3169,9 @@ class Oneiron:
         def lift_and_erase(self, spec):
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
+        def withdraw_erase(self, spec):
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_withdraw_erase(json.dumps(spec))))
     class _VaultCourtesyDeleteVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
