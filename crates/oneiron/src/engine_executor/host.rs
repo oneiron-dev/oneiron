@@ -246,6 +246,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
+        // The rows an earlier step's callables answered from (FIX 5763).
+        self.callable_rows = record.callable_rows.host_parts();
         self.storage = Some(storage);
         Ok(self)
     }

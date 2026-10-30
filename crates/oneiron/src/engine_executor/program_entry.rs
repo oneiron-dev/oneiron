@@ -499,6 +499,7 @@ impl<'a> EngineNativeExecutor<'a> {
         }
         record.bridge_calls.extend(host.bridge_calls);
         record.outputs.extend(host.captured);
+        record.callable_rows.keep(&host.callable_rows);
         let bindings: Vec<(String, String)> = host
             .bound
             .iter()
