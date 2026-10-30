@@ -18,8 +18,19 @@ pub(super) fn require_candidate(
     snapshot: &StoredRepoSnapshot,
 ) -> Result<()> {
     let canonical = super::oplog::repo_mutation_repo_key_hash;
+    // A run's proposal stands on its work's pinned base, the green commit's
+    // tree, while the stage captured the live checkout, which also holds
+    // what no tree does (ignored or untracked files, a submodule's checkout,
+    // a filter's bytes). It stands on the stage's base when the stage's HEAD
+    // is its pinned commit; every path it touches is checked against the
+    // stage's own entries below (FIX 7065).
+    let same_base = row.pre_action_fork_hash == pre_snapshot
+        || row
+            .run
+            .as_ref()
+            .is_some_and(|stamp| snapshot.head.as_deref() == Some(stamp.base_green.as_str()));
     if canonical(&RepoRef::parse(&row.repo)?) != canonical(repo)
-        || row.pre_action_fork_hash != pre_snapshot
+        || !same_base
         || row.id.to_hex() != candidate.id
     {
         return Err(invalid(
