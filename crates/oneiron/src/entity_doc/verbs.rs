@@ -134,8 +134,10 @@ impl Vault {
                     .set_peer_id(loro::LoroDoc::new().peer_id())
                     .map_err(|_| invalid("document peer rotation"))?;
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
+                // The edit's commit names the actor's stamp token (FIX 10930).
+                let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
                 let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
-                let place = apply(&mut doc, *entity, edit, &text.stored, at, &[], &lifted)?;
+                let place = apply(&mut doc, *entity, edit, stamp, &text.stored, at, &[], &lifted)?;
                 if let Some(place) = place {
                     let slot = format!("/edits/{index}/text");
                     let said = LandedProse::anchored(actor, slot, &doc, place, &text, &lifted);
@@ -189,6 +191,8 @@ impl Vault {
             )?;
             let text = &admitted.stored;
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
+            // The update's commit names the actor's stamp token (FIX 10930).
+            let stamp = crate::provenance::actor_stamp_in_txn(self, txn, request.actor)?;
             // The complete text is the writer's prose, wherever it lands; text
             // equal to its base says nothing new (FIX 1227).
             let landed = if *text == base_text {
@@ -218,7 +222,7 @@ impl Vault {
                 // then store the complete output under the author's own stamp.
                 fork = live.fork(&request.base)?;
                 super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
-                fork.edit_as(request.actor, request.at, |body| {
+                fork.edit_as(stamp, request.at, |body| {
                     body.delete(0, body.len_unicode())
                         .map_err(|_| invalid("rewrite delete"))?;
                     body.insert(0, text).map_err(|_| invalid("rewrite insert"))
@@ -249,7 +253,7 @@ impl Vault {
                 };
                 return Ok((outcome, landed));
             }
-            super::document::stamp(&fork.doc, request.actor, request.at, "update")?;
+            super::document::stamp(&fork.doc, stamp, request.at, "update")?;
             if !permitted {
                 let id = EntityId::now();
                 let req = ForkRequest {
@@ -499,23 +503,29 @@ pub(super) struct Admitted {
 }
 
 /// `replacement` is the text `edit` writes as admitted
-/// ([`admitted_prose_in_txn`]); `sources` are the rows its writer read for
-/// it, which its commit's receipt names (FIX 7790); `lifted` are the keys the
-/// live text's lift marked, for a quote a masked reader was issued (FIX 2936).
+/// ([`admitted_prose_in_txn`]), its commit naming `stamp`, its actor's stamp
+/// token (FIX 10930); `sources` are the rows its writer read for it, which
+/// its commit's receipt names (FIX 7790); `lifted` are the keys the live
+/// text's lift marked, for a quote a masked reader was issued (FIX 2936).
 /// Returns the Unicode position `replacement` landed at, or `None` when it
 /// replaced a span with the same text, which says nothing new (FIX 1227).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one anchored edit binds its document, verb, stamp, text, time, sources and lift"
+)]
 pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
+    stamp: crate::provenance::ActorStamp,
     replacement: &str,
     at: u64,
     sources: &[EntityId],
     lifted: &LiftedKeys,
 ) -> Result<Option<usize>> {
-    let actor = edit
-        .actor
-        .ok_or(invalid("text operation requires an actor"))?;
+    if edit.actor.is_none() {
+        return Err(invalid("text operation requires an actor"));
+    }
     let anchor = verb_parts(edit).0;
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
@@ -528,7 +538,7 @@ pub(super) fn apply(
         same = current == replacement;
     }
     let place = if replacing { start } else { end };
-    doc.edit_with(actor, at, sources, |body| {
+    doc.edit_with(stamp, at, sources, |body| {
         if replacing {
             body.delete(start, end - start)
                 .map_err(|_| invalid("anchored delete"))?;

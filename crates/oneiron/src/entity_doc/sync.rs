@@ -145,8 +145,10 @@ pub(crate) fn edit_sync_text_in_txn(
         .set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| invalid("document peer rotation"))?;
     super::forks::bind_actor(vault, txn, &doc, actor, edit.at)?;
+    // The edit's commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     let (start, delete) = (edit.start, edit.delete);
-    doc.edit_with(actor, edit.at, &[], |body| {
+    doc.edit_with(stamp, edit.at, &[], |body| {
         body.delete(start, delete)
             .map_err(|_| invalid("sync text delete"))?;
         body.insert(start, &text.stored)
@@ -322,12 +324,14 @@ fn edit_sequence_rows_in_txn(
     doc.set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| invalid("document peer rotation"))?;
     crate::typed_body::bind_peer(vault, txn, doc.peer_id(), edit.actor, edit.at)?;
+    // The update's commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, edit.actor)?;
     let body = doc.get_text(BODY);
     body.delete(edit.start, edit.delete)
         .map_err(|_| invalid("sync text delete"))?;
     body.insert(edit.start, &text.stored)
         .map_err(|_| invalid("sync text insert"))?;
-    stamp_with(&doc, edit.actor, edit.at, "edit", &[])?;
+    stamp_with(&doc, stamp, edit.at, "edit", &[])?;
     let update = doc
         .export(ExportMode::updates(&before))
         .map_err(|_| invalid("sync text update export"))?;

@@ -136,7 +136,10 @@ fn birth_message_in_txn(
     // A MESSAGE its writing door already stamped keeps that birth on its
     // document's birth commit (FIX 10929).
     let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, entity)?;
-    let doc = EntityDoc::open_born(*entity, text, actor, at, born.as_ref().map(|b| &b.made_by))?;
+    // The birth commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
+    let born = born.as_ref().map(|birth| &birth.made_by);
+    let doc = EntityDoc::open_born(*entity, text, (actor, stamp), at, born)?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
     fields.push((
         rmpv::Value::from("entity_doc_ref"),
@@ -200,7 +203,9 @@ pub(crate) fn append_message_stream_in_txn(
         .set_peer_id(loro::LoroDoc::new().peer_id())
         .map_err(|_| invalid("stream continuation peer"))?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
-    doc.edit_as(actor, at, |body| {
+    // The continuation's commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
+    doc.edit_as(stamp, at, |body| {
         body.insert(body.len_unicode(), delta)
             .map_err(|_| invalid("message continuation insert"))
     })?;
