@@ -11,13 +11,13 @@
 //! the import has committed, never before (FIX 11797); one that does not
 //! import stays on disk as written, and each start takes in those not yet
 //! taken in before its first session, and deletes the file of each one taken
-//! in before. On a managed vault each import runs under an
-//! admission of the reap freeze (FIX 11796): a frozen vault takes none, and
-//! the archive waits on disk until the freeze lifts, when the receiver takes
-//! in the kept archives again in the same run (FIX 12154), or until the next
-//! start. A live member's device
-//! holds the same sessions, and a removal wakes them. A failed session is
-//! tried again after a wait that doubles from
+//! in before and of each whose term has passed unimported. On a managed
+//! vault each import runs under an admission of the reap freeze (FIX
+//! 11796): a frozen vault takes none, and the archive waits on disk until
+//! the freeze lifts, when the receiver takes in the kept archives again in
+//! the same run (FIX 12154), or until the next start. A live member's
+//! device holds the same sessions, and a removal wakes them. A failed
+//! session is tried again after a wait that doubles from
 //! [`REMOVAL_DELIVERY_RETRY_FIRST`] to [`REMOVAL_DELIVERY_RETRY_MAX`]. Logs
 //! name receipts, never a slip or a key.
 #![cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use oneiron::federation::RemovalExportCopy;
+use oneiron::federation::{REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy};
 use oneiron::sync::SyncTransportCredential;
 use serde::Deserialize;
 use tokio::sync::{oneshot, watch};
@@ -38,6 +38,9 @@ use super::dial::Dial;
 use crate::commands::credential_file::PairedCredentialFile;
 use crate::handler::mesh::MeshHost;
 use crate::server::HousekeepingAdmission;
+
+mod kept_files;
+use kept_files::{remove_imported, remove_lapsed};
 
 /// The first wait after a failed session (a call).
 const REMOVAL_DELIVERY_RETRY_FIRST: Duration = Duration::from_secs(5);
@@ -649,24 +652,6 @@ fn import(
     remove_imported(path, &copy.receipt_id, copy.delivered_at);
 }
 
-/// Deletes `path`, the file of the archive `receipt` at delivery `version`
-/// whose import has committed (FIX 11797): the vault keeps the copy now, and
-/// its readers answer it there until its term. A delete that fails is
-/// logged by the archive's key alone and leaves the import as it stands;
-/// the next start's sweep deletes it ([`import_dir`]).
-fn remove_imported(path: &Path, receipt: &str, version: u64) {
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => tracing::warn!(
-            receipt = %receipt,
-            version,
-            kind = ?error.kind(),
-            "imported removal archive file not deleted"
-        ),
-    }
-}
-
 /// Takes into `vault` each archive kept under `archives` that it has not
 /// taken in yet: one an earlier import refused or never reached. Each is
 /// logged as [`import`] logs it; a sweep that cannot run is logged once and
@@ -696,7 +681,8 @@ async fn import_kept(
 /// [`import_kept`]'s sweep: each archive under `archives` not yet taken in
 /// is read and imported for the paired credential's holder, and the file of
 /// each one taken in before goes, its import committed (FIX 11797): one
-/// whose delete failed, or whose row has since lapsed at its term. No
+/// whose delete failed, or whose row has since lapsed at its term. The file
+/// of one whose term has passed unimported goes too ([`remove_lapsed`]). No
 /// directory, no sweep.
 fn import_dir(
     vault: &oneiron::Vault,
@@ -713,6 +699,11 @@ fn import_dir(
     let slip = oneiron::authority::CapabilitySlip::from_token(&paired.token)
         .map_err(|_| anyhow::anyhow!("the paired credential's slip does not decode"))?;
     let person = oneiron::EntityId::from_hex(&slip.claims.holder_ref)?;
+    // The wall clock, which the store clock never trails: a term passed on it
+    // has passed on the store clock the import reads.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
     for entry in entries {
         let path = entry?.path();
         let Some((receipt, version)) = archive_name(&path) else {
@@ -720,6 +711,10 @@ fn import_dir(
         };
         if vault.removal_archive_imported(person, receipt, version)? {
             remove_imported(&path, &receipt.to_hex(), version);
+            continue;
+        }
+        if version.saturating_add(REMOVAL_EXPORT_RETAIN_SECS) <= now {
+            remove_lapsed(&path, &receipt.to_hex(), version);
             continue;
         }
         match read_kept(&path) {
