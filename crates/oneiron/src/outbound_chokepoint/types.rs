@@ -272,6 +272,14 @@ pub(crate) trait OutboundTransport {
         false
     }
 
+    /// The actual cost the last send's provider reported for it, in a Spend
+    /// row's denomination (FIX 11662): a delivered send's preauthorized
+    /// spend is reconciled to it. By default a transport reports none, and
+    /// the declared price stays the charge.
+    fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
+        None
+    }
+
     /// Judges a new call once more under the writer that would record its
     /// gate decision, before any decision is recorded (FIX 6404): a refusal
     /// records none and sends nothing. By default a transport takes every

@@ -13,7 +13,8 @@ use super::types::OutboundEffectResult;
 use crate::Vault;
 use crate::connector_key::{
     self, ConnectorKeyStatus, ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetCharge,
-    EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetOnExhaust, SpendReserve,
+    EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetLocation,
+    EffectorBudgetOnExhaust, SpendReserve,
 };
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
@@ -136,18 +137,26 @@ pub(super) fn spend_price_in_txn(
     )
 }
 
+/// A preauthorized spend's reservation: the entries reserved, what they
+/// stood on, and every preauthorizing row the call met (FIX 11662).
+pub(super) type ReservedSpend = (
+    Vec<EffectorBudgetDebit>,
+    ConnectorSpendBasis,
+    Vec<EffectorBudgetLocation>,
+);
+
 /// FIX 8689: what the primary key's preauthorizing Spend rows, and its
 /// catalog pool's, say of `price`. `None` when one has no room: nothing
 /// debited, and a row set to suspend suspended its key. `Some(None)` when
-/// none preauthorizes. Otherwise the entries reserved (when `apply`) and
-/// what they stood on.
+/// none preauthorizes. Otherwise the entries reserved (when `apply`), what
+/// they stood on, and the rows a reported actual cost reconciles on.
 pub(super) fn spend_reserve(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     governance: &mut gate::ExternalEffectGovernance,
     price: Option<&ConnectorSpendEstimate>,
     apply: bool,
-) -> Result<Option<Option<(Vec<EffectorBudgetDebit>, ConnectorSpendBasis)>>, IntentLedgerError> {
+) -> Result<Option<Option<ReservedSpend>>, IntentLedgerError> {
     let Some(target) = governance.budget_target_mut() else {
         return Ok(Some(None));
     };
@@ -166,7 +175,11 @@ pub(super) fn spend_reserve(
             apply,
         )? {
             SpendReserve::SettleOnly => Some(None),
-            SpendReserve::Reserved { debits, basis } => Some(Some((debits, basis))),
+            SpendReserve::Reserved {
+                debits,
+                basis,
+                rows,
+            } => Some(Some((debits, basis, rows))),
             SpendReserve::Exhausted { .. } => None,
         },
     )

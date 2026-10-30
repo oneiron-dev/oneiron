@@ -522,9 +522,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     .ok_or(Error::InvariantViolation(
         "preauthorized spend changed inside admission transaction",
     ))?;
-    let spend_basis = spend.map(|(debits, basis)| {
+    let spend_basis = spend.map(|(debits, basis, rows)| {
         reserved.extend(debits);
-        basis
+        (basis, rows)
     });
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
         let (_, co_charge, exhausted) =

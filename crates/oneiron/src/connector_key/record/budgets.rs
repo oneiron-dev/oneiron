@@ -155,6 +155,15 @@ pub struct ConnectorSpendEstimate {
 pub enum ConnectorSpendBasis {
     Estimated(ConnectorSpendEstimate),
     Unpriced,
+    /// The delivered send's provider reported its actual cost (FIX 11662):
+    /// the estimate's entries, when one was reserved, came out and the
+    /// actual went in on the preauthorizing rows in its unit. An actual
+    /// above `estimated` is the overspend, written as it is, since the
+    /// effect already occurred.
+    Reconciled {
+        estimated: Option<ConnectorSpendEstimate>,
+        actual: ConnectorSpendEstimate,
+    },
 }
 
 /// One effector-budget row (OF-277 §3.3 schema, ratified names).

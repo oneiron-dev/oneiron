@@ -96,7 +96,7 @@ impl EffectorBudgetRowId {
 
 /// The budget row a charge stopped on, under the key that owns it: the
 /// per-grant key's own row, or its catalog pool's row under the catalog key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectorBudgetLocation {
     pub key_ref: EntityId,
     pub row: EffectorBudgetRowId,

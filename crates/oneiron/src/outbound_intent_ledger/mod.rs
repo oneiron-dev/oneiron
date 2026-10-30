@@ -45,7 +45,9 @@ pub(crate) use self::pinned_approval::{
 pub(crate) use self::resolution::{
     ConnectorIntentBinding, IntentResolution, RetryDisposition, UnconfirmedDelivery,
 };
-pub(crate) use self::settlement::{intent_settlement, provider_wait_edge, reserve_budget_in_txn};
+pub(crate) use self::settlement::{
+    intent_settlement, keep_reported_cost, provider_wait_edge, reserve_budget_in_txn,
+};
 pub(crate) use self::store::check_intent_attempt_format_in_txn;
 pub(crate) use self::store::checkpoint;
 pub(crate) use self::store::{
