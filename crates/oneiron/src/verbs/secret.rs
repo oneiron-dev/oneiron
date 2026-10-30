@@ -119,7 +119,7 @@ pub struct RevealReceipt {
     pub answered_by: Option<String>,
     /// The consent act's Gate receipt, `gate:<hex>`.
     pub decision: Option<String>,
-    /// The T1 lease that delivered it.
+    /// The lease that delivered it: a T1 lease, or a PERSON reveal's own.
     pub lease: Option<String>,
     pub asked_at: u64,
     pub delivered_at: Option<u64>,
@@ -203,8 +203,9 @@ pub fn wait_reveal_as_caller(
 
 /// `reveal.wait` made again by the step that collected it, resumed after a
 /// park (FIX 2360): the value its first wait delivered, read again under
-/// `lease`, the T1 lease its kept answer names. Nothing is spent, stamped or
-/// extended; a lapsed lease answers `expired`.
+/// `lease`, the lease its kept answer names (a PERSON reveal's too, FIX
+/// 11683). Nothing is spent, stamped or extended; a lapsed lease answers
+/// `expired`.
 pub fn replay_reveal_as_caller(
     memory: &Memory<'_>,
     input: RevealWaitRequest,
@@ -319,7 +320,7 @@ pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
     kept
 }
 
-/// The T1 lease a kept `granted` answer of `reveal.wait` names: the lease a
+/// The lease a kept `granted` answer of `reveal.wait` names: the lease a
 /// replay of its step reads the value again under (FIX 2360). `None` for any
 /// other answer.
 pub(crate) fn kept_reveal_lease(output: &serde_json::Value) -> Option<EntityId> {
@@ -541,7 +542,8 @@ impl Memory<'_> {
         .with_provider(self.model_provider())
         .with_reader(self.read_key()?)
         .with_attempt(attempt)
-        .with_task(task))
+        .with_task(task)
+        .with_step(self.host_step()))
     }
 }
 

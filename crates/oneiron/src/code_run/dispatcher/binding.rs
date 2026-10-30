@@ -108,6 +108,7 @@ impl<'a> HostSelfDispatcher<'a> {
             planner: None,
             slip_issuer: None,
             replay_exposures: Vec::new(),
+            assertions_created: RefCell::default(),
             model_provider: RefCell::new(None),
             run_request: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,

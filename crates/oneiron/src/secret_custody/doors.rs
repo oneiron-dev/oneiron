@@ -607,10 +607,14 @@ pub(crate) fn restore_secret_custody_in_txn(
 /// the row only named, keeps its record. Each live record is revoked as the
 /// revoke door's body revokes one, its value erased at rest, with its
 /// receipt; one revoked already gives up only the bytes it still holds.
+/// Under `act`, the owner act the erase carries out, each record it revokes
+/// is carried to his other machines too (FIX 11883); with none, the revoke
+/// stands here.
 pub(crate) fn revoke_side_row_custody_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     origin: &EntityId,
+    act: Option<&super::EraseOwnerAct<'_>>,
 ) -> Result<()> {
     let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     for id in super::found_keys::found_key_custody_in_txn(&vault.store, wtxn, origin)? {
@@ -627,6 +631,9 @@ pub(crate) fn revoke_side_row_custody_in_txn(
             crate::secret_rotation::revoke_custody_in_txn(vault, wtxn, &id, cause, at)?;
         } else {
             vault.revoke_secret_in_txn(wtxn, &record.name, cause, at)?;
+            if let Some(act) = act {
+                act.carry_revoke_in_txn(vault, wtxn, &record.name, at)?;
+            }
         }
     }
     Ok(())

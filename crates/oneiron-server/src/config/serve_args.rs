@@ -245,6 +245,12 @@ pub struct ServeArgs {
     #[arg(long = "seal-key-file")]
     pub seal_key_file: Option<PathBuf>,
 
+    /// Managed mode: this vault's e-sign seal key in secret custody, by its
+    /// record's handle, in place of `--seal-key-file`; its chain stays
+    /// `--seal-chain-file` (`ONEIRON_SEAL_KEY_HANDLE`, FIX 1297).
+    #[arg(long = "seal-key-handle")]
+    pub seal_key_handle: Option<String>,
+
     /// Managed mode: the seal key's certificate chain, an absolute path to
     /// its PEM file, the signer first (`ONEIRON_SEAL_CHAIN`).
     #[arg(long = "seal-chain-file")]
