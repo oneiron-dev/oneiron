@@ -21,10 +21,10 @@ use crate::pipeline::ScoredEntity;
 use crate::ppr::{PprNodeVisibility, SeedWeighting, ppr_query_scoped_in_txn};
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::WriteActor;
 
 // ---------------------------------------------------------------------------

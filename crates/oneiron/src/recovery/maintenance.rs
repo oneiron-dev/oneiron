@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::canonical::{capture_canonical_window_within, invalid};
-use super::{CanonicalSnapshot, RecoveryBudget, RecoveryTier};
+use super::{CanonicalSnapshot, RecoveryBudget, RecoveryBudgetOverrun, RecoveryTier};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::store::legal_hold::HoldActor;
@@ -27,6 +27,10 @@ pub struct WindowRecoveryReport {
     pub obligations: Vec<String>,
     /// blake3 of the canonical artifact the act captured and recovered from.
     pub snapshot_blake3: [u8; 32],
+    /// The NOTE births' measured overrun, when the capture measured past
+    /// its budget. `None` means no measurement passed, not that every
+    /// possible use was measured.
+    pub measured_budget_overrun: Option<RecoveryBudgetOverrun>,
 }
 
 /// What one canonical window re-bootstrap did.
@@ -154,8 +158,9 @@ impl Vault {
         // a written snapshot would have held, byte for byte, its pads
         // prepared into current custody first (KS-5, FIX 7313).
         super::canonical::prepare_artifact_pads(self);
-        let bytes = capture_canonical_window_within(self, window, &doc, budget.max_bytes)?
-            .encode_within(budget.max_bytes)?;
+        let (captured, mut measured_budget_overrun) =
+            capture_canonical_window_within(self, window, &doc, budget.max_bytes)?;
+        let bytes = captured.encode_within(budget.max_bytes)?;
         let snapshot_blake3 = *blake3::hash(&bytes).as_bytes();
         let snapshot = CanonicalSnapshot::decode(&bytes)?;
         drop(bytes);
@@ -170,8 +175,13 @@ impl Vault {
             // The recovery left the rebuilt document equivalent to the
             // artifact; the window's own cut of it must be too.
             let cut = crate::sync::window::prepare_rebootstrap(self, &key, &prepared.window)?;
-            let recaptured =
+            let (recaptured, recaptured_overrun) =
                 capture_canonical_window_within(self, window, &cut.doc, budget.max_bytes)?;
+            measured_budget_overrun = match (measured_budget_overrun, recaptured_overrun) {
+                (Some(kept), Some(seen)) if seen.required > kept.required => Some(seen),
+                (Some(kept), _) => Some(kept),
+                (None, seen) => seen,
+            };
             // A pad row reads back by key and pad (KS-5).
             if super::ladder::pad_equivalent(self, recaptured, &snapshot) != snapshot {
                 return Err(invalid("re-bootstrapped window is not equivalent"));
@@ -193,6 +203,7 @@ impl Vault {
                 quarantine_path: prepared.quarantine_path,
                 obligations: prepared.obligations,
                 snapshot_blake3,
+                measured_budget_overrun,
             },
             installed,
         ))

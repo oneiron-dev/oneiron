@@ -328,6 +328,7 @@ class DiaryEntryReceipt(TypedDict):
     record: NotRequired[RecordRef | None]
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
+    include_used: NotRequired[bool]
 class DiaryReadRecord(TypedDict):
     read: EntityId
     reader: EntityId

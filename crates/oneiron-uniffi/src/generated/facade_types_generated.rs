@@ -1043,6 +1043,12 @@ pub struct DiaryEntryReceipt {
 pub struct DiaryReadsRequest {
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(
+        rename = "include_used",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_used: Option<bool>,
 }
 
 /// `oneiron::memory::diary_read::DiaryReadRecord`.

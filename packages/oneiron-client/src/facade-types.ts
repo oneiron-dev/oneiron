@@ -141,7 +141,7 @@ export type RecordRef = { kind: string; id: string; short_id?: string | null; la
 /** `oneiron::verbs::self::DiaryEntryReceipt` */
 export type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null }
 /** `oneiron::memory::diary_read::DiaryReadsRequest` */
-export type DiaryReadsRequest = { limit?: number | null }
+export type DiaryReadsRequest = { limit?: number | null; include_used?: boolean }
 /** `oneiron::memory::diary_read::DiaryReadRecord` */
 export type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string }
 /** `oneiron::memory::diary_read::DiaryReviewState` */
