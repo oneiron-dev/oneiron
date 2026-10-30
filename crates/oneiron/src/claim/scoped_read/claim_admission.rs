@@ -77,6 +77,10 @@ impl<'v> ScopedRead<'v> {
     /// time-bound standing: grants and credentials stay judged at now.
     #[must_use]
     pub(crate) fn with_judged_at(mut self, at: Option<u64>) -> Self {
+        // L15 try asof_wall: judge at the wall clock, as before FIX 12226.
+        if crate::stage_timing::try_on("asof_wall") {
+            return self;
+        }
         self.judged_at = at.map(|at| at.min(crate::unix_seconds_now()));
         self
     }
