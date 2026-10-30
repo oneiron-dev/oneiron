@@ -8,16 +8,19 @@
 //! content ref. The send reads the filed text first and the fixed wording
 //! while none is filed, so no reminder waits for its wording.
 //!
-//! The owner approves the words the send reads at that moment. A wording
-//! filed after the reminder's proposal was approved is kept beside them, a
-//! version of the same artifact under its own run prefix, and never sent
-//! (FIX 12167).
+//! The approval pins the words its send reads (FIX 12239): the words the
+//! owner saw, by their content hash, when the approval names them; else the
+//! wording filed at that moment; else the fixed wording. The send reads the
+//! pinned words, and the fixed wording once the vault no longer holds them.
+//! A wording filed after the reminder's proposal was approved is kept beside
+//! the approved words, a version of the same artifact under its own run
+//! prefix, and never sent (FIX 12167).
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::EnqueueAttempt;
-use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use crate::blob_artifact::{BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance};
 use crate::commitment::{CommitmentObligorKind, CommitmentStatus};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::COMMITMENT_REMINDER_WORDING_BLOB;
@@ -37,6 +40,55 @@ const WORDING_RUN_PREFIX: &str = "commitment-reminder-wording:";
 /// The run prefix of a wording filed after the owner approved its reminder:
 /// kept beside the approved words, never sent.
 const UNSENT_WORDING_RUN_PREFIX: &str = "commitment-reminder-wording-unsent:";
+/// The pin of a reminder approved while no wording was filed for it.
+const FIXED_WORDING_PIN: &str = "fixed";
+
+/// The words an approved reminder's send reads, pinned when its approval
+/// schedules it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CommitmentReminderWordingPin {
+    /// The words whose BLAKE3 content hash this is: the filed wording with
+    /// that hash, or the fixed wording when the vault holds none.
+    Hash([u8; 32]),
+    /// No wording was filed at approval: the fixed wording.
+    Fixed,
+}
+
+impl CommitmentReminderWordingPin {
+    fn token(self) -> String {
+        match self {
+            Self::Hash(hash) => blake3::Hash::from_bytes(hash).to_hex().to_string(),
+            Self::Fixed => FIXED_WORDING_PIN.to_owned(),
+        }
+    }
+
+    fn parse(token: &str) -> Option<Self> {
+        if token == FIXED_WORDING_PIN {
+            return Some(Self::Fixed);
+        }
+        // Only the lowercase form a pin is written in reads as one.
+        let hash = blake3::Hash::from_hex(token).ok()?;
+        (hash.to_hex().as_str() == token).then_some(Self::Hash(*hash.as_bytes()))
+    }
+}
+
+/// The content ref an approved reminder's send names: the reminder's own ref
+/// and the words its approval pinned, `<reminder ref>:<hash hex | fixed>`.
+pub(super) fn pinned_content_ref(content_ref: &str, pin: CommitmentReminderWordingPin) -> String {
+    format!("{content_ref}:{}", pin.token())
+}
+
+/// A send's content ref split into the reminder's own ref and the pin it
+/// ends with, when it names one.
+pub(super) fn split_wording_pin(content_ref: &str) -> (&str, Option<CommitmentReminderWordingPin>) {
+    if let Some((reminder_ref, token)) = content_ref.rsplit_once(':')
+        && ReminderRef::parse(reminder_ref).is_some()
+        && let Some(pin) = CommitmentReminderWordingPin::parse(token)
+    {
+        return (reminder_ref, Some(pin));
+    }
+    (content_ref, None)
+}
 
 /// Who words the owner's reminders in place of the fixed wording: the host's
 /// model, in the voice of the persona `persona_ref` names when set.
@@ -265,13 +317,76 @@ impl Vault {
         content_ref: &str,
     ) -> Result<Option<String>> {
         let artifact_id = wording_artifact_id(content_ref)?;
+        match self.filed_wording_version(&artifact_id)? {
+            Some(record) => self.wording_text(&artifact_id, record.version),
+            None => Ok(None),
+        }
+    }
+
+    /// The words an approved send of the reminder `content_ref` pins: the
+    /// words the owner saw, by their BLAKE3 hash, when the approval names
+    /// them; else the wording filed for it now; else the fixed wording.
+    pub(super) fn commitment_reminder_wording_pin(
+        &self,
+        content_ref: &str,
+        seen: Option<[u8; 32]>,
+    ) -> Result<CommitmentReminderWordingPin> {
+        if let Some(hash) = seen {
+            return Ok(CommitmentReminderWordingPin::Hash(hash));
+        }
+        let filed = self.filed_wording_version(&wording_artifact_id(content_ref)?)?;
+        Ok(filed.map_or(CommitmentReminderWordingPin::Fixed, |record| {
+            CommitmentReminderWordingPin::Hash(record.content_hash)
+        }))
+    }
+
+    /// The words `pin` names for the reminder `content_ref`: the filed
+    /// wording with the pinned hash, kept beside an approval or not. `None`
+    /// for the fixed wording, or a pinned wording the vault no longer holds.
+    pub(super) fn pinned_commitment_reminder_wording(
+        &self,
+        content_ref: &str,
+        pin: CommitmentReminderWordingPin,
+    ) -> Result<Option<String>> {
+        let CommitmentReminderWordingPin::Hash(hash) = pin else {
+            return Ok(None);
+        };
+        let artifact_id = wording_artifact_id(content_ref)?;
         match self.get_blob_artifact(&artifact_id)? {
             Some(body) if body.media_type == WORDING_MEDIA_TYPE => {}
             _ => return Ok(None),
         }
         for version in self.blob_artifact_versions(&artifact_id)?.iter().rev() {
+            if version.content_hash != hash {
+                continue;
+            }
             let Some(record) =
                 self.blob_artifact_version_metadata(&artifact_id, version.version)?
+            else {
+                continue;
+            };
+            if matches!(
+                &record.provenance,
+                BlobVersionProvenance::AgentRun { run_ref }
+                    if run_ref.starts_with(WORDING_RUN_PREFIX)
+                        || run_ref.starts_with(UNSENT_WORDING_RUN_PREFIX)
+            ) && let Some(text) = self.wording_text(&artifact_id, record.version)?
+            {
+                return Ok(Some(text));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The latest version of the wording artifact `artifact_id` filed to
+    /// send. Versions kept beside an approval are passed over.
+    fn filed_wording_version(&self, artifact_id: &EntityId) -> Result<Option<BlobArtifactVersion>> {
+        match self.get_blob_artifact(artifact_id)? {
+            Some(body) if body.media_type == WORDING_MEDIA_TYPE => {}
+            _ => return Ok(None),
+        }
+        for version in self.blob_artifact_versions(artifact_id)?.iter().rev() {
+            let Some(record) = self.blob_artifact_version_metadata(artifact_id, version.version)?
             else {
                 return Ok(None);
             };
@@ -281,19 +396,22 @@ impl Vault {
                 BlobVersionProvenance::AgentRun { run_ref }
                     if run_ref.starts_with(WORDING_RUN_PREFIX) =>
                 {
-                    let Some(bytes) =
-                        self.read_blob_artifact_version(&artifact_id, record.version)?
-                    else {
-                        return Ok(None);
-                    };
-                    return String::from_utf8(bytes).map(Some).map_err(|_| {
-                        Error::InvalidClaimBody("a filed reminder wording is not text")
-                    });
+                    return Ok(Some(record));
                 }
                 _ => return Ok(None),
             }
         }
         Ok(None)
+    }
+
+    /// The text of one wording version, `None` once its bytes are gone.
+    fn wording_text(&self, artifact_id: &EntityId, version: u64) -> Result<Option<String>> {
+        let Some(bytes) = self.read_blob_artifact_version(artifact_id, version)? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| Error::InvalidClaimBody("a filed reminder wording is not text"))
     }
 
     /// Whether an approved wake proposal about the commitment `instance_id`
