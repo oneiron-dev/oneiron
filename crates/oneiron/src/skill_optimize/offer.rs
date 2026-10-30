@@ -122,6 +122,9 @@ pub fn record_training_offer(
         super::offer_pilot::validate_snapshot_in_txn(vault, txn, &offer)?;
         measure_offer(vault, &offer);
         OFFER.put(&vault.store, txn, &offer.id, &offer)?;
+        if let Some(previous) = &offer.previous {
+            crate::task_verb::void_training_offer_asks_in(vault, txn, previous, None, at)?;
+        }
         Ok(offer)
     })
 }
