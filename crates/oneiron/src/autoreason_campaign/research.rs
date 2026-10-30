@@ -24,7 +24,8 @@
 //!   and is refused until a held-out win in this campaign turned merge
 //!   crossover on. A controller weaves only a claim it wrote; one past
 //!   Proposed stands only where the gate recorded the owner's auto-weave
-//!   Grant for it, scoped to this campaign, its skill or the claim's project.
+//!   Grant for it, scoped to this campaign, its skill or the claim's project
+//!   (the gate's Allow stands in until an owner can mint that Grant).
 //! - Parents rank by the DGM formula until the engine estimator's information
 //!   gain wins a held-out selection benchmark (`estimator`). Each round
 //!   receipts every branch's Beta belief either way.
