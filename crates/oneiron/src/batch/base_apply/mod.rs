@@ -1,3 +1,7 @@
+//! Batch base apply: `apply_ops_with_origin` and its per-op arms.
+//! The loop dispatches each `BatchOp` to its phase child; the tail folds
+//! frontiers, rooms, streaks and indexes once over the final batch state.
+
 use super::claim_materialization::consume_claim_materialization;
 use super::verified_claim_transition::consume_next;
 use super::*;
@@ -5,27 +9,27 @@ use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use heed::RwTxn;
-use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, RegistryError, Result};
-use crate::ppr;
+use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
 
 mod edge;
 mod indexes;
+mod ops_claim;
+mod ops_delete;
+mod ops_misc;
+mod ops_put;
+mod ops_text;
+mod ops_vector;
 mod project_history;
 mod replay;
+mod tail;
 mod validation;
 
-use self::edge::{apply_edge_op, edge_op_endpoints};
-use self::indexes::{apply_text_index_update, finalize_batch_indexes};
 use self::replay::{ReplayIter, ReplayOps};
-use self::validation::{
-    birth_stamp_target, consume_preflight_decisions, mark_unapplied_preflight_decisions,
-    take_lapse_decisions, validate_put_type,
-};
+use self::validation::mark_unapplied_preflight_decisions;
 
 /// Check the decode point while this replay op still owns its buffers. On
 /// pre-match errors no match arm takes ownership, so scrub here before return.
@@ -127,6 +131,49 @@ pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
             .with_prechecked_claim_gate()
             .with_verified_claim_transitions(transitions),
     )
+}
+
+/// Batch-level mutable state threaded through per-op arms and the tail.
+struct BatchApplyState {
+    replay: bool,
+    run_derivations: Option<crate::skill_attribution::RunDerivations>,
+    hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
+    refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
+    birth_mask: Option<EntityId>,
+    text_births: HashMap<EntityId, Vec<EntityId>>,
+    births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
+    replicated_puts: BTreeSet<EntityId>,
+    mutation_recorded_at: u64,
+    authority_generation: u64,
+    record_gate_decisions: bool,
+    persist_gate_pending_consent: bool,
+    claim_materializations: VecDeque<ClaimMaterialization>,
+    claim_transitions: VecDeque<super::VerifiedClaimTransition>,
+    preflight_gate_decision_ids:
+        HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
+    pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
+    nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
+    masked_files: super::secret_scan::MaskedFiles,
+    masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>>,
+    habit_streak_candidates: BTreeSet<EntityId>,
+    had_graph_mutation: bool,
+    had_vector_mutation: bool,
+    materialized_entity_ids: BTreeSet<EntityId>,
+    local_materialized_ids: BTreeSet<EntityId>,
+    deleted_entity_ids: BTreeSet<EntityId>,
+    project_edge_endpoints: BTreeSet<EntityId>,
+    touched_projects: BTreeSet<EntityId>,
+    local_chat_turns: BTreeSet<EntityId>,
+    evicted_shell_sources: BTreeSet<EntityId>,
+    text_manifest_checked: bool,
+    later_text_coverage_by_op: Vec<bool>,
+    write_policy: Option<crate::gate::PolicyManifestResolution>,
+    pending_gate_consent_at_batch_start: HashSet<EntityId>,
+    pending_hnsw_rebuild: bool,
+    pending_embedding_tokens_written: HashMap<EntityId, Vec<u8>>,
+    #[cfg(feature = "sync")]
+    pending_embedding_enqueue_priorities: HashMap<EntityId, u8>,
 }
 
 /// Applies a batch under an explicit [`BaseWriteOrigin`].
@@ -255,21 +302,62 @@ pub(super) fn apply_ops_with_origin(
         remaining: std::mem::take(&mut ops.ops).into_iter(),
         replay,
     };
+    let mut state = BatchApplyState {
+        replay,
+        run_derivations,
+        hub_admission,
+        refinement_admission,
+        birth_mask,
+        text_births,
+        births,
+        asset_files,
+        replicated_puts,
+        mutation_recorded_at,
+        authority_generation,
+        record_gate_decisions,
+        persist_gate_pending_consent,
+        claim_materializations,
+        claim_transitions,
+        preflight_gate_decision_ids,
+        pre_analyzed_text,
+        nsw_plans,
+        masked_files,
+        masked_claims,
+        habit_streak_candidates,
+        had_graph_mutation,
+        had_vector_mutation,
+        materialized_entity_ids,
+        local_materialized_ids,
+        deleted_entity_ids,
+        project_edge_endpoints,
+        touched_projects,
+        local_chat_turns,
+        evicted_shell_sources,
+        text_manifest_checked,
+        later_text_coverage_by_op,
+        write_policy,
+        pending_gate_consent_at_batch_start,
+        pending_hnsw_rebuild,
+        pending_embedding_tokens_written,
+        #[cfg(feature = "sync")]
+        pending_embedding_enqueue_priorities,
+    };
     let mut op_index = 0;
     while let Some(mut op) = iter.next() {
         // K4: the op-decode point, inside the applying transaction. Every arm
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
         let materialization =
-            prepare_replay_op(store, &*wtxn, &mut claim_materializations, &mut op, origin)?;
-        let transition = consume_next(&mut claim_transitions, &op, iter.remaining.as_slice())?;
+            prepare_replay_op(store, &*wtxn, &mut state.claim_materializations, &mut op, origin)?;
+        let transition =
+            consume_next(&mut state.claim_transitions, &op, iter.remaining.as_slice())?;
         let mut put_options = PutOptions::for_batch_op(&op, &gate_mode);
-        put_options.indexing.later_text_op_covers = later_text_coverage_by_op[op_index];
+        put_options.indexing.later_text_op_covers = state.later_text_coverage_by_op[op_index];
 
         match op {
             BatchOp::Put {
                 id,
-                mut entity_type,
+                entity_type,
                 occurred,
                 learned_at,
                 data,
@@ -277,284 +365,27 @@ pub(super) fn apply_ops_with_origin(
                 allow_reserved_predicate,
                 hub_sync_imported,
             } => {
-                let mut data = Zeroizing::new(data);
-                entity_type = validate_put_type(
+                ops_put::apply_put_arm(
                     store,
-                    wtxn,
-                    &id,
-                    (entity_type, &mut data),
+                    config,
+                    analyzer,
+                    &mut *wtxn,
+                    &mut state,
+                    &gate_mode,
+                    id,
+                    entity_type,
+                    occurred,
+                    learned_at,
+                    data,
                     allow_maintenance,
                     allow_reserved_predicate,
                     hub_sync_imported,
+                    &materialization,
+                    &transition,
+                    put_options,
+                    origin,
+                    text_index_trusted,
                 )?;
-                let replicated = allow_maintenance && allow_reserved_predicate;
-                // FIX 3677: a long opaque local ASSET body goes to its file
-                // here, and the row keeps its manifest; a replicated or
-                // replayed row is written as it came.
-                put_options.storage.asset_file = asset_files.remove(&id);
-                if put_options.storage.asset_file.is_none()
-                    && !replicated
-                    && !replay
-                    && let Some((manifest, file)) =
-                        crate::store::file_put_body_in_txn(store, wtxn, entity_type, &data)?
-                {
-                    data = Zeroizing::new(manifest);
-                    put_options.storage.asset_file = Some(file);
-                }
-                let sources = text_births.get(&id).map(Vec::as_slice);
-                if let Some(facet) = birth_stamp_target(
-                    store,
-                    wtxn,
-                    id,
-                    entity_type,
-                    replicated,
-                    (birth_mask, sources),
-                )? {
-                    let owner = crate::vault::embedded_owner_actor_id()?;
-                    if birth_mask.is_none()
-                        && facet == crate::claim::substrate_facet_id(owner)?
-                        && stored_entity_type(store, wtxn, &owner)?.is_none()
-                    {
-                        apply_ops_with_origin(
-                            store,
-                            config,
-                            analyzer,
-                            wtxn,
-                            vec![BatchOp::Put {
-                                id: owner,
-                                entity_type: crate::registry::ENTITY_TYPE_PERSON,
-                                occurred,
-                                learned_at,
-                                data: crate::vault::encode_embedded_owner_actor_body()?,
-                                allow_maintenance: false,
-                                allow_reserved_predicate: false,
-                                hub_sync_imported: false,
-                            }],
-                            text_index_trusted,
-                            ApplyOpsGateMode::new(
-                                record_gate_decisions,
-                                persist_gate_pending_consent,
-                            ),
-                            origin,
-                        )?;
-                    }
-                    let found = stored_entity_type(store, wtxn, &facet)?;
-                    if found != Some(crate::registry::ENTITY_TYPE_FACET) {
-                        return Err(Error::Registry(RegistryError::InvalidFacet {
-                            facet,
-                            found,
-                        }));
-                    }
-                    apply_edge_with_created_at(
-                        store,
-                        wtxn,
-                        id,
-                        crate::edge::EdgeKind::FacetOf,
-                        facet,
-                        1.0,
-                        learned_at,
-                        crate::affect::Vad::NEUTRAL,
-                        None,
-                    )?;
-                    ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
-                    had_graph_mutation = true;
-                }
-                let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                    && !allow_reserved_predicate
-                {
-                    preflight_gate_decision_ids
-                        .get_mut(&id)
-                        .and_then(VecDeque::pop_front)
-                        .flatten()
-                } else {
-                    None
-                };
-                put_options.consent.can_resolve_pending =
-                    pending_gate_consent_at_batch_start.contains(&id);
-                put_options.decision.preflight = preflight_decision_id;
-                // A TURN or MESSAGE written again may change its words under a
-                // temporal key the sieve has passed: its turn is owed a new
-                // sieve read in this commit. A new TURN is owed its first
-                // read, whatever time it claims; a MESSAGE joins one through
-                // the witness door's re-dirty.
-                let text_row = matches!(
-                    entity_type,
-                    crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
-                );
-                let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
-                let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
-                let applied = apply_put(
-                    store,
-                    wtxn,
-                    PutRequest {
-                        row: PutRow {
-                            id,
-                            entity_type,
-                            occurred,
-                            learned_at,
-                            data: &data,
-                        },
-                        options: put_options,
-                        context: PutContext {
-                            origin,
-                            write_policy: write_policy.as_ref(),
-                            write_envelope: materialization
-                                .as_ref()
-                                .and_then(ClaimMaterialization::gate_envelope)
-                                .or_else(|| gate_mode.caller_envelopes.get(&id)),
-                            hub_admission: hub_admission.as_ref(),
-                            refinement_admission: refinement_admission.as_ref(),
-                            transition: transition.as_ref(),
-                            posture: config.privacy.posture,
-                            owner_authored: None,
-                        },
-                    },
-                )?;
-                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
-                if rewritten {
-                    crate::dreamer_wake::mark_on_publication_in_txn(store, wtxn, &id)?;
-                } else if born_turn {
-                    crate::dreamer_wake::owe_sieve_read_in_txn(store, wtxn, &id)?;
-                } else if matches!(
-                    entity_type,
-                    crate::registry::ENTITY_TYPE_ACCESS_GRANT
-                        | crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-                ) {
-                    // A grant, or a policy manifest's read grant, may let the
-                    // Dreamer read words the sieve left.
-                    crate::dreamer_wake::sieve_grant_written_in_txn(store, wtxn)?;
-                }
-                let revisions = project_history::revision_puts(
-                    store,
-                    (applied.project_revisions.into_iter())
-                        .map(|(revision, bytes)| (revision, bytes, occurred, learned_at)),
-                )?;
-                if !revisions.is_empty() {
-                    apply_ops_with_origin(
-                        store,
-                        config,
-                        analyzer,
-                        wtxn,
-                        revisions,
-                        text_index_trusted,
-                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
-                        origin,
-                    )?;
-                }
-                touched_projects.extend(applied.touched_projects);
-                if let Some((source_id, source_bytes)) = applied.portable_agent_source {
-                    apply_ops_with_origin(
-                        store,
-                        config,
-                        analyzer,
-                        wtxn,
-                        vec![BatchOp::Put {
-                            id: source_id,
-                            entity_type: crate::registry::ENTITY_TYPE_ASSET,
-                            occurred,
-                            learned_at,
-                            data: source_bytes,
-                            allow_maintenance: false,
-                            allow_reserved_predicate: false,
-                            hub_sync_imported: false,
-                        }],
-                        text_index_trusted,
-                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent)
-                            .with_birth_mask(birth_mask),
-                        origin,
-                    )?;
-                }
-                if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    let authored = materialization.is_some() && !allow_reserved_predicate;
-                    claim_materialization::record_committed_claim(store, wtxn, &id, authored)?;
-                }
-                evicted_shell_sources.extend(applied.evicted_shell_sources);
-                #[cfg(feature = "sync")]
-                let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
-                    crate::embed::EMBED_PRIORITY_SERVER
-                } else {
-                    crate::embed::EMBED_PRIORITY_DEVICE
-                };
-                if let Some(token) = applied.pending_embedding_token {
-                    pending_embedding_tokens_written.insert(id, token);
-                    #[cfg(feature = "sync")]
-                    pending_embedding_enqueue_priorities
-                        .entry(id)
-                        .and_modify(|priority| {
-                            *priority = (*priority).min(pending_embedding_priority);
-                        })
-                        .or_insert(pending_embedding_priority);
-                }
-                if applied.cleared_pending_embedding {
-                    pending_embedding_tokens_written.remove(&id);
-                    #[cfg(feature = "sync")]
-                    pending_embedding_enqueue_priorities.remove(&id);
-                }
-                had_vector_mutation |= applied.had_vector_mutation;
-                if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                    && !(allow_maintenance && allow_reserved_predicate)
-                    && !applied.is_lexical_query_hint_claim
-                {
-                    let deleted = delete_lexical_query_hint_claims_for_target(
-                        store,
-                        wtxn,
-                        &id,
-                        &HashSet::new(),
-                    )?;
-                    for (deleted_id, neighbors) in &deleted.deleted {
-                        pending_embedding_tokens_written.remove(deleted_id);
-                        #[cfg(feature = "sync")]
-                        pending_embedding_enqueue_priorities.remove(deleted_id);
-                        ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
-                    }
-                    had_graph_mutation |= deleted.had_graph_mutation;
-                    had_vector_mutation |= deleted.had_vector;
-                }
-                if let Some((target, query_hint)) = lexical_query_hint_for_replayed_put(
-                    &id,
-                    entity_type,
-                    allow_maintenance && allow_reserved_predicate,
-                    &data,
-                )? {
-                    let mut text_indexing = LexicalHintTextIndexing {
-                        analyzer,
-                        manifest_checked: &mut text_manifest_checked,
-                        trusted: text_index_trusted,
-                    };
-                    let materialized = materialize_lexical_query_hint_text_if_target_ready(
-                        store,
-                        wtxn,
-                        &mut text_indexing,
-                        id,
-                        &target,
-                        query_hint,
-                    )?;
-                    had_graph_mutation |= materialized;
-                }
-                if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    let mut text_indexing = LexicalHintTextIndexing {
-                        analyzer,
-                        manifest_checked: &mut text_manifest_checked,
-                        trusted: text_index_trusted,
-                    };
-                    let materialized = materialize_lexical_query_hints_for_target(
-                        store,
-                        wtxn,
-                        &mut text_indexing,
-                        &id,
-                    )?;
-                    had_graph_mutation |= materialized;
-                }
-                // Type-76 rows are never legal participants/actors. Their
-                // dedicated ingest door reconciles after the seq join, so
-                // feeding event ids into the generic participant hook would
-                // enumerate the append-only family once per appended event.
-                if entity_type != crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
-                    materialized_entity_ids.insert(id);
-                }
-                if !(replicated && replicated_puts.contains(&id)) {
-                    local_materialized_ids.insert(id);
-                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -564,73 +395,31 @@ pub(super) fn apply_ops_with_origin(
                 learned_at,
                 internal_lexical_query_hint,
             } => {
-                let preflight_decision_id = if !internal_lexical_query_hint {
-                    preflight_gate_decision_ids
-                        .get_mut(&id)
-                        .and_then(VecDeque::pop_front)
-                        .flatten()
-                } else {
-                    None
-                };
-                put_options.consent.can_resolve_pending =
-                    pending_gate_consent_at_batch_start.contains(&id);
-                put_options.decision.preflight = preflight_decision_id;
-                let pre_mask = masked_claims.get_mut(&id).and_then(VecDeque::pop_front);
-                let applied = apply_claim_candidate(
+                ops_claim::apply_claim_candidate_arm(
                     store,
                     config,
-                    (analyzer, text_index_trusted),
-                    wtxn,
-                    ClaimCandidateRequest {
-                        id,
-                        candidate: *candidate,
-                        envelope: &envelope,
-                        occurred,
-                        learned_at,
-                        decision: put_options.decision,
-                        consent: put_options.consent,
-                        indexing: put_options.indexing,
-                        write_policy: write_policy.as_ref(),
-                        owner_authored: gate_mode.owner_authored.as_ref(),
-                    },
-                    pre_mask,
+                    analyzer,
+                    &mut *wtxn,
+                    &mut state,
+                    &gate_mode,
+                    id,
+                    candidate,
+                    envelope,
+                    occurred,
+                    learned_at,
+                    internal_lexical_query_hint,
+                    put_options,
+                    text_index_trusted,
                 )?;
-                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
-                if !internal_lexical_query_hint {
-                    claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
-                }
-                had_graph_mutation |= applied.had_graph_mutation;
-                had_vector_mutation |= applied.had_vector_mutation;
-                if let Some(token) = applied.pending_embedding_token {
-                    pending_embedding_tokens_written.insert(id, token);
-                    #[cfg(feature = "sync")]
-                    pending_embedding_enqueue_priorities
-                        .entry(id)
-                        .and_modify(|priority| {
-                            *priority = (*priority).min(crate::embed::EMBED_PRIORITY_DEVICE);
-                        })
-                        .or_insert(crate::embed::EMBED_PRIORITY_DEVICE);
-                }
-                if applied.cleared_pending_embedding {
-                    pending_embedding_tokens_written.remove(&id);
-                    #[cfg(feature = "sync")]
-                    pending_embedding_enqueue_priorities.remove(&id);
-                }
-                materialized_entity_ids.insert(id);
-                local_materialized_ids.insert(id);
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
-                let keep: HashSet<EntityId> = keep.into_iter().collect();
-                let deleted =
-                    delete_lexical_query_hint_claims_for_target(store, wtxn, &source, &keep)?;
-                for (deleted_id, neighbors) in &deleted.deleted {
-                    pending_embedding_tokens_written.remove(deleted_id);
-                    #[cfg(feature = "sync")]
-                    pending_embedding_enqueue_priorities.remove(deleted_id);
-                    ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
-                }
-                had_graph_mutation |= deleted.had_graph_mutation;
-                had_vector_mutation |= deleted.had_vector;
+                ops_claim::apply_reconcile_lexical_arm(
+                    store,
+                    &mut *wtxn,
+                    &mut state,
+                    source,
+                    keep,
+                )?;
             }
             BatchOp::Vector {
                 id,
@@ -638,39 +427,16 @@ pub(super) fn apply_ops_with_origin(
                 pending_embedding_token,
                 provenance,
             } => {
-                let vector = Zeroizing::new(vector);
-                let pending_embedding_token = Zeroizing::new(pending_embedding_token);
-                let same_batch_token = pending_embedding_token
-                    .as_deref()
-                    .or_else(|| pending_embedding_tokens_written.get(&id).map(Vec::as_slice));
-                let plan = nsw_plans.get_mut(&id).and_then(VecDeque::pop_front);
-                let applied = apply_vector(
+                ops_vector::apply_vector_arm(
                     store,
                     config,
-                    wtxn,
+                    &mut *wtxn,
+                    &mut state,
                     id,
-                    &vector,
-                    provenance.as_ref(),
-                    same_batch_token,
+                    vector,
+                    pending_embedding_token,
+                    provenance,
                 )?;
-                if applied.wrote_vector {
-                    // A plan searched the committed graph; after an earlier
-                    // graph write in this batch it no longer describes it.
-                    crate::hnsw::hnsw_insert_planned(
-                        store,
-                        config,
-                        wtxn,
-                        (&id, vector.as_slice()),
-                        &mut pending_hnsw_rebuild,
-                        plan.as_ref().filter(|_| !had_vector_mutation),
-                    )?;
-                    had_vector_mutation = true;
-                }
-                if applied.cleared_pending_embedding {
-                    pending_embedding_tokens_written.remove(&id);
-                    #[cfg(feature = "sync")]
-                    pending_embedding_enqueue_priorities.remove(&id);
-                }
             }
             op @ (BatchOp::Edge { .. }
             | BatchOp::PublicEdgeWithCreatedAt { .. }
@@ -678,27 +444,19 @@ pub(super) fn apply_ops_with_origin(
             | BatchOp::SetEdgeWeight { .. }
             | BatchOp::SetEdgeVad { .. }
             | BatchOp::DeleteEdge { .. }) => {
-                project_edge_endpoints.extend(edge_op_endpoints(&op));
-                had_graph_mutation |= apply_edge_op(store, wtxn, op)?;
+                ops_misc::apply_edge_arm(store, &mut *wtxn, &mut state, op)?;
             }
             BatchOp::Text { id, fields } => {
-                let fields = Zeroizing::new(fields);
-                let analyzed = pre_analyzed_text
-                    .get_mut(&id)
-                    .and_then(VecDeque::pop_front)
-                    .flatten();
-                apply_text_index_update(
+                ops_text::apply_text_arm(
                     store,
-                    wtxn,
-                    (analyzer, analyzed.as_ref()),
-                    &id,
-                    &fields,
+                    &mut *wtxn,
+                    &mut state,
+                    analyzer,
+                    id,
+                    fields,
                     text_index_trusted,
-                    &mut text_manifest_checked,
                 )?;
             }
-            // OF-370: only promotion replays a room's media vector; it lands
-            // when base's bindings still take it, else the backfill fills it.
             BatchOp::MediaVector {
                 space,
                 id,
@@ -707,221 +465,52 @@ pub(super) fn apply_ops_with_origin(
                 vector,
                 provenance,
             } => {
-                let vector = Zeroizing::new(vector);
-                crate::embed::replay_media_vector_in_txn(
+                ops_vector::apply_media_vector_arm(
                     store,
-                    wtxn,
-                    &space,
-                    &id,
+                    &mut *wtxn,
+                    space,
+                    id,
                     kind,
                     text_hash,
-                    &vector,
-                    provenance.as_ref(),
+                    vector,
+                    provenance,
                 )?;
             }
             BatchOp::Phonetic { id, codes } => {
-                if !crate::vault::entity_revision::defer_phonetic(store, wtxn, &id, &codes)? {
-                    apply_phonetic(store, wtxn, id, &codes)?;
-                }
+                ops_vector::apply_phonetic_arm(store, &mut *wtxn, id, codes)?;
             }
             BatchOp::Delete { id } => {
-                reject_engine_authored_delete(store, wtxn, &id)?;
-                deleted_entity_ids.insert(id);
-                crate::counterparty_contact::retire_family_claims_for_batch_delete_in_txn(
+                ops_delete::apply_delete_arm(
                     store,
                     config,
                     analyzer,
-                    wtxn,
-                    &id,
-                    mutation_recorded_at,
+                    &mut *wtxn,
+                    &mut state,
+                    id,
+                    origin,
                     text_index_trusted,
                 )?;
-                // A batch delete tears the row, a hard delete (ARCH-0038), so
-                // a batch-deleted world takes its keys with it (fix 7). There
-                // is no soft batch delete; a soft delete keeps the keys.
-                crate::world_keys::destroy_world_keys_in_txn(
-                    store,
-                    wtxn,
-                    id,
-                    crate::world_keys::WorldKeyDestroyCause::BatchDelete,
-                    None,
-                    mutation_recorded_at,
-                )?;
-                // A pad row's key leaves custody with it (KS-5, FIX 7192).
-                crate::world_keys::erase_batch_pad_row_in_txn(
-                    store,
-                    wtxn,
-                    &id,
-                    mutation_recorded_at,
-                )?;
-                // Capture before tear (R2-F4): a PROJECT row's signed chain
-                // is kept as revisions before the row goes.
-                let captured = crate::workspace_roster::capture_before_tear(store, wtxn, id)?;
-                let revisions = project_history::revision_puts(store, captured)?;
-                if !revisions.is_empty() {
-                    apply_ops_with_origin(
-                        store,
-                        config,
-                        analyzer,
-                        wtxn,
-                        revisions,
-                        text_index_trusted,
-                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
-                        origin,
-                    )?;
-                }
-                let (_existed, had_vector, deleted_graph_state, neighbors) =
-                    deindex_entity_with_machine_history(store, wtxn, &id)?;
-                claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
-                if persist_gate_pending_consent {
-                    store.let_go_pending_gate_consent_in_txn(wtxn, &id, mutation_recorded_at)?;
-                }
-                pending_embedding_tokens_written.remove(&id);
-                #[cfg(feature = "sync")]
-                pending_embedding_enqueue_priorities.remove(&id);
-                ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
-                had_graph_mutation |= deleted_graph_state;
-                had_vector_mutation |= had_vector;
             }
-            // CMT-4 (ONE-1541). All-or-nothing by construction: the helper
-            // grounds every selected instance before staging a single op and
-            // never commits, so one stale, closed or gate-refused member takes
-            // the whole selection down with the caller's transaction.
             BatchOp::CommitmentGapDecay {
                 ids,
                 envelope,
                 learned_at,
             } => {
-                // Hand each id its preflight identity in recorded order. The
-                // nested ClaimCandidate applies consume its marker, not this
-                // outer arm; consuming here a second time aborts the lapse.
-                let lapse_decision_ids =
-                    take_lapse_decisions(&mut preflight_gate_decision_ids, &ids);
-                crate::commitment::lapse_commitments_in_txn(
+                ops_misc::apply_commitment_gap_decay_arm(
                     store,
                     config,
                     analyzer,
-                    wtxn,
-                    &ids,
-                    &envelope,
+                    &mut *wtxn,
+                    &mut state,
+                    ids,
+                    envelope,
                     learned_at,
                     text_index_trusted,
-                    write_policy.as_ref(),
-                    lapse_decision_ids,
                 )?;
             }
         }
         op_index += 1;
     }
 
-    require_consumed_claim_bindings(&claim_materializations, &claim_transitions)?;
-    // Rule A: each born row's made_by lands in the transaction that births it.
-    for (row, birth) in &births {
-        crate::provenance::birth::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
-    }
-    if preflight_gate_decision_ids
-        .values()
-        .any(|ids| !ids.is_empty())
-    {
-        return Err(Error::InvariantViolation(
-            "unconsumed preflight gate decision identity",
-        ));
-    }
-
-    // Each touched project's frontier is folded once over the final batch
-    // state, before rooms reconcile against it.
-    crate::workspace_roster::refresh_project_frontiers(
-        store,
-        wtxn,
-        config.privacy.posture,
-        &touched_projects,
-    )?;
-    crate::workspace_roster::reconcile_project_rooms(
-        store,
-        config,
-        analyzer,
-        text_index_trusted,
-        wtxn,
-        &materialized_entity_ids,
-    )?;
-    project_edge_endpoints.extend(&materialized_entity_ids);
-    crate::workspace_roster::validate_project_graph(store, wtxn, &project_edge_endpoints)?;
-    crate::workspace_roster::validate_local_leader_chat_turns(store, wtxn, &local_chat_turns)?;
-
-    // STO-03: derived Habit counters, recomputed from the FINAL child state of
-    // this transaction — after every op, so an add and a delete of the same
-    // edge net out and the batch order cannot be read off the result. Local
-    // check-in commits and sync replay both land here because both reach
-    // `apply_ops`; there is no second, sync-only streak algorithm.
-    recompute_touched_habit_streaks_in_txn(store, wtxn, &habit_streak_candidates)?;
-
-    crate::identity_topology::reconcile_identity_topology_for_materialized_entities_in_txn(
-        store,
-        config,
-        analyzer,
-        text_index_trusted,
-        wtxn,
-        &materialized_entity_ids,
-    )?;
-    crate::identity_topology::reconcile_identity_topology_for_deleted_entities_in_txn(
-        store,
-        config,
-        analyzer,
-        text_index_trusted,
-        wtxn,
-        &deleted_entity_ids,
-    )?;
-    // ONE-1604-D1 (fix-leg 5): the dominance eviction removed a type-76 event
-    // ROW, which both hides the removed event's own participants from the
-    // reconciler above (it enumerates SURVIVING rows) and replays the entire
-    // fold, so LATER events can flip effective/rejected and strand THEIR
-    // sources' edges too. Recompute the union of both families against one
-    // final fold. Ordered after the materialization pass so both see the same
-    // ledger, and a no-op on every batch without an eviction.
-    crate::identity_topology::reconcile_shell_edges_after_eviction_in_txn(
-        store,
-        config,
-        analyzer,
-        text_index_trusted,
-        wtxn,
-        &evicted_shell_sources,
-    )?;
-
-    crate::authority::check_materialized_claim_causality(
-        store,
-        wtxn,
-        config.privacy.posture,
-        &local_materialized_ids,
-    )?;
-
-    #[cfg(feature = "sync")]
-    for (id, token) in &pending_embedding_tokens_written {
-        if config.embedding_model.is_some()
-            && store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice())
-        {
-            let priority = pending_embedding_enqueue_priorities
-                .get(id)
-                .copied()
-                .unwrap_or(crate::embed::EMBED_PRIORITY_DEVICE);
-            crate::sync::queue::push_embed_job_in_txn(store, wtxn, id, priority)?;
-        }
-    }
-
-    masked_files.restrict(store, wtxn)?;
-    crate::skill_attribution::note_run_derivations_in_txn(store, wtxn, run_derivations.as_ref());
-    // DOOR-101: an owner home pick this batch landed, local or from a peer's
-    // log, re-elects this node's MACRO home over the final batch state.
-    if crate::authority::authority_cache_generation(store, wtxn)? != authority_generation {
-        crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture);
-    }
-
-    finalize_batch_indexes(
-        store,
-        config,
-        wtxn,
-        &materialized_entity_ids,
-        pending_hnsw_rebuild,
-        had_graph_mutation,
-        had_vector_mutation,
-    )
+    tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)
 }
