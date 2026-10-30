@@ -10,6 +10,7 @@
 mod bound;
 mod consume;
 mod doors;
+mod spelling;
 mod verb_class;
 
 pub use self::bound::{

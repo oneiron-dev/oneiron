@@ -1,10 +1,11 @@
 //! A standing outbound grant's scope dial, its one spelling onto a standing
 //! consent Grant's bound, and the grant as read back from its Grant row.
 
+use super::spelling;
 use super::verb_class::{classes_of, verb_in_class};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, ConsentGrantRow,
-    GrantBound, StandingConsentGrant,
+    GrantBound, MAX_ENVELOPE_SELECTORS, StandingConsentGrant,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -47,6 +48,16 @@ const SELECTOR_ENDPOINT: &str = "endpoint";
 /// The actor a dial's own match names on both sides, where the caller
 /// matches the grant's principal itself.
 const DIAL_ACTOR: &str = "dial";
+
+// Each dial's stable label: the grants lens shows it, and a grant's record
+// names its dial by it.
+pub(super) const DIAL_CONTACT: &str = "always_this_contact";
+pub(super) const DIAL_VERB_CLASS: &str = "always_this_verb_class";
+pub(super) const DIAL_CHANNEL: &str = "always_this_channel";
+pub(super) const DIAL_BRIEF_VERB_CLASS: &str = "brief_verb_class";
+pub(super) const DIAL_SCOPED_MCP: &str = "scoped_mcp";
+pub(super) const DIAL_ARTIFACT_PUBLISH: &str = "artifact_publish";
+pub(super) const DIAL_BOOKING_PAGE_INVITES: &str = "booking_page_invites";
 
 /// Scope dial selected by the owner when minting a standing outbound grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -118,13 +129,13 @@ impl StandingOutboundGrantScope {
     #[must_use]
     pub const fn dial_label(&self) -> &'static str {
         match self {
-            Self::Contact { .. } => "always_this_contact",
-            Self::VerbClass { .. } => "always_this_verb_class",
-            Self::Channel { .. } => "always_this_channel",
-            Self::BriefVerbClass { .. } => "brief_verb_class",
-            Self::ScopedMcp { .. } => "scoped_mcp",
-            Self::ArtifactPublish { .. } => "artifact_publish",
-            Self::BookingPageInvites { .. } => "booking_page_invites",
+            Self::Contact { .. } => DIAL_CONTACT,
+            Self::VerbClass { .. } => DIAL_VERB_CLASS,
+            Self::Channel { .. } => DIAL_CHANNEL,
+            Self::BriefVerbClass { .. } => DIAL_BRIEF_VERB_CLASS,
+            Self::ScopedMcp { .. } => DIAL_SCOPED_MCP,
+            Self::ArtifactPublish { .. } => DIAL_ARTIFACT_PUBLISH,
+            Self::BookingPageInvites { .. } => DIAL_BOOKING_PAGE_INVITES,
         }
     }
 
@@ -199,21 +210,52 @@ impl StandingOutboundGrantScope {
 
     /// This dial's bound for `principal_ref`, with `selectors` beside the
     /// dial's own. Selectors no effect names never change what it contains.
+    /// A part past a consent bound's caps is spelled by its digest, as an
+    /// effect's candidates spell it, and the bound then carries its
+    /// principal and dial whole as a record ([`spelling`]).
     fn bound_over(
         &self,
         principal_ref: &str,
         selectors: impl IntoIterator<Item = String>,
     ) -> Result<GrantBound> {
         self.validate()?;
-        let (class, mut dial_selectors, target) = self.axes();
-        dial_selectors.extend(selectors);
-        let mut envelope = ActionEnvelope::new(dial_selectors)?;
+        let (class, dial_selectors, target) = self.axes();
+        let extra: Vec<String> = selectors.into_iter().collect();
+        let plain = spelling::ref_fits(principal_ref)
+            && spelling::ref_fits(&class)
+            && target.as_deref().is_none_or(spelling::ref_fits)
+            && dial_selectors
+                .iter()
+                .all(|selector| spelling::selector_fits(selector))
+            && dial_selectors.len() + extra.len() <= MAX_ENVELOPE_SELECTORS;
+        let mut envelope_selectors: Vec<String> = dial_selectors
+            .iter()
+            .map(|selector| spelling::spell_selector(selector))
+            .collect();
+        if !plain {
+            let record = spelling::record_selectors(principal_ref, self);
+            // Endpoints past the selector cap collapse into one selector:
+            // no effect's candidate names a scoped grant's endpoints, and
+            // the record carries them.
+            if let Self::ScopedMcp {
+                endpoint_allowlist, ..
+            } = self
+                && envelope_selectors.len() + extra.len() + record.len() > MAX_ENVELOPE_SELECTORS
+            {
+                let endpoint_prefix = format!("{SELECTOR_ENDPOINT}:");
+                envelope_selectors.retain(|selector| !selector.starts_with(&endpoint_prefix));
+                envelope_selectors.push(spelling::endpoint_set_selector(endpoint_allowlist));
+            }
+            envelope_selectors.extend(record);
+        }
+        envelope_selectors.extend(extra);
+        let mut envelope = ActionEnvelope::new(envelope_selectors)?;
         if let Some(target) = target {
-            envelope = envelope.with_target(target)?;
+            envelope = envelope.with_target(spelling::spell_ref(&target))?;
         }
         GrantBound::action(
-            ActorBound::new(principal_ref)?,
-            ActionClass::new(class)?,
+            ActorBound::new(spelling::spell_ref(principal_ref))?,
+            ActionClass::new(spelling::spell_ref(&class))?,
             envelope,
         )
     }
@@ -307,11 +349,11 @@ impl StandingOutboundGrantScope {
         }
     }
 
-    /// The grant id, policy frontier and dial a bound spells, when it is
-    /// exactly the bound [`Self::grant_bound`] builds for them. Any other
-    /// bound, a standing consent Grant of another kind included, is no
-    /// outbound grant.
-    fn from_bound(bound: &GrantBound) -> Option<(EntityId, [u8; 32], Self)> {
+    /// The grant id, policy frontier, principal and dial a bound spells,
+    /// when it is exactly the bound [`Self::grant_bound`] builds for them.
+    /// Any other bound, a standing consent Grant of another kind included, is
+    /// no outbound grant.
+    pub(crate) fn from_bound(bound: &GrantBound) -> Option<(EntityId, [u8; 32], String, Self)> {
         let actor = bound.actor()?;
         let BoundClass::Action(class) = bound.class() else {
             return None;
@@ -321,8 +363,13 @@ impl StandingOutboundGrantScope {
         };
         let (mut id, mut frontier) = (None, None);
         let mut fields: Vec<(&str, &str)> = Vec::new();
+        let mut record = Vec::new();
         for selector in envelope.selectors() {
             let (key, value) = selector.split_once(':')?;
+            if let Some(index) = key.strip_prefix(spelling::SELECTOR_DIAL_RECORD) {
+                record.push((index.parse::<usize>().ok()?, value));
+                continue;
+            }
             match key {
                 SELECTOR_GRANT if id.replace(EntityId::from_hex(value).ok()?).is_none() => {}
                 SELECTOR_POLICY_FRONTIER
@@ -334,8 +381,26 @@ impl StandingOutboundGrantScope {
             }
         }
         let (id, frontier) = (id?, frontier?);
-        let class = class.as_str();
-        let dial = match fields.as_slice() {
+        // A bound that carries a record spells some part by its digest: its
+        // principal and dial read from the record alone.
+        let (principal_ref, dial) = if record.is_empty() {
+            (
+                actor.actor_ref().to_owned(),
+                Self::from_fields(class.as_str(), &fields)?,
+            )
+        } else {
+            spelling::decode_record(record)?
+        };
+        // Round trip: only the exact bound this dial spells is this grant,
+        // so a target, budget or extra selector a dial never writes reads as
+        // no outbound grant at all.
+        let rebuilt = dial.grant_bound(&principal_ref, id, &frontier).ok()?;
+        (rebuilt == *bound).then_some((id, frontier, principal_ref, dial))
+    }
+
+    /// The dial a bound's own selectors spell under its `class`.
+    fn from_fields(class: &str, fields: &[(&str, &str)]) -> Option<Self> {
+        Some(match fields {
             [(SELECTOR_CONTACT, contact)] => Self::Contact {
                 contact_ref: (*contact).to_owned(),
             },
@@ -355,13 +420,8 @@ impl StandingOutboundGrantScope {
             [(SELECTOR_PAGE, page)] => Self::BookingPageInvites {
                 page_ref: EntityId::from_hex(page).ok()?,
             },
-            _ => scoped_mcp_from_fields(&fields)?,
-        };
-        // Round trip: only the exact bound this dial spells is this grant,
-        // so a target, budget or extra selector a dial never writes reads as
-        // no outbound grant at all.
-        let rebuilt = dial.grant_bound(actor.actor_ref(), id, &frontier).ok()?;
-        (rebuilt == *bound).then_some((id, frontier, dial))
+            _ => scoped_mcp_from_fields(fields)?,
+        })
     }
 
     /// Validates the dial's values before any bound is spelled from them.
@@ -477,10 +537,11 @@ impl StandingOutboundGrant {
             return None;
         }
         let bound = grant.bound();
-        let (id, policy_frontier, scope) = StandingOutboundGrantScope::from_bound(bound)?;
+        let (id, policy_frontier, principal_ref, scope) =
+            StandingOutboundGrantScope::from_bound(bound)?;
         Some(Self {
             id,
-            principal_ref: bound.actor()?.actor_ref().to_owned(),
+            principal_ref,
             scope,
             status: row.status,
             created_at: row.created_at,
@@ -607,20 +668,20 @@ fn effect_candidates(
 }
 
 /// One candidate bound: `principal_ref` running `class` on one selector,
-/// narrowed to `target`.
+/// narrowed to `target`, each part spelled as a grant's bound spells it.
 fn candidate_bound(
     principal_ref: &str,
     class: String,
     selector: String,
     target: Option<String>,
 ) -> Result<GrantBound> {
-    let mut envelope = ActionEnvelope::new([selector])?;
+    let mut envelope = ActionEnvelope::new([spelling::spell_selector(&selector)])?;
     if let Some(target) = target {
-        envelope = envelope.with_target(target)?;
+        envelope = envelope.with_target(spelling::spell_ref(&target))?;
     }
     GrantBound::action(
-        ActorBound::new(principal_ref)?,
-        ActionClass::new(class)?,
+        ActorBound::new(spelling::spell_ref(principal_ref))?,
+        ActionClass::new(spelling::spell_ref(&class))?,
         envelope,
     )
 }
