@@ -1,8 +1,7 @@
 //! Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors.
 
 use crate::ports::EntityStoreRead;
-use sha2::Digest;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::batch::BatchOp;
@@ -13,7 +12,7 @@ use crate::edit_distance::delta::{
 };
 use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::receipt::gate_decision_receipt;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
@@ -28,7 +27,6 @@ use super::model::{
     InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
 };
 use super::projection::explicit_inbox_group;
-use crate::error::GateError;
 
 /// The owner-set inbox review dial: a singleton row.
 const REVIEW_DIAL: SideTable<(), InboxReviewDial, Raw> =
@@ -603,10 +601,12 @@ fn accept_member_with_amendment_in_txn(
             delta,
         )?;
     }
+    let vad_claim_id = pending.dreamer_run_id.is_some().then_some(*id);
+    crate::store::owe_claim_vad_in_txn(&vault.store, wtxn, vad_claim_id.as_slice(), now)?;
     Ok(Some(AcceptedMember {
         record,
         delta,
-        vad_claim_id: pending.dreamer_run_id.is_some().then_some(*id),
+        vad_claim_id,
     }))
 }
 
