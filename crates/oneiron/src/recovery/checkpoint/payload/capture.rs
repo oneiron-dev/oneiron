@@ -131,7 +131,11 @@ pub(in crate::recovery::checkpoint) fn seal_image(
             .iter()
             .map(|(family, rows)| ((*family).to_owned(), *rows))
             .collect(),
-        registry_gaps: projected.findings.iter().map(ToString::to_string).collect(),
+        registry_gaps: projected
+            .registry_gaps
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     }))
 }
 

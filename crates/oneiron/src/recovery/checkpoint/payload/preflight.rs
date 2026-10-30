@@ -1,12 +1,12 @@
-//! The payload registry's preflight (KS7-6, Engine 10-30 11:12): what the
-//! registry ([`super::rows`]) misses or names twice, and the owner families
-//! no compartment may seal, found before a capture places a row. Nothing
-//! here refuses a capture. Each finding is logged and named on the capture
-//! receipt, a family by its name, database and prefix, and the capture rides
-//! past it: a family or entity kind a finding names is not compartmented,
-//! so its rows stay in the image under the vault-wide seal, as before KS-7;
-//! a database one names is not read, so the rows no getter places stay
-//! there too.
+//! The payload registry's preflight (KS7-6, Engine 10-30 11:12): the gaps
+//! in the registry ([`super::rows`]), what it misses or names twice, and the
+//! owner families no compartment may seal, found before a capture places a
+//! row. Nothing here refuses a capture. Each registry gap is logged and
+//! named on the capture receipt, a family by its name, database and prefix,
+//! and the capture rides past it: a family or entity kind a gap names is not
+//! compartmented, so its rows stay in the image under the vault-wide seal,
+//! as before KS-7; a database one names is not read, so the rows no getter
+//! places stay there too.
 //!
 //! A compartment holds the getter's live value. An owner family must not be
 //! sealed when the snapshot writes it otherwise than it rests (a row-held
@@ -100,9 +100,9 @@ static REFERENCE_KINDS: &[u8] = &[
     ENTITY_TYPE_SECRET_CUSTODY,
 ];
 
-/// What a finding is.
+/// What a registry gap is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Gap {
+enum GapKind {
     /// Declared, registered or in the manifest, but not in the registry.
     Unregistered,
     /// In the registry more than once.
@@ -119,7 +119,7 @@ enum Gap {
     Unread,
 }
 
-impl Gap {
+impl GapKind {
     const fn says(self) -> &'static str {
         match self {
             Self::Unregistered => "the payload registry does not name it",
@@ -135,40 +135,40 @@ impl Gap {
     }
 }
 
-/// What a finding names.
+/// What a registry gap names.
 #[derive(Clone, Copy, Debug)]
 enum Place {
     Family(&'static SideTableDecl),
     Database(&'static str),
-    Kind(&'static str),
+    EntityKind(&'static str),
 }
 
-/// One registry gap a capture rides past.
+/// One gap in the payload registry, which a capture rides past.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Finding {
+pub(super) struct RegistryGap {
     place: Place,
-    gap: Gap,
+    kind: GapKind,
 }
 
-impl Finding {
+impl RegistryGap {
     /// A database the projection has no reader for.
     pub(super) fn unread(database: &'static str) -> Self {
         Self {
             place: Place::Database(database),
-            gap: Gap::Unread,
+            kind: GapKind::Unread,
         }
     }
 
     /// Logs it, a family by its name, database and prefix.
     pub(super) fn log(&self) {
         tracing::warn!(
-            finding = %self,
-            "checkpoint payload preflight: a registry gap rides in the image, not compartmented"
+            gap = %self,
+            "checkpoint payload registry gap: its rows ride in the image, not compartmented"
         );
     }
 }
 
-impl fmt::Display for Finding {
+impl fmt::Display for RegistryGap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.place {
             Place::Family(decl) => write!(
@@ -179,28 +179,28 @@ impl fmt::Display for Finding {
                 decl.prefix.escape_ascii()
             )?,
             Place::Database(name) => write!(f, "database {name}")?,
-            Place::Kind(kind) => write!(f, "entity kind {kind}")?,
+            Place::EntityKind(kind) => write!(f, "entity kind {kind}")?,
         }
-        let rides = match (self.place, self.gap) {
-            (_, Gap::Unknown) => "no row is compartmented under it",
+        let rides = match (self.place, self.kind) {
+            (_, GapKind::Unknown) => "no row is compartmented under it",
             (Place::Database(_), _) => {
                 "the projection does not read it, and the rows no getter places stay in the image, \
                  not compartmented"
             }
             _ => "its rows stay in the image, not compartmented",
         };
-        write!(f, ": {}; {rides}", self.gap.says())
+        write!(f, ": {}; {rides}", self.kind.says())
     }
 }
 
-/// What the preflight found, and what a capture keeps out of compartments
-/// for it.
+/// The registry gaps the preflight found, and what a capture keeps out of
+/// compartments for them.
 pub(super) struct Preflight {
-    findings: Vec<Finding>,
-    /// The families a finding names, by identity.
+    gaps: Vec<RegistryGap>,
+    /// The families a gap names, by identity.
     families: BTreeMap<(bool, &'static [u8]), &'static SideTableDecl>,
-    /// The entity kinds a finding names.
-    kinds: BTreeSet<&'static str>,
+    /// The entity kinds a gap names.
+    entity_kinds: BTreeSet<&'static str>,
     /// The manifest databases the projection reads, each once, in the
     /// registry's order.
     databases: Vec<(&'static str, DbClass)>,
@@ -208,7 +208,7 @@ pub(super) struct Preflight {
 
 static PREFLIGHT: LazyLock<Preflight> = LazyLock::new(Preflight::run);
 
-/// The registry's preflight, read once: the registry is static.
+/// The registry's preflight, run once: the registry is static.
 pub(super) fn preflight() -> &'static Preflight {
     &PREFLIGHT
 }
@@ -216,31 +216,31 @@ pub(super) fn preflight() -> &'static Preflight {
 impl Preflight {
     fn run() -> Self {
         let mut preflight = Self {
-            findings: Vec::new(),
+            gaps: Vec::new(),
             families: BTreeMap::new(),
-            kinds: BTreeSet::new(),
+            entity_kinds: BTreeSet::new(),
             databases: Vec::new(),
         };
         preflight.check_families();
-        preflight.check_kinds();
+        preflight.check_entity_kinds();
         preflight.check_databases();
         preflight
     }
 
-    fn family(&mut self, decl: &'static SideTableDecl, gap: Gap) {
-        self.findings.push(Finding {
+    fn family(&mut self, decl: &'static SideTableDecl, kind: GapKind) {
+        self.gaps.push(RegistryGap {
             place: Place::Family(decl),
-            gap,
+            kind,
         });
         self.families.insert(rows::identity(decl), decl);
     }
 
-    fn kind(&mut self, kind: &'static str, gap: Gap) {
-        self.findings.push(Finding {
-            place: Place::Kind(kind),
-            gap,
+    fn entity_kind(&mut self, name: &'static str, kind: GapKind) {
+        self.gaps.push(RegistryGap {
+            place: Place::EntityKind(name),
+            kind,
         });
-        self.kinds.insert(kind);
+        self.entity_kinds.insert(name);
     }
 
     /// Every declared family once, every family the registry names
@@ -261,32 +261,32 @@ impl Preflight {
             .collect();
         for (identity, decl) in &declared {
             if !named.contains_key(identity) {
-                self.family(*decl, Gap::Unregistered);
+                self.family(*decl, GapKind::Unregistered);
             }
         }
         for (identity, (decl, classes)) in &named {
             let canonical =
                 storage_tier(rows::db_name(decl.db), decl.prefix) == StorageTier::Canonical;
-            let gap = match classes[..] {
-                _ if !declared.contains_key(identity) => Gap::Unknown,
-                [_, _, ..] => Gap::NamedTwice,
-                [Class::NotImaged] if canonical => Gap::Imaged,
+            let kind = match classes[..] {
+                _ if !declared.contains_key(identity) => GapKind::Unknown,
+                [_, _, ..] => GapKind::NamedTwice,
+                [Class::NotImaged] if canonical => GapKind::Imaged,
                 _ => continue,
             };
-            self.family(*decl, gap);
+            self.family(*decl, kind);
         }
         let owned = |decl: &SideTableDecl| {
             named
                 .get(&rows::identity(decl))
                 .is_some_and(|(_, classes)| matches!(classes[..], [Class::Owner(_)]))
         };
-        for (decls, gap) in [
-            (REWRITTEN, Gap::Rewritten),
-            (REFERENCES, Gap::References),
+        for (decls, kind) in [
+            (REWRITTEN, GapKind::Rewritten),
+            (REFERENCES, GapKind::References),
         ] {
             for decl in decls {
                 if owned(*decl) {
-                    self.family(*decl, gap);
+                    self.family(*decl, kind);
                 }
             }
         }
@@ -295,45 +295,45 @@ impl Preflight {
     /// Every registered entity kind once, every kind the registry names
     /// registered, and no owner kind one the snapshot rewrites or a restore
     /// reads references from.
-    fn check_kinds(&mut self) {
+    fn check_entity_kinds(&mut self) {
         let mut named: BTreeMap<&'static str, Vec<Class>> = BTreeMap::new();
-        for (class, kinds) in rows::kinds() {
-            for kind in *kinds {
-                named.entry(*kind).or_default().push(*class);
+        for (class, names) in rows::kinds() {
+            for name in *names {
+                named.entry(*name).or_default().push(*class);
             }
         }
         let registered: BTreeSet<&'static str> = ENTITY_TYPE_REGISTRY
             .iter()
             .map(|entry| entry.kind)
             .collect();
-        for kind in &registered {
-            if !named.contains_key(kind) {
-                self.kind(*kind, Gap::Unregistered);
+        for name in &registered {
+            if !named.contains_key(name) {
+                self.entity_kind(*name, GapKind::Unregistered);
             }
         }
-        for (kind, classes) in &named {
-            if !registered.contains(kind) {
-                self.kind(*kind, Gap::Unknown);
+        for (name, classes) in &named {
+            if !registered.contains(name) {
+                self.entity_kind(*name, GapKind::Unknown);
             } else if classes.len() > 1 {
-                self.kind(*kind, Gap::NamedTwice);
+                self.entity_kind(*name, GapKind::NamedTwice);
             }
         }
         let owned = |type_byte: u8| {
             entity_type_registry_entry(type_byte)
                 .map(|entry| entry.kind)
-                .filter(|kind| {
+                .filter(|name| {
                     named
-                        .get(kind)
+                        .get(name)
                         .is_some_and(|classes| matches!(classes[..], [Class::Owner(_)]))
                 })
         };
-        for (kinds, gap) in [
-            (REWRITTEN_KINDS, Gap::Rewritten),
-            (REFERENCE_KINDS, Gap::References),
+        for (type_bytes, kind) in [
+            (REWRITTEN_KINDS, GapKind::Rewritten),
+            (REFERENCE_KINDS, GapKind::References),
         ] {
-            for type_byte in kinds {
-                if let Some(kind) = owned(*type_byte) {
-                    self.kind(kind, gap);
+            for type_byte in type_bytes {
+                if let Some(name) = owned(*type_byte) {
+                    self.entity_kind(name, kind);
                 }
             }
         }
@@ -349,42 +349,42 @@ impl Preflight {
         for (name, _) in rows::DATABASES {
             *times.entry(*name).or_default() += 1;
         }
-        let mut gaps: Vec<(&'static str, Gap)> = manifest
+        let mut gaps: Vec<(&'static str, GapKind)> = manifest
             .iter()
             .filter(|name| !times.contains_key(*name))
-            .map(|name| (*name, Gap::Unregistered))
+            .map(|name| (*name, GapKind::Unregistered))
             .collect();
         for &(name, class) in rows::DATABASES {
             let not_imaged = matches!(class, DbClass::Rows(Class::NotImaged));
-            let gap = if !manifest.contains(name) {
-                Gap::Unknown
+            let kind = if !manifest.contains(name) {
+                GapKind::Unknown
             } else if times.get(name).is_some_and(|times| *times > 1) {
-                Gap::NamedTwice
+                GapKind::NamedTwice
             } else if not_imaged && storage_tier(name, &[]) == StorageTier::Canonical {
-                Gap::Imaged
+                GapKind::Imaged
             } else if matches!(class, DbClass::Rows(Class::Owner(_)))
                 && REWRITTEN_DATABASES.contains(&name)
             {
-                Gap::Rewritten
+                GapKind::Rewritten
             } else {
                 if !not_imaged {
                     self.databases.push((name, class));
                 }
                 continue;
             };
-            if !gaps.contains(&(name, gap)) {
-                gaps.push((name, gap));
+            if !gaps.contains(&(name, kind)) {
+                gaps.push((name, kind));
             }
         }
-        self.findings.extend(gaps.into_iter().map(|(name, gap)| Finding {
+        self.gaps.extend(gaps.into_iter().map(|(name, kind)| RegistryGap {
             place: Place::Database(name),
-            gap,
+            kind,
         }));
     }
 
-    /// Every finding, in the order the preflight made them.
-    pub(super) fn findings(&self) -> &[Finding] {
-        &self.findings
+    /// Every registry gap, in the order the preflight found them.
+    pub(super) fn registry_gaps(&self) -> &[RegistryGap] {
+        &self.gaps
     }
 
     /// The manifest databases the projection reads, each once, by class.
@@ -392,13 +392,13 @@ impl Preflight {
         &self.databases
     }
 
-    /// Whether a finding names `decl`: its rows stay in the image.
+    /// Whether a gap names `decl`: its rows stay in the image.
     pub(super) fn holds_out(&self, decl: &SideTableDecl) -> bool {
         self.families.contains_key(&rows::identity(decl))
     }
 
-    /// The family a finding names that the row `key` of `db` falls under:
-    /// how the receipt names a row the registry places under no family.
+    /// The family a gap names that the row `key` of `db` falls under: how
+    /// the receipt names a row the registry places under no family.
     pub(super) fn family_of(&self, db: SideDb, key: &[u8]) -> Option<&'static SideTableDecl> {
         self.families
             .values()
@@ -407,7 +407,7 @@ impl Preflight {
     }
 
     /// Whether a compartment may hold the image row `key` of `db`, holding
-    /// `value`: one of no family or entity kind a finding names.
+    /// `value`: one of no family or entity kind a gap names.
     fn compartments(&self, db: RowDb, key: &[u8], value: &[u8]) -> bool {
         let db = match db {
             RowDb::VaultMeta => SideDb::VaultMeta,
@@ -415,17 +415,17 @@ impl Preflight {
             RowDb::Entities => {
                 return !EntityMetadataHeader::parse(value)
                     .and_then(|header| entity_type_registry_entry(header.entity_type))
-                    .is_some_and(|entry| self.kinds.contains(entry.kind));
+                    .is_some_and(|entry| self.entity_kinds.contains(entry.kind));
             }
             RowDb::EdgesOut | RowDb::EdgesIn | RowDb::SyncQueue => return true,
         };
         self.family_of(db, key).is_none()
     }
 
-    /// `captured` with no owner part of a family or entity kind a finding
+    /// `captured` with no owner part of a family or entity kind a gap
     /// names: those rows stay in the image, as before KS-7.
     pub(super) fn hold_out(&self, captured: Captured) -> Captured {
-        if self.families.is_empty() && self.kinds.is_empty() {
+        if self.families.is_empty() && self.entity_kinds.is_empty() {
             return captured;
         }
         keep_owner_parts(captured, &|db, key, value| self.compartments(db, key, value))

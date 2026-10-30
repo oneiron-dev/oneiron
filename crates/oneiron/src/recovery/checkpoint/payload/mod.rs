@@ -18,7 +18,7 @@
 //! restore ([`restore`]: each compartment opened before anything is made),
 //! and KS7-6 turned [`CHECKPOINT_PAYLOADS_ENABLED`] on. A registry gap
 //! never refuses a capture: the preflight ([`preflight`]) names each, and
-//! the rows it covers stay in the image. Off, the projection answers
+//! the rows it names stay in the image. Off, the projection answers
 //! [`Projection::Unchanged`] before it classifies, reads, mints or refuses
 //! anything, and the artifact's writer is handed no payload.
 #![allow(
@@ -479,7 +479,7 @@ pub(super) struct Projected {
     links: Vec<structure::Link>,
     /// Every registry gap the capture rode past, which its receipt names
     /// (KS7-6).
-    findings: Vec<preflight::Finding>,
+    registry_gaps: Vec<preflight::RegistryGap>,
 }
 
 impl Projected {
@@ -596,16 +596,16 @@ pub(super) fn project(
         return Ok(Projection::Unchanged);
     }
     let preflight = preflight::preflight();
-    for finding in preflight.findings() {
-        finding.log();
+    for gap in preflight.registry_gaps() {
+        gap.log();
     }
     let mut projected = Projected {
-        findings: preflight.findings().to_vec(),
+        registry_gaps: preflight.registry_gaps().to_vec(),
         ..Projected::default()
     };
     let mut claims = Claims::default();
     // Each getter reads its whole families once; only the rows the image
-    // takes are kept, and no part of a family or kind a finding names.
+    // takes are kept, and no part of a family or kind a registry gap names.
     for getter in Getter::ALL {
         let role = BundleRole::Content(*getter);
         let captured = preflight.hold_out(filter.keep(getter.capture(dbs, txn)?));
@@ -623,7 +623,7 @@ pub(super) fn project(
             let (family, class) = match class {
                 DbClass::Rows(class) => (name, class),
                 DbClass::Families(db) => match families.of(db, key) {
-                    // A family a finding names stays in the image, named.
+                    // A family a registry gap names stays in the image, named.
                     Some((decl, _)) if preflight.holds_out(decl) => {
                         projected.count(decl.name);
                         return Ok(());
@@ -678,9 +678,9 @@ pub(super) fn project(
             Ok(())
         };
         if !for_each_row(dbs, txn, name, &mut place)? {
-            let finding = preflight::Finding::unread(name);
-            finding.log();
-            projected.findings.push(finding);
+            let gap = preflight::RegistryGap::unread(name);
+            gap.log();
+            projected.registry_gaps.push(gap);
         }
     }
     let grouped = carriers.project_documents(txn, filter, &documents, &mut split)?;
