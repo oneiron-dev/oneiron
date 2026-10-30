@@ -98,25 +98,29 @@ impl NotePin {
             return Err(invalid("NOTE citation exceeds bound"));
         }
         frontier(&self.frontier)?;
-        for (bytes, side) in [
-            (&self.start_cursor, Side::Left),
-            (&self.end_cursor, Side::Right),
-        ] {
-            let cursor = Cursor::decode(bytes).map_err(|_| invalid("invalid NOTE cursor"))?;
-            if cursor.container != loro::ContainerID::new_root(BODY, loro::ContainerType::Text) {
-                return Err(invalid("NOTE cursor is not in the body"));
-            }
-            // Both endpoints name quoted characters, never a moving document
-            // boundary. The sides describe the edges of those characters.
-            if cursor.id.is_none() || cursor.side != side {
-                return Err(invalid("NOTE cursor is not a quoted character boundary"));
-            }
-        }
+        quoted_cursor(&self.start_cursor, Side::Left)?;
+        quoted_cursor(&self.end_cursor, Side::Right)?;
         if self.quote_hash != *blake3::hash(self.quote_text.as_bytes()).as_bytes() {
             return Err(invalid("NOTE quote hash mismatch"));
         }
         Ok(())
     }
+}
+
+/// A cited span's endpoint, decoded and checked for its shape: in the body
+/// text, on a quoted character, on `side`. A pin's validation and a live
+/// span's read judge it alike (FIX 10747).
+fn quoted_cursor(bytes: &[u8], side: Side) -> Result<Cursor> {
+    let cursor = Cursor::decode(bytes).map_err(|_| invalid("invalid NOTE cursor"))?;
+    if cursor.container != loro::ContainerID::new_root(BODY, loro::ContainerType::Text) {
+        return Err(invalid("NOTE cursor is not in the body"));
+    }
+    // Both endpoints name quoted characters, never a moving document
+    // boundary. The sides describe the edges of those characters.
+    if cursor.id.is_none() || cursor.side != side {
+        return Err(invalid("NOTE cursor is not a quoted character boundary"));
+    }
+    Ok(cursor)
 }
 
 pub(super) struct NoteDocument {
@@ -382,15 +386,16 @@ impl NoteDocument {
 
     /// The live characters a cited span's cursors name and their text, when
     /// both still stand and the text hashes to `quote_hash`; `None` is
-    /// drift. A span with no claim resolves alike (FIX 9814).
+    /// drift. A span with no claim resolves alike (FIX 9814), its cursors
+    /// checked for a pin's shape first (FIX 10747).
     pub(super) fn live_span(
         &self,
         start_cursor: &[u8],
         end_cursor: &[u8],
         quote_hash: &[u8; 32],
     ) -> Result<Option<(usize, usize, String)>> {
-        let start = Cursor::decode(start_cursor).map_err(|_| invalid("NOTE start cursor"))?;
-        let end = Cursor::decode(end_cursor).map_err(|_| invalid("NOTE end cursor"))?;
+        let start = quoted_cursor(start_cursor, Side::Left)?;
+        let end = quoted_cursor(end_cursor, Side::Right)?;
         // Resolve only live character IDs. get_cursor_pos falls back to
         // historical replay for deleted anchors, which cannot run safely on
         // StateOnly documents whose dependencies have been erased (Loro 1.13).

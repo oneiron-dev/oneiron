@@ -3,8 +3,11 @@
 //! and the outline's text at its keep, whose lifted keys a reader masked from
 //! them reads as handles (FIX 9605).
 
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+
 use super::super::citation_erase::NOTE_ERASE_SOURCE;
-use super::super::document::invalid;
+use super::super::document::{NoteDocument, invalid};
 use super::load;
 use crate::error::Result;
 use crate::side_table::HexId;
@@ -18,31 +21,61 @@ pub(crate) struct DeckSpanObservation {
     pub(crate) mapped: bool,
 }
 
+/// The NOTE documents one deck read cites, each judged for erasure and
+/// loaded once however many of its pins cite it (FIX 10746). `None` is a
+/// document that was erased.
+#[derive(Default)]
+pub(crate) struct DeckSpanReads {
+    documents: BTreeMap<EntityId, Option<NoteDocument>>,
+}
+
+/// Whether `id`, a cited span's source, was erased, as a pin's source is
+/// judged.
+fn source_erased_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+    Ok(vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
+        || NOTE_ERASE_SOURCE.contains(&vault.store, txn, &HexId(id))?)
+}
+
 /// What `document`'s span from `start_cursor` to `end_cursor`, quoting
 /// `quote_hash`, is in `txn`: the document's frontier and whether the span
 /// still stands. Its sources' erasure is judged as a pin's is: the document
-/// always, `claim` only when the span names one.
+/// always, `claim` only when the span names one. `reads` holds the
+/// documents this read has already judged and loaded.
 ///
 /// # Errors
 ///
-/// An erased or unreadable source, an undecodable cursor, storage errors.
+/// An erased or unreadable source, an undecodable or misshapen cursor,
+/// storage errors.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn observe_deck_span_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    reads: &mut DeckSpanReads,
     document: EntityId,
     claim: Option<EntityId>,
     start_cursor: &[u8],
     end_cursor: &[u8],
     quote_hash: &[u8; 32],
 ) -> Result<DeckSpanObservation> {
-    for id in std::iter::once(document).chain(claim) {
-        if vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
-            || NOTE_ERASE_SOURCE.contains(&vault.store, txn, &HexId(id))?
-        {
-            return Err(invalid("NOTE citation source was erased"));
-        }
+    if let Some(claim) = claim
+        && source_erased_in_txn(vault, txn, claim)?
+    {
+        return Err(invalid("NOTE citation source was erased"));
     }
-    let doc = load(vault, txn, document)?;
+    let doc = match reads.documents.entry(document) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            let doc = if source_erased_in_txn(vault, txn, document)? {
+                None
+            } else {
+                Some(load(vault, txn, document)?)
+            };
+            entry.insert(doc)
+        }
+    };
+    let Some(doc) = doc.as_ref() else {
+        return Err(invalid("NOTE citation source was erased"));
+    };
     let mapped = doc
         .live_span(start_cursor, end_cursor, quote_hash)?
         .is_some();
