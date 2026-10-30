@@ -599,3 +599,35 @@ pub(crate) fn restore_secret_custody_in_txn(
     register_secret_in_txn(vault, wtxn, id, rec)?;
     Ok(true)
 }
+
+/// Revokes, in `wtxn`, each custody record the side-row wall minted from the
+/// row outside the entity tables that `origin` names (FIX 6710): an erase
+/// that takes the row reaches every value it lifted. A record is minted from
+/// the row when its mask origin names it; a value custody held before, which
+/// the row only named, keeps its record. Each live record is revoked as the
+/// revoke door's body revokes one, its value erased at rest, with its
+/// receipt; one revoked already gives up only the bytes it still holds.
+pub(crate) fn revoke_side_row_custody_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: &EntityId,
+) -> Result<()> {
+    let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    for id in super::found_keys::found_key_custody_in_txn(&vault.store, wtxn, origin)? {
+        let minted = crate::batch::secret_scan::mask_origin_in_txn(&vault.store, wtxn, &id)?
+            .is_some_and(|mask| mask.record == *origin);
+        if !minted {
+            continue;
+        }
+        let Some(record) = super::read_secret_custody_meta_in_txn(&vault.store, wtxn, &id)? else {
+            continue;
+        };
+        let cause = crate::secret_rotation::RevokeCause::Revoked;
+        if record.status == SecretCustodyStatus::Revoked {
+            crate::secret_rotation::revoke_custody_in_txn(vault, wtxn, &id, cause, at)?;
+        } else {
+            vault.revoke_secret_in_txn(wtxn, &record.name, cause, at)?;
+        }
+    }
+    Ok(())
+}

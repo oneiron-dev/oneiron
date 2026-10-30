@@ -25,8 +25,9 @@
 //! stated reason. Under a rationale-bearing output contract the reason
 //! reaches the ledger as a [`GateSystemNoticeRecord`] on the `policy.audit`
 //! channel with the `audit` audience (see [`policy_model_rationale_notice`]),
-//! holding the decision, the row and a digest of the reason, never its words
-//! (FIX 10035): a reason can quote the candidate. The words stay on the
+//! holding the decision, the row and a vault-keyed MAC of the reason (none
+//! on a keyless vault), never its words (FIX 10035, 10532): a reason can
+//! quote the candidate. The words stay on the
 //! verdict the caller holds. The row is addressed to the substrate owner
 //! reading their own receipts, so a host rendering reader-facing notices
 //! filters it out by channel rather than by inspecting bodies.

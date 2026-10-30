@@ -4,10 +4,12 @@
 //! value. Each call goes through the use door
 //! ([`sdk::use_secret_as_caller`]) as the step's own agent while the step
 //! still holds its lease, under an invocation derived from the step's run,
-//! the same on every replay of the try. It crosses the row's verb-hook
-//! boundary ([`verb_hook_boundary::row`]) as a pumped run's `self.use`
-//! does, so the owner's verb hooks fire once around it: a pre-hook's skip
-//! (or any other stop) goes back to the model as the tool's error result,
+//! the same on every replay of the try, with its leased try bound as the
+//! use's task host: a secret its run found is the step's to use (FIX 8334).
+//! It crosses the row's verb-hook boundary ([`verb_hook_boundary::row`]) as
+//! a pumped run's `self.use` does, so the owner's verb hooks fire once
+//! around it: a pre-hook's skip (or any other stop) goes back to the model
+//! as the tool's error result,
 //! its reason with it, never as the step's failure. Every round the model is asked
 //! again is admitted and metered on the step's one funded run, so the
 //! step's budget bounds the rounds; nothing else does.
@@ -32,7 +34,7 @@ use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryErr
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::secret_custody::SECRET_USE_OPERATIONS;
 use oneiron::task_verb::sdk::{self, AgentVerb, SecretUseRequest};
-use oneiron::task_verb::verb_hook_boundary;
+use oneiron::task_verb::{HostBinding, verb_hook_boundary};
 use oneiron::{
     ContentPart, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult,
     LlmToolSpec, ModelId, Vault, WriteActor,
@@ -263,6 +265,13 @@ impl<'a> StepSecretUse<'a> {
             .vault
             .memory(self.actor.entity_ref(), self.actor.actor_class())
             .with_invocation(InvocationId::of_run_step(&self.run, ordinal));
+        // The step's leased try is the use's task host, so a secret its run
+        // found is the step's to use (FIX 8334). The invocation stays: a
+        // held connector call is found again by it.
+        let memory = match HostBinding::from_leased(self.attempt, None) {
+            Ok(binding) => memory.with_task_host(binding),
+            Err(_) => memory,
+        };
         // The row's one verb-hook boundary, as a pumped run's `self.use`
         // crosses it: the pre chain may rewrite the args, which pass the
         // row's own input check again, and the post chain reads the answer.

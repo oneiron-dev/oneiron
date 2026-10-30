@@ -4,7 +4,10 @@
 //! carries the complete permitted set in pieces, each one carrier within the
 //! codec's own floors: at most [`MAX_CARRIER_BYTES`] encoded (the 4 MiB a
 //! carrier held before pieces, its piece fields beside it) and at most
-//! [`MAX_PIECE_VALUES`] sealed values. No total recipient count is refused.
+//! [`MAX_PIECE_VALUES`] sealed values. No total recipient count is refused,
+//! nor any value's size: a value too large for one carrier rides in
+//! numbered envelopes, each in a piece within the floors, a piece carrying
+//! on the value the piece before it ended with (FIX 7953).
 //!
 //! Every piece signs the commitment to the request's complete set
 //! ([`custody_recipient_set`]), the request, generation and input it enacts,
@@ -21,9 +24,12 @@
 //! alone has no custody effect.
 
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron_crypto::HybridPublicKey;
 
 use super::super::types::SecretCustodyStatus;
-use super::payload::{MAX_CARRIER_BYTES, MAX_PIECE_VALUES};
+use super::payload::{
+    MAX_CARRIER_BYTES, MAX_PIECE_VALUES, VALUE_ENVELOPE_BYTES, split_value_envelopes,
+};
 use super::{CustodyTransition, refused};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, CustodyRecipientPermit, custody_recipient_set,
@@ -72,33 +78,37 @@ impl CustodyTransition {
     }
 
     /// Whether this piece's place is whole on its own: one of its pieces,
-    /// the first piece starting the set and no other, a revoked transition
-    /// one empty piece, and a lone piece carrying exactly the set it commits
-    /// to.
+    /// the first piece starting the set, a revoked transition one empty
+    /// piece, and a lone piece carrying exactly the set it commits to. A
+    /// later piece starts there too only when it carries on the first
+    /// value (FIX 7953), which [`CustodyPieces::whole`] decides.
     pub(super) fn place_whole(&self) -> bool {
         let lone = self.pieces == 1;
         let permits: Vec<CustodyRecipientPermit> = self.permits().copied().collect();
         self.piece < self.pieces
-            && (self.piece == 0) == (self.first == 0)
+            && (self.piece != 0 || self.first == 0)
             && (self.status != SecretCustodyStatus::Revoked || lone)
             && (!lone || self.set == custody_recipient_set(&permits))
     }
 
     /// Whether this piece is its place in `recipients`, a request's
     /// complete permitted set: it commits to exactly that set, its permits
-    /// are the run of it at `first`, and the last piece ends it.
+    /// are the run of it at `first`, and the last piece ends it. A piece
+    /// before the last ends it too only when the next carries on its last
+    /// value (FIX 7953), which [`CustodyPieces::whole`] decides.
     pub(super) fn piece_of(&self, recipients: &[CustodyRecipientPermit]) -> bool {
         let Ok(start) = usize::try_from(self.first) else {
             return false;
         };
-        let Some(end) = start.checked_add(self.sealed.len()) else {
+        let Some(end) = start.checked_add(self.permits().count()) else {
             return false;
         };
+        let last = self.piece.checked_add(1) == Some(self.pieces);
         self.set == custody_recipient_set(recipients)
             && recipients
                 .get(start..end)
                 .is_some_and(|run| run.iter().eq(self.permits()))
-            && (self.piece.checked_add(1) == Some(self.pieces)) == (end == recipients.len())
+            && (!last || end == recipients.len())
     }
 
     /// The custody map key this piece rides under in its window.
@@ -128,18 +138,33 @@ pub(crate) fn parse_custody_row_key(key: &str) -> Option<(EntityId, u32)> {
     (custody_row_key(id, piece) == key).then_some((id, piece))
 }
 
-/// Signs `template`'s transition with `signing` for `vault_id`, its values
-/// `sealed` ascending by machine, in as few pieces as the frame floors
-/// allow, and verifies every piece before it returns any. One sealed value
-/// too large for a carrier of its own is the codec's floor, and refuses as
-/// before.
+/// Signs `template`'s transition with `signing` for `vault_id`, its `value`
+/// sealed to each of `recipients` ascending by machine, in as few pieces as
+/// the frame floors allow, and verifies every piece before it returns any.
+/// A value too large for a carrier of its own is sealed as numbered
+/// envelopes, each sized to ride in a piece within the floors, and a piece
+/// that carries on the value the piece before it ended with starts at that
+/// value's permit (FIX 7953). No value size is refused; only a record whose
+/// body leaves a piece no room for a value is, as before.
 pub(super) fn sign_pieces(
     vault_id: &[u8; 32],
     signing: &SigningKey,
     template: CustodyTransition,
-    sealed: Vec<(CustodyRecipientPermit, Vec<u8>)>,
+    recipients: &[(CustodyRecipientPermit, HybridPublicKey)],
+    value: &[u8],
 ) -> Result<CustodyPieces> {
     let base = template.encode().len();
+    let room = MAX_CARRIER_BYTES.saturating_sub(base + VALUE_FRAME_BYTES + VALUE_ENVELOPE_BYTES);
+    let binding = template.binding();
+    let mut recipients: Vec<&(CustodyRecipientPermit, HybridPublicKey)> =
+        recipients.iter().collect();
+    recipients.sort_unstable_by_key(|(permit, _)| permit.machine);
+    let mut sealed = Vec::with_capacity(recipients.len());
+    for (permit, public) in recipients {
+        for envelope in split_value_envelopes(vault_id, &binding, permit, public, value, room)? {
+            sealed.push((*permit, envelope));
+        }
+    }
     let mut groups = Vec::new();
     let mut current = Vec::new();
     let mut size = base;
@@ -158,11 +183,17 @@ pub(super) fn sign_pieces(
     groups.push(current);
     let pieces = u32::try_from(groups.len())
         .map_err(|_| refused("the custody transition has too many pieces"))?;
-    let mut first = 0_u32;
+    let mut next = 0_u32;
+    let mut last = None;
     let mut signed = Vec::with_capacity(groups.len());
     for (place, group) in (0..pieces).zip(groups) {
-        let carried = u32::try_from(group.len())
-            .map_err(|_| refused("the custody transition has too many recipients"))?;
+        let lead = group.first().map(|(permit, _)| *permit);
+        let first = if lead.is_some() && lead == last {
+            next - 1
+        } else {
+            next
+        };
+        last = group.last().map(|(permit, _)| *permit).or(last);
         let mut piece = CustodyTransition {
             piece: place,
             pieces,
@@ -172,10 +203,14 @@ pub(super) fn sign_pieces(
         };
         piece.signature = signing.sign(&piece.transcript(vault_id)).to_bytes();
         if piece.encode().len() > MAX_CARRIER_BYTES {
-            return Err(refused("one sealed value outgrows a custody carrier"));
+            return Err(refused(
+                "the custody record leaves its carrier no room for a value",
+            ));
         }
         piece.verify_signed(vault_id)?;
-        first = first
+        let carried = u32::try_from(piece.permits().count())
+            .map_err(|_| refused("the custody transition has too many recipients"))?;
+        next = first
             .checked_add(carried)
             .ok_or_else(|| refused("the custody transition has too many recipients"))?;
         signed.push(piece);
@@ -214,15 +249,21 @@ impl CustodyPieces {
         self.0
     }
 
-    /// The permits of every piece kept, ascending by machine.
+    /// The permits of every piece kept, ascending by machine, once each: a
+    /// value carried on from one piece into the next shares its permit.
     pub(crate) fn permits(&self) -> impl Iterator<Item = &CustodyRecipientPermit> + '_ {
-        self.0.iter().flat_map(CustodyTransition::permits)
+        let mut last = None;
+        self.0
+            .iter()
+            .flat_map(CustodyTransition::permits)
+            .filter(move |permit| last.replace(*permit) != Some(*permit))
     }
 
     /// The one group verifier: whether these are every piece of one
     /// transition, its places `0..pieces` once each and in order, each
-    /// piece's permits starting where the piece before it ended, with no gap
-    /// and no overlap, and all their permits, joined, ascending by machine
+    /// piece's permits starting where the piece before it ended, or at its
+    /// last permit when it carries on that value (FIX 7953), with no gap and
+    /// no other overlap, and all their permits, joined, ascending by machine
     /// and exactly the set every piece commits to. Only then is its set
     /// whole here.
     pub(crate) fn whole(&self) -> bool {
@@ -231,14 +272,22 @@ impl CustodyPieces {
             return false;
         }
         let mut next = 0_usize;
+        let mut last = None;
         for (place, piece) in (0_u32..).zip(&self.0) {
+            let carried_on = last.is_some() && piece.permits().next() == last;
+            let start = if carried_on {
+                next.saturating_sub(1)
+            } else {
+                next
+            };
             if piece.piece != place
                 || !piece.same_transition(lead)
-                || usize::try_from(piece.first).ok() != Some(next)
+                || usize::try_from(piece.first).ok() != Some(start)
             {
                 return false;
             }
-            next = next.saturating_add(piece.sealed.len());
+            next = start.saturating_add(piece.permits().count());
+            last = piece.permits().last().or(last);
         }
         let permits: Vec<CustodyRecipientPermit> = self.permits().copied().collect();
         permits
@@ -259,8 +308,9 @@ impl CustodyPieces {
         self.0.iter().try_for_each(|piece| piece.verify(fold))
     }
 
-    /// The value sealed to `machine`, opened from whichever piece carries
-    /// it ([`CustodyTransition::open_value`]).
+    /// The value sealed to `machine`, opened from the pieces that carry it,
+    /// its numbered envelopes joined in order (FIX 7953,
+    /// [`CustodyTransition::open_value`]).
     #[cfg(feature = "sync")]
     pub(crate) fn open_value(
         &self,
@@ -268,10 +318,7 @@ impl CustodyPieces {
         machine: EntityId,
         secret: &oneiron_crypto::HybridSecretKey,
     ) -> Option<zeroize::Zeroizing<Vec<u8>>> {
-        self.0
-            .iter()
-            .find(|piece| piece.permits().any(|permit| permit.machine == machine))?
-            .open_value(vault_id, machine, secret)
+        CustodyTransition::open_value(&self.0, vault_id, machine, secret)
     }
 
     /// The digest an executor's output binding keeps of these pieces.

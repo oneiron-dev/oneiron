@@ -138,6 +138,10 @@ pub enum SweepWork {
         /// Owed consolidations that failed; each keeps its debt.
         failed: u64,
     },
+    FoundKeyNotices {
+        /// Due records whose notices were raised.
+        records: u64,
+    },
 }
 
 impl SweepWork {
@@ -185,6 +189,7 @@ impl SweepWork {
             Self::SharedActs { noticed } => noticed == 0,
             Self::SecretLift(work) => work == SecretLiftWork::default(),
             Self::ClaimVadDebt { settled, failed } => settled == 0 && failed == 0,
+            Self::FoundKeyNotices { records } => records == 0,
         }
     }
 }
