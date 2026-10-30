@@ -18044,7 +18044,7 @@ class ClaimDemoteView(TypedDict):
     stale: bool
     receipt_ref: str
 class ReadFilterInput(TypedDict):
-    entity_types: NotRequired[list[int] | None]
+    entity_types: NotRequired[list[str] | None]
     max_sensitivity_band: NotRequired[int | None]
     include_stale: NotRequired[bool | None]
     min_confidence: NotRequired[float | None]

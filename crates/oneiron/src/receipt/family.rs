@@ -245,6 +245,7 @@ pub(super) fn collect_receipt_records(
         );
         records.extend(
             durable_send_receipts(vault)?
+                .0
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );
