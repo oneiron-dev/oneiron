@@ -119,7 +119,8 @@ pub(super) struct OwnerWorkState {
     permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
     /// Each (signer, commitment) whose permit set has been joined and
     /// verified here, so a refold of it hashes no bytes again (FIX 12014).
-    /// The first join still verifies; merged by union.
+    /// The first join still verifies. A piece that changes a set drops its
+    /// verdict, and a merge keeps only the left's verdicts on unchanged sets.
     verified_permit_sets: BTreeSet<([u8; 32], CustodyPermitPieces)>,
 }
 
@@ -492,12 +493,14 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     }
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
+    // A verified set stays verified only on the side whose pieces it was
+    // judged on: the left's, where the merge left them unchanged. The
+    // right's verdicts are not carried; a later join judges again.
     for (key, piece) in &right.permit_pieces {
-        permit_pieces::keep_piece(&mut merged.permit_pieces, *key, piece);
+        if permit_pieces::keep_piece(&mut merged.permit_pieces, *key, piece) {
+            merged.verified_permit_sets.remove(&(key.0, key.1));
+        }
     }
-    merged
-        .verified_permit_sets
-        .extend(right.verified_permit_sets.iter().copied());
     for (request, cancels) in &right.cancels {
         merged
             .cancels
