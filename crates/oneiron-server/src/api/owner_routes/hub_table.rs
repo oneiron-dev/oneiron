@@ -345,6 +345,15 @@ pub(super) fn owner_table() -> OwnerTable {
         ),
         (
             OwnerRoute {
+                method: "post",
+                path: "/booking/quarantine/{claim_ref}/restore",
+                summary: "Book a quarantined confirm's kept submission with an ordinary hold and confirm (FIX 7851) and close its pending consent; a taken slot answers slot_taken with alternatives.",
+                row: None,
+            },
+            post(crate::api::restore_quarantined_booking),
+        ),
+        (
+            OwnerRoute {
                 method: "get",
                 path: "/model-catalog",
                 summary: "The catalog ref's sync policy, the revisions it has seen and trusted, and the installed pack.",

@@ -79,12 +79,13 @@ pub(in crate::booking) use self::claim::{
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     enqueue_booking_verb, enqueue_booking_verb_with_publication, issue_checkout_lease,
-    run_booking_lifecycle_attempt, run_booking_lifecycle_once,
+    run_booking_lifecycle_attempt, run_booking_lifecycle_attempt_with_invites,
+    run_booking_lifecycle_once,
 };
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
-    token_event_type, token_page_ref,
+    confirm_hold_taken_at, token_event_type, token_page_ref,
 };
 pub use self::types::{
     BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,
@@ -99,6 +100,7 @@ pub use self::types::{
 
 pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity, booking_invite_identity_in_txn,
+    erase_booking_receipt_carriers_in_txn,
 };
 pub(super) use self::emergency::{
     admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
@@ -106,7 +108,7 @@ pub(super) use self::emergency::{
 };
 pub(super) use self::storage::booking_writer;
 pub(crate) use self::token::hex_lower;
-pub(super) use self::token::{digest_with, mint_raw_token};
+pub(super) use self::token::{digest_with, live_hold_in_txn, mint_raw_token};
 // The three ordinary transitions are reached from outside this module only by
 // sibling test suites; the non-test doors stay behind the consumer turn.
 #[cfg(test)]
@@ -258,6 +260,26 @@ mod entity_ref_serde {
     }
 }
 
+mod entity_refs_serde {
+    use super::{Deserialize, Deserializer, EntityId, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &[EntityId],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(value.iter().map(EntityId::to_hex))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<EntityId>, D::Error> {
+        Vec::<String>::deserialize(deserializer)?
+            .iter()
+            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
+            .collect()
+    }
+}
+
 /// The digest row a lifecycle token resolves through. The token carries no
 /// state; this row is where the EVENT and the permitted action live.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -311,6 +333,10 @@ struct LifecycleReceiptRow {
     session_hash: Option<[u8; 32]>,
     confirmation: Option<BookingConfirmationContext>,
     invite_identity: Option<(String, String)>,
+    /// The rows the writer read to decide this transition (FIX 5483), so a
+    /// replay lists what the first pass read.
+    #[serde(with = "entity_refs_serde")]
+    reads: Vec<EntityId>,
 }
 
 impl LifecycleReceiptRow {
@@ -320,6 +346,25 @@ impl LifecycleReceiptRow {
             uid: self.uid,
             sequence: self.sequence,
         }
+    }
+
+    /// [`Self::into_revision`], beside the read set this receipt kept.
+    fn into_revision_and_reads(self) -> (CalendarRevision, Vec<EntityId>) {
+        let Self {
+            event_ref,
+            uid,
+            sequence,
+            reads,
+            ..
+        } = self;
+        (
+            CalendarRevision {
+                event_ref,
+                uid,
+                sequence,
+            },
+            reads,
+        )
     }
 }
 

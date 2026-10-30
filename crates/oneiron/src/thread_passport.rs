@@ -487,11 +487,13 @@ pub enum StickyMaskDecision {
     Unset,
     /// The thread's pinned mask, which the caller must wear.
     Keep(ThreadMask),
-    /// The request disagrees with the pin. Never an automatic From/facet flip.
+    /// The request, or with no request the thread's own later evidence,
+    /// disagrees with the pin. Never an automatic From/facet flip.
     Conflict {
-        /// Mask the thread's first passport pinned.
+        /// Mask the thread's first recorded passport pinned.
         pinned: ThreadMask,
-        /// Mask the caller asked for.
+        /// Mask the caller asked for; with no request, the mask of a passport
+        /// recorded after the pin whose observed time sorts ahead of it.
         requested: ThreadMask,
     },
 }

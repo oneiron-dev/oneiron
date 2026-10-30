@@ -10,6 +10,7 @@ use crate::booking::lifecycle::{booking_writer, digest_with, mint_raw_token};
 use crate::booking::{
     BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotOracle, SolveRequest,
 };
+use crate::calendar::tz::utc_to_wall;
 use crate::temporal::TimeRange;
 
 use super::CompanionPresetRow;
@@ -22,8 +23,10 @@ pub const COMPANION_PROPOSAL_META_PREFIX: &[u8] = b"booking:companion_proposal:v
 /// How many curated choices one proposal offers. A shortlist, not a grid: the
 /// companion asks friends to tap, and a wall of buttons is a poll.
 const MAX_PROPOSAL_CHOICES: u16 = 5;
-/// How many participants one proposal may issue tokens for.
-const MAX_PROPOSAL_PARTICIPANTS: u16 = 16;
+/// The participant count past which a proposal's creation is logged: an
+/// advisory measurement, never a refusal. Every participant gets a token,
+/// up to what the ordinal's own width counts.
+const PROPOSAL_PARTICIPANTS_ADVISORY: u16 = 16;
 /// Width of a raw participant token, in lower-hex characters. Pinned to what
 /// the shared minter emits.
 pub(super) const PARTICIPANT_TOKEN_HEX_LEN: usize = 64;
@@ -218,23 +221,31 @@ pub fn create_companion_proposal(
     participant_count: usize,
     expires_at: u64,
 ) -> Result<CompanionProposalCreation, BookingError> {
-    // Narrowing to the ordinal's own width IS the admission check, so a count
+    // Narrowing to the ordinal's own width IS the shape check, so a count
     // that survives it cannot need a fallback further down.
     let participants = u16::try_from(participant_count)
         .ok()
-        .filter(|count| (1..=MAX_PROPOSAL_PARTICIPANTS).contains(count))
+        .filter(|count| *count >= 1)
         .ok_or_else(|| {
             refused(format!(
-                "a proposal must issue 1..={MAX_PROPOSAL_PARTICIPANTS} participant tokens"
+                "a proposal must issue 1..={} participant tokens",
+                u16::MAX
             ))
         })?;
+    if participants > PROPOSAL_PARTICIPANTS_ADVISORY {
+        tracing::info!(
+            participants,
+            advisory = PROPOSAL_PARTICIPANTS_ADVISORY,
+            "companion proposal issues tokens past the advisory participant count"
+        );
+    }
     validate_visitor_tz(&visitor_tz)?;
     let vault = companion.vault();
     let companion_ref = companion.actor();
 
     let request = companion_solve_request(preset, window, constraint, visitor_tz);
     let solved = oracle.solve(&request)?;
-    let choices = curated_shortlist(&solved.slots);
+    let choices = curated_shortlist(&solved.slots, &request.visitor_tz);
     if choices.is_empty() {
         return Err(BookingError::SlotOracle(
             "the oracle offered no slot to propose in this window".to_owned(),
@@ -311,8 +322,9 @@ pub fn create_companion_proposal(
 }
 /// The shortlist: highest-ranked first, ties broken by the earlier start so two
 /// equally-ranked slots order deterministically. The oracle's ranks and times
-/// are read, never rewritten.
-fn curated_shortlist(slots: &[RankedSlot]) -> Vec<ProposalChoice> {
+/// are read, never rewritten; each label shows the slot in the stored visitor
+/// zone, named (FIX 9632).
+fn curated_shortlist(slots: &[RankedSlot], visitor_tz: &str) -> Vec<ProposalChoice> {
     let mut ordered = slots.to_vec();
     ordered.sort_by(|left, right| {
         right
@@ -328,10 +340,41 @@ fn curated_shortlist(slots: &[RankedSlot]) -> Vec<ProposalChoice> {
         .zip(0_u16..)
         .map(|(slot, index)| ProposalChoice {
             id: ChoiceId(index),
-            // The label is derived from the oracle's own UTC integers, so the
-            // engine ships no user-facing prose and the surface owns formatting.
-            label: format!("{}-{}", slot.start_utc, slot.end_utc),
+            label: choice_label(&slot, visitor_tz),
             slot,
         })
         .collect()
+}
+
+/// `2026-10-30 14:00-14:30 Asia/Tokyo`: the slot's wall times in the visitor
+/// zone and the zone's name. The slot keeps its exact UTC identity; only the
+/// label is local. A zone the calendar cannot resolve labels the slot in UTC,
+/// so no proposal is refused for its label.
+fn choice_label(slot: &RankedSlot, visitor_tz: &str) -> String {
+    let (zone, start, end) = match (
+        utc_to_wall(slot.start_utc, visitor_tz),
+        utc_to_wall(slot.end_utc, visitor_tz),
+    ) {
+        (Ok(start), Ok(end)) => (visitor_tz, start, end),
+        _ => match (
+            utc_to_wall(slot.start_utc, "UTC"),
+            utc_to_wall(slot.end_utc, "UTC"),
+        ) {
+            (Ok(start), Ok(end)) => ("UTC", start, end),
+            _ => return format!("{}-{} UTC", slot.start_utc, slot.end_utc),
+        },
+    };
+    let day = format!("{:04}-{:02}-{:02}", start.y, start.mo, start.d);
+    let end_day = format!("{:04}-{:02}-{:02}", end.y, end.mo, end.d);
+    if day == end_day {
+        format!(
+            "{day} {:02}:{:02}-{:02}:{:02} {zone}",
+            start.h, start.mi, end.h, end.mi
+        )
+    } else {
+        format!(
+            "{day} {:02}:{:02}-{end_day} {:02}:{:02} {zone}",
+            start.h, start.mi, end.h, end.mi
+        )
+    }
 }
