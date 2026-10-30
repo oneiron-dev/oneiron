@@ -10,7 +10,7 @@ use oneiron::task_verb::sdk::{self, *};
 
 use super::clock_ingress;
 use super::host_doors::no_hook_sandbox;
-use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof, refused};
+use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -362,17 +362,17 @@ pub(crate) async fn vault_packs_hooks_grant_get(
 /// replay (`host_door_lists`). It lists the pack's source row and what each
 /// hook's listing replay lists, as `vault.hooks.replay` does: the binding
 /// it would get, its body's source, each entry's fact row and every row a
-/// replayed read served. `None` when a replay's verdict evidence is not
-/// listed, never an empty list standing in for it. A refusal lists none.
+/// replayed read served. Every listed row is named; an empty list means no
+/// rows. A refusal lists none.
 pub(crate) async fn vault_packs_hooks_qualify(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HubHookQualifyRequest,
-) -> MaybeListed<HubHookQualificationReceipt> {
+) -> Listed<HubHookQualificationReceipt> {
     const VERB: &str = "vault.packs.hooks.qualify";
     let owner = match owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
-        Err(refusal) => return (Err(refusal), Some(Vec::new())),
+        Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
     clock_ingress::run_blocking(move || {
@@ -380,7 +380,7 @@ pub(crate) async fn vault_packs_hooks_qualify(
         // stops the runner, not an explicit qualification (FIX 1122).
         let runtime = match crate::commands::hook_sandbox(&server) {
             Ok(runtime) => runtime,
-            Err(reason) => return (Err(no_hook_sandbox(reason)), Some(Vec::new())),
+            Err(reason) => return (Err(no_hook_sandbox(reason)), Vec::new()),
         };
         match sdk::hub_hooks_qualify_as_owner_listing(
             server.vault(),
@@ -389,9 +389,9 @@ pub(crate) async fn vault_packs_hooks_qualify(
             &input,
         ) {
             Ok((answer, rows)) => (Ok(answer), rows),
-            Err(error) => (Err(error), Some(Vec::new())),
+            Err(error) => (Err(error), Vec::new()),
         }
     })
     .await
-    .unwrap_or_else(|_| (Err(internal(VERB)), Some(Vec::new())))
+    .unwrap_or_else(|_| (Err(internal(VERB)), Vec::new()))
 }

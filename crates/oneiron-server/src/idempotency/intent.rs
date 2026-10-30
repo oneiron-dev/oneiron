@@ -34,7 +34,7 @@ pub(super) const INTENT_STATUS: u16 = StoredIdempotencyEntry::INTENT_STATUS;
 
 /// The state a retry answers when its key's first request committed writes
 /// and its reply was not kept (CALLS: FIX 10379 reply-not-kept answer).
-const REPLY_NOT_KEPT_STATE: &str = "idempotent_reply_not_kept";
+pub(crate) const REPLY_NOT_KEPT_STATE: &str = "idempotent_reply_not_kept";
 
 impl IdempotencyStore {
     /// Keeps the intent of the request `request_target` sent with
@@ -131,12 +131,17 @@ pub(super) fn reply_not_kept(committed_writes: u32) -> ApiError {
 /// commits there, or on a hop that carries the intent, counts itself on the
 /// intent's row (FIX 10379). A key the engine does not take as an intent
 /// runs as it is, and its writes count nothing.
-pub(super) async fn run_under_intent<F: Future>(store_key: &str, run: F) -> F::Output {
+pub(crate) async fn run_under_intent<F: Future>(store_key: &str, run: F) -> F::Output {
     IntentPolls {
         intent: IdempotencyIntent::new(store_key).ok(),
         run: Box::pin(run),
     }
     .await
+}
+
+/// The owned-key form for a detached worker whose future must be `'static`.
+pub(crate) async fn run_under_intent_owned<F: Future>(store_key: String, run: F) -> F::Output {
+    run_under_intent(&store_key, run).await
 }
 
 /// A future each of whose polls runs with its intent open.

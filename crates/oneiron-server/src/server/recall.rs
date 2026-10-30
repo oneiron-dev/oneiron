@@ -615,6 +615,7 @@ fn recall_did_not_finish() -> MemoryError {
 /// runs. Not for use inside a `LocalSet`; [`crate::build_app`] asks hosts
 /// not to serve from one.
 pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    let work = oneiron::store::carry_idempotency_intent(work);
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
         Ok(_) => std::thread::scope(|scope| {
