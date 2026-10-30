@@ -54,7 +54,9 @@ pub(super) fn deck_body_locator(
 
 /// Where a deck body locator's node stands at `to`: its slide's position
 /// there, under the same node id; drifted when the node is gone. `None`
-/// when the locator names no node.
+/// when the locator names no node. The node is found by its id, never by
+/// the locator's position, so two slides that swap places keep their
+/// comments.
 pub(super) fn move_deck_locator(to: &DeckUnits, locator: &Locator) -> Option<ReanchorOutcome> {
     let Locator::Pptx { shape_id, .. } = locator else {
         return None;
