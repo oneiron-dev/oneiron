@@ -391,7 +391,16 @@ impl Drop for AiHost {
 /// is the later of the wall clock and one second past the youngest lease:
 /// every dead lease expires, even after the clock stepped back, and none
 /// waits.
+fn heal_sent_trap_markers(vault: &Vault) {
+    match oneiron::llm::heal_sent_markers(vault) {
+        Ok(0) => {}
+        Ok(healed) => tracing::info!(healed, "restored missing Sent trap markers"),
+        Err(error) => tracing::warn!(%error, "Sent trap marker recovery failed"),
+    }
+}
+
 fn recover_dead_leases(vault: &Vault) {
+    heal_sent_trap_markers(vault);
     let queue = AttemptQueue::new(vault);
     let rows = match queue.list() {
         Ok(rows) => rows,
@@ -485,6 +494,7 @@ fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
 /// Requeues every attempt this server's Dreamer or its agent run pump parked
 /// on an unavailable provider.
 fn resume_outage_parks(vault: &Vault) {
+    heal_sent_trap_markers(vault);
     let rows = match AttemptQueue::new(vault).list() {
         Ok(rows) => rows,
         Err(error) => {

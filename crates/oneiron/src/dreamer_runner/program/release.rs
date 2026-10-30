@@ -227,6 +227,9 @@ fn stop_in_txn(
         ForceCancelOutcome::AlreadyCancelled(record)
         | ForceCancelOutcome::AlreadySettled(record) => (record, false),
     };
+    if let Some(park) = PARKED.get(&vault.store, &*wtxn, &attempt)? {
+        super::super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
+    }
     PARKED.delete(&vault.store, wtxn, &attempt)?;
     abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);
     Ok((record, stopped))

@@ -28,6 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/coach_host/seal_checks.rs` | src | s | 1 crate-vis | — | The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession… |
 | `src/ai_host/coach_host/type_tree_upkeep.rs` | src | s | 1 crate-vis | — | The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the… |
 | `src/ai_host/coach_host/weave_digest_settings.rs` | src | s | 1 crate-vis | — | The host's digest settings drafter (FIX 5609, ARCH-0026): the Coach's model, on its own seat or else the… |
+| `src/ai_host/coach_site_skills.rs` | src | s | 1 crate-vis | — | The Coach's site skills on the host (CUA E8b, FIX 7606): the engine's fixed-code distill pass under the… |
 | `src/ai_host/code_fix.rs` | src | m | 11 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/ai_host/code_fix/shadow.rs` | src | s | 2 crate-vis | — | The Coach's shadow runner for a code fix's engine candidates (FIX 1661, 2144): the host's… |
 | `src/ai_host/code_mode.rs` | src | m | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
