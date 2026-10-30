@@ -11,6 +11,7 @@
 mod ask;
 mod chain;
 mod credential;
+mod golden;
 mod plain_resume;
 mod record;
 mod redact;

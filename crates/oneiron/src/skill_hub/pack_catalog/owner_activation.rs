@@ -45,7 +45,7 @@ impl Vault {
             candidate.hub_ref.clone(),
             super::hub_pin(&candidate.pin_type, &candidate.pin_value)?,
         )?;
-        self.with_write_txn_grouped(|txn| {
+        let disposition = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
             if PACK_CANDIDATE
                 .get(&self.store, &*txn, &candidate.content_hash)?
@@ -98,6 +98,11 @@ impl Vault {
                 self.follow_pack_hook_update_in_txn(txn, owner, receipt, source_id, &source)?;
             }
             Ok(disposition)
-        })
+        })?;
+        // The bindings changed once the install committed.
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(disposition)
     }
 }
