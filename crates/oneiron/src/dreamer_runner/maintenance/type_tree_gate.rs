@@ -498,13 +498,13 @@ pub(super) fn drive(
     } else {
         scorer
     };
-    let verdict = match score_gate_skill_edit_in_cycle(
-        vault,
-        &proposal,
-        judge,
-        attempt.status.attempt.id,
-        now,
-    ) {
+    let scored =
+        score_gate_skill_edit_in_cycle(vault, &proposal, judge, attempt.status.attempt.id, now);
+    // A revision the owner approved on an agent-health card settles on that
+    // card on the gate's ruling, a refusal's included, through its
+    // approval's checks and in place of this pass's own admission (FIX 3725).
+    let approved = vault.settle_approved_skill_edit_by_candidate(&proposal)?;
+    let verdict = match scored {
         Ok(verdict) => verdict,
         Err(Error::Artifact(ArtifactError::SkillEditGateRetry(_))) => {
             return Ok(Some(TreeGateOutcome::Retry));
@@ -522,10 +522,7 @@ pub(super) fn drive(
             now,
         )?;
     }
-    // A revision the owner approved on an agent-health card settles on that
-    // card, through its approval's checks, in place of this pass's own
-    // admission (FIX 3725).
-    if let Some(settled) = vault.settle_approved_skill_edit_by_candidate(&proposal)? {
+    if let Some(settled) = approved {
         return Ok(Some(match settled.state {
             AgentHealthApplicationState::Admitted => TreeGateOutcome::Admitted(proposal),
             AgentHealthApplicationState::Rejected if verdict.disposition.admits() => {

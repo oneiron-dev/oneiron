@@ -348,8 +348,9 @@ impl Vault {
     /// settles the application as the owner's own re-apply would: the
     /// approved bytes are checked, an acceptance admits the candidate and
     /// supersedes the skill, a rejection or refusal closes it, anything else
-    /// leaves it pending. The approval was the owner's act when it landed;
-    /// this carries it out. `None` when no standing application names
+    /// leaves it pending, and a ruling already settled leaves the card
+    /// untouched. The approval was the owner's act when it landed; this
+    /// carries it out. `None` when no standing application names
     /// `candidate`: another proposal, or a card or ask that moved on.
     ///
     /// # Errors
@@ -377,6 +378,13 @@ impl Vault {
             else {
                 return Ok(None);
             };
+            // A gate that ruled nothing new since the last settle leaves the
+            // card as it is.
+            let ruling =
+                skill_edit_verdict_in_txn(self, txn, candidate)?.map(|verdict| verdict.id);
+            if standing.state == AgentHealthApplicationState::Pending && ruling == standing.verdict {
+                return Ok(Some(standing));
+            }
             self.settle_standing_in_txn(txn, &key, card, standing, now)
                 .map(Some)
         })
