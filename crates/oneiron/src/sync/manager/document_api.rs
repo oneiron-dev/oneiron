@@ -46,6 +46,13 @@ impl WindowManager {
         Ok(note || has_typed_body_in_txn(&self.vault.store, &txn, &id)?)
     }
 
+    /// The owner REQUEST a home sends an own device for `id`, whose typed
+    /// body the home does not hold yet (FIX 2458): the device answers with
+    /// its own body's frame.
+    pub fn owner_document_request(self: &Arc<Self>, id: crate::EntityId) -> Result<Vec<u8>> {
+        self.documents.owner_body_request(id)
+    }
+
     /// [`Self::export_owner_document`] judged for the machine `peer` the lane
     /// proved: it reads the NOTEs of the private worlds that machine may read.
     pub fn export_owner_document_for(

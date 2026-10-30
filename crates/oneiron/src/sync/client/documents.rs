@@ -82,6 +82,8 @@ impl SyncClient {
                 }
             }
         }
+        // FIX 2458: on the owner lane a typed body goes back to the home too.
+        let owner_lane = federated.is_none() && self.config.note_session.is_some();
         match frame.kind {
             document_sub_tags::ACK => {
                 doc.acknowledge(frame.payload).map_err(storage)?;
@@ -108,6 +110,14 @@ impl SyncClient {
                     )
                     .into_result()?,
                 ];
+                // The operations the home's typed body head lacks follow.
+                if owner_lane {
+                    out.extend(
+                        doc.owner_body_reply(frame.payload, self.home_peer)
+                            .map_err(storage)?
+                            .filter(|frame| !self.frame_withheld(frame)),
+                    );
+                }
                 // Text a device-only world keeps here, or a federation peer may
                 // not read now, stays journaled; each reply loop asks again
                 // right before its send.
@@ -118,6 +128,19 @@ impl SyncClient {
                         .filter(|frame| !self.frame_withheld(frame)),
                 );
                 Ok(out)
+            }
+            // A home that holds no typed body yet asks for this device's.
+            document_sub_tags::REQUEST if owner_lane => {
+                let remote_vv = frame
+                    .payload
+                    .strip_prefix(&[0_u8; 4])
+                    .ok_or(TransportError::InvalidPayload("invalid owner request"))?;
+                Ok(doc
+                    .owner_body_frame(remote_vv, self.home_peer)
+                    .map_err(storage)?
+                    .into_iter()
+                    .filter(|frame| !self.frame_withheld(frame))
+                    .collect())
             }
             _ => Err(TransportError::InvalidPayload(
                 "server sent document request",
