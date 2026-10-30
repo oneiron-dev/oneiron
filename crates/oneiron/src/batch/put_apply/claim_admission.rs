@@ -140,13 +140,13 @@ pub(super) fn validate_witness_message_body(
     // Placed BEFORE any store mutation in this function, so a refusal on
     // either road leaves nothing partial behind for the caller's
     // quarantine-and-continue to clean up.
-    if replicated && own_device.is_some_and(|lane| lane.machine_for(id, data).is_some()) {
+    if replicated && let Some(machine) = own_device.and_then(|lane| lane.machine_for(id, data)) {
         // FIX 9600: one of the owner's own machines sent these exact bytes
         // at this id, over a connection that proved the machine. The
-        // own-device door admits the author buckets this store can bind. A
-        // lane that vouches for another row or other bytes is no lane: the
-        // row meets the door below.
-        crate::gate::validate_own_device_witness_message_body(store, txn, data)?;
+        // own-device door admits the author buckets this store can bind and
+        // refuses the rest as the door below does. A lane that vouches for
+        // another row or other bytes is no lane: the row meets the door below.
+        crate::gate::validate_own_device_witness_message_body(store, txn, machine, data)?;
     } else if replicated {
         // The REPLICATED road has no actor to run the ceiling against and,
         // without a lane, no verified sender: a federated, recovered or
