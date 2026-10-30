@@ -129,15 +129,15 @@ impl SyncConnection {
                             // Flush debounce buffer before disconnecting; the
                             // close code tells a server fault from a refusal
                             // (FIX 5927).
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                             return LoopExit::Closed(ServerClose::read(frame.as_ref()));
                         }
                         None => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                             return LoopExit::Disconnected("Server closed connection".to_string());
                         }
                         Some(Err(e)) => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                             return LoopExit::Disconnected(format!("WS error: {e}"));
                         }
                         _ => {} // Text, Pong — ignore
@@ -163,7 +163,7 @@ impl SyncConnection {
                     match partial {
                         Ok(frame) => {
                             if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                                flush_to_queue(&self.queue, &mut debounce_buffer);
+                                self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                                 return LoopExit::Disconnected(format!("Presence send failed: {error}"));
                             }
                         }
@@ -455,7 +455,7 @@ impl SyncConnection {
 
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
-                        flush_to_queue(&self.queue, &mut debounce_buffer);
+                        self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                         let _ = write.send(Message::Close(None)).await;
                         return LoopExit::Renegotiate;
                     }
@@ -466,7 +466,7 @@ impl SyncConnection {
                 // `wait_for` returns goes before the close frame's await, so
                 // the loop stays `Send` for a host that spawns it.
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
-                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                     let _ = write.send(Message::Close(None)).await;
                     return LoopExit::Shutdown;
                 }
@@ -474,7 +474,7 @@ impl SyncConnection {
                 // Shutdown signal
                 _ = &mut *shutdown_rx => {
                     // Flush any remaining buffered updates to queue
-                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                     // Send close frame
                     let _ = write.send(Message::Close(None)).await;
                     return LoopExit::Shutdown;

@@ -246,13 +246,16 @@ fn feed_routes(
 /// wake that follows, the route moves to the committed home over the last
 /// host snapshot, and only a host update replaces that snapshot. Each
 /// snapshot's routes are fed before its election, which captures a move's
-/// route as it commits the move (FIX 6459).
+/// route as it commits the move (FIX 6459). Each later update's writes hold
+/// the host's `admission`, a pause waited out (FIX 12036); the caller holds
+/// one across this first one.
 pub(super) fn watch_topology(
     vault: Arc<Vault>,
     source: &HomeNodeTopology,
     route: Option<ResidenceHomeRoute>,
     server: String,
     events: mpsc::UnboundedSender<SyncEvent>,
+    admission: Option<Arc<dyn super::SyncBatchAdmission>>,
 ) -> Result<TopologyWatcher> {
     let mut updates = source.subscribe();
     let routes = source.routes.clone();
@@ -265,22 +268,25 @@ pub(super) fn watch_topology(
     publish_route(&vault, &routes, &snapshot, routed.as_ref());
     Ok(TopologyWatcher(tokio::spawn(async move {
         loop {
-            let home = tokio::select! {
+            let (home, _round) = tokio::select! {
                 changed = updates.changed() => {
                     if changed.is_err() {
                         break;
                     }
+                    let round = super::batch_admission::admit_round(admission.as_deref()).await;
                     snapshot = updates.borrow_and_update().clone();
                     feed_routes(&vault, &snapshot, route.as_ref(), &server);
-                    DreamerRunnerStore::new(&vault)
-                        .sync_topology_changed(&snapshot.candidates, now_secs())
+                    let home = DreamerRunnerStore::new(&vault)
+                        .sync_topology_changed(&snapshot.candidates, now_secs());
+                    (home, round)
                 }
                 Ok(()) = wakes.changed() => {
+                    let round = super::batch_admission::admit_round(admission.as_deref()).await;
                     let home = DreamerRunnerStore::new(&vault).home_node_designation();
                     if matches!(&home, Ok(home) if *home == routed) {
                         continue;
                     }
-                    home
+                    (home, round)
                 }
             };
             match home {

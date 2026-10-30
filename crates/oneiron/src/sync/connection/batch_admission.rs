@@ -166,6 +166,18 @@ impl<'a> BatchGate<'a> {
     }
 }
 
+/// The admission `host` grants for one round off the loop, its pauses
+/// waited out; at once with no host.
+pub(super) async fn admit_round(host: Option<&dyn SyncBatchAdmission>) -> SyncBatchGuard {
+    let mut gate = BatchGate::new(host);
+    loop {
+        if let Some(guard) = gate.admit().await {
+            return guard;
+        }
+        gate.thawed().await;
+    }
+}
+
 impl SyncConnection {
     /// This connection, asking `host` before each batch it applies or sends
     /// and pausing with its socket open while `host` is frozen (FIX 12036).
@@ -180,11 +192,11 @@ impl SyncConnection {
         BatchGate::new(self.batch_admission.as_deref())
     }
 
-    /// The host's admission for one connect: its dial, initial sync, queue
-    /// replay and convergence are one exchange. A paused host is waited out
-    /// with no socket open; `None` once `shutdown` or a confirmed leave ends
-    /// the wait.
-    pub(super) async fn admit_connect(
+    /// The host's admission for one connect (its dial, initial sync, queue
+    /// replay and convergence are one exchange), or for the topology's first
+    /// election before it. A paused host is waited out with no socket open;
+    /// `None` once `shutdown` or a confirmed leave ends the wait.
+    pub(super) async fn admit_or_stop(
         &self,
         shutdown: &mut tokio::sync::oneshot::Receiver<()>,
         left: &mut tokio::sync::watch::Receiver<bool>,
@@ -200,6 +212,42 @@ impl SyncConnection {
                 _ = left.wait_for(|left| *left) => return None,
             }
         }
+    }
+
+    /// The host's admission for one round of a worker beside the loop
+    /// (residence directives, home handoff, residence mode), a pause waited
+    /// out: the worker ends with the loop, so a stop ends the wait too.
+    pub(super) async fn admit_round(&self) -> SyncBatchGuard {
+        admit_round(self.batch_admission.as_deref()).await
+    }
+
+    /// Queues what the loop buffered as it exits, under the host's admission
+    /// when it admits. A paused host's exit queues it all the same: no stop
+    /// waits for a thaw, and no buffered update is dropped.
+    pub(super) async fn queue_on_exit(
+        &self,
+        gate: &mut BatchGate<'_>,
+        buffer: &mut Vec<LocalUpdate>,
+    ) {
+        let _queued = if buffer.is_empty() {
+            None
+        } else {
+            gate.admit().await
+        };
+        flush_to_queue(&self.queue, buffer);
+    }
+
+    /// The queue-overflow check between reconnect attempts, under the host's
+    /// admission; a paused host leaves it to the next attempt.
+    pub(super) async fn admitted_overflow_check(
+        &self,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+    ) {
+        let Some(_check) = self.batch_gate().admit().await else {
+            return;
+        };
+        self.handle_queue_overflow_check(client, event_tx, self.queue.is_full());
     }
 
     /// Applies what the gate holds, once running: the home's frames in
