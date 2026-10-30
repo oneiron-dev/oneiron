@@ -453,12 +453,14 @@ pub(super) async fn handle_window_sync(
             // the same operations in memory before its own append lands, and the acknowledgment
             // below must name durable bytes.
             if imported.pending.is_some() || doc.oplog_vv() != before {
-                let broadcast_msg =
-                    protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
-                        .into_result()
-                        .map_err(|e| {
-                            ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
-                        })?;
+                // An update past one frame goes whole to each socket's release
+                // door, which sends it as its envelope's bounded parts (FIX 8247).
+                let broadcast_msg = oneiron::sync::transport::encode_unsplit_window_sync(
+                    window_key,
+                    window_sub_tags::UPDATE,
+                    update,
+                )
+                .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
             }
             // The acknowledgment is the update's receipt; a sealed owner-lane

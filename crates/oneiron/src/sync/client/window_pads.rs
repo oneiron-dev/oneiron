@@ -64,6 +64,10 @@ pub(crate) struct WindowPadLedger {
     carrier: HashSet<String>,
     /// First frames released whose parts follow them, by envelope id.
     released: HashSet<[u8; 32]>,
+    /// The last update past one frame this connection made for each window,
+    /// its envelope id and payload, read whole when its first frame is
+    /// judged (FIX 8247). A later one of the window takes its place.
+    continued: HashMap<String, ([u8; 32], Vec<u8>)>,
 }
 
 fn invalid(why: &'static str) -> TransportError {
@@ -124,6 +128,16 @@ impl SyncClient {
         raw: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
         let (frames, binding) = prepared.frames(window_key, sub_tag, queue_seq)?;
+        // An update past one frame is judged whole as its first frame leaves,
+        // from the payload kept here until then (FIX 8247).
+        if sub_tag == window_sub_tags::UPDATE
+            && let Some(id) = frames.first().and_then(|first| continued_frame_id(first))
+        {
+            let payload = prepared.envelope(WindowPadKind::Update, queue_seq).payload;
+            self.window_pad_ledger()
+                .continued
+                .insert(window_key.to_owned(), (id, payload));
+        }
         let sealed = prepared.form() == WindowPadForm::Sealed;
         let key = match queue_seq {
             Some(seq) => SentKey::Residence(seq),
@@ -365,13 +379,28 @@ impl SyncClient {
     pub(crate) fn window_frame_withheld(&self, key: &str, sub_tag: u8, payload: &[u8]) -> bool {
         match sub_tag {
             window_sub_tags::UPDATE => {
-                let Ok((id, inner, streams)) = transport::window_pad_frame_payload(payload) else {
-                    return true;
+                let (id, inner, streams) = match transport::window_pad_frame_payload(payload) {
+                    Ok((id, inner, streams)) => (id, Cow::Borrowed(inner), streams),
+                    // A first frame whose payload continues in parts: the
+                    // payload this device made, read whole (FIX 8247).
+                    Err(_) => {
+                        let id = transport::window_pad_frame_id(payload);
+                        let mut ledger = self.window_pad_ledger();
+                        let Some((id, whole)) = ledger
+                            .continued
+                            .remove(key)
+                            .filter(|(made, _)| Some(*made) == id)
+                        else {
+                            return true;
+                        };
+                        drop(ledger);
+                        (id, Cow::Owned(whole), true)
+                    }
                 };
-                let withheld = self.update_verdict(key, inner) != UpdateVerdict::Portable;
+                let withheld = self.update_verdict(key, &inner) != UpdateVerdict::Portable;
                 let mut ledger = self.window_pad_ledger();
                 if withheld {
-                    let digest = *blake3::hash(inner).as_bytes();
+                    let digest = *blake3::hash(&inner).as_bytes();
                     ledger.sent.remove(&SentKey::Update(key.to_owned(), digest));
                 } else if streams {
                     ledger.released.insert(id);
@@ -383,4 +412,14 @@ impl SyncClient {
             _ => false,
         }
     }
+}
+
+/// The envelope id of `frame`, a window frame this device made, when it is a
+/// first frame whose payload continues in parts (FIX 8247).
+fn continued_frame_id(frame: &[u8]) -> Option<[u8; 32]> {
+    let (_, _, payload) = transport::decode_window_sync(frame.get(1..)?).ok()?;
+    if transport::window_pad_frame_payload(payload).is_ok() {
+        return None;
+    }
+    transport::window_pad_frame_id(payload)
 }

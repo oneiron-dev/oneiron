@@ -528,6 +528,15 @@ pub fn window_pad_frame_payload(frame: &[u8]) -> Result<([u8; 32], &[u8], bool),
     ))
 }
 
+/// The id of the envelope whose first frame `frame` is, read from its header
+/// alone: how a sender finds the whole payload it made for a first frame
+/// whose payload continues in parts (FIX 8247).
+pub fn window_pad_frame_id(frame: &[u8]) -> Option<[u8; 32]> {
+    Header::read(frame)
+        .ok()
+        .map(|_| *blake3::hash(&frame[..WINDOW_PAD_HEADER_BYTES]).as_bytes())
+}
+
 /// The envelope id a `WINDOW_PAD_PART` frame names.
 pub fn window_pad_part_id(part: &[u8]) -> Option<[u8; 32]> {
     (part.len() > PART_LEAD).then(|| array(part, 0))
