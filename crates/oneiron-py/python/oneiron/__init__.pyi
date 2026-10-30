@@ -1395,6 +1395,8 @@ class Oneiron:
             """Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence."""
         def pick(self, spec: Facade.SkillOptimizeTradeoffPickRequest) -> Facade.SkillOptimizeResultView:
             """Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."""
+        def resolve(self, spec: Facade.SkillOptimizeTradeoffResolveRequest) -> Facade.SkillOptimizeResultView:
+            """The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."""
     class _VaultSkillsGovernanceVerbs:
         def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
             """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""

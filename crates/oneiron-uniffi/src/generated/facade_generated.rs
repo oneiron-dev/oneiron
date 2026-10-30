@@ -1251,6 +1251,11 @@ export_facade! {
     let output = client.vault_skills_optimize_tradeoff_asks_pick(&input)?;
     crate::codec::lift_record("vault.skills.optimize.tradeoff_asks.pick", &output)
 };
+"vault.skills.optimize.tradeoff_asks.resolve" => fn vault_skills_optimize_tradeoff_asks_resolve(&self, input: SkillOptimizeTradeoffResolveRequest) -> SkillOptimizeResultView = |client| {
+    let input: oneiron::task_verb::sdk::SkillOptimizeTradeoffResolveRequest = crate::codec::lower_record("vault.skills.optimize.tradeoff_asks.resolve", input)?;
+    let output = client.vault_skills_optimize_tradeoff_asks_resolve(&input)?;
+    crate::codec::lift_record("vault.skills.optimize.tradeoff_asks.resolve", &output)
+};
 "vault.skills.governance.get" => fn vault_skills_governance_get(&self, input: HubSkillRequest) -> SkillGovernanceView = |client| {
     let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.governance.get", input)?;
     let output = client.vault_skills_governance_get(&input)?;

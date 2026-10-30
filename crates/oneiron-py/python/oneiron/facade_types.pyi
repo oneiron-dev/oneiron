@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4380 declarations.
-Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1210 facade rows, 4381 declarations.
+Inputs: 1138 of 1210 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1044 of 1210 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5635,6 +5635,11 @@ class SkillOptimizeTradeoffAskView(TypedDict):
 class SkillOptimizeTradeoffPickRequest(TypedDict):
     proposal: EntityId
     question_digest: str
+    choice: TradeoffChoice
+class SkillOptimizeTradeoffResolveRequest(TypedDict):
+    proposal: EntityId
+    pending: EntityId
+    evidence: str
     choice: TradeoffChoice
 class SkillGovernanceSetRequest(TypedDict):
     entity: EntityId
@@ -15981,6 +15986,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
+    executor: NotRequired[str | None]
     artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
@@ -16012,6 +16018,12 @@ class AmendmentJudgmentView(TypedDict):
     d_norm: float
     engine_ver: str
     at: int
+    rejected: bool
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    judge: NotRequired[str | None]
+    judge_model: NotRequired[str | None]
+    on_judge_model: bool
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
     artifact_ref: NotRequired[EntityId | None]

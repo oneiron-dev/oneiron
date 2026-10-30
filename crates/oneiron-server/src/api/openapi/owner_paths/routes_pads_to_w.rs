@@ -479,6 +479,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/skills/judge/tradeoff-asks/resolve",
+        summary: "The owner's decision on one exact pending tradeoff.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/space-posting",
         summary: "One space's dial.",

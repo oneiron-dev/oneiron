@@ -284,6 +284,7 @@ vaultSkillsOptimizePreferencesGet(input: unknown): unknown
 vaultSkillsOptimizePreferencesSet(input: unknown): unknown
 vaultSkillsOptimizeTradeoffAsks(input: unknown): unknown
 vaultSkillsOptimizeTradeoffAsksPick(input: unknown): unknown
+vaultSkillsOptimizeTradeoffAsksResolve(input: unknown): unknown
 vaultSkillsGovernanceGet(input: unknown): unknown
 vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
