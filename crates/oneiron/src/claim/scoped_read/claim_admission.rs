@@ -55,6 +55,7 @@ impl<'v> ScopedRead<'v> {
             .with_claim_status(ClaimReadStatus::Recorded);
         lane.own_owner_authority = self.own_owner_authority;
         lane.records_cover = self.records_cover.clone();
+        lane.judged_at = self.judged_at;
         Ok(lane)
     }
 }
@@ -65,6 +66,24 @@ impl<'v> ScopedRead<'v> {
     pub(crate) fn with_claim_status(mut self, status: ClaimReadStatus) -> Self {
         self.claim_status = status;
         self
+    }
+
+    /// The same lane judging a claim's time-bound standing (a learned
+    /// preference's decay, a world's stale age) at `at`, Unix seconds: an
+    /// `as_of` read judges at its `as_of`, never at the wall clock (Engine
+    /// ruling, FIX 12226). `None` judges at now, and a later `at` judges at
+    /// now too (L02 04:20): the recall door takes a future `as_of`, but no
+    /// claim stands at a time that has not come. Authorization is not
+    /// time-bound standing: grants and credentials stay judged at now.
+    #[must_use]
+    pub(crate) fn with_judged_at(mut self, at: Option<u64>) -> Self {
+        self.judged_at = at.map(|at| at.min(crate::unix_seconds_now()));
+        self
+    }
+
+    /// When this lane judges a claim's time-bound standing; `None` is now.
+    pub(crate) fn judged_at(&self) -> Option<u64> {
+        self.judged_at
     }
 
     /// Whether a claim whose principal audience is `principal` admits this
@@ -142,7 +161,8 @@ impl<'v> ScopedRead<'v> {
                 .entity_record_in(rtxn, id)?
                 .ok_or(Error::CorruptedIndex("preference entity"))?
                 .learned_at;
-            if !preference_in_force(body, learned_at, crate::unix_seconds_now())? {
+            let now = self.judged_at.unwrap_or_else(crate::unix_seconds_now);
+            if !preference_in_force(body, learned_at, now)? {
                 return Ok(false);
             }
         }

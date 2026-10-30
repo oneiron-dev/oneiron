@@ -746,6 +746,10 @@ impl Memory<'_> {
             Some(worlds) => lane.within_worlds(worlds.clone()),
             None => lane,
         };
+        // An as_of recall judges each claim's decay and staleness at its
+        // as_of, never at the wall clock (FIX 12226).
+        let census = census.with_judged_at(execution.as_of);
+        let lane = lane.with_judged_at(execution.as_of);
         let mut receipt = lane.read_receipt(None, 0)?;
         let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
