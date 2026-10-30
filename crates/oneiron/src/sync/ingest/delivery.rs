@@ -358,7 +358,10 @@ impl crate::store::Store {
             .sync_state
             .range_bytes(
                 txn,
-                &(Bound::Included(start.as_slice()), Bound::Excluded(end.as_slice())),
+                &(
+                    Bound::Included(start.as_slice()),
+                    Bound::Excluded(end.as_slice()),
+                ),
             )?
             .next()
         else {
