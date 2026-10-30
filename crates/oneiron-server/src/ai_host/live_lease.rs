@@ -6,8 +6,12 @@
 //! try alone would. Nothing is reserved on the scope ahead of a call, and a
 //! call already admitted is never stopped: its spend books whole, past the
 //! cap if it must.
+//!
+//! One lease can be lent ([`LeaseLine`], FIX 11747) to the calls of its
+//! entry that run beside its backend, on its meter: each handle books on the
+//! one ledger, so their spend is booked once.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::{BudgetGuard, Vault};
@@ -24,7 +28,44 @@ pub(crate) struct LiveLease<'a> {
     budget_units: u64,
     /// How much of the meter's spend is on the scope already: the replayed
     /// tries', which booked their own, then what this try booked since.
-    booked: Mutex<u64>,
+    /// Shared by every handle its [`LeaseLine`] lends.
+    booked: Arc<Mutex<u64>>,
+}
+
+/// A lease without its vault, lent to the calls of one entry that run
+/// beside its backend on its meter (FIX 11747): the run's `ai.speech` and
+/// its planner's pattern capture. [`LeaseLine::on`] is the lease itself,
+/// on the one ledger.
+#[derive(Clone)]
+pub(crate) struct LeaseLine {
+    scope: SpendScopeId,
+    meter: BudgetGuard,
+    budget_units: u64,
+    booked: Arc<Mutex<u64>>,
+}
+
+impl LeaseLine {
+    /// The lease of a meter opened on `scope` that has spent nothing yet,
+    /// never past the limit it was opened with.
+    pub(crate) fn new(scope: SpendScopeId, meter: BudgetGuard) -> Self {
+        Self {
+            budget_units: meter.read().limit_units,
+            scope,
+            meter,
+            booked: Arc::default(),
+        }
+    }
+
+    /// The lease, on `vault`.
+    pub(crate) fn on<'a>(&self, vault: &'a Vault) -> LiveLease<'a> {
+        LiveLease {
+            vault,
+            scope: Some(self.scope.clone()),
+            meter: self.meter.clone(),
+            budget_units: self.budget_units,
+            booked: Arc::clone(&self.booked),
+        }
+    }
 }
 
 impl<'a> LiveLease<'a> {
@@ -41,7 +82,7 @@ impl<'a> LiveLease<'a> {
             scope,
             meter,
             budget_units,
-            booked: Mutex::new(booked),
+            booked: Arc::new(Mutex::new(booked)),
         }
     }
 
