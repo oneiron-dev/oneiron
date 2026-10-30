@@ -267,6 +267,8 @@ pub(super) fn strip_guest_share_metadata(
     // Its NOTEs already passed the selection that made `source`. A guest is
     // another vault, as far as its rows' births go.
     copy_births_within(source, &out, BirthReach::OtherVault(withheld))?;
+    // A body reference rides beside the owner it binds (FIX 5489).
+    crate::sync::asset_body::references::copy_refs_within(source, &out)?;
     crate::sync::note::copy_selected(source, &out, &NoteSelection::carried())?;
     out.commit();
     Ok(out)
@@ -465,12 +467,6 @@ pub(super) fn filter_window_doc(
             .into_iter()
             .map(|(_, id)| id),
     );
-    // So does a file-plane ASSET, whose row holds no bytes (FIX 5393).
-    custody_withheld.extend(crate::sync::asset_body::file_rows_in(
-        &vault.store,
-        &rtxn,
-        &source_entities,
-    )?);
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -780,6 +776,7 @@ pub(super) fn filter_window_doc(
     // Rule A: a birth crosses only beside an owner this filter shipped, and
     // only as far as `reach` lets it.
     copy_births_within(source, &out, reach)?;
+    crate::sync::asset_body::references::copy_refs_within(source, &out)?;
     // FIX 2902: a proved machine of this vault's takes, beside each shipped
     // row, the origin this vault's import judged its bytes by.
     if matches!(reach, BirthReach::OwnMachines)
