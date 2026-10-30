@@ -1,18 +1,21 @@
 //! Generic claim-door writes of the projector-only `comm.*` classes, routed
 //! through the projector.
 //!
-//! The projector alone authors `comm.last_touch` and `comm.thread_member`: it
-//! mints each head at an id derived from its source event, behind its
-//! compare-and-set write and its slot rules (the newest touch supersedes the
-//! rest; one live membership per thread). A generic write of either class is
-//! not refused. It is recorded as the source event the projector reads, and
+//! The projector alone authors `comm.last_touch`, `comm.thread_member` and
+//! the STOP heads of `comm.opt_out`: it mints each head at an id derived from
+//! its source event, behind its compare-and-set write and its slot rules (the
+//! newest touch supersedes the rest; one live membership per thread; a STOP
+//! consumes its slot's clear gates). A generic write of these classes is not
+//! refused. It is recorded as the source event the projector reads, and
 //! the projector's next pass authors the head. The projector's own writes,
 //! the typed doors and replication land through `apply_ops` and never come
 //! here.
 
 use super::claims::{
-    CommClaim, CommClaimValue, CommError, PREDICATE_COMM_LAST_TOUCH, PREDICATE_COMM_THREAD_MEMBER,
+    CommClaim, CommClaimValue, CommError, PREDICATE_COMM_LAST_TOUCH, PREDICATE_COMM_OPT_OUT,
+    PREDICATE_COMM_THREAD_MEMBER,
 };
+use super::consent::OPT_OUT_REASON_STOP;
 use super::descriptor::claim_class_descriptor_in_txn;
 use super::projector::put_source_event_in_txn;
 use super::records::CommEventKind;
@@ -33,11 +36,13 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 /// it, so a body the door refuses is refused alike. A body byte-identical to
 /// the claim already at `id` is a replay and records nothing. Otherwise the
 /// fact the body states becomes a source event on the party it names: a live
-/// touch an asserted touch, a live membership a join, and a closed membership
-/// a leave at its close. The projector mints the head at its derived id, so
-/// `id` stays free. A body that states no fact the projector authors (a
-/// proposed, rejected or stale head, a closed touch) and a subject that is
-/// not a PERSON party are left to the door.
+/// touch an asserted touch, a live membership a join, a closed membership a
+/// leave at its close, and a live STOP opt-out on one channel class an
+/// inbound STOP, whose send hold starts in this write. The projector mints
+/// the head at its derived id, so `id` stays free. A body that states no fact
+/// the projector authors (a proposed, rejected or stale head, a closed touch,
+/// a closed opt-out, a party-wide one or one for another reason) and a
+/// subject that is not a PERSON party are left to the door.
 ///
 /// # Errors
 /// A body the door refuses, a subject that is not there, or a storage
@@ -48,7 +53,12 @@ pub fn route_projector_only_comm_put_in_txn(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<bool> {
-    if body.predicate != PREDICATE_COMM_LAST_TOUCH && body.predicate != PREDICATE_COMM_THREAD_MEMBER
+    if ![
+        PREDICATE_COMM_LAST_TOUCH,
+        PREDICATE_COMM_THREAD_MEMBER,
+        PREDICATE_COMM_OPT_OUT,
+    ]
+    .contains(&body.predicate.as_str())
     {
         return Ok(false);
     }
@@ -93,6 +103,18 @@ pub fn route_projector_only_comm_put_in_txn(
             CommEventKind::ThreadJoined,
             None,
             Some(thread_ref),
+            occurred_at,
+        ),
+        CommClaimValue::OptOut {
+            party_ref,
+            channel_class: Some(channel_class),
+            reason,
+            occurred_at,
+        } if live && reason == OPT_OUT_REASON_STOP => (
+            party_ref,
+            CommEventKind::InboundStop,
+            Some(channel_class),
+            None,
             occurred_at,
         ),
         CommClaimValue::ThreadMember {
