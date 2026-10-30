@@ -456,7 +456,7 @@ impl Pass<'_> {
                 .and_then(|seen| seen.filed_ids.last())
                 .copied();
             let predecessor =
-                match cursor.and_then(|cursor| own.iter().find(|(id, _)| **id == cursor)) {
+                match cursor.and_then(|cursor| own.iter().find(|(id, _)| *id == cursor)) {
                     Some((id, record)) => Some((*id, record.clone())),
                     None => match own.len() {
                         0 => None,
