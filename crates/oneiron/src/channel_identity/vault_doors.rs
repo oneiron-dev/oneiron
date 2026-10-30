@@ -167,11 +167,23 @@ impl Vault {
         grant: &DelegatedGrant,
     ) -> Result<()> {
         let rtxn = self.store.env.read_txn()?;
+        self.verify_delegated_custody_in_txn(&rtxn, channel, address_or_handle, grant)
+    }
+
+    /// [`Self::verify_delegated_custody`] in the caller's transaction: the
+    /// send door runs it under the write it copies in.
+    pub(crate) fn verify_delegated_custody_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        channel: &str,
+        address_or_handle: &str,
+        grant: &DelegatedGrant,
+    ) -> Result<()> {
         let channel_key = ChannelKey::normalize(channel);
         let address = AssignmentAddress::normalize(channel_key.as_str(), address_or_handle);
         verify_delegated_custody_in_txn(
             &self.store,
-            &rtxn,
+            txn,
             channel_key.as_str(),
             address.as_str(),
             grant,

@@ -27,9 +27,15 @@ impl GmailDelegatedAdapter {
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<DoorInjectionReceipt> {
         self.require_send_grant()?;
-        self.require_active_row_matches_adapter(vault, &identity_id)?;
-        self.verify_custody_grant(vault)?;
-        vault.inject_secret_at_door(
+        // The row check, the custody re-proof and the token copy share one
+        // write transaction, so a release or scope removal cannot commit
+        // between them (FIX 9676, the FIX 6011 pattern); the door drops it
+        // before `apply` runs.
+        let wtxn = vault.store.env.write_txn()?;
+        self.require_active_row_matches_adapter_in_txn(vault, &wtxn, &identity_id)?;
+        self.verify_custody_grant_in_txn(vault, &wtxn)?;
+        vault.inject_secret_at_door_in_txn(
+            wtxn,
             &self.config.custody_record_ref,
             super::super::GMAIL_CONNECTOR_EFFECTOR,
             apply,

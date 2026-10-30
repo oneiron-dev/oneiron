@@ -434,6 +434,17 @@ impl GmailDelegatedAdapter {
         )
     }
 
+    /// [`Self::verify_custody_grant`] in the caller's transaction: the send
+    /// door runs it under the write it copies in.
+    fn verify_custody_grant_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        vault.verify_delegated_custody_in_txn(
+            txn,
+            EMAIL_CHANNEL,
+            &self.config.mailbox_address,
+            &self.delegated_grant(),
+        )
+    }
+
     /// Stands up this mailbox's delegated identity row through the ONE engine
     /// door, and returns it alongside the provider provision record.
     ///
