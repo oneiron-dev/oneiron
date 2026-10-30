@@ -123,7 +123,9 @@ impl Vault {
                 .transpose()?
                 .unwrap_or_default();
             let paths: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
-            let scope = format!("origin:{}:{}", repo.identity().as_hex(), update.name);
+            // The repository's own scope, as every local writer spells it:
+            // one document per path whatever ref a push moves (FIX 12199).
+            let scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
             for path in paths {
                 let before = bytes(&old, &path);
                 let after = bytes(&new, &path);
@@ -154,15 +156,30 @@ impl Vault {
                         (std::str::from_utf8(before), std::str::from_utf8(after))
                     {
                         let document = self.open_code_document(&scope, &path, before, session)?;
-                        ingress.push(CodeFileIngress {
-                            operation,
-                            session: document,
-                            edit: CodeFileEdit::between(&path, before, after),
-                            metadata_edit: None,
-                            actor: WriteActor::new(attribution.actor_id, EdgeActorClass::System),
-                            expected_text: before.to_owned(),
-                        });
-                        true
+                        // Another ref's push may have moved the document off
+                        // this push's base: the pushed text lands as one
+                        // version over its current text, never a refused
+                        // push. A replay lowers the edit it landed.
+                        let base = match self.code_file_edit_receipt(operation)? {
+                            Some(landed) => self.code_document_at(&landed.before)?,
+                            None => document.text(),
+                        };
+                        if base == after {
+                            false
+                        } else {
+                            ingress.push(CodeFileIngress {
+                                operation,
+                                session: document,
+                                edit: CodeFileEdit::between(&path, &base, after),
+                                metadata_edit: None,
+                                actor: WriteActor::new(
+                                    attribution.actor_id,
+                                    EdgeActorClass::System,
+                                ),
+                                expected_text: base,
+                            });
+                            true
+                        }
                     } else {
                         false
                     }
