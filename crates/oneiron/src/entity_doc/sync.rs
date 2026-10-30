@@ -23,7 +23,7 @@
 //! and is marked, and a hit no rule places stays, recorded. No hit refuses.
 
 use heed::{RoTxn, RwTxn};
-use loro::{CommitOptions, ExportMode, LoroDoc};
+use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 
 use super::doc_actor::DocActor;
 use super::document::{BIRTH, BODY, Birth, META, map_insert_bytes, stamp_with};
@@ -335,7 +335,8 @@ fn edit_sequence_rows_in_txn(
     let update = doc
         .export(ExportMode::updates(&before))
         .map_err(|_| invalid("sync text update export"))?;
-    let sequence = append_sequence_update_in_txn(vault, txn, entity, &doc, &update, None)?;
+    let sequence =
+        append_sequence_update_in_txn(vault, txn, entity, (&doc, &before), &update, None)?;
     // No document stands to read the insert in its place: its own links are
     // read on their own.
     let landed = (!edit.insert.is_empty())
@@ -362,7 +363,7 @@ fn join_sequence_rows_in_txn(
     if doc.oplog_vv() == before {
         return Ok(false);
     }
-    append_sequence_update_in_txn(vault, txn, entity, &doc, update, masked)?;
+    append_sequence_update_in_txn(vault, txn, entity, (&doc, &before), update, masked)?;
     Ok(true)
 }
 
@@ -378,19 +379,21 @@ fn replace_sequence_rows_in_txn(
     sequence_rows::snapshot(vault, txn, *entity, staged, true)
 }
 
-/// Appends `update`, whose operations `doc` now holds, as the next update of
-/// `entity`'s sequence rows, once the sync scan has read `masked`, else
-/// `doc`'s text. The sequence the update took.
+/// Appends `update`, whose operations `doc` now holds past `before`, as the
+/// next update of `entity`'s sequence rows, once the sync scan has read
+/// `masked`, else `doc`'s text. The sequence the update took.
 fn append_sequence_update_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
-    doc: &LoroDoc,
+    (doc, before): (&LoroDoc, &VersionVector),
     update: &[u8],
     masked: Option<&str>,
 ) -> Result<u32> {
     let text = doc.get_text(BODY).to_string();
     scan_sequence_text_in_txn(vault, txn, entity, masked.unwrap_or(&text))?;
+    // The stamp tokens its new changes name, for the hold check (FIX 11965).
+    super::token_uses::record_sequence_uses_in_txn(&vault.store, txn, entity, doc, before)?;
     sequence_rows::append(vault, txn, *entity, update)
 }
 

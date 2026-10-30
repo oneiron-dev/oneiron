@@ -454,8 +454,9 @@ families! {
     Class::Owner(Getter::ProvenanceBody) => PROVENANCE_BODY PROVENANCE_BODY_DIGEST;
     Class::Structure => OUTBOUND_INTENT_ATTEMPT_FORMAT PROVENANCE_BODY_INSTANCE
         PROVENANCE_BODY_RELEASED;
-    // An actor's stamp token is two ids, no payload (FIX 10930).
-    Class::Structure => PROVENANCE_ACTOR_STAMP_TOKEN;
+    // An actor's stamp token is two ids, no payload (FIX 10930), and so is a token-use row
+    // (FIX 11965).
+    Class::Structure => PROVENANCE_ACTOR_STAMP_TOKEN PROVENANCE_ACTOR_STAMP_TOKEN_USE;
     Class::Other(Client::Dispatch(OtherClient::Body)) => PROVENANCE_BODY_ERASE
         PROVENANCE_BODY_ERASED PROVENANCE_BODY_INLINE PROVENANCE_BODY_KEY;
     Class::Other(Client::Dispatch(OtherClient::Response)) => PROVENANCE_BODY_RESPONSE

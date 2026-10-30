@@ -219,6 +219,8 @@ pub(super) fn persist_scanned(
     }
     store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
+    // The stamp tokens its new changes name, for the hold check (FIX 11965).
+    super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
     crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;

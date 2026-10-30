@@ -16,8 +16,8 @@
 //! names one then names a token nothing resolves, and readers show no one.
 //! No history is rewritten. A token whose claim is absent here (erased,
 //! purged, or not yet synced) resolves to no one. A legal hold that keeps a
-//! reference-refusal receipt naming a token keeps that token's claim until
-//! it lifts.
+//! reference-refusal receipt naming a token, or a record whose document
+//! names it ([`uses`], FIX 11965), keeps that token's claim until it lifts.
 //!
 //! A writer finds its actor's token through this device's cache
 //! ([`ACTOR_STAMP_TOKEN`]); a miss mints a token claim and its cache row in
@@ -44,6 +44,11 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+
+mod uses;
+pub(crate) use uses::{
+    erase_actor_stamp_uses_in_txn, record_actor_stamp_uses_in_txn, tokens_named_since,
+};
 
 /// This device's cache from an actor to its stamp token. Key: id16 (actor);
 /// value: id16 (token).
@@ -224,11 +229,11 @@ fn stamped_actor(body: &ClaimBody) -> Option<WriteActor> {
 /// Erasing `actor` (FIX 10930): each `actor.stamp_token` claim naming it is
 /// hard-erased in the erase's own transaction, its tombstone staged so the
 /// vault's other devices purge their copy, and every stamp naming its token
-/// names no one from then on. A token a legal hold keeps (its claim held, or
-/// a held reference-refusal receipt naming it, FIX 11040) stays until the
-/// hold lifts: [`release_held_actor_stamps_in_txn`] erases it then. The
-/// cache row goes with the declared table's scrub
-/// ([`erase_actor_stamp_cache_in_txn`]).
+/// names no one from then on. A token a legal hold keeps (its claim held, a
+/// held reference-refusal receipt naming it, FIX 11040, or a held record
+/// whose document names it, FIX 11965) stays until the hold lifts:
+/// [`release_held_actor_stamps_in_txn`] erases it then. The cache row goes
+/// with the declared table's scrub ([`erase_actor_stamp_cache_in_txn`]).
 ///
 /// # Errors
 ///
@@ -338,14 +343,17 @@ struct ReceiptCarrier {
     receipt: ReceiptRecord,
 }
 
-/// The tokens a held reference-refusal receipt names (FIX 11040), read from
-/// every RECEIPT_RECORD a standing legal hold keeps. A vault that keeps no
-/// hold row holds none. A carrier that does not decode names no token.
+/// The tokens a legal hold keeps through what names them: a held
+/// reference-refusal receipt (FIX 11040), read from every RECEIPT_RECORD a
+/// standing legal hold keeps, and a held record's document, read from the
+/// token-use index (FIX 11965). A vault that keeps no hold row holds none. A
+/// carrier that does not decode names no token.
 fn held_tokens_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
     let mut held = BTreeSet::new();
     if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {
         return Ok(held);
     }
+    held.extend(uses::tokens_of_held_documents_in_txn(&vault.store, txn)?);
     let mut records = Vec::new();
     for id in vault
         .store

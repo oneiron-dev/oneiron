@@ -181,6 +181,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A cached stamp token follows the image's token claims (FIX 10930): the restore's
     // actor sweep drops an erased actor's again, and a writer checks its claim on each read.
     (&t::PROVENANCE_ACTOR_STAMP_TOKEN, CONTENT),
+    // A token-use row follows the image's documents (FIX 11965): it names a token a restored
+    // document's history names.
+    (&t::PROVENANCE_ACTOR_STAMP_TOKEN_USE, CONTENT),
     (&t::PROVENANCE_BIRTH_BY_TRIGGER, CONTENT),
     (&t::PROVENANCE_BODY, CONTENT),
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),
