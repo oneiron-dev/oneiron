@@ -89,6 +89,19 @@ impl RepoProposal {
         self.files.iter().map(|file| file.path.as_str()).collect()
     }
 
+    /// Whether it is a received bundle whose every file names the source
+    /// operation it was accepted from: a queue overlap hands it off like a
+    /// whole-file proposal (FIX 9976).
+    #[must_use]
+    pub(crate) fn is_source_bound_received(&self) -> bool {
+        self.received_candidate().is_some()
+            && !self.files.is_empty()
+            && self
+                .files
+                .iter()
+                .all(|file| file.source_operation.is_some() && file.metadata_edit.is_some())
+    }
+
     /// The oplog subject it lands under: an ordinary file's path, a
     /// received bundle's candidate id, or a native bundle's message.
     #[must_use]

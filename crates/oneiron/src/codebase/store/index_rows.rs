@@ -2,6 +2,8 @@
 //! The write entry is `put_scope_index_rows_for_snapshot`.
 //! `store` owns the tables and row types; this leaf forwards no definitions.
 
+use std::collections::BTreeSet;
+
 use super::*;
 
 pub(super) fn fork_has_other_snapshot(
@@ -55,8 +57,8 @@ pub(super) fn delete_exact_index_rows_for_snapshot(
             id: *id,
         },
     )?;
-    for entry in &snapshot.files {
-        let asset_id = codebase_asset_entity_id(&entry.content_hash)?;
+    for content_hash in &unshared_assets(store, wtxn, id, snapshot)? {
+        let asset_id = codebase_asset_entity_id(content_hash)?;
         SCOPE_INDEX.delete(
             store,
             wtxn,
@@ -67,6 +69,45 @@ pub(super) fn delete_exact_index_rows_for_snapshot(
         )?;
     }
     Ok(())
+}
+
+/// The content hashes of `snapshot`'s files that no other snapshot of its
+/// scope holds: a shared asset keeps its scope row until the last snapshot
+/// that holds it goes (FIX 8679).
+fn unshared_assets(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    snapshot: &CodebaseSnapshot,
+) -> Result<BTreeSet<[u8; CODEBASE_CONTENT_HASH_LEN]>> {
+    let mut unshared: BTreeSet<_> = snapshot
+        .files
+        .iter()
+        .map(|entry| entry.content_hash)
+        .collect();
+    // A scope is one project and one repo_ref, so every snapshot that can
+    // share it is indexed under the repo_ref.
+    let prefix = text_index_scan_prefix(&snapshot.repo_ref.canonical());
+    for key in REPO_INDEX.scan_keys(store, wtxn, &prefix)? {
+        if unshared.is_empty() {
+            break;
+        }
+        if key.id == *id {
+            continue;
+        }
+        let other = match SNAPSHOTS.get(store, wtxn, &key.id) {
+            Ok(Some(other)) => other,
+            Ok(None) | Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(_))) => continue,
+            Err(err) => return Err(err),
+        };
+        if other.scope_key != snapshot.scope_key {
+            continue;
+        }
+        for entry in &other.files {
+            unshared.remove(&entry.content_hash);
+        }
+    }
+    Ok(unshared)
 }
 
 pub(super) fn put_scope_index_rows_for_snapshot(
