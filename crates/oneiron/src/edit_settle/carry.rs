@@ -15,6 +15,11 @@
 //! before anyone presses Keep is withdrawn and asked again the same way. A
 //! changed slide is asked again over the host's fresh render of it. Other
 //! held edits are not split; a moved base strands them whole.
+//!
+//! An edit to the artifact's live body that was never exported moves no
+//! version, so each ask also pins the live body it stood beside, and the
+//! split diffs the body at that frontier and at its head unit by unit
+//! ([`live`], FIX 2115).
 
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
