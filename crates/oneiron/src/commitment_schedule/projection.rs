@@ -729,3 +729,26 @@ fn same_copied_identity(
         && existing.strength == minted.strength
         && existing.birth_provenance == minted.birth_provenance
 }
+
+impl Vault {
+    /// Whether a minted instance's series still fires its wakes (FIX 1471):
+    /// the series claim is there and still projects. A series the owner
+    /// rejected, one an edit replaced, or one no longer approved stops
+    /// reminding through the instances it already minted. A record that
+    /// names no series is not this check's to stop.
+    pub(crate) fn commitment_instance_series_fires_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        instance: &CommitmentRecord,
+    ) -> crate::Result<bool> {
+        let Some(series_ref) = CommitmentSchedulePayload::decode(&instance.schedule)
+            .ok()
+            .and_then(|payload| payload.series_ref)
+        else {
+            return Ok(true);
+        };
+        Ok(self
+            .get_claim_in_txn(txn, &series_ref)?
+            .is_some_and(|body| series_projects(&body)))
+    }
+}

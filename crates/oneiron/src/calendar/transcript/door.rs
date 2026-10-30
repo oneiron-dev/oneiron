@@ -26,7 +26,23 @@ impl Memory<'_> {
     /// Ingests the uploaded text as the bound caller, retaining source labels
     /// without treating them as verified speaker identities. Session close,
     /// ordered turns and the SessionEnd wake share the existing landing txn.
+    ///
+    /// When the caller's own local session is open, the answer names it and
+    /// the verified upload is retained: it lands once that session closes,
+    /// through the host's drain of retained uploads, until its deadline.
     pub fn calendar_transcript_ingest(
+        &self,
+        input: &TranscriptFileDropInput,
+    ) -> MemoryResult<TranscriptIngestOutcome> {
+        let outcome = self.calendar_transcript_ingest_once(input)?;
+        if matches!(outcome, TranscriptIngestOutcome::RetryOpenSession { .. }) {
+            self.queue_pending_transcript(input, self.vault().now_recorded_at())?;
+        }
+        Ok(outcome)
+    }
+
+    /// One landing of `input` as the bound caller, with nothing retained.
+    pub(super) fn calendar_transcript_ingest_once(
         &self,
         input: &TranscriptFileDropInput,
     ) -> MemoryResult<TranscriptIngestOutcome> {
