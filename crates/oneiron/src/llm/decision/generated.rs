@@ -57,8 +57,8 @@ pub struct GeneratedRung<'a> {
 impl GeneratedRung<'_> {
     /// What the rung's model costs per thousand units it reads, from its model registry
     /// row's input price per million (FIX 11305): the vault a durable step runs in holds the
-    /// row. None for a raw read, which names no vault, and for a model with no registered
-    /// price.
+    /// row. None for a raw read, which names no vault, for a model with no registered
+    /// price, and when the price names no currency (FIX 11778: unknown never prices).
     fn registered_cost_per_thousand(&self) -> Option<f64> {
         let GeneratedStep::Durable { step, .. } = &self.step else {
             return None;
@@ -68,7 +68,11 @@ impl GeneratedRung<'_> {
             .model_registry_row(&self.request.model)
             .ok()
             .flatten()?;
-        let per_million: f64 = row.catalog.cost.as_ref()?.input_per_million.parse().ok()?;
+        let cost = row.catalog.cost.as_ref()?;
+        if cost.currency.is_none() {
+            return None;
+        }
+        let per_million: f64 = cost.input_per_million.parse().ok()?;
         (per_million.is_finite() && per_million >= 0.0).then_some(per_million / 1_000.0)
     }
 }

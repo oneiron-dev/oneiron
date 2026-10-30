@@ -469,7 +469,9 @@ impl<'a> BranchResources<'a> {
             let facts = candidate_facts(&candidate.candidate)?;
             if facts.world != scope.world
                 || facts.facet != scope.facet
-                || scope.relationship.is_some_and(|rel| facts.rel != Some(rel))
+                || scope.relationship.as_ref().is_some_and(|bound| {
+                    !facts.rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+                })
                 || candidate.supersedes.is_some()
                 || !candidate.provenance_chain.is_empty()
                 || candidate.claim_id
@@ -480,7 +482,7 @@ impl<'a> BranchResources<'a> {
                         &facts.value,
                         facts.world,
                         facts.facet,
-                        facts.rel,
+                        facts.rel.as_ref(),
                         facts.project,
                         facts.topic.as_deref(),
                     )?

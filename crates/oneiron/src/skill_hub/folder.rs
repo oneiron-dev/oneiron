@@ -33,6 +33,16 @@ pub(crate) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
         (false, Some(version)) => version,
         (false, None) => content_version(&files)?,
     };
+    // A site skill's origins, routes and seeds that do not read are named
+    // on its provenance (CUA E10); the import goes on all the same.
+    let mut provenance = vec![(rmpv::Value::from("source"), rmpv::Value::from("hub-folder"))];
+    let site_notes = super::site_folder::import_notes(&files);
+    if !site_notes.is_empty() {
+        provenance.push((
+            rmpv::Value::from(super::site_folder::SITE_NOTES_KEY),
+            rmpv::Value::Array(site_notes.into_iter().map(rmpv::Value::from).collect()),
+        ));
+    }
     let record = SkillRecord::new(
         scalar("name")?,
         scalar("description")?,
@@ -44,10 +54,7 @@ pub(crate) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
         false,
         true,
         vec![],
-        rmpv::Value::Map(vec![(
-            rmpv::Value::from("source"),
-            rmpv::Value::from("hub-folder"),
-        )]),
+        rmpv::Value::Map(provenance),
     )
     .with_role(role, call);
     crate::skill::encode_skill_record(&record)?;
@@ -436,6 +443,14 @@ pub(crate) fn declared_role_call(
     };
     let (fields, _, role, call, _) = frontmatter_fields(front)?;
     Ok((fields.contains_key("role").then_some(role), call))
+}
+
+/// The licence a source tree's SKILL.md frontmatter declares. A tree with
+/// no frontmatter, or one that does not read, declares none.
+pub(super) fn declared_license(files: &[HubFile]) -> Option<String> {
+    let front = source_frontmatter(instruction_text(files).ok()?).ok()??;
+    let (fields, _, _, _, _) = frontmatter_fields(front).ok()?;
+    frontmatter_scalar(fields.get("license")?).ok()
 }
 
 /// Reconstructs an untrusted package without changing one byte of its source.

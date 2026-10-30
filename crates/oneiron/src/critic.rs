@@ -494,13 +494,23 @@ impl<'a> CritiqueArtifactStore<'a> {
         branch_attempt: AttemptId,
         artifact_id: &str,
     ) -> Result<Option<CritiqueArtifact>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.get_in_txn(&rtxn, branch_attempt, artifact_id)
+    }
+
+    /// [`Self::get`] in the caller's snapshot.
+    pub(crate) fn get_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        branch_attempt: AttemptId,
+        artifact_id: &str,
+    ) -> Result<Option<CritiqueArtifact>> {
         validate_identifier(artifact_id, MAX_ARTIFACT_ID_BYTES, "critique artifact id")?;
         let key = CritiqueArtifactKey {
             branch_attempt,
             artifact_id: artifact_id.to_owned(),
         };
-        let rtxn = self.vault.store.env.read_txn()?;
-        let Some(artifact) = CRITIQUE_ARTIFACT.get(&self.vault.store, &rtxn, &key)? else {
+        let Some(artifact) = CRITIQUE_ARTIFACT.get(&self.vault.store, txn, &key)? else {
             return Ok(None);
         };
         validate_critique_artifact(&artifact)?;

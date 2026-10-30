@@ -39,11 +39,14 @@ impl Vault {
     /// Returns the erased shells for the redaction sweep, plus the other
     /// documents this walk rewrote (author-stamped events, citing NOTEs, a
     /// restamped subject edge's endpoints) for post-commit local
-    /// invalidation. No notice is sent from inside the transaction.
+    /// invalidation. No notice is sent from inside the transaction. Each
+    /// shell's actor scrub runs under `act`, the owner act the head's erase
+    /// carries out, when its door bound one (FIX 11883).
     pub(in crate::deletion) fn cascade_hard_erase_to_redirect_shells_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         head: &EntityId,
+        act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(BTreeSet<EntityId>, Vec<EntityId>)> {
         let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
             &self.store,
@@ -90,7 +93,7 @@ impl Vault {
         // row stamped with a shell's id keeps it (FIX 6709). The head's own
         // provenance erase stays the one that retires keys.
         for shell in &shells {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, shell)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, shell, act)?;
         }
         let mut touched = shells.clone();
         touched.insert(*head);

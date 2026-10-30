@@ -399,7 +399,8 @@ impl<'a> EngineNativeExecutor<'a> {
             .into());
         }
         self.verify_storage_dispatcher_binding()?;
-        Ok(Some(self.storage.witness_executor_utterance(
+        let assertions = self.gated_write.take_run_assertions();
+        let result = self.storage.witness_executor_utterance_sourced(
             self.gated_write.run_ref(),
             run_id,
             kind,
@@ -407,7 +408,12 @@ impl<'a> EngineNativeExecutor<'a> {
             occurred_at,
             order,
             self.gated_write.actor(),
-        )?))
+            assertions.clone(),
+        );
+        if result.is_err() {
+            self.gated_write.restore_run_assertions(assertions);
+        }
+        Ok(Some(result?))
     }
 
     /// A run's answer said as its typed result (FIX 365), under the same
@@ -427,7 +433,8 @@ impl<'a> EngineNativeExecutor<'a> {
             .into());
         }
         self.verify_storage_dispatcher_binding()?;
-        Ok(Some(self.storage.witness_executor_result(
+        let assertions = self.gated_write.take_run_assertions();
+        let result = self.storage.witness_executor_result_sourced(
             self.gated_write.run_ref(),
             run_id,
             attachment,
@@ -435,7 +442,12 @@ impl<'a> EngineNativeExecutor<'a> {
             occurred_at,
             order,
             self.gated_write.actor(),
-        )?))
+            assertions.clone(),
+        );
+        if result.is_err() {
+            self.gated_write.restore_run_assertions(assertions);
+        }
+        Ok(Some(result?))
     }
 
     /// Refuses a mismatched storage/dispatcher pair before ANY read or write.

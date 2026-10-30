@@ -40,6 +40,7 @@ use super::selection::{
 use super::{CampaignDatasetRef, CampaignError};
 use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use crate::entity_id::bytes_to_hex_lower;
+use crate::limit_ask::EngineLimit;
 use crate::run_tree::{RunTree, RunTreeNode, render_run_tree};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{EvalSeat, GoalAxisKind, GoalAxisSpec, skill_edit_goal};
@@ -105,8 +106,6 @@ const ROUND: SideTable<([u8; 16], u64), SelectionReceipt, Named> =
     SideTable::new(&side_table::AUTORESEARCH_ROUND);
 
 const MAX_REF_BYTES: usize = 256;
-const MAX_REFS: usize = 64;
-const MAX_WEAVE_PARENTS: usize = 8;
 /// The gate's recorded content kind and outcomes a weave claim is read by.
 const WEAVE_CONTENT_KIND: &str = "claim";
 const OUTCOME_ALLOW: &str = "allow";
@@ -434,15 +433,18 @@ fn bounded(value: &str, what: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn bounded_refs(refs: &[String], required: bool) -> Result<()> {
+/// Evidence names its receipt refs, each bounded. How many it names is
+/// measured against the vault's row-items limit, which asks past its bound
+/// and keeps every ref (FIX 9121, rule 5).
+pub(super) fn bounded_refs(vault: &Vault, refs: &[String], required: bool) -> Result<()> {
     if (required && refs.is_empty())
-        || refs.len() > MAX_REFS
         || refs
             .iter()
             .any(|value| value.trim().is_empty() || value.len() > MAX_REF_BYTES)
     {
-        return Err(invalid("evidence names one to 64 bounded receipt refs"));
+        return Err(invalid("evidence names at least one bounded receipt ref"));
     }
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, refs.len() as u64);
     Ok(())
 }
 
