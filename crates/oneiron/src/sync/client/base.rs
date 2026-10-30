@@ -74,6 +74,10 @@ pub struct SyncClient {
     /// When each owed artifact publication, by digest, may be sent again on
     /// this connection. Cleared at every connect.
     pub(crate) artifact_publication_resend: HashMap<[u8; 32], std::time::Instant>,
+    /// This connection's by-reference ASSET body transfers (FIX 5489).
+    /// Started again at every connect. Only the client's own `&mut` takes
+    /// it; the mutex keeps the client `Sync`.
+    pub(crate) asset_bodies: Mutex<crate::sync::AssetBodySession>,
     /// The machine the home proved on this connection's upgrade (OF-534
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
@@ -184,6 +188,7 @@ impl SyncClient {
             lfs_last_id: 0,
             last_lfs_download: None,
             artifact_publication_resend: HashMap::new(),
+            asset_bodies: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
             status: SyncStatus::Disconnected,
             event_tx,

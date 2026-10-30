@@ -80,6 +80,7 @@ pub mod window;
 pub(crate) mod window_rows;
 pub(crate) mod withdrawn_cutoffs;
 
+pub use asset_body::session::{ASSET_BODY_FRAMES_PER_POLL, AssetBodyPeer, AssetBodySession};
 pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,

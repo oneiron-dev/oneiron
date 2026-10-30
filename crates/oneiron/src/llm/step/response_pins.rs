@@ -16,6 +16,10 @@
 //! erase's shell, a shell's pins release, and an omitted claim's or
 //! version's pin goes without releasing anything (an omission is no erase).
 //! The pins are found by walking this one forward table; no reverse index.
+//!
+//! A replica's copy of a step claim was filed by no write here, so no row of
+//! the table names it: its teardown takes the pin its own value names, the
+//! exact artifact, version and content hash (FIX 8500).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -67,7 +71,8 @@ pub(super) fn register_step_response_pin_in_txn(
 }
 
 /// Takes every pin `claim` holds at its teardown, before anything of it
-/// goes, by any door (`erase`: an erase, not a delete). Each exact version
+/// goes, by any door (`erase`: an erase, not a delete); a claim no write here
+/// pinned holds the one its own value names. Each exact version
 /// no other retained claim pins is released with its support rows and
 /// unheld bytes. An erase retires the version's kept body copies, the
 /// claim's receipt naming each; while another holder still keeps the bytes
@@ -83,14 +88,45 @@ pub(crate) fn release_step_response_pins_in_txn(
     claim: &EntityId,
     erase: bool,
 ) -> Result<()> {
-    let Some(pins) = PINS.get(store, txn, claim)? else {
-        return Ok(());
+    let pins = match PINS.get(store, txn, claim)? {
+        Some(pins) => {
+            PINS.delete(store, txn, claim)?;
+            pins
+        }
+        None => match carried_pin_in_txn(store, txn, claim)? {
+            Some(pin) => vec![pin],
+            None => return Ok(()),
+        },
     };
-    PINS.delete(store, txn, claim)?;
     for pin in &pins {
         release_pin_in_txn(store, txn, claim, pin, erase)?;
     }
     Ok(())
+}
+
+/// The response version the `dreamer.step` claim stored at `claim` names in
+/// its own value: what a replica's copy pins. `None` for any other row, and
+/// for a value that does not decode.
+fn carried_pin_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    claim: &EntityId,
+) -> Result<Option<StepResponseRef>> {
+    let Some(raw) = store.port_entity_raw(txn, claim)? else {
+        return Ok(None);
+    };
+    if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+        return Ok(None);
+    };
+    if body.predicate != super::types::DREAMER_STEP_PREDICATE {
+        return Ok(None);
+    }
+    Ok(super::step_claim::decode_step_claim_value(&body.value)
+        .ok()
+        .and_then(|decoded| decoded.response_ref))
 }
 
 /// One pin of `claim`'s teardown: the bytes' descriptors are read before
