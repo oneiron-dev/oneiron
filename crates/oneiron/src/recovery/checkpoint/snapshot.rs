@@ -230,6 +230,9 @@ impl Vault {
         // transaction, so it is the one these rows saw; sealed after it
         // (FIX 6598).
         let host_holds = super::host_holds::export_in_txn(self, &txn);
+        // Where each row the image takes goes, read in this same transaction
+        // (KS7-5): none while CHECKPOINT_PAYLOADS_ENABLED is off.
+        let projected = payload::project_image(self, &txn, &filter)?;
         drop(txn);
         super::window_pad_refs::warn_kept_window_pads(kept_windows);
         tracing::info!(
@@ -256,6 +259,12 @@ impl Vault {
                 "checkpoint snapshot: a body its rows name has no instance bound yet"
             );
             return Ok(None);
+        };
+        // Each owner's rows go sealed under its own compartment, out of the
+        // image (KS7-5); the rows no compartment holds stay, named.
+        let payload = match &projected {
+            Some(projected) => payload::seal_image(self, projected, &filter, &mut databases)?,
+            None => None,
         };
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
         // The artifact's snapshot id, minted before anything is sealed to
@@ -312,7 +321,7 @@ impl Vault {
             &bytes,
             &files.streams(),
             |index| files.open(index),
-            None,
+            payload.as_ref().map(|payload| &payload.streams),
             budget,
         )?;
         tracing::info!(

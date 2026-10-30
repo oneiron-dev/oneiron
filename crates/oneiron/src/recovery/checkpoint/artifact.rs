@@ -424,9 +424,6 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) sequence: u64,
     /// The snapshot id its verified commitment signs.
     pub(super) snapshot: [u8; 32],
-    /// The payload compartments it carries, apart from its bodies (KS-7).
-    #[allow(dead_code, reason = "KS7-5 opens the compartments")]
-    pub(super) payload: Option<SealedPayload<'k>>,
 }
 
 /// The result bodies an opened artifact carries, each read back through its
@@ -436,6 +433,8 @@ pub(super) struct SealedBodies<'k> {
     sealer: Sealer<'k>,
     /// Each body's manifest line and its frames (offset, length).
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
+    /// The payload compartments it carries, apart from its bodies (KS-7).
+    pub(super) payload: Option<SealedPayload<'k>>,
 }
 
 /// Opens the artifact at `path` with `key`: its manifest, checked against the
@@ -613,17 +612,16 @@ pub(super) fn open_artifact_file(
             file,
             sealer,
             streams,
+            payload,
         },
         custody: manifest.custody,
         sequence: commitment.sequence,
         snapshot: prelude.snapshot,
-        payload,
     })
 }
 
 /// The payload compartments an opened artifact carries (KS-7), read apart
 /// from its bodies: each bundle's stream after the last body's.
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 pub(super) struct SealedPayload<'k> {
     pub(super) section: PayloadSection,
     file: File,
@@ -633,8 +631,12 @@ pub(super) struct SealedPayload<'k> {
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
 }
 
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 impl SealedPayload<'_> {
+    /// The vault its compartments are sealed for.
+    pub(super) fn vault_id(&self) -> [u8; 32] {
+        self.sealer.key.vault_id
+    }
+
     /// The `index`th payload stream's bytes, each chunk checked against the
     /// manifest and opened as it is read, the whole checked after.
     pub(super) fn stream(&mut self, index: usize) -> Result<Vec<u8>> {

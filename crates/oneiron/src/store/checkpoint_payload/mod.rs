@@ -7,17 +7,15 @@
 //!
 //! This module holds the item codec, the instance table ([`instance`]) and
 //! the custody glue a capture and a restore call: the binding pinned with
-//! the leaves it protects, the mint under the custody guard, guarded reads,
-//! and the restore plan for a list of compartments. Nothing calls them yet:
-//! projection (KS7-2), the mixed sync carriers (KS7-3), erase, hold and
-//! retention staging (KS7-4) and capture and restore (KS7-5) do. Until KS7-6
-//! flips [`CHECKPOINT_PAYLOADS_ENABLED`], every write here refuses and every
-//! read answers empty.
-#![allow(
-    dead_code,
-    reason = "KS7-2 to KS7-5 call these; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
-)]
+//! the leaves it protects, the mint under the custody guard ([`capture`]),
+//! guarded reads and the restore plan for a list of compartments
+//! ([`compartment_access`]). Projection (KS7-2), the mixed sync carriers (KS7-3), erase,
+//! hold and retention staging (KS7-4) and capture and restore (KS7-5) call
+//! them. Until KS7-6 flips [`CHECKPOINT_PAYLOADS_ENABLED`], every write here
+//! refuses and every read answers empty.
+#![allow(dead_code, reason = "CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6")]
 
+pub(crate) mod capture;
 pub(crate) mod instance;
 pub(crate) mod loro;
 pub(crate) mod retirement;
@@ -320,4 +318,42 @@ pub(crate) fn require_all(
             plan.require(&subject.at(*generation))
         })
         .collect())
+}
+
+/// How a restore opens one compartment its image names (KS7-5).
+pub(crate) enum CompartmentAccess {
+    /// Its leaf is live in the restore's source custody: the compartment
+    /// opens with this key.
+    Open(Zeroizing<[u8; 32]>),
+    /// Its leaf is retired, or committed to be: its owner's rows are
+    /// dropped as its erase took them.
+    Retired,
+}
+
+/// What a restore opens each compartment `required` names with, in order,
+/// through `plan`, the one plan its claim keys use ([`require_all`]). A
+/// missing leaf refuses, as KS-4's lost custody does: an image supplies a
+/// binding, never a key (ARCH-0038, a restore needs the key custody).
+///
+/// # Errors
+///
+/// A missing leaf or source binding, a leaf that does not read, and custody
+/// faults.
+pub(crate) fn compartment_access(
+    plan: &mut CustodyPlan,
+    required: &[(PayloadItem, u64)],
+) -> Result<Vec<CompartmentAccess>> {
+    let answers = require_all(plan, required)?;
+    let source = plan.source().cloned();
+    required
+        .iter()
+        .zip(answers)
+        .map(|((item, generation), answer)| match answer? {
+            Requirement::Retired => Ok(CompartmentAccess::Retired),
+            Requirement::Live => {
+                let binding = source.as_ref().ok_or_else(corrupt)?;
+                read_key(LocalCustody::at(binding), item, *generation).map(CompartmentAccess::Open)
+            }
+        })
+        .collect()
 }
