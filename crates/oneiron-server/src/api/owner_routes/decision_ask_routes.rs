@@ -142,6 +142,11 @@ async fn answer(
             request.seq,
             &request.answer,
         )?;
+        // A pack setup's allow ask lands the owner's allow the same way
+        // (FIX 1406).
+        server
+            .vault()
+            .press_pack_setup_allow(&owner, request.seq, &request.answer)?;
         asks.answer_with_reason(
             &owner,
             request.seq,

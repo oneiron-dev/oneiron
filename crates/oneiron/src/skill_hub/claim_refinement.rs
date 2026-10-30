@@ -142,10 +142,8 @@ impl Vault {
         base: EntityId,
         labels: &[EntityId],
     ) -> Result<()> {
-        if labels.is_empty() || labels.len() > 4096 {
-            return Err(invalid(
-                "claim held-out reserve must be bounded and nonempty",
-            ));
+        if labels.is_empty() {
+            return Err(invalid("claim held-out reserve must be nonempty"));
         }
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
@@ -534,7 +532,7 @@ impl Vault {
         let evidence = RESERVE
             .get(&self.store, txn, &base_id)?
             .ok_or_else(|| invalid("claim held-out reserve is missing"))?;
-        if evidence.is_empty() || evidence.len() > 4096 {
+        if evidence.is_empty() {
             return Err(invalid("claim held-out reserve is invalid"));
         }
         let mut hash = blake3::Hasher::new_derive_key("oneiron.claim-refinement.merge.v1");

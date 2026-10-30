@@ -22,6 +22,7 @@ mod land;
 mod ledger;
 mod plan;
 mod review;
+mod speakers;
 mod text;
 mod tree;
 
@@ -32,6 +33,7 @@ pub use land::HistoryImportReport;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
 pub use review::history_import_review_id;
 pub(crate) use review::imported_evidence_in_txn;
+pub(crate) use speakers::{ImportedConversationSpeakers, imported_speakers_in};
 
 use serde::Serialize;
 

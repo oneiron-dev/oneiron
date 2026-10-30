@@ -124,8 +124,8 @@ impl RunGuests {
             steps: proposal.steps.clone(),
             postcondition: proposal.postcondition.clone(),
         };
-        let steps = match program.fill(&proposal.args) {
-            Ok((steps, _)) => steps,
+        let (steps, checks) = match program.fill(&proposal.args) {
+            Ok(filled) => filled,
             Err(error) => return refused(error.code()),
         };
         let batch = BatchInput {
@@ -150,6 +150,37 @@ impl RunGuests {
             Some(SubgoalStatus::Done) => {}
             Some(status) => return ProgramAdmissionOutcome::ReconstructionStopped { status },
             None => return refused("admission_batch_unread"),
+        }
+        // The filled postcondition on the reconstructed page (FIX 10721),
+        // read as propose's own Solved check reads its expects: a Done batch
+        // whose page misses checks ends here, proposing nothing. Only the
+        // fills this side reproduces are read here: propose slots secret
+        // operands against the proposing session's driver, which this job
+        // has none of, so a proposal carrying typed secret arguments, or
+        // naming a seed candidate whose own program stands in for the
+        // proposal's, keeps propose's own read as before and never ends
+        // at this one.
+        let own_read = proposal.secret_args.is_empty() && proposal.candidate.is_none();
+        let mut unmet = Vec::new();
+        if own_read {
+            for (index, check) in checks.iter().enumerate() {
+                let Ok(input) = serde_json::to_value(check) else {
+                    return refused("admission_expect_encode");
+                };
+                let verb = AgentVerb::SelfBrowserExpect;
+                let output = match self.job_call(server, runtime, leased, caller, verb, input) {
+                    Ok(output) => output,
+                    Err(outcome) => return outcome,
+                };
+                match output.get("met").and_then(|met| met.as_bool()) {
+                    Some(true) => {}
+                    Some(false) => unmet.push(index),
+                    None => return refused("admission_expect_unread"),
+                }
+            }
+        }
+        if !unmet.is_empty() {
+            return ProgramAdmissionOutcome::PostconditionUnmet { unmet };
         }
         let Ok(input) = serde_json::to_value(proposal) else {
             return refused("admission_proposal_encode");

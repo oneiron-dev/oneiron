@@ -53,6 +53,9 @@ pub struct PackManifest {
     /// Organ folders under `organs/`, by name (ARCH-0075 §9, OF-575). Each
     /// pins its builds by platform; the builds travel as blob assets.
     pub organs: BTreeSet<String>,
+    /// Lens folders under `lenses/`, by name (OF-250). Each binds one of the
+    /// pack's skills as its slot; a compiled build travels as a blob asset.
+    pub lenses: BTreeSet<String>,
     /// Predicate migration maps this source ships for moves from earlier
     /// sources of the pack (ARCH-0059 §4, rung 1).
     pub migrations: Vec<PackMigration>,
@@ -116,9 +119,6 @@ impl PackManifest {
             };
             let entries: Vec<String> = serde_json::from_str(value)
                 .map_err(|_| invalid("manifest list must be a JSON string array"))?;
-            if entries.len() > 128 {
-                return Err(invalid("manifest list too long"));
-            }
             let mut set = BTreeSet::new();
             for entry in entries {
                 if entry.is_empty()
@@ -213,7 +213,14 @@ impl PackManifest {
         }
         let predicates = list("predicates")?;
         let kinds = list("kinds")?;
-        for declaration in predicates.iter().chain(&kinds) {
+        for declaration in &predicates {
+            crate::claim::validate_predicate(declaration, false)
+                .map_err(|_| invalid("invalid predicate declaration"))?;
+            if !declaration.starts_with(&format!("{name}.")) {
+                return Err(invalid("declaration must be in the pack namespace"));
+            }
+        }
+        for declaration in &kinds {
             validate_name(declaration)?;
             if !declaration.starts_with(&format!("{name}.")) {
                 return Err(invalid("declaration must be in the pack namespace"));
@@ -231,11 +238,12 @@ impl PackManifest {
             super::hooks::validate_hook_name(hook)?;
         }
         let organs = list("organs")?;
-        if organs.len() > 32 {
-            return Err(invalid("too many organs"));
-        }
         for organ in &organs {
             super::organs::validate_organ_name(organ)?;
+        }
+        let lenses = list("lenses")?;
+        for lens in &lenses {
+            super::lenses::validate_lens_name(lens)?;
         }
         let migrations = fields
             .get("migrations")
@@ -266,6 +274,7 @@ impl PackManifest {
             wake_subscriptions: list("wakes")?,
             hooks,
             organs,
+            lenses,
             migrations,
             setup,
         })
@@ -302,6 +311,7 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "wakes"
                 | "hooks"
                 | "organs"
+                | "lenses"
                 | "facets"
                 | "migrations"
                 | "setup"
@@ -401,11 +411,20 @@ pub(super) fn scalar(value: &str, allow_controls: bool) -> Result<String> {
     let text: String = if value.starts_with('"') {
         serde_json::from_str(value).map_err(|_| invalid("invalid quoted scalar"))?
     } else {
-        if value
-            .chars()
-            .any(|c| matches!(c, '\'' | '&' | '*' | '!' | '{' | '[' | '|' | '>' | '#'))
-        {
+        // Prose may hold `'`, `&`, `*`, `!`, `{`, `[`, `|`, `>` and `#`
+        // inside; only a leading indicator (an anchor, alias, tag, flow
+        // collection, block scalar or quoted string this parser does not
+        // read) or a ` #` comment start stays unsupported.
+        if value.starts_with(['\'', '&', '*', '!', '{', '[', '|', '>', '#']) {
             return Err(invalid("unsupported YAML scalar"));
+        }
+        // `#` after whitespace starts a comment; elsewhere it is literal prose.
+        let mut prev_is_space = false;
+        for c in value.chars() {
+            if c == '#' && prev_is_space {
+                return Err(invalid("unsupported YAML scalar"));
+            }
+            prev_is_space = c.is_whitespace();
         }
         value.to_owned()
     };

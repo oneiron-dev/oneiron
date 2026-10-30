@@ -256,7 +256,12 @@ impl Vault {
         // doors, so only the threshold row needs this transaction.
         let mut count = {
             let txn = self.store.env.read_txn()?;
-            ScanCount::start(&self.store, &txn, EngineScan::DagWalkRecords, revision_id.as_bytes())?
+            ScanCount::start(
+                &self.store,
+                &txn,
+                EngineScan::DagWalkRecords,
+                revision_id.as_bytes(),
+            )?
         };
         let mut visited = HashSet::new();
         let outcome = self.inherited_file_mode_walk(revision, &mut visited, &mut count);

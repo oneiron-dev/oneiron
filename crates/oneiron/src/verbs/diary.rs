@@ -29,9 +29,7 @@ impl DiaryQueryRequest {
         self.agent_id()?;
         let reason = self.reason.trim();
         if reason.is_empty() || reason.contains(['\n', '\r']) {
-            return Err(MemoryError::bad_request(
-                "reason is one non-empty line",
-            ));
+            return Err(MemoryError::bad_request("reason is one non-empty line"));
         }
         Ok(())
     }

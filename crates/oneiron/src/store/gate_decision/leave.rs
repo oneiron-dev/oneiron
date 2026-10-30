@@ -134,7 +134,10 @@ impl Store {
         partitions: &HashSet<Partition>,
     ) -> bool {
         self.gate_decision_claim_refs_in_txn(txn, id)
-            .map_or(true, |refs| refs.into_iter().any(|claim| partitions.contains(&Some(claim))))
+            .map_or(true, |refs| {
+                refs.into_iter()
+                    .any(|claim| partitions.contains(&Some(claim)))
+            })
     }
 }
 

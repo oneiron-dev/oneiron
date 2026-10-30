@@ -2214,13 +2214,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def prepare(self, spec):
-            """The owner opens, or resumes, a pack's guided setup; opening grants nothing."""
+            """The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_prepare(json.dumps(spec))))
         def get(self, spec):
-            """A pack's guided setup as it stands, for the owner."""
+            """A pack's guided setup as it stands, for the owner or an agent acting for the owner."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_get(json.dumps(spec))))
         def answer(self, spec):
-            """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
+            """One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_answer(json.dumps(spec))))
         def verify(self, spec):
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""

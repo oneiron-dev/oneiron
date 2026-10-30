@@ -258,6 +258,10 @@ pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
 /// FIX 9554). Parts: the annotated row's entity type, its id.
 pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
 
+/// The source-bearing ASSET of one pack source (`skill_hub::pack_catalog::codec`,
+/// FIX 10125). Parts: the source's canonical tree content hash (32 bytes).
+pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 57] = [

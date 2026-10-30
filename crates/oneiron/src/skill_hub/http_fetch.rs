@@ -125,9 +125,8 @@ impl HttpEndpointSkillHubAdapter {
             .schema
             .as_deref()
             .is_some_and(|schema| schema != WELL_KNOWN_SCHEMA)
-            || index.skills.len() > 4096
         {
-            return Err(invalid("unsupported or oversized discovery index"));
+            return Err(invalid("unsupported discovery index"));
         }
         let mut names = std::collections::BTreeSet::new();
         for entry in &index.skills {
@@ -151,8 +150,8 @@ impl HttpEndpointSkillHubAdapter {
     fn index(value: serde_json::Value) -> Result<Index> {
         let index: Index =
             serde_json::from_value(value).map_err(|_| invalid("invalid hub index"))?;
-        if index.schema != 1 || index.packages.len() > 4096 {
-            return Err(invalid("unsupported or oversized hub index"));
+        if index.schema != 1 {
+            return Err(invalid("unsupported hub index"));
         }
         let mut aliases = std::collections::BTreeSet::new();
         for entry in &index.packages {

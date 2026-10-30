@@ -11,8 +11,7 @@ pub fn capture_canonical_window(
     window: &str,
     doc: &LoroDoc,
 ) -> Result<CanonicalSnapshot> {
-    capture_canonical_window_within(vault, window, doc, usize::MAX)
-        .map(|(snapshot, _)| snapshot)
+    capture_canonical_window_within(vault, window, doc, usize::MAX).map(|(snapshot, _)| snapshot)
 }
 
 /// Publishes into current custody each pad a row holds that custody lacks,

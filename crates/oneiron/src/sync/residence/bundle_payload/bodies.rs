@@ -179,10 +179,12 @@ pub(super) fn land(
             }
             let doc = docs.get(&carried.window).cloned();
             let window = |key: &WindowKey| doc.clone().filter(|_| *key == carried.window);
+            let windows = || vec![carried.window.clone()];
             let peer = AssetBodyPeer {
                 vault,
                 lease_vault_id: manager.materializer().lease_vault_id(),
                 window: &window,
+                windows: &windows,
             };
             land_carried_body(&peer, &carried.window, &carried.body, &bytes)
         })();

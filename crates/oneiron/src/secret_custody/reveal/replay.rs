@@ -53,8 +53,7 @@ impl Vault {
             class: row.class()?,
             effector: format!("model:{}", asker.connection()),
         };
-        let value =
-            crate::secret_lease::reread_reveal_lease_in_txn(self, &txn, &authority, lease)?;
+        let value = crate::secret_lease::reread_reveal_lease_in_txn(self, &txn, &authority, lease)?;
         Ok(SecretRevealWait {
             decision: if value.is_some() {
                 SecretRevealDecision::Granted

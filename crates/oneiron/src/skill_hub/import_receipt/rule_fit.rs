@@ -5,7 +5,10 @@
 //! is ready. No model is consulted: the same package, scan and caller give
 //! the same answer. Requested permissions stay inert either way: the fit
 //! only decides whether the install lands now or asks.
-use super::{MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator, permission_labels};
+use super::{
+    FIT_ANALYSIS_BYTES, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
+    permission_labels,
+};
 use crate::consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectFacts};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill_hub::hub_owner::OwnerAskedSkillFit;
@@ -18,9 +21,6 @@ use crate::{Vault, error::Result};
 /// The owner's skill fit setting; an absent row is the rule fit.
 const SKILL_FIT: SideTable<(), SkillFitSetting, Raw> =
     SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_SKILL_FIT);
-
-/// The analysis bound [`MarketplaceFitDecision`] keeps.
-const ANALYSIS_BYTES: usize = 512;
 
 /// What the caller already holds, as its host judges it. A permission is a
 /// request label: `verb:<name>` and `lane:<name>` for a section, and
@@ -176,7 +176,7 @@ fn rule_fit(
 /// ones that do not fit are counted, never dropped silently.
 fn bounded_list(lead: &str, items: &[String], tail: &str) -> String {
     // Room for the lead, the tail and an " and N more" note.
-    let room = ANALYSIS_BYTES.saturating_sub(lead.len() + tail.len() + 32);
+    let room = FIT_ANALYSIS_BYTES.saturating_sub(lead.len() + tail.len() + 32);
     let mut named = String::new();
     let mut shown = 0_usize;
     for item in items {

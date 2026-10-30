@@ -48,6 +48,7 @@ pub(crate) use self::dispatch_attempt_id::{
 };
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
 pub(crate) use self::dispatch_pipeline::outbound_gate_effect;
+pub(crate) use self::dispatch_pipeline::provider_retry_after_secs;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::dispatch_pipeline::validate_publisher_signature_in_txn;
 pub(crate) use self::dispatch_pipeline::{

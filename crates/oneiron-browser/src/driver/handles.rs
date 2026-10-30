@@ -23,7 +23,9 @@
 //! `MemoryFloor`, and the session stays.
 
 use super::CdpDriver;
+use super::pages::rows_bytes;
 use super::row_metadata;
+use crate::cdp::{Held, footprint_items};
 use crate::observation::HandleInfo;
 use crate::outline::{self, Line, Masks};
 use crate::retention::HandleRetention;
@@ -71,13 +73,18 @@ enum Key {
 /// One read of the front tab, minted: its rows with their live handles, the
 /// DOM node of each, the accessibility nodes they were read from, and the
 /// scope they belong to; and, for each row that shows a secret in place,
-/// what its page holds there, for the read's own checks only.
+/// what its page holds there, for the read's own checks only. The charge
+/// for what of a past-threshold reply it keeps, given back as it drops
+/// (FIX 11578).
 pub(super) struct Capture {
     pub(super) rows: Vec<Row>,
     pub(super) nodes: Vec<Option<u64>>,
     pub(super) ax: Vec<Value>,
     pub(super) scope: String,
     pub(super) originals: Vec<Option<String>>,
+    // Dropped for the charge it gives back; never read (FIX 11578).
+    #[allow(dead_code)]
+    held: Vec<Held>,
 }
 
 /// The front tab's documents as CDP reports them: each frame's loader by
@@ -621,6 +628,11 @@ impl CdpDriver {
                 break (None, ax, candidates, dom);
             }
         };
+        // The tree's charge rides the capture until it drops (FIX 11578):
+        // its reply's went back as its call took it, and its rows are
+        // charged as held answers only once an observation keeps them.
+        let mut held = Vec::new();
+        held.extend(self.pipe.charge_retained(footprint_items(&ax)));
         let masks = self.secret_masks(&ax, &candidates, &dom);
         let mut lines = if masks.is_empty() {
             candidates
@@ -636,19 +648,53 @@ impl CdpDriver {
             .filter(|line| line.masked)
             .filter_map(|line| Some((line.frame.clone(), line.backend_node?)))
             .collect();
-        let originals = lines.iter_mut().map(|line| line.original.take()).collect();
+        let originals: Vec<Option<String>> =
+            lines.iter_mut().map(|line| line.original.take()).collect();
         let target = self.target.clone();
         let missing = self.handles.missing(&target, documents.as_ref(), &lines);
         let gone = self.gone_nodes(&missing);
         let (rows, nodes, scope) = self
             .handles
             .mint(&target, documents.as_ref(), lines, &gone)?;
+        held.extend(
+            self.pipe
+                .charge_retained(capture_bytes(&rows, &nodes, &scope, &originals)),
+        );
         Ok(Capture {
             rows,
             nodes,
             ax,
             scope,
             originals,
+            held,
         })
     }
+}
+
+/// The bytes a capture keeps beside its tree: its rows', each node's slot,
+/// its scope's, and each secret original's room.
+fn capture_bytes(
+    rows: &[Row],
+    nodes: &[Option<u64>],
+    scope: &str,
+    originals: &[Option<String>],
+) -> usize {
+    let texts = originals
+        .iter()
+        .flatten()
+        .map(|text| text.capacity())
+        .fold(0, usize::saturating_add);
+    rows_bytes(rows)
+        .saturating_add(
+            nodes
+                .len()
+                .saturating_mul(std::mem::size_of::<Option<u64>>()),
+        )
+        .saturating_add(
+            originals
+                .len()
+                .saturating_mul(std::mem::size_of::<Option<String>>()),
+        )
+        .saturating_add(scope.len())
+        .saturating_add(texts)
 }

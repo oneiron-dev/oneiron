@@ -1,12 +1,12 @@
 //! The agent's doors: `reveal`, `wait` and `describe` on a handle.
 
+use super::notice::{notify_reveal_ask_in_txn, settle_reveal_notices_in_txn};
 use super::{
     HandleReveal, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAct,
     RevealAsker, RevealAuthority, RevealRow, SecretHandleCard, SecretProvenance,
     SecretRevealDecision, SecretRevealState, SecretRevealWait, append_reveal_decision_in_txn,
     checked_text, resolve_handle_in_txn, reveal_class, unknown,
 };
-use super::notice::{notify_reveal_ask_in_txn, settle_reveal_notices_in_txn};
 use crate::consent::{
     approve_once_authorization_in_txn, approve_once_decision_in_txn, load_active_standing_grants,
     spend_approve_once_in_txn,

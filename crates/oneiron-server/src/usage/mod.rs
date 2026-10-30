@@ -22,9 +22,9 @@ pub use model::{
     UsageRollupStatus, UsageRun, UsageTokenCounts,
 };
 pub use pricing::catalog_cost_rates;
+pub(crate) use repair::{UsageScope, removal_conflict_reason};
 pub use retrieval_buffer::{
     RETRIEVAL_BUFFER_ROWS, RETRIEVAL_FLUSH_SECS, RetrievalMeterBatch, RetrievalMeterBuffer,
 };
-pub(crate) use repair::{UsageScope, removal_conflict_reason};
 #[cfg(test)]
 mod tests;

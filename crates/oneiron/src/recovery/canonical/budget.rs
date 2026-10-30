@@ -55,10 +55,7 @@ impl ByteBudget {
     /// Counts `bytes` no copy refuses on (Rule 5, FIX 6540): the measure
     /// stays honest and the copy goes on. While the measure is past the
     /// limit, the overrun is returned, typed, for its caller to report.
-    pub(in crate::recovery) fn measure(
-        &mut self,
-        bytes: usize,
-    ) -> Option<RecoveryBudgetOverrun> {
+    pub(in crate::recovery) fn measure(&mut self, bytes: usize) -> Option<RecoveryBudgetOverrun> {
         self.held = self.held.saturating_add(bytes);
         self.measured = self.measured.saturating_add(bytes);
         if self.held <= self.limit {
