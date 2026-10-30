@@ -141,7 +141,7 @@ export type RecordRef = { kind: string; id: string; short_id?: string | null; la
 /** `oneiron::verbs::self::DiaryEntryReceipt` */
 export type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null }
 /** `oneiron::memory::diary_read::DiaryReadsRequest` */
-export type DiaryReadsRequest = { limit?: number | null }
+export type DiaryReadsRequest = { limit?: number | null; include_used?: boolean }
 /** `oneiron::memory::diary_read::DiaryReadRecord` */
 export type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string }
 /** `oneiron::memory::diary_read::DiaryReviewState` */
@@ -4483,7 +4483,7 @@ export type DisclosureCeilingSet = { connection: string; class?: DisclosureDataC
 /** `oneiron::verbs::disclosure::RevealAsksRequest` */
 export type RevealAsksRequest = { pending?: boolean; limit?: number | null }
 /** `oneiron::verbs::secret::RevealReceipt` */
-export type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null }
+export type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null; cause?: string | null; scope?: string | null }
 /** `oneiron::verbs::disclosure::RevealAskView` */
 export type RevealAskView = { receipt: RevealReceipt; state: string; expires_at: number; disclosure?: string | null; expected_digest?: string | null; grant_ref?: string | null }
 /** `oneiron::verbs::disclosure::RevealOutcome` */
@@ -4499,7 +4499,7 @@ export type RevealPending = { reveal: string }
 /** `oneiron::verbs::secret::RevealWaitRequest` */
 export type RevealWaitRequest = { reveal: string }
 /** `oneiron::verbs::secret::RevealDecision` */
-export type RevealDecision = "pending" | "granted" | "denied" | "expired"
+export type RevealDecision = "pending" | "granted" | "denied" | "expired" | "unavailable"
 /** `oneiron::verbs::secret::RevealWaitAnswer` */
 export type RevealWaitAnswer = { decision: RevealDecision; value?: string | null; value_base64?: string | null; receipt?: RevealReceipt | null }
 /** `oneiron::verbs::secret::RevealDescribeRequest` */

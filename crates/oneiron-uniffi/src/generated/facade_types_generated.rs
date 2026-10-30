@@ -1043,6 +1043,12 @@ pub struct DiaryEntryReceipt {
 pub struct DiaryReadsRequest {
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(
+        rename = "include_used",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_used: Option<bool>,
 }
 
 /// `oneiron::memory::diary_read::DiaryReadRecord`.
@@ -34985,6 +34991,10 @@ pub struct RevealReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub delivered_at: Option<u64>,
+    #[serde(rename = "cause", default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 /// `oneiron::verbs::disclosure::RevealAskView`.
@@ -35087,6 +35097,8 @@ pub enum RevealDecision {
     Denied,
     #[serde(rename = "expired")]
     Expired,
+    #[serde(rename = "unavailable")]
+    Unavailable,
 }
 
 /// `oneiron::verbs::secret::RevealWaitAnswer`.

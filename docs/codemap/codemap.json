@@ -15042,6 +15042,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_revision/integrity/walk.rs",
+     "purpose": "The iterative fold-chain proof behind a revision's integrity record",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_revision/keys.rs",
      "purpose": "Typed side tables for the code-revision row families: finalized records, forks, per-revision integrity…",
      "surface": {
@@ -15582,7 +15592,7 @@
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -37828,24 +37838,38 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HardEraseWork",
       "HostOnlyReason",
       "HousekeepingBudget",
-      "HousekeepingReport",
-      "HousekeepingSweep",
-      "SecretLiftWork",
-      "SweepOutcome",
-      "SweepReport",
-      "SweepWork"
+      "HousekeepingSweep"
      ],
      "path": "src/housekeeping/mod.rs",
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due",
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 4,
-      "fn": 13,
-      "struct": 5
+      "enum": 2,
+      "fn": 7,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HardEraseWork",
+      "HousekeepingReport",
+      "SecretLiftWork",
+      "SweepOutcome",
+      "SweepReport",
+      "SweepWork"
+     ],
+     "path": "src/housekeeping/report.rs",
+     "purpose": "What a housekeeping pass reports: one row per sweep, and the counts each sweep run reports",
+     "surface": {
+      "enum": 2,
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -42392,7 +42416,7 @@
      "purpose": "One snapshot and one admission for policy-managed inference calls",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 4
      }
     },
@@ -44826,8 +44850,18 @@
       "const": 1,
       "crate-vis": 3,
       "enum": 5,
-      "fn": 15,
+      "fn": 14,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/diary_read/log.rs",
+     "purpose": "The agent's complete diary read/review log view (OF-490): the persisted read rows and review requests…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -52964,6 +52998,7 @@
      "path": "src/persona_snapshot/copy.rs",
      "purpose": "Owner edits to accepted mode-A copies, never to their source claims",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 3
      }
@@ -52996,7 +53031,7 @@
      "path": "src/persona_snapshot/mod.rs",
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 3
      }
@@ -55174,8 +55209,8 @@
      "path": "src/ppr_community/codec.rs",
      "purpose": "Snapshot and membership encode/decode with strict guards",
      "surface": {
-      "crate-vis": 3,
-      "fn": 4,
+      "crate-vis": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -55376,7 +55411,7 @@
      "path": "src/provenance/body.rs",
      "purpose": "Who owns a body and whether it is whole",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 3,
       "struct": 3
@@ -55390,6 +55425,16 @@
      "purpose": "The checkpoint getter of body descriptors (KS7-2): each descriptor and each digest holder row under its…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provenance/body/retained.rs",
+     "purpose": "The side rows a kept body stands on (FIX 8850)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -56533,8 +56578,21 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 20,
-      "re-export": 6
+      "crate-vis": 15,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecoveryBudgetOverrun"
+     ],
+     "path": "src/recovery/canonical/budget.rs",
+     "purpose": "The capture budget and its measured overrun: what one capture or encoding copied, and the bytes it only…",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 1
      }
     },
     {
@@ -60454,7 +60512,7 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 21,
+      "crate-vis": 23,
       "re-export": 3
      }
     },
@@ -60468,7 +60526,7 @@
      "purpose": "An erased actor out of the reveal rows (FIX 3520)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1
      }
     },
@@ -60480,6 +60538,16 @@
      "purpose": "The agent's doors: `reveal`, `wait` and `describe` on a handle",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/close.rs",
+     "purpose": "A reveal closed with a named cause when its secret is erased (FIX 8350)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60527,6 +60595,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/notice.rs",
+     "purpose": "An asked reveal's inbox Ask (FIX 2355): one notice per live owner, so an open ask waits in the inbox, not…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -60549,15 +60627,37 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/replay.rs",
+     "purpose": "A granted `reveal.wait` made again by its step, resumed after a park (FIX 2360)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/scope.rs",
+     "purpose": "The reach of the owner's standing grant on a reveal (FIX 2354): this project, every project, this task or…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "HandleReveal",
       "OwnerSecretReveal",
+      "RevealGrantScope",
       "RevealTarget",
       "SecretHandleCard",
       "SecretProvenance",
       "SecretRevealAnswer",
       "SecretRevealAnswered",
       "SecretRevealAsk",
+      "SecretRevealCause",
       "SecretRevealDecision",
       "SecretRevealReceipt",
       "SecretRevealState"
@@ -60565,8 +60665,8 @@
      "path": "src/secret_custody/reveal/types.rs",
      "purpose": "The reveal's public value types: its states, decisions, receipts, asks and answers, and what a handle…",
      "surface": {
-      "enum": 5,
-      "fn": 3,
+      "enum": 7,
+      "fn": 5,
       "struct": 6
      }
     },
@@ -60900,7 +61000,7 @@
      "purpose": "Txn row reads/writes, teardown, lazy expiry, and the one stamping body",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1
      }
     },
@@ -65892,7 +65992,7 @@
      "path": "src/speculative/scoped.rs",
      "purpose": "Credential-bound candidate admission, inside every speculative pass",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -66243,6 +66343,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/claim_vad_owed.rs",
+     "purpose": "Owed claim VAD consolidation (FIX 9598)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -66411,6 +66521,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/leave.rs",
+     "purpose": "The gate-decision rows a left environment's purge keeps (FIX 8851): the decisions of the partitions a…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -66468,7 +66588,7 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 3
      }
     },
@@ -67127,13 +67247,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 36
      }
     },
     {
@@ -67203,7 +67323,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "mod": 1,
       "re-export": 18
      }
@@ -67461,7 +67581,7 @@
      "path": "src/store/ppr_community.rs",
      "purpose": "Bounded, local community snapshots in the existing `vault_meta` database",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 9
      }
     },
     {
@@ -67780,7 +67900,7 @@
      "path": "src/store/world_pad_custody.rs",
      "purpose": "The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -77451,9 +77571,9 @@
      "path": "src/verbs/secret.rs",
      "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret or person's value by its handle…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 8
      }
     },
@@ -82441,7 +82561,7 @@
      "purpose": "Symbol-anchored memory slots, transfers and scoped pulls"
     },
     "code_revision": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82889,7 +83009,7 @@
      "purpose": "HNSW graph index over the persisted neighbor graph"
     },
     "housekeeping": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83057,7 +83177,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 294,
+     "files": 295,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83225,7 +83345,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83267,7 +83387,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 105,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -83358,7 +83478,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 61,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83512,7 +83632,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 177,
+     "files": 179,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83750,9 +83870,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5611,
+   "source_files": 5622,
    "test_files": 902
   },
   "oneiron-android": {
@@ -100319,7 +100439,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/options.rs",
@@ -108072,7 +108192,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LimitsConfig"
@@ -108082,6 +108202,16 @@
      "surface": {
       "crate-vis": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/limits/override_keys.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -112446,7 +112576,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 12,
       "re-export": 1,
       "struct": 1
@@ -115034,7 +115164,17 @@
      "path": "src/server/recall_hyde.rs",
      "purpose": "A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/recall_hyde/wait.rs",
+     "purpose": "Owned recall workers, so HyDE waits hold no shared blocking-pool thread",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -116407,9 +116547,9 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 63,
+     "files": 64,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
@@ -116743,7 +116883,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 72,
+     "files": 73,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116820,9 +116960,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 32,
+   "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1456,
+   "source_files": 1458,
    "test_files": 182
   },
   "oneiron-spawn": {

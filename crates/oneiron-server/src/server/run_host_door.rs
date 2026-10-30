@@ -268,7 +268,6 @@ impl AgentVerbDoor for RunHostDoor {
         // The run's thread drives its own reactor; the row runs on the
         // server's runtime, which its model rungs block on, and the run's
         // thread waits for it.
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(&self.server);
         let actor = self.actor;
         let origin = origin.clone();
@@ -276,66 +275,74 @@ impl AgentVerbDoor for RunHostDoor {
         let input = call.input.clone();
         // FIX 3103: the row writes for the run whose lease the origin seals.
         let run_writes = RunWriteToken::of_origin(&origin);
-        self.runtime.spawn_blocking(move || {
+        let work = move || {
             // The run's speech is admitted after its lease's look, as the
             // entry's own model calls are (FIX 11747).
             if let Some(lease) = &lease {
                 lease.on(server.vault()).book_and_revise();
             }
-            let _ = sender.send(with_run_write_token(
-                run_writes.as_ref(),
-                || match resident {
-                    Some(ResidentRow::Board) => {
-                        board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
-                            .map(|(output, rows)| (output, Some(rows)))
-                    }
-                    Some(ResidentRow::SelfBrief) => resident_rows::self_brief_as_agent(
-                        &server,
-                        actor,
-                        &origin,
-                        invocation,
-                        &board,
-                        line.as_ref(),
-                        input,
-                    )
-                    .map(|(output, rows)| (output, Some(rows))),
-                    Some(ResidentRow::WeaveLens) => resident_rows::weave_lens_as_agent(
-                        &server,
-                        actor,
-                        run_id,
-                        &origin,
-                        invocation,
-                        line.as_ref(),
-                        input,
-                    )
-                    .map(|(output, rows)| (output, Some(rows))),
-                    // An owner's own program takes the owner's rows (FIX 5911).
-                    None if super::owner_program_rows::is_owner_row(verb) => {
-                        super::owner_program_rows::answer(
-                            &server,
-                            actor,
-                            &origin,
-                            invocation,
-                            verb,
-                            input,
-                            line.as_ref(),
-                            attempt.as_deref(),
-                        )
-                    }
-                    None => answer_as_agent(
+            with_run_write_token(run_writes.as_ref(), || match resident {
+                Some(ResidentRow::Board) => {
+                    board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
+                        .map(|(output, rows)| (output, Some(rows)))
+                }
+                Some(ResidentRow::SelfBrief) => resident_rows::self_brief_as_agent(
+                    &server,
+                    actor,
+                    &origin,
+                    invocation,
+                    &board,
+                    line.as_ref(),
+                    input,
+                )
+                .map(|(output, rows)| (output, Some(rows))),
+                Some(ResidentRow::WeaveLens) => resident_rows::weave_lens_as_agent(
+                    &server,
+                    actor,
+                    run_id,
+                    &origin,
+                    invocation,
+                    line.as_ref(),
+                    input,
+                )
+                .map(|(output, rows)| (output, Some(rows))),
+                // An owner's own program takes the owner's rows (FIX 5911).
+                None if super::owner_program_rows::is_owner_row(verb) => {
+                    super::owner_program_rows::answer(
                         &server,
                         actor,
                         &origin,
                         invocation,
                         verb,
                         input,
-                        held,
                         line.as_ref(),
                         attempt.as_deref(),
-                    ),
-                },
-            ));
-        });
+                    )
+                }
+                None => answer_as_agent(
+                    &server,
+                    actor,
+                    &origin,
+                    invocation,
+                    verb,
+                    input,
+                    held,
+                    line.as_ref(),
+                    attempt.as_deref(),
+                ),
+            })
+        };
+        let receiver = if verb == AgentVerb::VaultRecall {
+            // Engine 00:59 for parked L09: only VaultRecall leaves the shared
+            // blocking pool; every other verb keeps the runtime path.
+            super::recall_hyde::spawn_hyde_recall_mpsc(work)
+        } else {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            self.runtime.spawn_blocking(move || {
+                let _ = sender.send(work());
+            });
+            receiver
+        };
         let Ok(answered) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
@@ -357,6 +364,31 @@ impl AgentVerbDoor for RunHostDoor {
                 },
             },
         )
+    }
+
+    /// A granted `reveal.wait` the run's step made before a park, made again
+    /// as the resumed step replays it (FIX 2360): on the agent's own surface,
+    /// the value read again under `lease`; nothing is spent, stamped or
+    /// extended. A refusal leaves the step its kept answer.
+    fn replay_reveal(
+        &self,
+        call: &SelfAgentVerbCall,
+        lease: EntityId,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let memory = agent_memory(&self.server, self.actor, origin, invocation);
+        let answered = serde_json::from_value::<sdk::RevealWaitRequest>(call.input.clone())
+            .map_err(|_| MemoryError::bad_request("reveal.wait takes the reveal id"))
+            .and_then(|input| sdk::replay_reveal_as_caller(&memory, input, lease))
+            .and_then(|answer| {
+                serde_json::to_value(answer)
+                    .map_err(|_| MemoryError::bad_request("reveal.wait answer does not encode"))
+            });
+        Ok(match answered {
+            Ok(output) => Ok(AgentVerbAnswer::new(output, None)),
+            Err(error) => Err(AgentVerbRefusal { code: error.code }),
+        })
     }
 
     /// The run's own calls keep the run's own admission. A consult landing
