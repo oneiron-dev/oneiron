@@ -178,6 +178,13 @@ impl SyncConnection {
             if *left_rx.borrow_and_update() {
                 break;
             }
+            // The connect is one exchange under the host's admission; a
+            // paused host is waited out before the dial (FIX 12036).
+            let Some(connect_batch) = self.admit_connect(&mut shutdown_rx, &mut left_rx).await
+            else {
+                let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                break;
+            };
             // A residence-mode switch takes effect at this connect's hello.
             client.config.residence_mode = *mode_rx.borrow_and_update();
             // Attempt connection
@@ -192,6 +199,7 @@ impl SyncConnection {
                     break;
                 }
             };
+            drop(connect_batch);
             let mut renegotiate = false;
             match connected {
                 Ok(ws_stream) => {
