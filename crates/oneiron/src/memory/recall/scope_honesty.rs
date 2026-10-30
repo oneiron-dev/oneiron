@@ -28,6 +28,7 @@ impl Memory<'_> {
             return self.out_of_scope_worlds_scan(lane, receipt, read, deadline);
         }
         let mut worlds = BTreeSet::new();
+        let mut l15_suppressed = 0;
         let mut judged = 0;
         let mut stopped = false;
         let mut after_world = None;
@@ -59,6 +60,7 @@ impl Memory<'_> {
                 judged += ids.len();
                 let reads: Vec<_> = ids.into_iter().map(PointRead::id).collect();
                 let scoped = lane.read(&reads, None)?;
+                l15_suppressed += scoped.receipt.suppressed_count;
                 receipt.restrict_with(&scoped.receipt);
                 for row in scoped.value.into_iter().flatten() {
                     let Some(bytes) = row.body else { continue };
@@ -76,6 +78,7 @@ impl Memory<'_> {
                 }
             }
         }
+        l15_census_counts(judged, l15_suppressed, worlds.len(), stopped || judged >= SCOPE_HONESTY_SCAN_CAP);
         Ok(ScopeHonesty {
             out_of_scope_worlds: worlds.into_iter().collect(),
             census_capped: stopped || judged >= SCOPE_HONESTY_SCAN_CAP,
@@ -154,6 +157,7 @@ impl Memory<'_> {
         let mut stopped = false;
         let ids = self.census_claim_ids(lane, deadline, &mut stopped)?;
         let mut worlds = BTreeSet::new();
+        let (mut l15_judged, mut l15_suppressed) = (0_usize, 0_usize);
         for chunk in ids.chunks(128) {
             if deadline.is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due) {
                 stopped = true;
@@ -161,6 +165,8 @@ impl Memory<'_> {
             }
             let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
             let scoped = lane.read(&reads, None)?;
+            l15_judged += reads.len();
+            l15_suppressed += scoped.receipt.suppressed_count;
             receipt.restrict_with(&scoped.receipt);
             for row in scoped.value.into_iter().flatten() {
                 let Some(bytes) = row.body else { continue };
@@ -177,6 +183,7 @@ impl Memory<'_> {
                 }
             }
         }
+        l15_census_counts(l15_judged, l15_suppressed, worlds.len(), stopped || ids.len() >= SCOPE_HONESTY_SCAN_CAP);
         Ok(ScopeHonesty {
             out_of_scope_worlds: worlds.into_iter().collect(),
             census_capped: stopped || ids.len() >= SCOPE_HONESTY_SCAN_CAP,
@@ -222,4 +229,13 @@ impl Memory<'_> {
             }
         }
     }
+}
+
+/// L15 bench-only: what one census judged, as stage counts.
+fn l15_census_counts(judged: usize, suppressed: usize, worlds: usize, capped: bool) {
+    let n = |v: usize| u64::try_from(v).unwrap_or(u64::MAX);
+    crate::stage_timing::record("count.census_judged", n(judged));
+    crate::stage_timing::record("count.census_suppressed", n(suppressed));
+    crate::stage_timing::record("count.census_worlds", n(worlds));
+    crate::stage_timing::record("count.census_capped", u64::from(capped));
 }
