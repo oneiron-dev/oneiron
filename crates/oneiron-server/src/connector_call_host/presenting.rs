@@ -37,6 +37,9 @@ enum Door {
     },
     /// The custody record a `self.use` call names.
     Record(EntityId),
+    /// A record the use's own run found, presented through that run's seat
+    /// binding under the route effector's door policy (FIX 8334).
+    Run(EntityId, RunSecretHolder),
     /// The record the route's own secret name resolved to before the
     /// exchange was declared, presented by its id.
     Route(EntityId),
@@ -65,7 +68,10 @@ impl ServedConnectorCallHost {
                 target: SecretGrantTarget::Connector { name: route.name },
                 custody,
             }),
-            (None, Some(custody), _) => Some(Door::Record(custody)),
+            (None, Some(custody), _) => Some(match self.run {
+                Some(holder) => Door::Run(custody, holder),
+                None => Door::Record(custody),
+            }),
             (None, None, Some(secret_ref)) => {
                 Some(match self.vault.resolve_secret_ref(&secret_ref) {
                     Ok(Some(custody)) => Door::Route(custody),
@@ -76,7 +82,7 @@ impl ServedConnectorCallHost {
         };
         let text = match &door {
             Some(Door::Grant { custody, .. }) => self.vault.secret_clear_text(custody.as_ref()),
-            Some(Door::Record(custody) | Door::Route(custody)) => {
+            Some(Door::Record(custody) | Door::Route(custody) | Door::Run(custody, _)) => {
                 self.vault.secret_clear_text(Some(custody))
             }
             Some(Door::Unresolved) | None => String::new(),
@@ -128,6 +134,10 @@ impl Presenting {
             }
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
+                .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
+            // The record's handle text names it at the run's door.
+            Door::Run(custody, holder) => vault
+                .with_run_secret_for(&holder, &self.text, effector, &mut present)
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
             Door::Route(custody) => vault
                 .present_resolved_secret_at_door(&custody, effector, &mut present)
@@ -186,6 +196,9 @@ impl Presenting {
                 .is_ok(),
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
+                .is_ok(),
+            Door::Run(_, holder) => vault
+                .with_run_secret_for(&holder, &self.text, effector, &mut present)
                 .is_ok(),
             Door::Route(custody) => vault
                 .present_resolved_secret_at_door(&custody, effector, &mut present)

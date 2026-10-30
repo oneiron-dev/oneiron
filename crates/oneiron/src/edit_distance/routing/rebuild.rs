@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::keys::{
-    AGGREGATE, AggregateKey, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, aggregate_key,
+    AGGREGATE, AggregateKey, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, StoredHead,
+    aggregate_key,
 };
 use super::outcomes::run_outcome_in_txn;
 use super::write::{apply_fold, fold_of, head_of};
@@ -54,15 +55,18 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
             let outcome = run_outcome_in_txn(vault, &rtxn, judgment)?;
             // A judgment that holds keeps its binding and folds nothing.
             let mut counted = None;
+            let mut head = None;
             if let Some(fold) = fold_of(judgment, outcome)? {
                 counted.clone_from(&fold.outcome);
                 let key = aggregate_key(&head_of(judgment))?;
+                head = Some(StoredHead::from(&key));
                 apply_fold(rebuilt.entry(key).or_default(), fold)?;
             }
             let member = StoredExecutor {
                 v: ROW_VERSION,
                 executor: judgment.executor_key().to_owned(),
                 outcome: counted,
+                head,
             };
             members.push((receipt_id, member));
         }

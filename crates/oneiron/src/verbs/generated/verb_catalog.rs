@@ -11661,11 +11661,13 @@ impl AgentVerb {
                 "The owner stops one connector event subscription; the agent's key for the channel stays."
             }
             Self::VaultPacksSetupPrepare => {
-                "The owner opens, or resumes, a pack's guided setup; opening grants nothing."
+                "The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing."
             }
-            Self::VaultPacksSetupGet => "A pack's guided setup as it stands, for the owner.",
+            Self::VaultPacksSetupGet => {
+                "A pack's guided setup as it stands, for the owner or an agent acting for the owner."
+            }
             Self::VaultPacksSetupAnswer => {
-                "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."
+                "One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here."
             }
             Self::VaultPacksSetupVerify => {
                 "Checks one pack connection with the engine's fixed read-only provider call for its declared check."

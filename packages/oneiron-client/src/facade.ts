@@ -2734,9 +2734,9 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.connectors.subscriptions.put": { description: "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.subscriptions.list": { description: "An agent's connector event subscriptions, standing and revoked, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.connectors.subscriptions.revoke": { description: "The owner stops one connector event subscription; the agent's key for the channel stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.packs.setup.prepare": { description: "The owner opens, or resumes, a pack's guided setup; opening grants nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.packs.setup.get": { description: "A pack's guided setup as it stands, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.packs.setup.answer": { description: "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.setup.prepare": { description: "The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.setup.get": { description: "A pack's guided setup as it stands, for the owner or an agent acting for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.packs.setup.answer": { description: "One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.setup.verify": { description: "Checks one pack connection with the engine's fixed read-only provider call for its declared check.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.authority.audit": { description: "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.authority.history.export": { description: "Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -4463,11 +4463,11 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           },
         },
         setup: {
-          /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
+          /** The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing. */
           prepare: (input: Facade.PackSetupRequest, options?: O): FacadeReturns<"vault.packs.setup.prepare">[K] => invoke("vault.packs.setup.prepare", input, options, newInvocation()),
-          /** A pack's guided setup as it stands, for the owner. */
+          /** A pack's guided setup as it stands, for the owner or an agent acting for the owner. */
           get: (input: Facade.PackSetupRequest, options?: O): FacadeReturns<"vault.packs.setup.get">[K] => invoke("vault.packs.setup.get", input, options, newInvocation()),
-          /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
+          /** One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here. */
           answer: (input: Facade.PackSetupAnswerRequest, options?: O): FacadeReturns<"vault.packs.setup.answer">[K] => invoke("vault.packs.setup.answer", input, options, newInvocation()),
           /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
           verify: (input: Facade.PackSetupVerifyRequest, options?: O): FacadeReturns<"vault.packs.setup.verify">[K] => invoke("vault.packs.setup.verify", input, options, newInvocation()),

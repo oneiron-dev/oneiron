@@ -109,29 +109,34 @@ pub(crate) fn anchor_settlement_in_txn(
     if let Some(id) =
         lifecycle_receipt::settled_in(vault, txn, task, terminal.finished_at).map_err(refused)?
     {
-        return lifecycle_receipt::anchor_in(vault, txn, &id, kind, reference).map_err(refused);
-    }
-    let memory = vault.memory(by, EdgeActorClass::Human);
-    if !memory.keeps_lifecycle() {
-        return Ok(());
-    }
-    let mut lifecycle = memory.lifecycle_record(
-        &TaskVia::Wire,
-        SETTLED_CALL,
-        terminal.disposition.as_str(),
-        Some(task),
-        job,
-        terminal.finished_at,
-    );
-    lifecycle.fields.extend(anchor_fields(kind, reference));
-    let id = lifecycle_receipt::receipt_id(
-        SETTLED_CALL,
-        &[task.as_bytes(), by.as_bytes(), reference.as_bytes()],
-    )
-    .map_err(refused)?;
-    lifecycle_receipt::stamp_record_in(vault, txn, &lifecycle, id.clone(), None)
+        lifecycle_receipt::anchor_in(vault, txn, &id, kind, reference).map_err(refused)?;
+    } else {
+        let memory = vault.memory(by, EdgeActorClass::Human);
+        if !memory.keeps_lifecycle() {
+            return Ok(());
+        }
+        let mut lifecycle = memory.lifecycle_record(
+            &TaskVia::Wire,
+            SETTLED_CALL,
+            terminal.disposition.as_str(),
+            Some(task),
+            job,
+            terminal.finished_at,
+        );
+        lifecycle.fields.extend(anchor_fields(kind, reference));
+        let id = lifecycle_receipt::receipt_id(
+            SETTLED_CALL,
+            &[task.as_bytes(), by.as_bytes(), reference.as_bytes()],
+        )
         .map_err(refused)?;
-    lifecycle_receipt::mark_settled_in(vault, txn, &id).map_err(refused)
+        lifecycle_receipt::stamp_record_in(vault, txn, &lifecycle, id.clone(), None)
+            .map_err(refused)?;
+        lifecycle_receipt::mark_settled_in(vault, txn, &id).map_err(refused)?;
+    }
+    // The routing projection counts this anchor on the folds whose runs
+    // worked this TASK before it settled (FIX 11807).
+    crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, task);
+    Ok(())
 }
 
 /// [`anchor_settlement_in_txn`] for an owner's review `decision`: approved,

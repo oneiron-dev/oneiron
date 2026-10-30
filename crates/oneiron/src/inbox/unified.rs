@@ -19,9 +19,12 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeActorClass;
+use crate::edit_distance::miner::CompilationTarget;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::vault_shape::{ShapeApplyReceipt, ShapeInboxGroup};
+use crate::write_envelope::WriteActor;
 
 use super::model::{InboxBulkVerb, InboxBundleResolution, InboxGroup};
 use super::root_group::{OpenTray, RunGroups, root_group_card};
@@ -136,6 +139,36 @@ impl UnifiedInboxGroupCursor {
     }
 }
 
+/// The host's compilation target for a Dreamer answer, as the wire carries
+/// it: the [`CompilationTarget`] shape with a schema derive. Present it is
+/// authoritative (ARCH-0056).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", content = "text", rename_all = "snake_case")]
+pub enum InboxGroupResolveTarget {
+    /// Preserve the existing lexical-claim/content-skill-edit chooser.
+    Fallback,
+    /// Propose a prohibition. Does not install an enforcement rule.
+    Ban(String),
+    /// Propose an OF-332 style token. Does not supersede an expression head.
+    StyleRule(String),
+    /// Propose a line for the acting charter. Does not change its authority.
+    CharterLine(String),
+    /// Propose a brief update. Does not mutate a brief.
+    BriefUpdate(String),
+}
+
+impl From<&InboxGroupResolveTarget> for CompilationTarget {
+    fn from(value: &InboxGroupResolveTarget) -> Self {
+        match value {
+            InboxGroupResolveTarget::Fallback => Self::Fallback,
+            InboxGroupResolveTarget::Ban(text) => Self::Ban(text.clone()),
+            InboxGroupResolveTarget::StyleRule(text) => Self::StyleRule(text.clone()),
+            InboxGroupResolveTarget::CharterLine(text) => Self::CharterLine(text.clone()),
+            InboxGroupResolveTarget::BriefUpdate(text) => Self::BriefUpdate(text.clone()),
+        }
+    }
+}
+
 /// The owner's answer to one inbox group of either kind.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -148,6 +181,11 @@ pub struct InboxGroupResolveRequest {
     /// `conflict` rows. A shape group has no verb classes.
     #[serde(default)]
     pub verb_class: Option<String>,
+    /// The host's compilation target for a Dreamer answer. Absent keeps
+    /// today's path: no principal, no learning. Present is authoritative
+    /// (ARCH-0056). A shape group ignores it.
+    #[serde(default)]
+    pub target: Option<InboxGroupResolveTarget>,
 }
 
 /// What the owner's answer to a group did, by the group's kind.
@@ -239,14 +277,17 @@ impl Vault {
     }
 
     /// The owner's answer to the group `request` names, by its kind: a
-    /// Dreamer group's bundle consent ([`Vault::resolve_inbox_group_at`]), or
-    /// a shape apply's answer ([`Vault::resolve_shape_inbox_group`]), with
-    /// the host's slip issuer when it has one.
+    /// Dreamer group's bundle consent ([`Vault::resolve_inbox_group_at`], or
+    /// [`Vault::resolve_inbox_group_as_verb_class_at`] when the request
+    /// carries a target), or a shape apply's answer
+    /// ([`Vault::resolve_shape_inbox_group`]), with the host's slip issuer
+    /// when it has one.
     ///
     /// # Errors
     ///
     /// An owner proof that no longer holds, no open group of that kind and
-    /// key, a verb class named for a shape group, or a store failure.
+    /// key, a verb class named for a shape group, an invalid learning
+    /// target, or a store failure.
     pub fn resolve_inbox_group_of_kind(
         &self,
         owner: &AuthenticatedOwner,
@@ -256,15 +297,28 @@ impl Vault {
     ) -> Result<InboxGroupResolution> {
         match request.kind {
             InboxGroupKind::Dreamer => {
-                owner.revalidate(self)?;
-                Ok(InboxGroupResolution::Dreamer {
-                    resolution: self.resolve_inbox_group_at(
+                let owner_actor = owner.revalidate(self)?;
+                let resolution = match request.target.as_ref() {
+                    None => self.resolve_inbox_group_at(
                         &request.group_key,
                         request.verb,
                         request.verb_class.as_deref(),
                         now,
                     )?,
-                })
+                    Some(target) => {
+                        let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
+                        let target = CompilationTarget::from(target);
+                        self.resolve_inbox_group_as_verb_class_at(
+                            actor,
+                            &request.group_key,
+                            request.verb,
+                            request.verb_class.as_deref(),
+                            &target,
+                            now,
+                        )?
+                    }
+                };
+                Ok(InboxGroupResolution::Dreamer { resolution })
             }
             InboxGroupKind::Shape => {
                 if request.verb_class.is_some() {
@@ -283,5 +337,23 @@ impl Vault {
                 })
             }
         }
+    }
+
+    /// Resolves consent as a host-authenticated human over one verb class
+    /// and captures that principal's learning evidence atomically, as
+    /// [`Vault::resolve_inbox_group_as_at`] does for the whole group.
+    /// `target` is an explicit host classification, not permission to
+    /// install a rule.
+    pub fn resolve_inbox_group_as_verb_class_at(
+        &self,
+        actor: WriteActor,
+        group_key: &str,
+        verb: InboxBulkVerb,
+        verb_class: Option<&str>,
+        target: &CompilationTarget,
+        now: u64,
+    ) -> Result<InboxBundleResolution> {
+        target.validate()?;
+        self.resolve_inbox_group_bound_at(group_key, verb, verb_class, now, Some((actor, target)))
     }
 }

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1260 code-mode rows (1220 host rows, 40 run rows), 4428 declarations.
+// Census: 1260 code-mode rows (1220 host rows, 40 run rows), 4430 declarations.
 // Replies: 1072 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -405,7 +405,7 @@ declare namespace Sdk {
   type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number };
   type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type SpendState = "open" | "closed";
-  type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number };
+  type SpendPayer = { party: EntityId; granted_by?: EntityId | null; at_ms: number };
   type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
   type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
   type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
@@ -998,7 +998,8 @@ declare namespace Sdk {
   type UnifiedInboxGroup = { kind: "dreamer"; group: InboxGroup } | { kind: "shape"; group: ShapeInboxGroup };
   type UnifiedInboxGroupPage = { groups: UnifiedInboxGroup[]; next?: string | null };
   type InboxGroupKind = "dreamer" | "shape";
-  type InboxGroupResolveRequest = { kind: InboxGroupKind; group_key: string; verb: InboxBulkVerb; verb_class?: string | null };
+  type InboxGroupResolveTarget = { kind: "fallback" } | { kind: "ban"; text: string } | { kind: "style_rule"; text: string } | { kind: "charter_line"; text: string } | { kind: "brief_update"; text: string };
+  type InboxGroupResolveRequest = { kind: InboxGroupKind; group_key: string; verb: InboxBulkVerb; verb_class?: string | null; target?: InboxGroupResolveTarget | null };
   type InboxBundleResolution = { group_key: string; verb: InboxBulkVerb; bundle_ref: string; bundle_receipt: ReceiptRecord; item_receipts?: ReceiptRecord[]; review_items?: string[] };
   type InboxGroupResolution = { kind: "dreamer"; resolution: InboxBundleResolution } | { kind: "shape"; receipt: ShapeApplyReceipt };
   type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
@@ -1052,7 +1053,7 @@ declare namespace Sdk {
   type BudgetPolicyRef = string;
   type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef };
   type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref?: string | null; world_name?: string | null; reason: string; body: string };
-  type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number; notices?: WorldRecipientNotice[] };
+  type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number; notices?: WorldRecipientNotice[]; owner_activated?: PackCandidateReason[] };
   type PackPutReceipt = { outcome: PackPutOutcome; reason?: string | null; receipt?: PackInstallReceipt | null };
   type HubPackRequest = { name: string };
   type HubSkillImported = { entity: EntityId };
@@ -1123,7 +1124,7 @@ declare namespace Sdk {
   type HookOutcomeKind = "continue" | "rewrite" | "skip" | "ask" | "add_block" | "annotate" | "redact" | "propose" | "enqueue" | "effect" | "nothing";
   type HookRenderClass = "deterministic_eager" | "generative";
   type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass };
-  type HookAuthor = { kind: "owner" } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string };
+  type HookAuthor = { kind: "owner" } | { kind: "agent"; agent: string } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string };
   type PackHookBinding = { version: number; code: string; owner: string; source: string; pack: string; hook: string; hook_version: string; body_hash: string; selector: HookSelector; enabled: boolean; author: HookAuthor };
   type HookGrant = { reader: string; reader_class: HookActorClass; predicates?: string[]; worlds?: string[] };
   type HubHookBindingRow = { id: EntityId; binding: PackHookBinding; grant: HookGrant };
@@ -1138,7 +1139,7 @@ declare namespace Sdk {
   type HookReplayCompare = "same" | "differs" | "incomplete";
   type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "withheld"; reason: string } | { status: "missing_history"; reason: string };
   type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
-  type HubHookReplay = { hook: string; entries: HookReplayRow[] };
+  type HubHookReplay = { hook: string; entries: HookReplayRow[]; unreplayed: boolean };
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
   type PackTextFile = { path: string; text: string };
   type PackBytesFile = { path: string; content_base64: string };
@@ -1267,7 +1268,8 @@ declare namespace Sdk {
   type PackSetupConnectionState = { id: string; secrets: PackSetupSecretState[]; permissions: PackSetupPermissionState[]; connector_key?: string | null; check: PackSetupCheck; ready: boolean };
   type PackSetupView = { session_id: string; pack_name: string; description: string; version: string; source_id: string; content_hash: string; status: PackInstallStatus; setup: PackSetup; instructions: string; permissions: PackPermissions; connections: PackSetupConnectionState[]; ready: boolean };
   type PackSetupStoreSecret = { door: string; connection: string; name: string; effector: string };
-  type PackSetupReceipt = { setup: PackSetupView; cards: unknown[]; text: string; store_secret?: PackSetupStoreSecret | null };
+  type PackSetupOwnerAsk = { seq: number; door: string; connection: string; permissions: string[] };
+  type PackSetupReceipt = { setup: PackSetupView; cards: unknown[]; text: string; store_secret?: PackSetupStoreSecret | null; owner_ask?: PackSetupOwnerAsk | null };
   type PackSetupAnswer = { answer: "secret_stored"; connection: string; secret: string } | { answer: "allow"; connection: string; permissions: string[] } | { answer: "bind_key"; connection: string; key: string };
   type PackSetupCardActionInput = { action_id: string; state?: GeneratedUiStateSnapshot };
   type PackSetupAnswerRequest = { pack: string; source?: string | null; answer?: PackSetupAnswer | null; card_action?: PackSetupCardActionInput | null };
@@ -6609,11 +6611,11 @@ declare const vault: Sdk.VaultHost & {
       };
     };
     setup: {
-      /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
+      /** One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here. */
       answer(input: Sdk.PackSetupAnswerRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
-      /** A pack's guided setup as it stands, for the owner. */
+      /** A pack's guided setup as it stands, for the owner or an agent acting for the owner. */
       get(input: Sdk.PackSetupRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
-      /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
+      /** The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing. */
       prepare(input: Sdk.PackSetupRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
       /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
       verify(input: Sdk.PackSetupVerifyRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;

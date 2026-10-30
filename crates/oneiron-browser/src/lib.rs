@@ -174,6 +174,12 @@ pub enum BrowserError {
     CallTimeout(String),
     #[error("browser protocol: {0}")]
     Protocol(String),
+    /// FIX 11582: the browser answered a protocol call with an error, by
+    /// the call and its words. Its code is the protocol's own; the driver
+    /// tells it from a call the browser never answered (a timeout, a gone
+    /// guest) and from its own transport failures.
+    #[error("browser protocol: {0}")]
+    Answered(String),
     #[error("image {0} no longer shows the page as it is; take a new screenshot")]
     StaleImage(String),
     #[error("the routine step went up to the planner: {0}")]
@@ -579,7 +585,7 @@ impl BrowserError {
             Self::Url(_) => "browser_url_refused",
             Self::Navigation(_) => "browser_navigation_failed",
             Self::Timeout(_) | Self::CallTimeout(_) => "browser_timeout",
-            Self::Protocol(_) => "browser_protocol",
+            Self::Protocol(_) | Self::Answered(_) => "browser_protocol",
             Self::StaleImage(_) => "browser_stale_image",
             Self::AskUp(_) => "routine_ask_up",
             Self::Decider(_) => "routine_decider_failed",

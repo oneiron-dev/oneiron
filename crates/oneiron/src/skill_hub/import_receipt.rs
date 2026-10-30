@@ -31,6 +31,12 @@ const CODE_AUTO_INSTALL_REVISION: SideTable<(), u64, Raw> =
 /// Owner blocking rule on one canonical content hash; an absent row is off.
 const BLOCKED_HASH: SideTable<[u8; 32], MarketplaceSwitch, Raw> =
     SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_BLOCKED_HASH);
+/// Owner switch for turning a dependency advisory hit into one owner ask on
+/// a ready marketplace fit; an absent row is on.
+const ADVISORY_ASK: SideTable<(), MarketplaceSwitch, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_ADVISORY_ASK);
+/// The analysis bound a [`MarketplaceFitDecision`] keeps.
+const FIT_ANALYSIS_BYTES: usize = 512;
 
 /// One owner-set marketplace switch byte: `0` off, `1` on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +88,8 @@ impl MarketplaceFitDecision {
         static_scan: &crate::skill_hub::SkillScanReceipt,
     ) -> Result<Self> {
         let analysis = analysis.into();
-        if analysis.len() > 512 || (outcome != MarketplaceFit::Ready && analysis.trim().is_empty())
+        if analysis.len() > FIT_ANALYSIS_BYTES
+            || (outcome != MarketplaceFit::Ready && analysis.trim().is_empty())
         {
             return Err(invalid("marketplace fit analysis is missing or too long"));
         }
@@ -94,6 +101,59 @@ impl MarketplaceFitDecision {
             analysis,
             static_scan: static_scan.clone(),
         })
+    }
+
+    /// Binds the bytes' dependency advisories into this fit. Each advisory
+    /// id is named in the analysis the import receipt carries; with
+    /// `hit_asks`, a hit turns a ready fit into one owner ask. An ask or a
+    /// no-fit keeps its rung, so a hit never blocks or holds an install.
+    fn with_advisories(mut self, advisory_ids: &[String], hit_asks: bool) -> Self {
+        if advisory_ids.is_empty() {
+            return self;
+        }
+        let lead = if hit_asks && self.outcome == MarketplaceFit::Ready {
+            self.outcome = MarketplaceFit::Ask;
+            "dependency advisories ask the owner once: "
+        } else {
+            "dependency advisories: "
+        };
+        self.analysis = advisory_analysis(&self.analysis, lead, advisory_ids);
+        self
+    }
+}
+
+/// `analysis`, then `lead` and the advisory ids, within the analysis bound.
+/// The advisory note keeps at least half the bound: the analysis is cut at a
+/// character boundary to fit beside it, and ids that do not fit are counted,
+/// never dropped silently.
+fn advisory_analysis(analysis: &str, lead: &str, ids: &[String]) -> String {
+    // Room for the "; " separator and an " and N more" count.
+    let room = FIT_ANALYSIS_BYTES - analysis.len().min(FIT_ANALYSIS_BYTES / 2) - 2;
+    let mut note = String::from(lead);
+    let mut shown = 0_usize;
+    for id in ids {
+        let extra = id.len() + if shown == 0 { 0 } else { 2 };
+        if note.len() + extra + 24 > room {
+            break;
+        }
+        if shown > 0 {
+            note.push_str(", ");
+        }
+        note.push_str(id);
+        shown += 1;
+    }
+    let note = match (shown, ids.len() - shown) {
+        (_, 0) => note,
+        (0, more) => format!("{note}{more} advisories"),
+        (_, more) => format!("{note} and {more} more"),
+    };
+    let mut cut = analysis.len().min(FIT_ANALYSIS_BYTES - note.len() - 2);
+    while !analysis.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    match analysis[..cut].trim_end() {
+        "" => note,
+        kept => format!("{kept}; {note}"),
     }
 }
 
@@ -209,6 +269,41 @@ impl Vault {
         })
     }
 
+    /// Whether a dependency advisory hit turns a ready marketplace fit into
+    /// one owner ask: on unless the owner turned it off.
+    pub fn marketplace_advisory_ask(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(ADVISORY_ASK
+            .get(&self.store, &txn, &())?
+            .is_none_or(|MarketplaceSwitch(enabled)| enabled))
+    }
+
+    /// The owner sets whether a dependency advisory hit asks him once before
+    /// a ready marketplace install lands. The change is his own act,
+    /// consented once and spent in the same writer.
+    pub fn set_marketplace_advisory_ask(
+        &self,
+        owner: &AuthenticatedOwner,
+        enabled: bool,
+    ) -> Result<ConsentReceipt> {
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let nonce = self.store.clock.entity_id()?;
+            let effect = ComposedEffect::new(EffectFacts::new(format!(
+                "skill.marketplace.advisory-ask:{enabled}:{}",
+                nonce.to_hex()
+            ))?)
+            .digest();
+            let receipt = self.approve_once_in_txn(txn, owner, effect)?;
+            let authorization =
+                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
+                    .ok_or_else(|| invalid("marketplace advisory ask consent missing"))?;
+            ADVISORY_ASK.put(&self.store, txn, &(), &MarketplaceSwitch(enabled))?;
+            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            Ok(receipt)
+        })
+    }
+
     /// Fetches from a configured source and checks the publisher again at commit.
     /// Import, scan, activation and source receipt share one transaction.
     pub fn import_marketplace_skill_from_adapter<A: SkillHubAdapter>(
@@ -226,8 +321,8 @@ impl Vault {
     }
 
     /// The same import; with `advisories`, the bytes' OSV receipts are queried
-    /// before the writer and co-commit with the import, so the activation
-    /// consult reads them.
+    /// before the fit, bound into it, and co-commit with the import, so the
+    /// activation consult reads them.
     #[expect(
         clippy::too_many_arguments,
         reason = "the marketplace import plus an optional dependency advisory transport"

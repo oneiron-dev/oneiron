@@ -170,11 +170,54 @@ pub(super) struct StoredExecutor {
     pub(super) v: u8,
     pub(super) executor: String,
     /// The anchored task outcome this receipt's fold counted, so the
-    /// settle-time refold adjusts the head's counts instead of recounting
-    /// (FIX 11618). Absent on a row written before refolds, and on a fold
+    /// settle-time refold moves that count between the folded head and the
+    /// head the judgment names now instead of recounting (FIX 11618,
+    /// FIX 11707). Absent on a row written before refolds, and on a fold
     /// that counted none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<String>,
+    /// The head the fold counted on, in aggregate-key wire form, so the
+    /// settle-time refold moves the outcome count off the old head when a
+    /// receipt is re-judged onto another executor or scope (FIX 11707).
+    /// Absent on a row folded before the head was kept, and on a fold that
+    /// counted nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) head: Option<StoredHead>,
+}
+
+/// A folded aggregate head in wire form: the four [`AggregateKey`] parts as
+/// stored strings. [`AggregateKey`] itself is not `Serialize`, and the scope's
+/// type ref is not the key part's wire form, so the member row keeps the wire
+/// form (FIX 11707).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct StoredHead {
+    pub(super) task_class: String,
+    pub(super) measurement_version: String,
+    pub(super) type_ref: String,
+    pub(super) executor: String,
+}
+
+impl From<&AggregateKey> for StoredHead {
+    fn from(key: &AggregateKey) -> Self {
+        Self {
+            task_class: key.task_class.clone(),
+            measurement_version: key.measurement_version.clone(),
+            type_ref: key.type_ref.clone(),
+            executor: key.executor.clone(),
+        }
+    }
+}
+
+impl StoredHead {
+    /// The aggregate key this stored head names.
+    pub(super) fn key(&self) -> AggregateKey {
+        AggregateKey {
+            task_class: self.task_class.clone(),
+            measurement_version: self.measurement_version.clone(),
+            type_ref: self.type_ref.clone(),
+            executor: self.executor.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

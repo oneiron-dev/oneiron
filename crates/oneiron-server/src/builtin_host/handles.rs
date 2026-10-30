@@ -11,7 +11,7 @@ use oneiron::channel_identity_provider::{
 };
 use oneiron::skill_hub::pack_catalog::{CheckedBuiltinConnection, PackSetupSecret};
 
-use super::slack_app::{SlackInstalls, public_origin, slack_app_config};
+use super::slack_app::{public_origin, slack_app_config};
 use crate::config::LineConfig;
 
 /// The built-in Slack pack's connection, its request-signing secret and the
@@ -28,8 +28,6 @@ const LINE_CHANNEL_SECRET: &str = "line.channel_secret";
 pub(crate) struct BuiltinHandles {
     slack: RwLock<Option<Arc<SlackHandle>>>,
     line: RwLock<Option<Arc<LineHandle>>>,
-    /// The Slack app installs started by the owner, awaiting Slack's redirect.
-    pub(crate) slack_installs: SlackInstalls,
 }
 
 pub(crate) struct SlackHandle {

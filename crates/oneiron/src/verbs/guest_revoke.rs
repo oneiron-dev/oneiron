@@ -73,7 +73,7 @@ pub fn revoke_guest_embedded(
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         "vault.guests.revoke signs each pact disconnect with the host's own key; an embedded vault holds none",
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }
 
