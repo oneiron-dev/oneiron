@@ -30,7 +30,7 @@ impl Vault {
     pub(super) fn restore_image(
         mut image: CheckpointImage,
         checkpoint_id: String,
-        bodies: artifact::SealedBodies<'_>,
+        mut bodies: artifact::SealedBodies<'_>,
         destination: &Path,
         config: VaultConfig,
         reason: RestoreReason,
@@ -40,6 +40,12 @@ impl Vault {
         budget: &dyn RecoveryWriteBudget,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
         validate_image_rows_before_destination(&image)?;
+        // The compartments its payload is sealed in, carried apart from the
+        // image (KS7-5).
+        let sealed_payload = bodies.payload.take();
+        // A bare restore has no live source to name what was erased since
+        // the cut (FIX 4753).
+        let bare = matches!(custody, Custody::Keep | Custody::Landed | Custody::NewHost);
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
@@ -61,6 +67,26 @@ impl Vault {
                 source,
             )?
         };
+        // Every compartment opens through the same plan, before anything is
+        // made, so a fork copies its leaf with the rest; each entity row it
+        // holds is refused as the image's are, and the image's rows naming
+        // an owner that did not open go (KS7-5, FIX 6376).
+        let plan = gate_custody.plan_mut();
+        let opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let opened_entities = opened
+            .as_ref()
+            .map(super::payload::OpenedPayload::entity_rows)
+            .unwrap_or_default();
+        for (_, blob) in &opened_entities {
+            validate_checkpoint_entity_row(blob)?;
+        }
+        // An owner that did not open was erased since the cut: it goes as
+        // the source's erasures do.
+        let erased = match &opened {
+            Some(opened) => opened.carry_erasures(erased),
+            None => erased.clone(),
+        };
+        let payload_opened = opened.is_some();
         // Every body instance the rows name, through the plan the claim keys
         // share, so one fork copies both: missing refuses by name, retired
         // takes its rows out (KS-2A).
@@ -149,12 +175,20 @@ impl Vault {
                     db.put(txn, key, value)?;
                 }
             }
+            // Each compartment that opened lands beside them, through its
+            // getter's own restore (KS7-5).
+            if let Some(opened) = opened {
+                super::payload::restore_opened_in_txn(&vault.store, txn, opened)?;
+            }
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
             // transaction. A refusal discards the copy before it commits.
             vault
                 .store
                 .validate_checkpoint_entity_kinds_in_txn(&*txn, &image.databases["entities"])?;
+            if !opened_entities.is_empty() {
+                vault.store.validate_checkpoint_entity_kinds_in_txn(&*txn, &opened_entities)?;
+            }
             if fork {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
             }
@@ -173,7 +207,7 @@ impl Vault {
             // Open-time seed/backfill gates consult type indexes. Reconstruct this
             // mechanical projection before reopening; tokenizer/model work waits
             // until those compatibility gates have passed.
-            for (key, raw) in &image.databases["entities"] {
+            for (key, raw) in image.databases["entities"].iter().chain(&opened_entities) {
                 let id = crate::EntityId::from_bytes(
                     key.as_slice().try_into().map_err(|_| codec_error())?,
                 )?;
@@ -195,10 +229,10 @@ impl Vault {
             crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
             // What the live source erased after the cut, read before the
             // sweep below writes anything.
-            let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, erased)?;
+            let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
-            crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, erased)?;
+            crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, &erased)?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).
             response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;
@@ -295,10 +329,17 @@ impl Vault {
             opaque_responses: opaque.landed,
             credential_notes,
             pad_object_notes: Vec::new(),
+            // Until KS7-6, a bare restore's erasures after the cut reach it
+            // only through the compartments it opened (FIX 4753).
+            erasure_note: (bare && !payload_opened).then(|| BARE_ERASURE_NOTE.to_owned()),
         };
         Ok((made, forked, vault, report))
     }
 }
+
+/// What a bare restore's receipt says when no compartment carried the
+/// source's erasures after the cut to it (FIX 4753).
+const BARE_ERASURE_NOTE: &str = "erasures after the cut not applied";
 
 /// Refuses a row with no header, which the index rebuild refuses anyway; a
 /// body the local identity refusal turns away; or an AUTHORITY_LOG row whose

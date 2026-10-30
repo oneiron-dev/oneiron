@@ -300,6 +300,7 @@ pub struct RestoreReport {
     /// What it did not carry of its source's current pad objects (PAD-1);
     /// empty when it carried them all, or had none to carry.
     pub pad_object_notes: Vec<PadObjectNote>,
+    pub erasure_note: Option<String>,
 }
 /// What a restore over a live vault says about a table a home move carries
 /// (FIX 5661 C2b).
@@ -635,6 +636,7 @@ impl Vault {
             opaque_responses: 0,
             credential_notes: credential_custody::notes(&vault.store, credentials),
             pad_object_notes: Vec::new(),
+            erasure_note: None,
         };
         pad_objects::finish_activation(&vault, &live.pad_objects, landing, &mut report);
         Ok(report)
