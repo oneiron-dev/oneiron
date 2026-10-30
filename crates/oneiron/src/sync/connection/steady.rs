@@ -45,6 +45,8 @@ impl SyncConnection {
         let debounce_ms = u64::from(self.config.client_config.sync_debounce_ms).max(1);
         let mut debounce_buffer: Vec<LocalUpdate> = Vec::new();
         let mut document_buffer: Vec<Vec<u8>> = Vec::new();
+        // Window updates and documents lead the tick's batch in turn (FIX 8870).
+        let mut batch_turn = super::node_batch::NodeBatchTurn::default();
         // One owed artifact publication part at a time, outside the document
         // buffer, and where this connection stands in them (FIX 9575).
         let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
@@ -281,7 +283,7 @@ impl SyncConnection {
 
                     match self.flush_node_batch(
                         &mut write, client, &mut debounce_buffer, &mut document_buffer,
-                        &mut publication_slot,
+                        &mut publication_slot, &mut batch_turn,
                     ).await {
                         Err(error) => {
                             flush_to_queue(&self.queue, &mut debounce_buffer);
