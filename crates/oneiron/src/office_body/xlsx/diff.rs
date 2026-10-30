@@ -277,9 +277,13 @@ pub(super) fn moved(
 /// composed formats, the `sheets` layout and the `axes` row and column log.
 /// A unit both sides set differently is a conflict: last-writer-wins would
 /// drop one side's write silently. So is a cell or name one side wrote in a
-/// sheet the other side deleted, and every cell or name one side wrote while
-/// the other moved rows or columns, since its address may now name another
-/// cell.
+/// sheet the other side deleted. When one side moved rows or columns and
+/// the other did not, the other side's writes move by the same edits first
+/// (FIX 3036): a unit conflicts where both sides end up writing it, named by
+/// its address once both land, and a cell the edits delete conflicts by its
+/// written address. When both sides moved rows or columns differently,
+/// every cell or name one side wrote conflicts, since its address may now
+/// name another cell.
 pub(in crate::office_body) fn diff(
     base: &XlsxBody,
     current: &XlsxBody,
@@ -288,23 +292,10 @@ pub(in crate::office_body) fn diff(
 ) -> OfficeBodyDiff {
     let theirs = side(base, current);
     let ours = side(base, proposal);
-    let mut conflicts = Vec::new();
-    for (unit, (kind, state)) in &ours {
-        let Some((other, other_state)) = theirs.get(unit) else {
-            continue;
-        };
-        if state == other_state {
-            continue;
-        }
-        conflicts.push(BodyConflict {
-            block: unit.clone(),
-            kind: if *kind == ChangeKind::Deleted || *other == ChangeKind::Deleted {
-                ConflictKind::DeleteEdit
-            } else {
-                ConflictKind::BothSet
-            },
-        });
-    }
+    let shifted_conflicts = one_moved(base, current, proposal)
+        .and_then(|(mover, entries, writer)| moved_conflicts(base, mover, entries, writer).ok());
+    let translated = shifted_conflicts.is_some();
+    let mut conflicts = shifted_conflicts.unwrap_or_else(|| both_set(&ours, &theirs));
     let gone = |body: &XlsxBody| -> BTreeSet<String> {
         base.sheets
             .iter()
@@ -327,7 +318,7 @@ pub(in crate::office_body) fn diff(
         ours.get("axes").map(|(_, state)| state),
         theirs.get("axes").map(|(_, state)| state),
     );
-    if our_axes != their_axes {
+    if !translated && our_axes != their_axes {
         for (moved, written) in [(&ours, &theirs), (&theirs, &ours)] {
             if !moved.contains_key("axes") {
                 continue;
@@ -343,7 +334,7 @@ pub(in crate::office_body) fn diff(
             }
         }
     }
-    let list = |changes: BTreeMap<String, (ChangeKind, State<'_>)>| {
+    let list = |changes: Units<'_>| {
         changes
             .into_iter()
             .map(|(block, (kind, _))| BlockChange { block, kind })
@@ -359,6 +350,182 @@ pub(in crate::office_body) fn diff(
     }
 }
 
+/// One side's changed units, each with how it changed and its end state.
+type Units<'a> = BTreeMap<String, (ChangeKind, State<'a>)>;
+
+/// The units both sides changed to different end states.
+fn both_set(ours: &Units<'_>, theirs: &Units<'_>) -> Vec<BodyConflict> {
+    let mut conflicts = Vec::new();
+    for (unit, (kind, state)) in ours {
+        let Some((other, other_state)) = theirs.get(unit) else {
+            continue;
+        };
+        if state == other_state {
+            continue;
+        }
+        conflicts.push(BodyConflict {
+            block: unit.clone(),
+            kind: if *kind == ChangeKind::Deleted || *other == ChangeKind::Deleted {
+                ConflictKind::DeleteEdit
+            } else {
+                ConflictKind::BothSet
+            },
+        });
+    }
+    conflicts
+}
+
+/// When exactly one of `a` and `b` moved rows or columns since `base`, and
+/// kept its sheets as `base` laid them out: that side, its row and column
+/// edits since `base`, and the other side.
+fn one_moved<'a>(
+    base: &XlsxBody,
+    a: &'a XlsxBody,
+    b: &'a XlsxBody,
+) -> Option<(&'a XlsxBody, &'a [(String, XlsxAxisEdit)], &'a XlsxBody)> {
+    let entries = |side: &'a XlsxBody| side.axes.strip_prefix(base.axes.as_slice());
+    let (mover, moves, writer) = match (entries(a)?, entries(b)?) {
+        (moves, []) if !moves.is_empty() => (a, moves, b),
+        ([], moves) if !moves.is_empty() => (b, moves, a),
+        _ => return None,
+    };
+    // A side that renamed a sheet too moved its formulas under the new name.
+    (layout(mover) == layout(base)).then_some((mover, moves, writer))
+}
+
+/// `body` with `entries`, another side's row and column edits, applied to
+/// each of its sheets by key; a sheet `body` does not hold skips them.
+fn shifted(body: &XlsxBody, entries: &[(String, XlsxAxisEdit)]) -> Result<XlsxBody> {
+    let mut out = body.clone();
+    for (key, edit) in entries {
+        let Some(name) = out
+            .sheets
+            .iter()
+            .find(|sheet| sheet.key == *key)
+            .map(|sheet| sheet.name.clone())
+        else {
+            continue;
+        };
+        axis(&mut out, key, &name, edit, false)?;
+    }
+    Ok(out)
+}
+
+/// The conflicts of `writer`'s writes with `mover`'s, which moved rows or
+/// columns by `entries` since `base`: both read once the edits moved
+/// `writer`'s writes, plus each cell `writer` wrote that the edits delete.
+fn moved_conflicts(
+    base: &XlsxBody,
+    mover: &XlsxBody,
+    entries: &[(String, XlsxAxisEdit)],
+    writer: &XlsxBody,
+) -> Result<Vec<BodyConflict>> {
+    let (moved_base, moved_writer) = (shifted(base, entries)?, shifted(writer, entries)?);
+    let mut conflicts = both_set(&side(&moved_base, &moved_writer), &side(&moved_base, mover));
+    for unit in side(base, writer).into_keys() {
+        if unit.starts_with("name:") || unit.starts_with("format:") {
+            continue;
+        }
+        let Some((key, (col, row))) = unit
+            .rsplit_once('!')
+            .and_then(|(key, address)| Some((key, parse_a1(address)?)))
+        else {
+            continue;
+        };
+        let kept = entries
+            .iter()
+            .filter(|(sheet, _)| sheet == key)
+            .try_fold((col, row), |at, (_, edit)| edit.cell(at));
+        if kept.is_none() {
+            conflicts.push(BodyConflict {
+                block: unit,
+                kind: ConflictKind::DeleteEdit,
+            });
+        }
+    }
+    Ok(conflicts)
+}
+
+/// The body a fork's landing leaves when one side moved rows or columns and
+/// the other did not (FIX 3036): `merged`, the two documents merged, with
+/// the moving side's cells, read-only ranges, tables, names and log, and the
+/// other side's cell and name writes moved by the same edits. `None` when no
+/// side's writes move, or the merge already reads so.
+pub(in crate::office_body) fn landed(
+    base: &XlsxBody,
+    current: &XlsxBody,
+    proposal: &XlsxBody,
+    merged: &XlsxBody,
+) -> Result<Option<XlsxBody>> {
+    let Some((mover, entries, writer)) = one_moved(base, current, proposal) else {
+        return Ok(None);
+    };
+    let (base, writer) = (shifted(base, entries)?, shifted(writer, entries)?);
+    let mut out = merged.clone();
+    out.axes.clone_from(&mover.axes);
+    let empty = BTreeMap::new();
+    for sheet in &mut out.sheets {
+        let after = writer.sheets.iter().find(|held| held.key == sheet.key);
+        let Some(held) = mover.sheets.iter().find(|held| held.key == sheet.key) else {
+            // A sheet only the writer has holds its cells, formulas moved.
+            if let Some(after) = after {
+                sheet.cells.clone_from(&after.cells);
+            }
+            continue;
+        };
+        sheet.cells.clone_from(&held.cells);
+        sheet.locked.clone_from(&held.locked);
+        sheet.tables.clone_from(&held.tables);
+        let Some(after) = after else {
+            continue;
+        };
+        let before = base
+            .sheets
+            .iter()
+            .find(|held| held.key == sheet.key)
+            .map_or(&empty, |held| &held.cells);
+        let addresses: BTreeSet<(u32, u32)> =
+            before.keys().chain(after.cells.keys()).copied().collect();
+        for at in addresses {
+            let (old, new) = (before.get(&at), after.cells.get(&at));
+            if same_cell(old, new) {
+                continue;
+            }
+            match new {
+                Some(cell) => sheet.cells.insert(at, cell.clone()),
+                None => sheet.cells.remove(&at),
+            };
+        }
+    }
+    let mut names = mover.names.clone();
+    let keys: BTreeSet<&String> = base.names.keys().chain(writer.names.keys()).collect();
+    for key in keys {
+        let (old, new) = (base.names.get(key), writer.names.get(key));
+        if same_name(old, new) {
+            continue;
+        }
+        match new {
+            Some(name) => names.insert(key.clone(), name.clone()),
+            None => names.remove(key),
+        };
+    }
+    // A name that reads as the merge left it keeps that read.
+    out.names = names
+        .into_iter()
+        .map(|(key, name)| match merged.names.get(&key) {
+            Some(held) if same_name(Some(held), Some(&name)) => (key, held.clone()),
+            _ => (key, name),
+        })
+        .collect();
+    Ok((out != *merged).then_some(out))
+}
+
+/// Write `after` over the document's current state.
+pub(in crate::office_body) fn write_body(doc: &LoroDoc, after: &XlsxBody) -> Result<()> {
+    let before = read(doc)?;
+    super::axis::write_back(doc, &before, after)
+}
+
 /// One unit's end state on a side, for comparing the sides.
 #[derive(Debug, PartialEq)]
 pub(super) enum State<'a> {
@@ -369,10 +536,7 @@ pub(super) enum State<'a> {
     Format(&'a XlsxFormat),
 }
 
-pub(super) fn side<'a>(
-    base: &XlsxBody,
-    other: &'a XlsxBody,
-) -> BTreeMap<String, (ChangeKind, State<'a>)> {
+pub(super) fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> Units<'a> {
     let mut changes = BTreeMap::new();
     if layout(base) != layout(other) {
         changes.insert(
