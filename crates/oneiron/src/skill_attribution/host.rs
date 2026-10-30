@@ -56,6 +56,11 @@ const SOLO_ROLE: &str = "solo";
 /// The role a team run's member plays.
 const MEMBER_ROLE: &str = "member";
 
+/// Whether bound attribution is a solo run's: the single `solo` role.
+pub(crate) fn is_solo_attribution(fields: &PackAttributionFields) -> bool {
+    matches!(fields.team_shape.as_slice(), [role] if role == SOLO_ROLE)
+}
+
 /// Binds the execution context of the leased agent run `attempt`, once.
 /// Returns whether it bound one now: a run that is no agent dispatch, no
 /// longer holds `lease_owner`'s lease, already carries one, or names no
