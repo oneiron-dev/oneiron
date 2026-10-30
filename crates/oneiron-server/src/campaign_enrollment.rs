@@ -41,6 +41,12 @@ const PUMP_ATTEMPTS: usize = 32;
 const LEASE_OWNER: &str = "oneiron-server-campaign-enrollment";
 /// Recorded on an attempt whose reason does not fit the queue's bound.
 const FAILED: &str = "the campaign enrollment attempt failed";
+/// First wait between a Gate-held send's re-drives (FIX 11514).
+const HOLD_REDRIVE_BASE_SECS: u64 = 30;
+/// Longest wait between a Gate-held send's re-drives (FIX 11514).
+const HOLD_REDRIVE_MAX_SECS: u64 = 15 * 60;
+/// Re-arms after which a Gate-held send fails instead (~2 days at the ceiling, FIX 11514).
+const HOLD_REDRIVE_MAX_ATTEMPTS: u32 = 192;
 /// The built-in native mail pack connection whose checked credential opens
 /// the host's Stalwart client for a campaign send (FIX 11642).
 const NATIVE_MAIL_PACK: &str = "oneiron.native_mail";
@@ -234,8 +240,9 @@ async fn execute(
 /// Runs the outward leg of `attempt` on the campaign channel sender
 /// (FIX 2636, FIX 11513, FIX 11642). `None` when the designation moved
 /// before the send: the row stays leased for the new home node. A Gate hold
-/// waits on the owner's press and fails the attempt with its digest, as a
-/// review hold does.
+/// waits on the owner's press and re-arms the attempt until the press lands
+/// or the wait ends (FIX 11514); past the wait it fails with the digest,
+/// as a review hold does.
 fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Settlement> {
     let vault = server.vault();
     let sender = CampaignChannelSender::new(
@@ -255,16 +262,52 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
         Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {
             Settlement::Complete
         }
-        Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => Settlement::Fail(format!(
-            "a campaign send awaits the owner's approval press on {approval_digest}"
-        )),
+        // FIX 11514: only this arm re-arms; a press on the digest re-drives
+        // the send, and every other arm below is unchanged.
+        Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => {
+            hold_redrive(vault, attempt, &approval_digest)
+        }
         // FIX 12176: a paced send waits out its window, then resends.
-        Ok(EnrollmentLegDrive::Paced { retry_at }) => Settlement::RetryAt(retry_at),
+        Ok(EnrollmentLegDrive::Paced { retry_at }) => Settlement::RetryAt {
+            until: retry_at,
+            last_error: None,
+        },
         Ok(EnrollmentLegDrive::NotHomeNode(_) | EnrollmentLegDrive::NoHomeNode) => return None,
         // The reason is recorded on the attempt, not logged: it can quote
         // the vault.
         Err(error) => Settlement::Fail(error.to_string()),
     })
+}
+
+/// How a Gate-held campaign send settles (FIX 11514): under the re-arm cap
+/// it retries at a doubling backoff, past the cap it fails with the digest.
+/// The depth is the row's `retry_of` lineage (`retry_chain_depth`), not its
+/// `attempt_count`: a retry mints a fresh row whose lease counter restarts
+/// at zero, so the counter cannot key a backoff. A broken chain fails
+/// closed, as the hold did before this fix. The digest in `last_error`
+/// lands on the finalized source row; the successor's digest is recomputed
+/// on re-drive, not stored (verify45-11514 (d)).
+fn hold_redrive(vault: &Vault, attempt: &AttemptRecord, approval_digest: &str) -> Settlement {
+    let now = vault.now_recorded_at();
+    match AttemptQueue::new(vault).retry_chain_depth(attempt.id) {
+        Ok(depth) if depth < HOLD_REDRIVE_MAX_ATTEMPTS => {
+            let backoff = HOLD_REDRIVE_BASE_SECS
+                .saturating_mul(1u64 << depth.min(31))
+                .min(HOLD_REDRIVE_MAX_SECS);
+            Settlement::RetryAt {
+                until: now.saturating_add(backoff),
+                last_error: Some(format!(
+                    "a campaign send awaits the owner's approval press on {approval_digest}; a press on it re-drives the send"
+                )),
+            }
+        }
+        Ok(_) => Settlement::Fail(format!(
+            "a campaign send awaited the owner's approval press on {approval_digest}, which never came within the wait"
+        )),
+        Err(_) => Settlement::Fail(format!(
+            "a campaign send awaited the owner's approval press on {approval_digest}, but its retry chain is unreadable, so the wait ends here"
+        )),
+    }
 }
 
 /// The host-owned Stalwart client for one campaign send (FIX 11642), or
@@ -311,8 +354,13 @@ fn campaign_stalwart_client(server: &SyncServer) -> Option<StalwartClient> {
 /// How one executed attempt settles.
 enum Settlement {
     Complete,
-    /// The member's saved pause falls due at this instant (FIX 9662).
-    RetryAt(u64),
+    /// The member's saved pause falls due at this instant (FIX 9662), or a
+    /// Gate-held send re-drives then (FIX 11514); `last_error` stamps the
+    /// finalized source row only.
+    RetryAt {
+        until: u64,
+        last_error: Option<String>,
+    },
     Fail(String),
 }
 
@@ -331,7 +379,10 @@ fn membership_settlement(executed: oneiron::Result<EnrollmentExecution>) -> Opti
             | EnrollmentExecution::SkippedStale
             | EnrollmentExecution::RejectedStaleEpoch { .. },
         ) => Settlement::Complete,
-        Ok(EnrollmentExecution::DeferredUntil { until }) => Settlement::RetryAt(until),
+        Ok(EnrollmentExecution::DeferredUntil { until }) => Settlement::RetryAt {
+            until,
+            last_error: None,
+        },
         Ok(EnrollmentExecution::ReviewRequired { cause }) => Settlement::Fail(format!(
             "a {} enrollment awaits the owner's review",
             cause.as_str()
@@ -367,13 +418,13 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, settlement: Settlement) {
                 now,
             })
             .map(drop),
-        Settlement::RetryAt(until) => queue
+        Settlement::RetryAt { until, last_error } => queue
             .retry(RetryAttempt {
                 id: attempt.id,
                 lease_owner: LEASE_OWNER.to_owned(),
                 attempt_count: attempt.attempt_count,
                 backoff_until: until,
-                last_error: None,
+                last_error,
                 now,
             })
             .map(drop),
