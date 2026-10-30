@@ -12,8 +12,9 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::note::{
-    FileOriginal, FilesWorld, FolderFile, FolderFileState, FolderRescan, FolderRescanReport,
-    FolderSource, ImportedFile, ImportedNote, ImportedNoteStanding,
+    FileFacts, FileOriginal, FilesWorld, FolderFile, FolderFileState, FolderRescan,
+    FolderRescanReport, FolderSource, FolderSourceFile, ImportedFile, ImportedNote,
+    ImportedNoteStanding, NameOnlyFile,
 };
 use oneiron::task_verb::sdk::{
     self, FilesLimitCrossed, FilesOriginalsUnkept, FilesRescanView, FilesSourceAttachAnswer,
@@ -22,9 +23,10 @@ use oneiron::task_verb::sdk::{
 use serde::Serialize;
 
 use super::ImportWarning;
+use super::present_links::resolve_present_links;
 use super::reader::{
     FILES_PART_MARK, Note, NoteCounts, PART_MARK, TitleCounts, choose_title, crossed_rows,
-    earlier_titles, file_of, read_folder, resolve_links,
+    earlier_titles, file_of, read_folder_rescan, resolve_links,
 };
 
 /// One rescan as stdout shows it: its counts, or why it read nothing.
@@ -139,9 +141,16 @@ pub(crate) fn files_attached(
     })
 }
 
+/// Whether a rescan skips the read and hash of a file whose size and mtime
+/// both match the last scan's record for that path (FIX 1365): an mtime
+/// shortcut, never a watcher. A content change that keeps both size and
+/// mtime is not seen until the next real change.
+const RESCAN_MTIME_SHORTCUT: bool = true;
+
 /// One rescan: the folder read as its source reads it, the files the
 /// source includes, each against the vault and the ledger; and the
-/// `[limits]` rows the read crossed.
+/// `[limits]` rows the read crossed. A file the last scan recorded with the
+/// same size and mtime is not read again.
 pub(crate) fn rescan(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
@@ -163,25 +172,36 @@ pub(crate) fn rescan(
     } else {
         PART_MARK
     };
-    let (mut notes, mut name_only, facts) = match &source.files {
-        Some(files) => {
-            let read = super::files::read_files(folder, &files.exclude, &mut counts)?;
-            (read.notes, read.name_only, read.facts)
-        }
-        None => {
-            let (notes, name_only) = read_folder(folder, &mut counts)?;
-            (notes, name_only, HashMap::new())
-        }
-    };
+    // What the last scan recorded of each file still worth skipping: its
+    // size and mtime. A retracted file is read again, so a returning file
+    // restores its note; a file with no record is read as today.
+    let ledger = vault.folder_source_files(&source.folder)?;
+    let prior = prior_files(&ledger);
+    let prior = RESCAN_MTIME_SHORTCUT.then_some(&prior);
+    let (mut notes, mut name_only, mut facts, mut skipped) =
+        read_for_rescan(source, folder, &mut counts, prior)?;
+    let mut standings = standings_of(vault, &namespace, &notes)?;
+    // A new note's inbound links, and a changed note's outbound ones, come
+    // from the whole folder, skipped files included: with a new or changed
+    // note the folder is read again, whole, so no live edge reads as dropped
+    // when the rescan reconciles a superseded note's links (FIX 1363).
+    if !skipped.is_empty()
+        && standings.iter().any(|standing| {
+            matches!(
+                standing,
+                ImportedNoteStanding::New | ImportedNoteStanding::Changed
+            )
+        })
+    {
+        counts = NoteCounts::default();
+        (notes, name_only, facts, skipped) = read_for_rescan(source, folder, &mut counts, None)?;
+        standings = standings_of(vault, &namespace, &notes)?;
+    }
     let mut warnings = crossed_rows(vault, &counts);
-    // A part goes with its file.
-    notes.retain(|note| included(&source.include, note.file()));
-    name_only.retain(|file| included(&source.include, &file.path));
     let raw_hashes = notes
         .iter()
         .filter_map(|note| Some((note.path.clone(), note.raw_hash.clone()?)))
         .collect::<HashMap<_, _>>();
-    let ledger = vault.folder_source_files(&source.folder)?;
     let seen = notes
         .iter()
         .map(|note| note.path.as_str())
@@ -205,19 +225,20 @@ pub(crate) fn rescan(
     // A folder emptied of its last file retracts that file too (ARCH-0027).
     // Retraction archives, and a returning file restores its note, so a
     // mount point read empty loses nothing.
-    let standings = vault.imported_note_standings(
-        &namespace,
-        &notes
-            .iter()
-            .map(|note| ImportedFile {
-                path: &note.path,
-                markdown: &note.markdown,
-                decoded: &note.decoded,
-            })
-            .collect::<Vec<_>>(),
-    )?;
     let earlier_titles = earlier_titles(vault, &namespace, &notes, &standings)?;
     let (links, _) = resolve_links(&notes, &standings, &earlier_titles);
+    // Every present file's links as its text holds them now: the rescan
+    // reconciles a superseded note's edges to them. Only a whole read
+    // resolves them; a read that skipped files leaves every file's alone.
+    let present_links = resolve_present_links(&notes, &standings);
+    let mut present_targets: HashMap<&str, Vec<String>> = HashMap::new();
+    for link in &present_links {
+        present_targets
+            .entry(link.from.as_str())
+            .or_insert_with(Vec::new)
+            .push(link.to.clone());
+    }
+    let links_complete = skipped.is_empty();
     let mut known_kinds = HashMap::new();
     let mut taken = HashSet::new();
     let mut titles = TitleCounts::default();
@@ -229,6 +250,8 @@ pub(crate) fn rescan(
             present.push(FolderFile {
                 path: note.path.clone(),
                 markdown,
+                links: links_complete
+                    .then(|| present_targets.remove(note.path.as_str()).unwrap_or_default()),
             });
             continue;
         }
@@ -260,7 +283,7 @@ pub(crate) fn rescan(
             name_only_originals.push((file.path.clone(), original));
         }
     }
-    let report = vault.rescan_folder_source(
+    let mut report = vault.rescan_folder_source(
         owner,
         FolderRescan {
             folder: source.folder.clone(),
@@ -273,6 +296,9 @@ pub(crate) fn rescan(
             facts,
         },
     )?;
+    // Skipped files keep what the ledger holds: each counts as unchanged,
+    // as the reconcile counts the files it read and found the same.
+    report.unchanged += skipped.len();
     // The notes have landed: what keeping their originals meets is said
     // beside the report, never in place of it.
     warnings.extend(keep_originals(
@@ -284,6 +310,72 @@ pub(crate) fn rescan(
         &name_only_originals,
     ));
     Ok((report, warnings))
+}
+
+/// What the last scan recorded of each file a rescan may skip: its size
+/// and mtime, by path. Only a file the ledger still holds counts.
+fn prior_files(ledger: &[FolderSourceFile]) -> HashMap<String, FileFacts> {
+    ledger
+        .iter()
+        .filter(|file| !matches!(file.state, FolderFileState::Retracted))
+        .filter_map(|file| {
+            let meta = file.meta?;
+            Some((
+                file.path.clone(),
+                FileFacts {
+                    bytes: meta.bytes,
+                    modified_at: meta.modified_at,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// One read of `source`'s folder for a rescan: its notes, the files held by
+/// name, the facts of every file read, and the included paths the shortcut
+/// skipped.
+fn read_for_rescan(
+    source: &FolderSource,
+    folder: &Path,
+    counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
+) -> anyhow::Result<(
+    Vec<Note>,
+    Vec<NameOnlyFile>,
+    HashMap<String, FileFacts>,
+    Vec<String>,
+)> {
+    let (mut notes, mut name_only, facts, mut skipped) = match &source.files {
+        Some(files) => {
+            let read = super::files::read_files(folder, &files.exclude, counts, prior)?;
+            (read.notes, read.name_only, read.facts, read.skipped)
+        }
+        None => read_folder_rescan(folder, counts, prior)?,
+    };
+    // A part goes with its file.
+    notes.retain(|note| included(&source.include, note.file()));
+    name_only.retain(|file| included(&source.include, &file.path));
+    skipped.retain(|path| included(&source.include, path));
+    Ok((notes, name_only, facts, skipped))
+}
+
+/// What the vault holds of each note read: new, changed or as it was.
+fn standings_of(
+    vault: &oneiron::Vault,
+    namespace: &str,
+    notes: &[Note],
+) -> anyhow::Result<Vec<ImportedNoteStanding>> {
+    Ok(vault.imported_note_standings(
+        namespace,
+        &notes
+            .iter()
+            .map(|note| ImportedFile {
+                path: &note.path,
+                markdown: &note.markdown,
+                decoded: &note.decoded,
+            })
+            .collect::<Vec<_>>(),
+    )?)
 }
 
 /// Keeps the original of each file the rescan read whose note the ledger

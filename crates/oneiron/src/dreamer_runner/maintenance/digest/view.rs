@@ -259,7 +259,11 @@ pub(super) fn render(
         rendered.push_str(&group_line(presentation, group));
         for ask in &digest.judge_asks {
             let reference = crate::entity_id::bytes_to_hex_lower(&ask.id);
-            rendered.push_str(&item_line(presentation, &judge_ask_summary(ask), &reference));
+            rendered.push_str(&item_line(
+                presentation,
+                &judge_ask_summary(ask),
+                &reference,
+            ));
         }
     }
     if !digest.eval_label_asks.is_empty() {

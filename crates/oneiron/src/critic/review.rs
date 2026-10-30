@@ -13,8 +13,8 @@ pub use dissent::{
 };
 mod persistence;
 mod questions;
-pub use outcomes::{record_review_outcome, recurring_findings};
 pub(crate) use outcomes::rewrite_outcome_artifact_ids_in_txn;
+pub use outcomes::{record_review_outcome, recurring_findings};
 use persistence::*;
 pub(crate) use persistence::{
     DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,

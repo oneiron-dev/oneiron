@@ -392,8 +392,7 @@ pub fn finalize_claim_tournament(
             .as_ref()
             .ok_or(invalid("the tournament result names no winner"))?;
         if !evidence.iter().any(|row| {
-            row.branch_attempt == winner.branch_attempt
-                && row.candidate_ref == winner.candidate_ref
+            row.branch_attempt == winner.branch_attempt && row.candidate_ref == winner.candidate_ref
         }) {
             return Err(invalid(
                 "the tournament winner has no persisted branch evidence",
