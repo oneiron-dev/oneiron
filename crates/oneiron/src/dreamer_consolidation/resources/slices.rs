@@ -62,6 +62,19 @@ impl BranchResources<'_> {
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
             let pages = known.pages(|id| self.priors.contains_key(id));
+            // What paging costs, measured where it happens (FIX 10354): each
+            // chunk of the group makes one call per page. Sharing one
+            // extraction across a listing's pages waits on these numbers.
+            if pages.len() > 1 {
+                tracing::info!(
+                    target: "oneiron::dreamer",
+                    code = "listing_paged",
+                    pages = pages.len(),
+                    chunks = group.chunks(turns_per_child).len(),
+                    entities = entities.len(),
+                    "a child's listing pages into more than one extraction call"
+                );
+            }
             for chunk in group.chunks(turns_per_child) {
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
                 let parents: BTreeSet<_> = ids.iter().filter_map(|id| self.turns.get(id)).collect();
