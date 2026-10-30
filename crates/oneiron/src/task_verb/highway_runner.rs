@@ -278,7 +278,7 @@ pub(super) fn runner_actor_in(
         && payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
     {
         let input = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)?;
-        return crate::agent_dispatch::agent_dispatch_actor(&input).map(Some);
+        return crate::agent_dispatch::agent_dispatch_run_actor(&input, record.id).map(Some);
     }
     if let Some(stamp) = vault.dreamer_attempt_authority_in_txn(txn, record.id)? {
         return Ok(Some(WriteActor::new(stamp.actor, EdgeActorClass::System)));
