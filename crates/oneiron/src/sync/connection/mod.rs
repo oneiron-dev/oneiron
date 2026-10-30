@@ -38,6 +38,7 @@ mod home_search;
 mod node_batch;
 mod note_reads;
 mod residence_mode;
+mod server_close;
 mod session;
 mod steady;
 mod topology;
@@ -671,6 +672,10 @@ enum LoopExit {
     Shutdown,
     /// WebSocket disconnected (with error description).
     Disconnected(String),
+    /// The server closed the socket with a close frame, read by its code
+    /// (FIX 5927): a server fault takes the retry path, a refusal is
+    /// reported as one.
+    Closed(server_close::ServerClose),
     /// The residence mode changed (FIX 8869): what was buffered is queued,
     /// and the next connect sends the new mode's hello.
     Renegotiate,

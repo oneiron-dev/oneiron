@@ -14,6 +14,7 @@ use crate::sync::types::parse_window_key_str;
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
 
+use super::server_close::ServerClose;
 use super::session::{
     EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, MACHINE_HISTORY_FETCH_TASKS,
     MACHINE_HISTORY_RETRY_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS,
@@ -135,8 +136,14 @@ impl SyncConnection {
                                 return LoopExit::Disconnected(format!("Pong failed: {e}"));
                             }
                         }
-                        Some(Ok(Message::Close(_))) | None => {
-                            // Flush debounce buffer before disconnecting
+                        Some(Ok(Message::Close(frame))) => {
+                            // Flush debounce buffer before disconnecting; the
+                            // close code tells a server fault from a refusal
+                            // (FIX 5927).
+                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            return LoopExit::Closed(ServerClose::read(frame.as_ref()));
+                        }
+                        None => {
                             flush_to_queue(&self.queue, &mut debounce_buffer);
                             return LoopExit::Disconnected("Server closed connection".to_string());
                         }

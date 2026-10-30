@@ -10,6 +10,7 @@ use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::queue::QueuedUpdate;
 
 use super::SyncConnection;
+use super::server_close::ServerClose;
 use super::session::{
     ConvergenceSession, FullResyncMarker, ITEM11_REBOOTSTRAP_UNREADABLE, MAX_CONVERGENCE_ROUNDS,
     PumpBudget, WsSink, WsSource,
@@ -287,8 +288,9 @@ impl SyncConnection {
                         .map_err(|e| format!("Pong failed: {e}"))?;
                 }
                 Some(Ok(Message::Pong(_) | Message::Text(_) | Message::Frame(_))) => {}
+                // The close code tells a server fault from a refusal (FIX 5927).
                 Some(Ok(Message::Close(frame))) => {
-                    return Err(format!("Server closed connection: {frame:?}"));
+                    return Err(ServerClose::read(frame.as_ref()).to_string());
                 }
                 Some(Err(e)) => return Err(format!("WS error: {e}")),
                 None => return Err("WS stream ended".to_string()),
