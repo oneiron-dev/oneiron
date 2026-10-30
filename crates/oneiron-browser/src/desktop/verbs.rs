@@ -179,21 +179,21 @@ impl BrowserDriver for DesktopSession {
         let class = effect_class(&line.row.name);
         let press = self.press_or_hold("click", &input, class, Some(&line.row), &snapshot)?;
         let pid = snapshot.key.pid;
-        let mut observation = self.act(&snapshot, &Base::of(input.base), |session| {
+        let acted = self.act(&snapshot, &Base::of(input.base), |session| {
             session
                 .input("click", json!({"pid": pid, "element_token": token}))
                 .map_err(|e| refusal(e, Some(input.target.as_str())))
-        })?;
+        });
         let class = receipt_class(class, Some(&line.row));
-        self.receipt(
+        self.sent(
             "click",
+            &snapshot,
             Some(&line.row),
             class,
             press,
-            &mut observation,
             started,
-        );
-        Ok(observation)
+            acted,
+        )
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
@@ -218,8 +218,8 @@ impl BrowserDriver for DesktopSession {
             target: &input.target,
             clear: input.clear,
         };
-        let (class, press, mut observation) = match entry {
-            Entry::Text(text) => self.enter(&typing, &line.row, text, &operands)?,
+        let observation = match entry {
+            Entry::Text(text) => self.enter(&typing, &line.row, text, &operands, started)?,
             // The secret's bytes come from the custody at the send itself,
             // and its line-break check reads them there; the field reads
             // as that secret from then on.
@@ -230,7 +230,7 @@ impl BrowserDriver for DesktopSession {
                 let secrets = self.secrets.clone();
                 let mut entered = None;
                 secrets.with_value(handle, SecretUse::Type, &mut |text: &str| {
-                    entered = Some(self.enter(&typing, &line.row, text, &operands)?);
+                    entered = Some(self.enter(&typing, &line.row, text, &operands, started)?);
                     Ok(())
                 })?;
                 entered.ok_or_else(|| {
@@ -238,14 +238,6 @@ impl BrowserDriver for DesktopSession {
                 })?
             }
         };
-        self.receipt(
-            "type",
-            Some(&line.row),
-            class,
-            press,
-            &mut observation,
-            started,
-        );
         Ok(observation)
     }
 
@@ -268,23 +260,23 @@ impl BrowserDriver for DesktopSession {
         let (line, token) = Self::token(&snapshot, &input.target)?;
         let pid = snapshot.key.pid;
         let base = Base::of(input.base);
-        let mut observation = self.act(&snapshot, &base, |session| {
+        let acted = self.act(&snapshot, &base, |session| {
             session
                 .input(
                     "set_value",
                     json!({"pid": pid, "element_token": token, "value": input.option}),
                 )
                 .map_err(|e| refusal(e, Some(input.target.as_str())))
-        })?;
-        self.receipt(
+        });
+        self.sent(
             "select",
+            &snapshot,
             Some(&line.row),
             None,
             PressMode::None,
-            &mut observation,
             started,
-        );
-        Ok(observation)
+            acted,
+        )
     }
 
     /// Waits for rows within its time: each look that finds none walks on
@@ -554,14 +546,13 @@ impl BrowserDriver for DesktopSession {
             None => arguments["window_id"] = Value::from(key.id),
         }
         let base = Base::of(input.base);
-        let mut observation = self.act(&snapshot, &base, |session| {
+        let acted = self.act(&snapshot, &base, |session| {
             session
                 .input("press_key", arguments)
                 .map_err(|e| refusal(e, input.target.as_deref()))
-        })?;
+        });
         let target = aimed.as_ref().map(|(line, _)| &line.row);
-        self.receipt("key", target, class, press, &mut observation, started);
-        Ok(observation)
+        self.sent("key", &snapshot, target, class, press, started, acted)
     }
 
     fn hotkey(&mut self, input: HotkeyInput) -> Result<Observation, BrowserError> {
@@ -582,16 +573,15 @@ impl BrowserDriver for DesktopSession {
         let row = key_row(&input.keys.join("+"));
         let press = self.press_or_hold("hotkey", &input, class, Some(&row), &snapshot)?;
         let base = Base::of(input.base);
-        let mut observation = self.act(&snapshot, &base, |session| {
+        let acted = self.act(&snapshot, &base, |session| {
             session
                 .input(
                     "hotkey",
                     json!({"pid": key.pid, "window_id": key.id, "keys": input.keys}),
                 )
                 .map_err(BrowserError::from)
-        })?;
-        self.receipt("hotkey", None, class, press, &mut observation, started);
-        Ok(observation)
+        });
+        self.sent("hotkey", &snapshot, None, class, press, started, acted)
     }
 
     /// A scroll moves the view, not the world: it lands no receipt.
@@ -682,6 +672,10 @@ impl BrowserDriver for DesktopSession {
             reason,
             asked_at_ms,
         })
+    }
+
+    fn sent_receipt(&mut self) -> Option<EffectReceipt> {
+        self.unread.take()
     }
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {

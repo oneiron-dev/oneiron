@@ -86,17 +86,18 @@ use crate::secret::{Entry, SecretUse, Secrets, entry};
 use crate::secret_fields::{
     FieldFacts, SECRET_MARK, classify, masked, secret_display_policy, secret_echo_policy,
 };
-use crate::session::{effect_class, press_for, receipt_class};
+use crate::session::{PressBook, effect_class, press_for, receipt_class};
 use crate::stop::elapsed_ms;
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FieldWriter, FindInput, FindOutput,
     HandoverInput, HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, NoWriter,
-    Observation, ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, PressMode,
-    ReceiptEvidenceSink, RoutineDecider, Row, RowSecret, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind, SecretNote, SelectInput, SendPolicy,
-    TakeoverRecord, TextProvenance, TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput,
-    WindowSwitch, WindowSwitchCause, WindowsInput, WindowsOutput, ZoomInput,
+    Observation, ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, PressGrants,
+    PressMode, ReceiptEvidenceSink, RoutineDecider, Row, RowSecret, ScreenshotInput,
+    ScreenshotOutput, ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind, SecretNote,
+    SelectInput, SendPolicy, TakeoverRecord, TextProvenance, TypeInput, ViewInput, WaitForInput,
+    WaitForOutput, WindowInput, WindowSwitch, WindowSwitchCause, WindowsInput, WindowsOutput,
+    ZoomInput,
 };
 use images::{looks_as_it_did, mask};
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
@@ -148,9 +149,17 @@ pub struct DesktopSession {
     guest: Box<dyn SessionLease>,
     manifest: SessionManifest,
     policy: SendPolicy,
+    /// The grants' policy as last read and the sends batch presses paid,
+    /// as a browser session keeps them (FIX 4613, 4615, 12133).
+    presses: PressBook,
     /// The act a press held and the press an owner's answer armed (FIX
     /// 11499).
     press_holds: press_holds::PressHolds,
+    /// The receipt of the input the running verb sent whose window did not
+    /// read after (FIX 12134), for its batch's stop to carry.
+    unread: Option<EffectReceipt>,
+    /// Whether the running act's input was sent (FIX 12134).
+    input_sent: bool,
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,

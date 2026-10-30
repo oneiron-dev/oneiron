@@ -188,8 +188,9 @@ fn logged_receipt(receipt: &Value) -> Value {
     logged
 }
 
-/// The vault's grants, read again at each classified browser send (FIX
-/// 4613): a grant revoked during the run covers no later send.
+/// The vault's grants, read again at each classified browser or desktop
+/// send (FIX 4613, 12133): a grant revoked during the run covers no later
+/// send.
 struct VaultPressGrants(Arc<oneiron::Vault>);
 
 impl PressGrants for VaultPressGrants {
@@ -450,6 +451,9 @@ impl RunDesktop {
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
+        // Each classified send reads the grants again, as the browser
+        // door's do (FIX 4613, 12133).
+        driver.set_press_grants(Box::new(VaultPressGrants(Arc::clone(&self.vault))));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (FIX 8899): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));
