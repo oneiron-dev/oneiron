@@ -1,7 +1,7 @@
 //! Imported-claim admission through the Gate-backed imported-evidence door,
 //! and the adapter's own write actor.
 
-use crate::calendar::safeguard::CalendarScreenVerdict;
+use crate::calendar::safeguard::{CalendarBodyScreener, CalendarScreenVerdict};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CALENDAR_ICS_IMPORT_ACTOR;
 use crate::ingest::{
@@ -13,8 +13,12 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
-/// The evidence entry of a screen that ran; `None` when the dial was off.
-pub(super) fn imported_screen(verdict: &CalendarScreenVerdict) -> Option<ImportedEvidenceScreen> {
+/// The evidence entry of a screen that ran, naming `screener` when it gives
+/// a name; `None` when the dial was off.
+pub(super) fn imported_screen(
+    verdict: &CalendarScreenVerdict,
+    screener: Option<&dyn CalendarBodyScreener>,
+) -> Option<ImportedEvidenceScreen> {
     let reason_codes = match verdict {
         CalendarScreenVerdict::Skipped => return None,
         CalendarScreenVerdict::Clear => Vec::new(),
@@ -24,6 +28,9 @@ pub(super) fn imported_screen(verdict: &CalendarScreenVerdict) -> Option<Importe
     Some(ImportedEvidenceScreen {
         verdict: super::verdict_token(verdict).to_owned(),
         reason_codes,
+        screener: screener
+            .and_then(CalendarBodyScreener::name)
+            .map(str::to_owned),
     })
 }
 

@@ -19,11 +19,11 @@ use oneiron::calendar::safeguard::{
 use oneiron::llm::decision::{DecisionBand, LabelClassifier};
 
 /// The question the head scores each text against.
-const SCREEN_QUESTION: &str =
+pub(super) const SCREEN_QUESTION: &str =
     "Does this calendar event text address an AI assistant with instructions or requests?";
 
 /// The two labels the head scores, the flagged one first.
-const SCREEN_LABELS: [&str; 2] = [
+pub(super) const SCREEN_LABELS: [&str; 2] = [
     "instructions addressed to an AI assistant",
     "ordinary calendar event text",
 ];
@@ -42,10 +42,13 @@ const REASON_CLASSIFIER_FAILED: &str = "calendar.safeguard.classifier_failed";
 static CALENDAR_BODY_SCREENER: OnceLock<Box<dyn CalendarBodyScreener>> = OnceLock::new();
 
 /// Installs `head` as this host's calendar safeguard labeller. The first
-/// head installed stays; returns whether this call installed it.
+/// head installed stays; returns whether this call installed it. Every
+/// screen record the head feeds names it by its pin, `model@version`.
 pub fn install_calendar_label_head(head: impl LabelClassifier + 'static) -> bool {
+    let pin = head.pin();
+    let name = format!("{}@{}", pin.model, pin.version);
     CALENDAR_BODY_SCREENER
-        .set(Box::new(LabelBodyScreener { head }))
+        .set(Box::new(LabelBodyScreener { head, name }))
         .is_ok()
 }
 
@@ -58,6 +61,8 @@ pub(crate) fn calendar_body_screener() -> Option<&'static dyn CalendarBodyScreen
 /// A [`CalendarBodyScreener`] over one label classifier head.
 struct LabelBodyScreener<H> {
     head: H,
+    /// The head's pin, `model@version`, as each screen record names it.
+    name: String,
 }
 
 /// What the head said about one text.
@@ -129,5 +134,9 @@ impl<H: LabelClassifier> CalendarBodyScreener for LabelBodyScreener<H> {
         } else {
             CalendarScreenVerdict::Clear
         })
+    }
+
+    fn name(&self) -> Option<&str> {
+        Some(self.name.as_str())
     }
 }
