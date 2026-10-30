@@ -12,6 +12,7 @@ pub(crate) mod courtesy_delete;
 pub(crate) mod embedder;
 pub(crate) mod federation_connect;
 pub(crate) mod feedback;
+pub(crate) mod folder_sources;
 pub(crate) mod graph_fs;
 pub(crate) mod guest_revoke;
 pub(crate) mod healer;

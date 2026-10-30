@@ -30,6 +30,8 @@ pub(super) struct FilesRead {
     pub(super) name_only: Vec<NameOnlyFile>,
     /// By path, the facts of each note's file, a part's included.
     pub(super) facts: HashMap<String, FileFacts>,
+    /// The paths the mtime shortcut skipped (FIX 1365): read by no one.
+    pub(super) skipped: Vec<String>,
 }
 
 /// How the file at `path` holds its text, by its extension; none for a
@@ -59,11 +61,13 @@ fn excludes(exclude: &[String], path: &str) -> bool {
 
 /// Every file under `folder` that `exclude` leaves, in path order: its
 /// notes, a file past the note bound as its parts, and the files it holds
-/// by name only.
+/// by name only. A file whose size and mtime both match `prior`'s record is
+/// not read (FIX 1365).
 pub(super) fn read_files(
     folder: &Path,
     exclude: &[String],
     counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
 ) -> anyhow::Result<FilesRead> {
     let mut read = FilesRead::default();
     let excluded =
@@ -75,7 +79,7 @@ pub(super) fn read_files(
             counts.unreadable_name += 1;
             return Ok(());
         };
-        read_file(path, file, shown, counts, &mut read)
+        read_file(path, file, shown, counts, &mut read, prior)
     })?;
     // A file that did not open on the walk (no read permission then) is
     // opened again, never through a link (FIX 11588). One that still does
@@ -86,7 +90,7 @@ pub(super) fn read_files(
             continue;
         };
         if let Some(file) = reopened(folder, &path) {
-            read_file(path, file, &shown, counts, &mut read)?;
+            read_file(path, file, &shown, counts, &mut read, prior)?;
             continue;
         }
         let facts = std::fs::symlink_metadata(&shown).map_or(
@@ -121,13 +125,15 @@ pub(super) fn read_files(
 /// its name with the reason it holds no text. Every file's bytes are read
 /// whole, of any size (FIX 11588): a format the source takes no text from
 /// and a file with another name keep theirs as their original, as a file
-/// whose bytes hold no text does (FIX 11276).
+/// whose bytes hold no text does (FIX 11276). A file `prior` records with
+/// the same size and mtime is not read at all (FIX 1365).
 fn read_file(
     path: String,
     file: File,
     shown: &Path,
     counts: &mut NoteCounts,
     read: &mut FilesRead,
+    prior: Option<&HashMap<String, FileFacts>>,
 ) -> anyhow::Result<()> {
     // Of the open file, so a name swapped after the walk listed it changes
     // nothing.
@@ -136,8 +142,16 @@ fn read_file(
         bytes: metadata.len(),
         modified_at: written_at(&metadata),
     };
-    let held = if super::hard_linked(&metadata) {
+    // A file with another name is passed over as today, never skipped:
+    // that name may be outside the folder.
+    let linked = super::hard_linked(&metadata);
+    if linked {
         counts.hard_linked += 1;
+    } else if prior.is_some_and(|prior| prior.get(&path) == Some(&facts)) {
+        read.skipped.push(path);
+        return Ok(());
+    }
+    let held = if linked {
         Some((NameOnlyReason::Linked, original(file, shown, &path)))
     } else {
         match text_kind(&path) {

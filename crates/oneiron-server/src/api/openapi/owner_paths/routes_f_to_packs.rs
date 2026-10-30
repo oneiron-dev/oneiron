@@ -215,6 +215,30 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "get",
+        path: "/imports/folders",
+        summary: "Every attached folder, with its ledger's counts.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/imports/folders/attach",
+        summary: "Attaches a folder and lands its notes; serve rescans it every few minutes from then on.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/imports/folders/detach",
+        summary: "Detaches a folder: no rescan reads it again. Its notes stay.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/imports/folders/rescan",
+        summary: "Rescans one attached folder now, or every attached folder.",
+        row: None,
+    },
+    OwnerRoute {
         method: "post",
         path: "/imports/preview",
         summary: "Preview import.",
