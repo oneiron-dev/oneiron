@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use oneiron::Vault;
+use oneiron::channel_identity_provider::native_mail::NativeMailPack;
 use oneiron::channel_identity_provider::{
     LINE_CHANNEL, LineOfficialAccountAdapter, SLACK_CHANNEL, SlackSharedPresenceAdapter,
 };
@@ -96,6 +97,19 @@ impl BuiltinHandles {
 impl BuiltinHandles {
     /// One pass over the native mail pack's inboxes, while the host names its
     /// `[native_mail]` server; the pack follows its check as a handle does.
+    /// Runs `run` on the native mail pack the last pass connected, holding
+    /// the inbox reads off while it runs; `None` while no pack is connected.
+    pub(crate) fn with_native_mail_pack<T>(
+        &self,
+        run: impl FnOnce(&NativeMailPack) -> T,
+    ) -> Option<T> {
+        let inboxes = self
+            .native_mail
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        inboxes.pack().map(run)
+    }
+
     pub(crate) fn poll_native_mail(&self, vault: &Vault, config: Option<&NativeMailConfig>) {
         let mut inboxes = self
             .native_mail
