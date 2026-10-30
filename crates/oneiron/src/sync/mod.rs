@@ -55,6 +55,7 @@ pub mod manager;
 pub mod mesh_path;
 pub(crate) mod message_docs;
 pub(crate) mod note;
+pub(crate) mod office_proposals;
 pub(crate) mod origin_claims;
 pub(crate) mod pack_sync;
 pub mod quarantine;

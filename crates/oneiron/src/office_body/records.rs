@@ -215,3 +215,352 @@ pub(super) struct OfficeBodyRead {
     pub(super) keys: LiftedKeys,
     pub(super) lifted: LiftedSources,
 }
+
+/// Why two copies of one proposal's header do not merge.
+#[cfg(feature = "sync")]
+const OTHER_HEADER: &str = "the proposal's header differs";
+
+/// Two copies of one actor field as one: the same actor, or no one when
+/// either copy names no one, since an erase wins (FIX 3520). `None` when
+/// they name two actors.
+#[cfg(feature = "sync")]
+fn met(ours: BodyActor, theirs: BodyActor) -> Option<BodyActor> {
+    match (ours, theirs) {
+        _ if ours == theirs => Some(ours),
+        (BodyActor::Erased, _) | (_, BodyActor::Erased) => Some(BodyActor::Erased),
+        _ => None,
+    }
+}
+
+/// Two copies of one member's answer as one; `None` when they differ.
+#[cfg(feature = "sync")]
+fn merged_answer(ours: &MemberAnswer, theirs: &MemberAnswer) -> Option<MemberAnswer> {
+    let by = match (&ours.by, &theirs.by) {
+        (AnsweringAuthority::Word { person: a }, AnsweringAuthority::Word { person: b }) => {
+            AnsweringAuthority::Word {
+                person: met(*a, *b)?,
+            }
+        }
+        (a, b) if a == b => a.clone(),
+        _ => return None,
+    };
+    let caller = met(ours.caller, theirs.caller)?;
+    let merged = MemberAnswer {
+        by,
+        caller,
+        ..ours.clone()
+    };
+    let other = MemberAnswer {
+        by: merged.by.clone(),
+        caller,
+        ..theirs.clone()
+    };
+    (other == merged).then_some(merged)
+}
+
+/// Two copies of one member as one: a decision beats waiting, and two
+/// decisions stand only when they are the same one. `None` when they differ.
+#[cfg(feature = "sync")]
+fn merged_member(ours: &ProposalMember, theirs: &ProposalMember) -> Option<ProposalMember> {
+    if ours.run_root != theirs.run_root || ours.origin != theirs.origin {
+        return None;
+    }
+    let opener = met(ours.opener, theirs.opener)?;
+    let mut member = match (ours.verdict, theirs.verdict) {
+        (MemberVerdict::Waiting, _) => theirs.clone(),
+        (_, MemberVerdict::Waiting) => ours.clone(),
+        (a, b) if a != b => return None,
+        _ => {
+            let answer = match (&ours.answer, &theirs.answer) {
+                (Some(a), Some(b)) => Some(merged_answer(a, b)?),
+                (None, None) => None,
+                _ => return None,
+            };
+            ProposalMember {
+                answer,
+                ..ours.clone()
+            }
+        }
+    };
+    member.opener = opener;
+    Some(member)
+}
+
+/// `ours` and `theirs`, two copies of one proposal, as one (FIX 2691):
+/// members union by fork, a member's decision beats its waiting, asks union
+/// by ask group, and a settled proposal beats an open one. A merge that
+/// leaves no member waiting closes the proposal at its last answer, so every
+/// machine closes it alike (a call; canon is silent). `Err` names why the
+/// copies diverge: another header, two decisions on one member, two
+/// settlements, or a settlement beside a member that still waits.
+#[cfg(feature = "sync")]
+fn merged_proposal(
+    ours: &OfficeBodyProposal,
+    theirs: &OfficeBodyProposal,
+) -> std::result::Result<OfficeBodyProposal, &'static str> {
+    let opener = met(ours.header.opener, theirs.header.opener).ok_or(OTHER_HEADER)?;
+    let header = ProposalHeader {
+        opener: ours.header.opener,
+        ..theirs.header.clone()
+    };
+    if header != ours.header {
+        return Err(OTHER_HEADER);
+    }
+    let mut merged = ours.clone();
+    merged.header.opener = opener;
+    for member in &theirs.members {
+        match merged
+            .members
+            .iter_mut()
+            .find(|held| held.fork == member.fork)
+        {
+            Some(held) => {
+                *held = merged_member(held, member).ok_or("two decisions on one member differ")?;
+            }
+            None => merged.members.push(member.clone()),
+        }
+    }
+    for ask in &theirs.asks {
+        if !merged.asks.iter().any(|held| held.ask == ask.ask) {
+            merged.asks.push(ask.clone());
+        }
+    }
+    merged.asks.sort_by_key(|ask| (ask.at, ask.ask));
+    merged.ask_refused = match (&ours.ask_refused, &theirs.ask_refused) {
+        (Some(a), Some(b)) if (b.at, &b.reason) > (a.at, &a.reason) => Some(b.clone()),
+        (a, b) => a.clone().or_else(|| b.clone()),
+    };
+    // An ask raised since the refusal clears it, as it does here.
+    if merged
+        .ask_refused
+        .as_ref()
+        .is_some_and(|refused| merged.asks.iter().any(|ask| ask.at >= refused.at))
+    {
+        merged.ask_refused = None;
+    }
+    merged.settlement = match (&ours.settlement, &theirs.settlement) {
+        (Some(a), Some(b)) if a != b => return Err("two settlements differ"),
+        (a, b) => a.clone().or_else(|| b.clone()),
+    };
+    let waits = merged
+        .members
+        .iter()
+        .any(|member| member.verdict == MemberVerdict::Waiting);
+    if waits && merged.settlement.is_some() {
+        return Err("a settled proposal holds a member that still waits");
+    }
+    if !waits {
+        let at = merged
+            .members
+            .iter()
+            .filter_map(|member| member.answer.as_ref().map(|answer| answer.at))
+            .max()
+            .unwrap_or(merged.header.opened_at);
+        consent::close_if_done(&mut merged, at, None);
+    }
+    Ok(merged)
+}
+
+#[cfg(feature = "sync")]
+impl OfficeBodyProposal {
+    /// Whether this copy holds all of `other`, a copy of the same proposal:
+    /// merging `other` into it changes nothing (FIX 2691).
+    pub(crate) fn covers(&self, other: &Self) -> bool {
+        merged_proposal(self, other).is_ok_and(|merged| merged == *self)
+    }
+
+    /// This copy as this vault holds a carried one: naming no one where this
+    /// vault erased an actor, and without a waiting member such an actor
+    /// opened, as the erase leaves a proposal here (FIX 3520). `None` when no
+    /// member is left.
+    pub(crate) fn carried_here(mut self, vault: &Vault, txn: &RoTxn<'_>) -> Result<Option<Self>> {
+        let erased = |actor: &mut BodyActor| -> Result<bool> {
+            let gone = match actor.id() {
+                Some(id) => vault.carrier_actor_erased_in_txn(txn, &id)?,
+                None => false,
+            };
+            if gone {
+                *actor = BodyActor::Erased;
+            }
+            Ok(gone)
+        };
+        erased(&mut self.header.opener)?;
+        let mut members = Vec::with_capacity(self.members.len());
+        for mut member in self.members {
+            if erased(&mut member.opener)? && member.verdict == MemberVerdict::Waiting {
+                continue;
+            }
+            if let Some(answer) = &mut member.answer {
+                erased(&mut answer.caller)?;
+                if let AnsweringAuthority::Word { person } = &mut answer.by {
+                    erased(person)?;
+                }
+            }
+            members.push(member);
+        }
+        self.members = members;
+        Ok((!self.members.is_empty()).then_some(self))
+    }
+}
+
+#[cfg(feature = "sync")]
+impl Vault {
+    /// Each office proposal on `artifact`, read in `txn`: what a window
+    /// carries beside the artifact (FIX 2691).
+    pub(crate) fn office_proposals_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        artifact: &EntityId,
+    ) -> Result<Vec<OfficeBodyProposal>> {
+        Ok(consent::PROPOSALS
+            .scan_from(&self.store, txn, artifact.as_bytes())?
+            .into_iter()
+            .map(|(_, record)| record)
+            .collect())
+    }
+
+    /// Merges `carried`, another machine's copy of a proposal, into this
+    /// vault's in the caller's writer (FIX 2691), as [`merged_proposal`]
+    /// merges two copies. It writes the proposal and the membership of each
+    /// of its forks and nothing else: no holder is asked, no fork lands or
+    /// goes, no grant is used. A copy whose artifact has not landed here
+    /// waits; one whose artifact this vault deleted or erased is refused and
+    /// never brings it back. A copy that diverges from this vault's, or that
+    /// holds a fork another proposal here holds, conflicts, and the one held
+    /// here stands.
+    pub(crate) fn merge_carried_office_proposal_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        carried: &OfficeBodyProposal,
+    ) -> Result<crate::entity_doc::DocumentMerge> {
+        use crate::entity_doc::DocumentMerge;
+        use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+        let artifact = carried.header.artifact;
+        if crate::ports::removed_in_txn(&self.store, wtxn, &artifact)? {
+            return Ok(DocumentMerge::Refused("its artifact is removed here"));
+        }
+        match live_entity_row_in_txn(&self.store, wtxn, &artifact)? {
+            LiveEntityRow::Live { .. } => {}
+            LiveEntityRow::Absent => return Ok(DocumentMerge::Waiting),
+            LiveEntityRow::DeletedShell => {
+                return Ok(DocumentMerge::Refused("its artifact is deleted here"));
+            }
+        }
+        let Some(carried) = carried.clone().carried_here(self, wtxn)? else {
+            return Ok(DocumentMerge::Held);
+        };
+        let key = (artifact, carried.header.proposal);
+        let merged = match consent::PROPOSALS.get(&self.store, wtxn, &key)? {
+            None => carried,
+            Some(held) => match merged_proposal(&held, &carried) {
+                Ok(merged) if merged == held => return Ok(DocumentMerge::Held),
+                Ok(merged) => merged,
+                Err(reason) => {
+                    tracing::warn!(
+                        artifact = %artifact.to_hex(),
+                        proposal = %key.1.to_hex(),
+                        reason,
+                        "a carried office proposal diverges from the one held here"
+                    );
+                    return Ok(DocumentMerge::Conflict);
+                }
+            },
+        };
+        for member in &merged.members {
+            let joined = consent::MEMBERSHIP.get(&self.store, wtxn, &(artifact, member.fork))?;
+            if joined.is_some_and(|joined| joined != key.1) {
+                tracing::warn!(
+                    artifact = %artifact.to_hex(),
+                    proposal = %key.1.to_hex(),
+                    "a carried office proposal holds a fork another proposal here holds"
+                );
+                return Ok(DocumentMerge::Conflict);
+            }
+        }
+        consent::PROPOSALS.put(&self.store, wtxn, &key, &merged)?;
+        for member in &merged.members {
+            consent::MEMBERSHIP.put(&self.store, wtxn, &(artifact, member.fork), &key.1)?;
+        }
+        Ok(DocumentMerge::Written)
+    }
+
+    /// The office facts a body's sync frame carries beside its frontiers
+    /// (FIX 2458): its format and the package version it imported, so the
+    /// machine that takes the body reads it as the office body it is. `None`
+    /// for an entity with no office body.
+    pub(crate) fn office_frame_record_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        artifact: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        SOURCES
+            .get(&self.store, txn, artifact)?
+            .map(|source| {
+                rmp_serde::to_vec_named(&source).map_err(|_| invalid("office body source encode"))
+            })
+            .transpose()
+    }
+
+    /// Installs `record`, the office facts a carried body's frame brought,
+    /// for `artifact`, whose body of `schema` was born here from that frame
+    /// (FIX 2458). Facts this vault holds stand.
+    pub(crate) fn adopt_office_frame_record_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &EntityId,
+        schema: &str,
+        record: &[u8],
+    ) -> Result<()> {
+        if record.is_empty() || SOURCES.contains(&self.store, wtxn, artifact)? {
+            return Ok(());
+        }
+        let source: OfficeBodySource =
+            rmp_serde::from_slice(record).map_err(|_| invalid("office body frame source"))?;
+        if source.kind.schema() != schema {
+            return Err(invalid(
+                "an office body frame's source names another format",
+            ));
+        }
+        SOURCES.put(&self.store, wtxn, artifact, &source)
+    }
+
+    /// The office merge preflight a carried body's operations pass before
+    /// they land on the head here (FIX 2458): the merged body still reads as
+    /// its format, and, for a DOCX or XLSX body, the carried head's changes
+    /// since the frontier both hold block nothing and meet no block or cell
+    /// the head changed too, as a reviewed fork's must to land. A deck's
+    /// operations merge as its tree allows. `false` opens a fork the owner
+    /// resolves; a schema no office body has lands as merged.
+    pub(crate) fn preflight_carried_office_body(
+        &self,
+        schema: &str,
+        carried: &crate::typed_body::sync_frame::CarriedBody<'_>,
+    ) -> Result<bool> {
+        let kinds = [
+            OfficeBodyKind::Docx,
+            OfficeBodyKind::Xlsx,
+            OfficeBodyKind::Pptx,
+        ];
+        let Some(kind) = kinds.into_iter().find(|kind| kind.schema() == schema) else {
+            return Ok(true);
+        };
+        if validate(kind, carried.merged).is_err() {
+            return Ok(false);
+        }
+        if kind == OfficeBodyKind::Pptx {
+            return Ok(true);
+        }
+        let diff = three_way(
+            kind,
+            carried.live,
+            carried.theirs,
+            carried.base,
+            carried.head,
+        )?;
+        Ok(!diff.blocking()
+            && !diff
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.kind == ConflictKind::BothEdited))
+    }
+}

@@ -501,6 +501,18 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 2691: an office artifact's proposals ride beside it.
+            if window_key.world().is_none()
+                && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                    header.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT
+                })
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::office_proposals::mirror_office_proposals(
+                    vault, doc, window_key, id,
+                )?
+            {
+                wrote_any = true;
+            }
             // FIX 853: a MESSAGE's document and its quote pins ride beside
             // it, mirrored after this pass commits.
             if window_key.world().is_none()
