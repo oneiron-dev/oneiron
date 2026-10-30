@@ -460,11 +460,7 @@ impl Vault {
             }
             let mut control = read_control(&self.store, txn, &ask.candidate)?
                 .ok_or_else(|| invalid("claim refinement control is missing"))?;
-            control.state = if accepted {
-                RefinementState::Admitted
-            } else {
-                RefinementState::Refused
-            };
+            control.rule(accepted);
             put_control(&self.store, txn, &ask.candidate, &control)?;
             self.put_refinement_receipt_in_txn(
                 txn,

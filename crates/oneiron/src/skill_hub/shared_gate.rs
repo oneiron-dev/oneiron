@@ -85,6 +85,7 @@ struct MergeSnapshot {
     baseline: String,
     evidence: Vec<String>,
     binding: String,
+    refusals: u32,
 }
 impl Vault {
     pub fn prepare_shared_skill_merge(
@@ -113,9 +114,14 @@ impl Vault {
         // A merge is reversible (ARCH-0053 r4, DEC-0006): activation
         // supersedes, the old revision stays readable, and
         // `roll_back_shared_skill_merge` restores it. The effect keeps the
-        // default full undo fidelity.
+        // default full undo fidelity. It names the candidate and how many
+        // times the gate has refused it, so a merge asked again after a
+        // refusal takes a fresh approve-once, while an unrefused merge keeps
+        // one effect however often it is asked.
         let effect = ComposedEffect::new(EffectFacts::new(format!(
-            "skill.merge:{}:{}:{}",
+            "skill.merge:{}:{}:{}:{}:{}",
+            candidate.to_hex(),
+            snapshot.refusals,
             snapshot.binding,
             resident.to_hex(),
             blake3::hash(
@@ -286,11 +292,7 @@ impl Vault {
             if let Some(authorization) = &answer {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, authorization)?;
             }
-            control.state = if accepted {
-                RefinementState::Admitted
-            } else {
-                RefinementState::Refused
-            };
+            control.rule(accepted);
             put_control(&self.store, txn, &ask.candidate, &control)?;
             self.put_refinement_receipt_in_txn(
                 txn,
@@ -619,6 +621,7 @@ impl Vault {
             baseline,
             evidence,
             binding: hash.finalize().to_hex().to_string(),
+            refusals: control.refusals,
         })
     }
 }
