@@ -179,14 +179,14 @@ impl Vault {
         };
         let (was, now) = (xlsx::read(&was)?, xlsx::read(&now)?);
         let named = |body: &XlsxBody| {
-            body.sheets.iter().find(|found| found.name == sheet).map(|found| {
-                let cells: SheetCells = found
+            body.sheets.iter().find(|entry| entry.name == sheet).map(|entry| {
+                let cells: SheetCells = entry
                     .cells
                     .iter()
                     .filter(|(_, cell)| cell.value != XlsxValue::Blank || cell.formula.is_some())
                     .map(|(at, cell)| (*at, (cell.value.clone(), cell.formula.clone())))
                     .collect();
-                (found.key.clone(), cells)
+                (entry.key.clone(), cells)
             })
         };
         let axes = |body: &XlsxBody, key: &str| {
@@ -230,7 +230,7 @@ impl Vault {
                 .import_frontier,
         };
         Ok(Some(LiveUnits {
-            then: deck_slides(&self.read_pptx_body(artifact, Some(&at))?.deck)?,
+            then: deck_slides(&self.read_pptx_body(artifact, Some(at.as_slice()))?.deck)?,
             now: deck_slides(&self.read_pptx_body(artifact, None)?.deck)?,
         }))
     }
@@ -290,7 +290,7 @@ impl Vault {
             None if head.frontier == head.birth => return Ok(None),
             None => head.birth,
         };
-        let was = typed_body_in_txn(&self.store, &txn, artifact, kind.schema(), Some(&at))
+        let was = typed_body_in_txn(&self.store, &txn, artifact, kind.schema(), Some(at.as_slice()))
             .ok()
             .flatten();
         Ok(was.map(|(_, was)| (was, now)))
