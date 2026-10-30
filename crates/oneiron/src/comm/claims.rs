@@ -192,11 +192,14 @@ pub struct ClaimClassDescriptorRow {
 
 /// The six `comm.*` claim-class rows, in family order.
 ///
-/// `comm.do_not_contact` is CA-owned; this row DESCRIBES the door CA landed and
-/// never redefines it.
+/// `comm.do_not_contact` is CA-owned: its row is the CRM pack's own row
+/// (`campaign::claims::claim_class_descriptors`), copied field for field, so
+/// descriptor lookup and the open-time seed read the ordinary, restrictive
+/// class the CRM table declares. Clearing one stays on the human-gated doors
+/// CA landed; no row here gates a write.
 #[must_use]
 pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
-    vec![
+    let mut rows = vec![
         ClaimClassDescriptorRow {
             predicate: PREDICATE_COMM_OPT_OUT,
             write_class: "recorded",
@@ -232,14 +235,20 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
             restrictive: false,
             projector_only: false,
         },
-        ClaimClassDescriptorRow {
-            predicate: crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
-            write_class: "human_ruled",
-            enforcement: true,
-            restrictive: true,
-            projector_only: false,
-        },
-    ]
+    ];
+    rows.extend(
+        crate::campaign::claims::claim_class_descriptors()
+            .into_iter()
+            .filter(|row| row.predicate == crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT)
+            .map(|row| ClaimClassDescriptorRow {
+                predicate: row.predicate,
+                write_class: row.write_class,
+                enforcement: row.enforcement,
+                restrictive: row.restrictive,
+                projector_only: row.projector_only,
+            }),
+    );
+    rows
 }
 
 /// Typed value carried by one claim in the `comm.*` family.
