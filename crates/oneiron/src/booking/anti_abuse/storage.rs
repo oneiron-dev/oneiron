@@ -75,15 +75,6 @@ pub(super) const IP_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.ip.v0";
 pub(super) const EMAIL_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.email.v0";
 pub(super) const SESSION_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.session.v0";
 
-/// Ratified bounds for the slot-list response cache TTL (30-60 seconds).
-/// These bound a value the owner picks; they are not a picked value.
-pub(super) const SLOT_LIST_CACHE_TTL_FLOOR_SECS: u64 = 30;
-pub(super) const SLOT_LIST_CACHE_TTL_CEIL_SECS: u64 = 60;
-
-/// Ratified bounds for the per-email active-future-booking cap (1-2).
-pub(super) const ACTIVE_FUTURE_PER_EMAIL_FLOOR: u8 = 1;
-pub(super) const ACTIVE_FUTURE_PER_EMAIL_CEIL: u8 = 2;
-
 /// One fixed window for every "per minute" counter, mirroring
 /// `task_verb.rs`'s node-local window counter.
 pub(super) const RATE_WINDOW_SECS: u64 = 60;
