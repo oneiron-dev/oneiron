@@ -162,7 +162,6 @@ impl Vault {
     /// Pure of grant IO: the caller loaded `grants` once on the pass txn.
     pub(super) fn project_report_disclosure_with_grants_in_txn(
         &self,
-        _txn: &heed::RoTxn<'_>,
         issue: &mut ReportIssue,
         grants: &[StandingConsentGrant],
     ) -> Result<()> {
@@ -241,7 +240,7 @@ impl Vault {
             return Ok(());
         }
         let grants = load_active_standing_grants(&self.store, txn)?;
-        self.project_report_disclosure_with_grants_in_txn(txn, issue, &grants)
+        self.project_report_disclosure_with_grants_in_txn(issue, &grants)
     }
 
     /// The owner's disclosure choice for one issue to `publisher_ref`, in the

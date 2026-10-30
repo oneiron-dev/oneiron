@@ -92,7 +92,7 @@ pub(super) fn read_with_grants(
     if issue.issue_ref != id.to_hex() {
         return Err(Error::CorruptedIndex("report issue identity"));
     }
-    vault.project_report_disclosure_with_grants_in_txn(txn, &mut issue, grants)?;
+    vault.project_report_disclosure_with_grants_in_txn(&mut issue, grants)?;
     Ok(Some(issue))
 }
 
@@ -201,7 +201,7 @@ impl Vault {
 
     /// Receipt-backed arrivals, oldest first. Each accepted actor/subject/category appears once.
     /// Loads the active standing grants once on the page txn and reuses the
-    /// set for every arrival (FIX 9366): N scans become 1, same snapshot.
+    /// set for every arrival (FIX 9366): at most N scans become 1; empty/no-text pages pay 1.
     pub fn report_inbox(
         &self,
         after: Option<(u64, EntityId)>,

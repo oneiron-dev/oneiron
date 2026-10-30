@@ -368,6 +368,7 @@ impl Vault {
         // The content-free projection: this lane carries no text (FIX 8747).
         let txn = self.store.env.read_txn()?;
         let Some(issue) = store::read(self, &txn, &id)? else {
+            drop(txn);
             self.retire_unrouted_signature(None)?;
             return Ok(None);
         };
@@ -375,9 +376,11 @@ impl Vault {
             // The issue no longer routes to a publisher: a lane it left behind
             // keeps an unanswered signature no run will ever send, so it reads
             // as no lane's (FIX 11631).
+            drop(txn);
             self.retire_unrouted_signature(Some(&issue))?;
             return Ok(None);
         };
+        drop(txn);
         self.deliver_report_signature(&issue, &payload, transport, now)
     }
 
@@ -397,6 +400,7 @@ impl Vault {
         let id = EntityId::from_hex(issue_ref)?;
         let txn = self.store.env.read_txn()?;
         let Some(issue) = store::read_with_grants(self, &txn, &id, grants)? else {
+            drop(txn);
             self.retire_unrouted_signature(None)?;
             return Ok(None);
         };
@@ -404,9 +408,11 @@ impl Vault {
             // The issue no longer routes to a publisher: a lane it left behind
             // keeps an unanswered signature no run will ever send, so it reads
             // as no lane's (FIX 11631).
+            drop(txn);
             self.retire_unrouted_signature(Some(&issue))?;
             return Ok(None);
         };
+        drop(txn);
         self.deliver_report_signature(&issue, &payload, transport, now)
     }
 
