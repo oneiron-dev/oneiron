@@ -42,7 +42,7 @@
 //! questions and every later reply are cleared the same way (FIX 3843).
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, Read};
 use std::sync::{Arc, Weak, mpsc};
 use std::time::{Duration, Instant};
 
