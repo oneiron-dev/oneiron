@@ -184,6 +184,7 @@ mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
 mod standing_doors;
+mod streamed_claims;
 mod summary_doors;
 mod support_grant_doors;
 #[cfg(test)]
@@ -230,6 +231,7 @@ use receipts::*;
 pub(crate) use release::*;
 pub(crate) use secret_body::{lift_custody_secret, with_custody_secret};
 pub(crate) use secret_use_doors::self_use_as;
+pub(crate) use streamed_claims::*;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
