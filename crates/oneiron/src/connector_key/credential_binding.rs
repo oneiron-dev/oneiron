@@ -592,4 +592,14 @@ impl Vault {
             });
         Ok(held.then_some(CONNECTOR_ISSUER_HOLD_REASON))
     }
+
+    /// One credential slot's binding as it stands, by its ref (FIX 9304):
+    /// the keys and rows an accepted issuer revision re-runs.
+    pub fn connector_credential_binding(
+        &self,
+        binding_ref: &EntityId,
+    ) -> Result<Option<ConnectorCredentialBinding>> {
+        let txn = self.store.env.read_txn()?;
+        BINDINGS.get(&self.store, &txn, binding_ref)
+    }
 }
