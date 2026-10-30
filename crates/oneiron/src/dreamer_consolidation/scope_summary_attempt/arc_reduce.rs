@@ -1,9 +1,10 @@
 //! The Arc assembled from its parts (FIX 7509 PR3): no model call, an
-//! ordered and lossless assembly. Once every part is done, each part's
-//! checked lines follow in source order, its compose pieces merged first
-//! ([`super::arc_part_merge`], FIX 8285), each line with its own TURN refs
-//! and slices; the ranges are counted again over the text so joined, and
-//! every distinct keep is kept, in order.
+//! ordered and lossless assembly; only the optional synopsis
+//! ([`super::arc_synopsis`], off by default) asks one more. Once every
+//! part is done, each part's checked lines follow in source order, its
+//! compose pieces merged first ([`super::arc_part_merge`], FIX 8285), each
+//! line with its own TURN refs and slices; the ranges are counted again
+//! over the text so joined, and every distinct keep is kept, in order.
 //!
 //! The rows hold no prose. A part's words are read back from its settled
 //! steps, through the Dreamer's own lane, and must be the reply the part
@@ -17,6 +18,7 @@ use super::arc_children::ArcRun;
 use super::arc_output::{ArcLines, arc_wire};
 use super::arc_part_merge::{PartLine, merge_part};
 use super::arc_review::{Observation, store_exit};
+use super::arc_synopsis::{ARC_SYNOPSIS, Synopsis};
 use super::output::reply_text;
 use super::{ScopeSummaryExecutor, compose_again};
 use crate::attempt_queue::AttemptId;
@@ -24,7 +26,7 @@ use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_runner::DreamerParkCause;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::{CallerSettledStep, settled_step_for_caller};
+use crate::llm::{CallerSettledStep, DurableStepContext, settled_step_for_caller};
 use crate::memory::Memory;
 use crate::scope_summary::{
     ArcChildRow, ArcReduceRow, ArcStepRef, ComposedSummary, SummaryLineSources, result_digest,
@@ -179,14 +181,16 @@ pub(super) fn assemble(memory: &Memory<'_>, parts: &[(u32, &[ArcStepRef])]) -> R
 }
 
 impl<E> ScopeSummaryExecutor<'_, E> {
-    /// Assembles every part's lines and lands the Arc through the landing
-    /// fence, its generation's completion proven there; or names the part
-    /// whose step did not read back, to compose again.
-    pub(super) fn land_arc_work(
+    /// Assembles every part's lines, led by their synopsis when it is on,
+    /// and lands the Arc through the landing fence, its generation's
+    /// completion proven there; or names the part whose step did not read
+    /// back, to compose again.
+    pub(super) async fn land_arc_work(
         &self,
         ctx: &WakeAttemptContext<'_>,
+        step_ctx: &DurableStepContext<'_>,
         attempt_id: AttemptId,
-        run: &ArcRun<'_>,
+        run: &mut ArcRun<'_>,
         rows: &BTreeMap<u32, ArcChildRow>,
         (params_hash, memo): ([u8; 32], [u8; 32]),
     ) -> Result<Landing> {
@@ -200,10 +204,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             };
             parts.push((child.id, row.composed.as_slice()));
         }
-        let memory = ctx
-            .vault
-            .memory(self.actor.entity_ref(), self.actor.actor_class());
-        let lines = match assemble(&memory, &parts) {
+        let assembled = {
+            let memory = ctx
+                .vault
+                .memory(self.actor.entity_ref(), self.actor.actor_class());
+            assemble(&memory, &parts)
+        };
+        let lines = match assembled {
             Ok(Assembly::Lines(lines)) => lines,
             Ok(Assembly::Unread { part, step }) => return Ok(Landing::Recompose { part, step }),
             Ok(Assembly::Empty) => {
@@ -214,6 +221,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             }
             Err(error) => return Ok(Landing::Exit(run.charges.park_on_error(&error))),
         };
+        let lines = if ARC_SYNOPSIS {
+            match self.lead_with_synopsis(run, ctx, step_ctx, lines).await? {
+                Synopsis::Lines(lines) => lines,
+                Synopsis::Exit(exit) => return Ok(Landing::Exit(exit)),
+            }
+        } else {
+            lines
+        };
+        // The text lands in durable names, never its calls' labels (FIX
+        // 10359); the reduce digest is the landed text's.
+        let lines = super::durable_labels::durable_arc(lines, run.view);
         let reduce = ArcReduceRow {
             digest: result_digest(&lines.text, &lines.keep, &lines.line_sources),
             lines: lines.line_sources.len() as u64,
