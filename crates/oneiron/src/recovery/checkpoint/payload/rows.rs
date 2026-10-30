@@ -533,8 +533,11 @@ families! {
     // The planned-intent fence's erased-asker selectors: value-free hashes
     // (FIX 11094).
     Class::Structure => SPAWN_PLANNED_INTENT_ASKER_ERASED;
+    // An export secret supplement's sealed copy is kept and relayed as a
+    // custody input row is (FIX 11843).
     Class::Other(Client::Dispatch(OtherClient::Credential)) => SECRET_CUSTODY_INPUT
-        SECRET_CUSTODY_TRANSITION SECRET_CUSTODY_WITNESS SECRET_CUSTODY_RESTORE_PENDING;
+        SECRET_CUSTODY_TRANSITION SECRET_CUSTODY_WITNESS SECRET_CUSTODY_RESTORE_PENDING
+        SECRET_CUSTODY_EXPORT_OUTPUT;
     // A centroid verdict's copied vectors and run (FIX 10094), owned by every
     // source it copied.
     Class::Other(Client::Dispatch(OtherClient::Response)) => SELF_HEAL_CENTROID_EVIDENCE;
@@ -542,7 +545,7 @@ families! {
     Class::Other(Client::Dispatch(OtherClient::Response)) => SAVED_QUERY_MEMO;
     Class::NotImaged => SELF_HEAL_SIGNED_EVENT SELF_HEAL_SIGNED_RUN SKILL_SOURCE_INDEX
         SKILL_HUB_CONTENT_HASH_INDEX SKILL_HUB_CONTENT_HASH_INDEX_SCHEMA_VERSION
-        SECRET_CUSTODY_RESTORE_ELECTION SECRET_CUSTODY_EXPORT_OUTPUT;
+        SECRET_CUSTODY_RESTORE_ELECTION;
     Class::Unclassified => SAVED_QUERY_WATERMARK SAVED_QUERY_MEMBERSHIP_EVENT SAVED_QUERY_HEALTH
         SAVED_QUERY_PACK_MIGRATION_MAP SAVED_QUERY_REPAIR SCOPE_STAMP_SWEEP_DONE
         SCOPE_POLICY_SWEEP_DONE SCOPE_RECORD_REVISION SCOPE_RECORD_V1 SCOPE_RECORD
