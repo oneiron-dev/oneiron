@@ -152,16 +152,16 @@ impl SyncClient {
     }
 
     /// An own device's NOTE client subscribes every NOTE row it holds on the
-    /// owner lane: at connect, then each row born here or materialized from
-    /// a window.
+    /// owner lane, and every typed body and office artifact (FIX 2458): at
+    /// connect, then each row born here or materialized from a window.
     pub(super) fn owner_note_requests(&self) -> Result<Vec<Vec<u8>>, TransportError> {
         if self.config.federation_peer.is_some() || self.config.note_session.is_none() {
             return Ok(Vec::new());
         }
-        self.manager
-            .documents()
-            .subscribe_owner_notes()
-            .map_err(storage)
+        let documents = self.manager.documents();
+        let mut requests = documents.subscribe_owner_notes().map_err(storage)?;
+        requests.extend(documents.subscribe_owner_typed_bodies().map_err(storage)?);
+        Ok(requests)
     }
 }
 

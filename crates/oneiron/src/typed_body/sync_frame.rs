@@ -126,6 +126,21 @@ pub(crate) fn typed_body_vv_in_txn(
     ))
 }
 
+/// Whether `entity` holds a typed body here: a document the owner lane
+/// carries beside NOTEs.
+pub(crate) fn has_typed_body_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<bool> {
+    HEADS.contains(store, txn, entity)
+}
+
+/// Every entity that holds a typed body here.
+pub(crate) fn typed_body_entities_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
+    HEADS.scan_keys(store, txn, &[])
+}
+
 /// Joins `payload`, a typed body's frame, to `entity`'s body in the caller's
 /// writer, through `owner`'s merge preflight. `None` when `payload` is no
 /// typed body's frame; else whether the head moved, a body was taken or a
