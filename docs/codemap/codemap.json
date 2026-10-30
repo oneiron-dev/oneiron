@@ -11545,7 +11545,7 @@
      "path": "src/campaign/enrollment/outbound_leg.rs",
      "purpose": "Outward leg bridging persisted refs to the outbound chokepoint and the ledger",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2
      }
@@ -51673,7 +51673,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 3
      }
     },
@@ -51881,7 +51881,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1,
       "re-export": 13
      }
