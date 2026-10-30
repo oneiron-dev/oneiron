@@ -238,6 +238,16 @@ pub(super) fn note_topic_summary_outgrown(
     };
     let run_id = attempt.status.attempt.run_id.as_deref();
     let queued = vault.store.authorization_now().and_then(|_| {
+        // Read first (FIX 9172): a group that did not outgrow its
+        // declaration, the common case, opens no write. The write checks
+        // again, so a group that changed in between is read as it is then.
+        let outgrown = {
+            let txn = vault.store.env.read_txn()?;
+            outgrown_in_txn(vault, &txn, parent, requester, declared)?.is_some()
+        };
+        if !outgrown {
+            return Ok(None);
+        }
         let now = vault.store.clock.now_recorded_at();
         vault.with_write_txn_grouped(|txn| {
             let Some(group) = outgrown_in_txn(vault, txn, parent, requester, declared)? else {
