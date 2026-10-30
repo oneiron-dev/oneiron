@@ -21,9 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use super::record::{ConnectorKeyStatus, invalid_body};
 use super::txn::read_connector_key_in_txn;
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{AuthenticatedOwner, CONSENT_CONTENT_KIND, EffectDigest};
 use crate::consent_graduation::RampScope;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::identity_topology::ProposalOutcome;
 use crate::outbound_consent::tool_call::ToolGrantDataClass;
 use crate::outbound_consent::{DataClass, ScopedMcpCallContext, ScopedMcpEscalationReason};
@@ -418,6 +418,69 @@ pub(super) fn signal_ramp_scope(signal: &ConnectorSlateScopeSignal) -> Result<Ra
     )
 }
 
+/// A linked ruling's approve-once digest, 64 lower-hex (FIX 9306): asks
+/// are stored as hex strings, and there is no `EffectDigest::from_hex`, so
+/// the parse lives here. `None` for anything else.
+fn linked_digest_from_hex(hex: &str) -> Option<EffectDigest> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0_u8; 32];
+    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(EffectDigest::from_bytes(bytes))
+}
+
+/// Whether `digest`'s approve-once marker is spent (FIX 9306): an available
+/// marker is an unanswered ask and links no ruling (J1 spent-only).
+fn approve_once_spent_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    digest: &EffectDigest,
+) -> Result<bool> {
+    match crate::consent::approve_once_authorization_in_txn(store, txn, digest) {
+        Ok(_) => Ok(false),
+        Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// Every denied approve-once digest in the consent ledger (FIX 9306): a deny
+/// receipt projects to a gate record with content kind `consent_grant`,
+/// outcome `denied` and the digest bytes as its `diff_handle`, and carries
+/// no grant ref, so the lookup is a full ledger scan (J2), built once per
+/// ruling writer.
+fn denied_digests_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<BTreeSet<[u8; 32]>> {
+    let mut denied = BTreeSet::new();
+    store.for_each_gate_decision_in_txn(txn, |record| {
+        if record.content_kind == CONSENT_CONTENT_KIND && record.outcome == "denied" {
+            if let Ok(bytes) = <[u8; 32]>::try_from(record.diff_handle.as_slice()) {
+                denied.insert(bytes);
+            }
+        }
+        Ok(())
+    })?;
+    Ok(denied)
+}
+
+/// Whether `linked_ruling` names an answered ask outside the signal's own
+/// asks (FIX 9306): a spent approve-once marker or a deny receipt for its
+/// digest. Anything unparseable answers nothing.
+fn linked_ruling_answered_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    linked_ruling: &str,
+) -> Result<bool> {
+    let Some(digest) = linked_digest_from_hex(linked_ruling) else {
+        return Ok(false);
+    };
+    if approve_once_spent_in_txn(store, txn, &digest)? {
+        return Ok(true);
+    }
+    Ok(denied_digests_in_txn(store, txn)?.contains(digest.as_bytes()))
+}
+
 impl Vault {
     /// The owner's ruling on the held call a scope signal names (FIX 988):
     /// approved untouched, approved amended or rejected, linked to the exact
@@ -426,7 +489,8 @@ impl Vault {
     /// and ED-05 does not hold it, the writer drafts the proposed delta
     /// slate, or reuses its scope's standing one: nothing is stamped,
     /// granted or widened. A send, a minted grant or a notification answer
-    /// is never a ruling here.
+    /// is never a ruling here. The link holds the signal's asks, a spent
+    /// approve-once marker or a deny receipt (FIX 9306).
     pub fn record_connector_scope_outcome(
         &self,
         owner: &AuthenticatedOwner,
@@ -445,7 +509,9 @@ impl Vault {
                     "the scope signal's ruling is already recorded",
                 ));
             }
-            if !signal.asks.contains(linked_ruling) {
+            if !signal.asks.contains(linked_ruling)
+                && !linked_ruling_answered_in_txn(&self.store, txn, linked_ruling)?
+            {
                 return Err(invalid_body(
                     "the ruling names no ask the signal's call held",
                 ));
