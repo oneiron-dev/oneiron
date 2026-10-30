@@ -8418,6 +8418,8 @@ class CampaignPromotionReceipt(TypedDict):
     sealed_digest: str
     referee_pin: str
     skill_proposal: NotRequired[EntityId | None]
+    skill: NotRequired[EntityId | None]
+    proposal_digest: NotRequired[str | None]
     disposition: PromotionDisposition
     budget: ResearchBudgetRead
     at: int

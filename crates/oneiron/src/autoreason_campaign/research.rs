@@ -420,6 +420,19 @@ pub(super) fn hex(attempt: &AttemptId) -> String {
     bytes_to_hex_lower(attempt.as_bytes())
 }
 
+/// The staged skill proposal a skill candidate names: `skill_proposal:<32 hex>`.
+pub(crate) fn proposal_of(candidate: &CandidateRef) -> Option<EntityId> {
+    let id = candidate.config_ref.strip_prefix("skill_proposal:")?;
+    if id.len() != 32
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    EntityId::from_hex(id).ok()
+}
+
 fn sha256_json<T: Serialize>(value: &T, what: &str) -> Result<String> {
     let bytes = serde_json::to_vec(value).map_err(|_| invalid(what))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))

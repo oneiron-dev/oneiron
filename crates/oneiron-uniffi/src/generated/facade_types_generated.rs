@@ -26072,6 +26072,14 @@ pub struct CampaignPromotionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub skill_proposal: Option<String>,
+    #[serde(rename = "skill", default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+    #[serde(
+        rename = "proposal_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_digest: Option<String>,
     #[serde(rename = "disposition")]
     pub disposition: PromotionDisposition,
     #[serde(rename = "budget")]

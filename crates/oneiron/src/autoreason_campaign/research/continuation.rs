@@ -24,7 +24,7 @@ use super::{
     BINDING, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput, ForkKind, HeldOutCall,
     NODE, PromotionBasis, PromotionDisposition, ROUND, ResearchBinding, ResearchExecution,
     ResearchReservation, ResearchStep, ResearchTarget, SearchEvidence, SelectionReceipt, hex,
-    invalid, nodes_in_txn, promote_measured, promotion_basis, record_fork,
+    invalid, nodes_in_txn, promote_measured, promotion_basis, proposal_of, record_fork,
     record_held_out_measurement, record_invalid_experiment, record_search_measurement,
     refund_research_work, research_binding, research_incumbent, research_promotions,
     research_reservations, reserve_confirmation, reserve_research_work, settle_research_work,
@@ -552,17 +552,4 @@ fn answer_object<T: DeserializeOwned>(text: &str) -> Option<T> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
     serde_json::from_str(text.get(start..=end)?).ok()
-}
-
-/// The staged skill proposal a skill candidate names: `skill_proposal:<32 hex>`.
-fn proposal_of(candidate: &CandidateRef) -> Option<EntityId> {
-    let id = candidate.config_ref.strip_prefix("skill_proposal:")?;
-    if id.len() != 32
-        || !id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return None;
-    }
-    EntityId::from_hex(id).ok()
 }
