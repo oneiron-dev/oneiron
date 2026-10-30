@@ -123,7 +123,7 @@ impl From<MemoryError> for FacadeApiError {
             // not a server fault.
             "rate_limited" | "quota_spent" => StatusCode::TOO_MANY_REQUESTS,
             "upstream_error" | "upstream_auth" | "label_read" => StatusCode::BAD_GATEWAY,
-            "kept_on_device" | "recall_failed" | "llm_unavailable" => {
+            "kept_on_device" | "world_route_not_admitted" | "recall_failed" | "llm_unavailable" => {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             "budget_denied" => StatusCode::PAYMENT_REQUIRED,

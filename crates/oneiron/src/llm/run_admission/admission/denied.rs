@@ -53,6 +53,10 @@ pub enum RunDenied {
     /// the owner's recipient choice for that world, or an integrity hold.
     #[error("the call's world stays on this device: {reason}")]
     KeptOnDevice { reason: &'static str },
+    /// The world's own order admits no route of the call's ladder (FIX
+    /// 11768): content-free, receipt-visible.
+    #[error("the world's order admits no route this call walks")]
+    WorldRouteNotAdmitted,
 }
 
 impl From<RunDenied> for LlmError {
@@ -75,6 +79,10 @@ impl From<RunDenied> for LlmError {
                     resets_at: Vec::new(),
                     reason: Some(reason.to_owned()),
                 })
+            }
+            // A world-order refusal stays one: never a budget refusal.
+            RunDenied::WorldRouteNotAdmitted => {
+                Self::Retryable(RetryableLlmError::WorldRouteNotAdmitted)
             }
             RunDenied::UndeclaredTeacher { .. }
             | RunDenied::UnknownSelector { .. }

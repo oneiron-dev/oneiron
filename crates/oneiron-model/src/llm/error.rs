@@ -130,6 +130,12 @@ pub enum RetryableLlmError {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    /// No rung the call reached may take it under its world's own order
+    /// (FIX 11768): the order names no route the ladder walks.
+    /// Content-free; the receipt's `passed_over` names each refused rung.
+    /// An unadmitted rung never rests, so no reset attaches.
+    #[error("world route not admitted")]
+    WorldRouteNotAdmitted,
     #[error("server error")]
     ServerError,
     #[error("timeout")]
