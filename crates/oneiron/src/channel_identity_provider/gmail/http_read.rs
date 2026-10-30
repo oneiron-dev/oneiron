@@ -137,7 +137,7 @@ impl HttpGmailReadWire {
             placement_of(&labels),
         );
         if let Some(message_id) = header("Message-ID") {
-            let references = header("References")
+            let references: Vec<String> = header("References")
                 .map(|references| references.split_whitespace().map(str::to_owned).collect())
                 .unwrap_or_default();
             let in_reply_to = header("In-Reply-To").map(|value| value.trim().to_owned());
