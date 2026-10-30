@@ -127,10 +127,17 @@ pub(crate) async fn fetch_owed_machine_history(
         .into_iter()
         .collect();
     // FIX 4294: each history this round settled asks the home to prove its
-    // pin here the latest.
+    // pin here the latest, unless no row landed for it and its pin is
+    // already proven the latest (L03 07:0x): a quiet round costs no call.
     if failed.is_none() {
-        for (target, _) in fetched.iter().filter(|(target, _)| !owed.contains(target)) {
-            prove_freshness(vault, &mut rpc, &selector, *target).await;
+        for (target, moved) in fetched.iter().filter(|(target, _)| !owed.contains(target)) {
+            let proven = matches!(
+                vault.machine_history_pin_freshness(*target),
+                Ok(crate::claim::MachineHistoryPinFreshness::Latest { .. })
+            );
+            if *moved || !proven {
+                prove_freshness(vault, &mut rpc, &selector, *target).await;
+            }
         }
     }
     failed.map_or(Ok(landed), Err)
