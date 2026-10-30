@@ -55,6 +55,7 @@ pub use consent::{
     ProposalSettleRequest, ProposalSettlement, ReviewedFork, SettleVerdict,
 };
 pub(crate) use consent::{DiscardAdmission, MergeAdmission};
+pub(crate) use holder_ask::resolve_holder_ask_in_txn;
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub use live_units::LivePin;
