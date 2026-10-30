@@ -193,6 +193,8 @@ impl Vault {
             // rederive_changed_in_txn, unless this thread defers it
             !crate::scope_summary::rederive_deferred()
                 && crate::scope_summary::rederive_owed_in_txn(self, &txn)?,
+            // an owed claim VAD consolidation (FIX 11858, L01 10:45)
+            crate::store::any_owed_claim_vad_in_txn(&self.store, &txn)?,
         ];
         Ok(due.contains(&true))
     }

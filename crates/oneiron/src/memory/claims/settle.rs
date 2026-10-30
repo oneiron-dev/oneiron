@@ -502,6 +502,10 @@ impl Memory<'_> {
                         now,
                     )?
                 };
+                // The approval's commit carries its consolidation debt (FIX 11858).
+                if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
+                    self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
+                }
                 let mut record = crate::memory::authorship::decision(
                     actor,
                     CLAIM_SETTLEMENT_CONTENT_KIND,

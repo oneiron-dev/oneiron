@@ -565,6 +565,10 @@ impl Vault {
                     },
                 )?;
             }
+            // The approval's commit carries its consolidation debt (FIX 11858).
+            if action == GateConsentBundleAction::Approve {
+                self.owe_settled_claim_vads_in_txn(wtxn, &member_claim_ids)?;
+            }
             let record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
                 decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
