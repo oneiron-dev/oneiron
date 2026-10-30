@@ -14,6 +14,12 @@ pub const DEFAULT_PREP_LEAD_SECS: u64 = 45 * 60;
 /// room to spare.
 pub const PREP_WAKE_REASON_TAG: &str = "calendar.prep.t45";
 
+/// The owner's local hour at which an unanswered check-in is asked once more.
+pub const CHECK_IN_RE_ASK_LOCAL_HOUR: u8 = 9;
+
+/// Seconds in one civil day on a fixed-offset clock.
+const SECS_PER_DAY: i64 = 86_400;
+
 /// The `Schedule` arm every prep wake carries.
 ///
 /// The contract's `Schedule` is tagged `#[serde(tag = "kind", rename_all =
@@ -141,4 +147,27 @@ pub fn plan_prep_wake(wake_id: String, event: &PrepEvent, policy: PrepPolicy) ->
         at_utc: fire_at,
         reason_tag: PREP_WAKE_REASON_TAG.to_owned(),
     })
+}
+
+/// The instant of the one morning re-ask for a check-in first asked at
+/// `asked_at`: [`CHECK_IN_RE_ASK_LOCAL_HOUR`]:00 on the owner's next local
+/// calendar day. `offset_minutes_at` is the owner's UTC offset in minutes at
+/// an instant, so a daylight-saving change overnight still lands the re-ask
+/// on the morning's own clock.
+///
+/// The engine owns no clock: like [`plan_prep_wake`], this only names the
+/// instant, and the host asks again once it has passed.
+#[must_use]
+pub fn plan_check_in_re_ask(asked_at: u64, offset_minutes_at: impl Fn(u64) -> i16) -> u64 {
+    let offset_secs = |at: u64| i64::from(offset_minutes_at(at)) * 60;
+    let asked = i64::try_from(asked_at).unwrap_or(i64::MAX);
+    let morning_local = asked
+        .saturating_add(offset_secs(asked_at))
+        .div_euclid(SECS_PER_DAY)
+        .saturating_add(1)
+        .saturating_mul(SECS_PER_DAY)
+        .saturating_add(i64::from(CHECK_IN_RE_ASK_LOCAL_HOUR) * 3_600);
+    let estimate = morning_local.saturating_sub(offset_secs(asked_at));
+    let morning_offset = offset_secs(u64::try_from(estimate).unwrap_or(asked_at));
+    u64::try_from(morning_local.saturating_sub(morning_offset)).unwrap_or(asked_at)
 }
