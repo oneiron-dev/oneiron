@@ -81,8 +81,6 @@ pub(super) fn original(
     );
     let referenced = tree.nodes.iter().any(|node| node.is(C, "f"));
     Ok(match chart_data(package, chart) {
-        // What the host cannot hold is no reason to rebuild (FIX 9165).
-        Err(refusal @ NativeRefusal::MemoryFloor { .. }) => return Err(refusal.into()),
         Ok(_) if referenced => Original::Own(part),
         _ if literal => Original::Absent,
         Ok(_) => Original::Replaced(part, RebuildReason::NoCells),
