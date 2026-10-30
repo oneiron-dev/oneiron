@@ -8,7 +8,9 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::blob_artifact::BlobVersionProvenance;
 use crate::booking::constraint::BookingError;
-use crate::booking::lifecycle::{ConfirmReceipt, booking_confirmation_context, hex_lower};
+use crate::booking::lifecycle::{
+    CalendarRevision, ConfirmReceipt, booking_confirmation_context, hex_lower,
+};
 use crate::calendar::ics::emit_imip_ics_with_organizer_zones;
 use crate::calendar::{
     CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarInviteMethod, CalendarInvitePayload,
@@ -231,7 +233,23 @@ pub(in crate::booking) fn dispatch_confirm_booking_invite_outcome(
     sink: &mut impl OutboundExecutionSink,
     now: u64,
 ) -> Result<ConfirmInviteOutcome, BookingError> {
-    let booking_ref = receipt.calendar.event_ref;
+    dispatch_booking_revision_invite_outcome(vault, actor, &receipt.calendar, sink, now)
+}
+
+/// Assembles and dispatches the `REQUEST` one committed revision of a
+/// confirmed booking carries: the first confirm's, or a move's under its
+/// bumped SEQUENCE (FIX 7850), read from committed state exactly as
+/// [`dispatch_confirm_booking_invite_outcome`] reads it. Each revision has
+/// its own intent and its own rendered document, and a replay of one
+/// revision sends nothing new.
+pub(in crate::booking) fn dispatch_booking_revision_invite_outcome(
+    vault: &Vault,
+    actor: EntityId,
+    revision: &CalendarRevision,
+    sink: &mut impl OutboundExecutionSink,
+    now: u64,
+) -> Result<ConfirmInviteOutcome, BookingError> {
+    let booking_ref = revision.event_ref;
     let Some(binding) = confirmed_booking_binding(vault, &booking_ref)? else {
         return Err(refused(
             "this booking carries no confirmed page and booker binding",
@@ -260,8 +278,8 @@ pub(in crate::booking) fn dispatch_confirm_booking_invite_outcome(
     let ics = emit_imip_ics_with_organizer_zones(
         &ImipEmitRequest {
             method: CalendarInviteMethod::Request,
-            uid: receipt.calendar.uid.clone(),
-            sequence: receipt.calendar.sequence,
+            uid: revision.uid.clone(),
+            sequence: revision.sequence,
             organizer,
             attendees: vec![binding.recipient.clone()],
             summary: binding.event_type,
@@ -279,7 +297,7 @@ pub(in crate::booking) fn dispatch_confirm_booking_invite_outcome(
     // no second version.
     let blob_ref = persist_imip_blob(
         vault,
-        &confirm_invite_blob_id(&booking_ref, receipt.calendar.sequence)?,
+        &confirm_invite_blob_id(&booking_ref, revision.sequence)?,
         "booking confirm invite",
         &ics,
         &BlobVersionProvenance::UserUpload,
@@ -293,8 +311,8 @@ pub(in crate::booking) fn dispatch_confirm_booking_invite_outcome(
         grant_ref,
         &ConfirmedBookingInvite {
             booking_ref,
-            uid: &receipt.calendar.uid,
-            sequence: receipt.calendar.sequence,
+            uid: &revision.uid,
+            sequence: revision.sequence,
             ics_blob_ref: &blob_ref,
         },
         sink,

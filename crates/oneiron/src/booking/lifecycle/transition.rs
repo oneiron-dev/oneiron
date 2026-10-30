@@ -23,7 +23,9 @@ use super::types::{
     MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
 };
 use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
-use crate::booking::invite_grant::dispatch_confirm_booking_invite_outcome;
+use crate::booking::invite_grant::{
+    dispatch_booking_revision_invite_outcome, dispatch_confirm_booking_invite_outcome,
+};
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};
 use crate::calendar::passport::index_passport_uid;
@@ -62,14 +64,31 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             invite_sink,
             attempt.public_authority.as_ref(),
         ),
-        BookingVerbRequest::Reschedule(spec) => execute_reschedule(
-            vault,
-            oracle,
-            spec,
-            now_utc,
-            attempt.public_authority.as_ref(),
-        )
-        .map(BookingVerbReceipt::Rescheduled),
+        BookingVerbRequest::Reschedule(spec) => {
+            let receipt = execute_reschedule(
+                vault,
+                oracle,
+                spec,
+                now_utc,
+                attempt.public_authority.as_ref(),
+            )?;
+            // The move carries its `REQUEST` under the bumped SEQUENCE through
+            // the same grant, gate and intent ledger as the confirm's (FIX
+            // 7850). As there, the writer has returned, and a dispatch failure
+            // never fails a move that is already committed.
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+                && let Err(error) = dispatch_booking_revision_invite_outcome(
+                    vault,
+                    actor,
+                    &receipt.calendar,
+                    sink,
+                    now_utc,
+                )
+            {
+                tracing::debug!(%error, "booking move sent no revised invite");
+            }
+            Ok(BookingVerbReceipt::Rescheduled(receipt))
+        }
         BookingVerbRequest::Cancel(spec) => {
             execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())
                 .map(BookingVerbReceipt::Cancelled)
