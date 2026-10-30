@@ -10,6 +10,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{VIEW_BUILD_OUTCOMES, VIEW_RECEIPTS, ViewReceipt};
 use crate::entity_id::bytes_to_hex_lower;
@@ -29,14 +30,28 @@ impl ViewReceipt {
     }
 }
 
+/// Set by a pass that failed, so the next housekeeping tick retries it.
+static COLLECTION_OWED: AtomicBool = AtomicBool::new(false);
+
 /// Runs [`collect_erased_views`] after a committed delete, logging (never
 /// raising) a failure: the delete stands, and the next pass retries.
 pub fn collect_after_delete(vault: &Vault) {
+    COLLECTION_OWED.store(false, Ordering::Relaxed);
     if let Err(error) = collect_erased_views(vault) {
+        COLLECTION_OWED.store(true, Ordering::Relaxed);
         tracing::warn!(
             kind = ?error.kind(),
             "working views of an erased source were not removed; the next pass retries"
         );
+    }
+}
+
+/// [`collect_after_delete`] for a housekeeping tick: it runs only when the
+/// tick's sweep erased something or an earlier pass failed, so an idle tick
+/// reads no view.
+pub fn collect_after_sweep(vault: &Vault, erased: bool) {
+    if erased || COLLECTION_OWED.load(Ordering::Relaxed) {
+        collect_after_delete(vault);
     }
 }
 
