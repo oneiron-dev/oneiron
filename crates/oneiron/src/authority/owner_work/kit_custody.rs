@@ -69,7 +69,7 @@ pub(super) fn apply_kit_request(
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: request.into_owned(),
+            request: Arc::new(request.into_owned()),
             key: *key,
             marks: BTreeMap::new(),
             narrow_only: false,
