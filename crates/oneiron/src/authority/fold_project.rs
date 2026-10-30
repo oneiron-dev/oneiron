@@ -14,7 +14,7 @@ use crate::EntityId;
 pub(super) struct Settled<'a> {
     pub(super) merged: Option<FoldState>,
     pub(super) valid_entries: BTreeSet<AuthorityEntryHash>,
-    pub(super) by_hash: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    pub(super) by_hash: &'a dyn RowsReadWhole,
     /// Already filtered to the settled branches.
     pub(super) revoke_facts: &'a RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
@@ -22,6 +22,19 @@ pub(super) struct Settled<'a> {
     pub(super) unsettled: bool,
     pub(super) counted_ancestor_pairs: u64,
     pub(super) issues: Vec<AuthorityFoldIssue>,
+}
+
+/// The rows a projection reads whole, by hash: the world-key records whose
+/// envelopes a folded key carries. A fold's own map of its rows, or the
+/// persistent one a resumed fold's base shares (FIX 12308).
+pub(super) trait RowsReadWhole {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry>;
+}
+
+impl RowsReadWhole for BTreeMap<AuthorityEntryHash, AuthorityLogEntry> {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry> {
+        BTreeMap::get(self, hash)
+    }
 }
 
 /// What the projection reads of each surviving row's own state beside the

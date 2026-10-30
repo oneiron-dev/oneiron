@@ -89,6 +89,30 @@ impl RowSummary {
     }
 }
 
+/// Each row a base folded, by hash: a persistent map, so the next base
+/// shares it and adds only the tail's rows (FIX 12308).
+type BaseRows = im::OrdMap<AuthorityEntryHash, Arc<RowSummary>>;
+
+/// The rows a base reads whole ([`is_projected`]), by hash, shared the same
+/// way.
+type ProjectedRows = im::OrdMap<AuthorityEntryHash, Arc<AuthorityLogEntry>>;
+
+/// Each row's first-seen seconds or sequence floor, by hash, shared the
+/// same way.
+type RowSeconds = im::OrdMap<AuthorityEntryHash, u64>;
+
+impl super::fold_project::RowsReadWhole for ProjectedRows {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry> {
+        im::OrdMap::get(self, hash).map(|entry| &**entry)
+    }
+}
+
+impl super::stale_roster::FirstSeenMap for RowSeconds {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&u64> {
+        im::OrdMap::get(self, hash)
+    }
+}
+
 /// A row's metadata, from its signed entry or the base's summary of it: all
 /// the heads, the next sequences and the sequence floors read of a row.
 #[derive(Clone, Copy)]
@@ -150,11 +174,11 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
 
 /// A stored log's fold, and what a resumed fold needs to carry it on.
 pub(in crate::authority) struct FoldBase {
-    inputs: Inputs,
+    inputs: Arc<Inputs>,
     /// Every row the base folded, a rejected one too.
-    rows: BTreeMap<AuthorityEntryHash, RowSummary>,
+    rows: BaseRows,
     /// The rows a fold past the base reads whole: see [`is_projected`].
-    projected: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    projected: ProjectedRows,
     /// Whether a row read whole revokes a device, rotates a key or re-roots
     /// the vault: only past one does the stale-roster window read any row
     /// ([`stale_roster_rows`]).
@@ -169,12 +193,12 @@ pub(in crate::authority) struct FoldBase {
 /// The first-seen seconds and sequence floors a base folded its rows under,
 /// and which of them are write-once receipts' (FIX 1854).
 struct BaseReceipts {
-    first_seen: BTreeMap<AuthorityEntryHash, u64>,
-    floors: BTreeMap<AuthorityEntryHash, u64>,
+    first_seen: RowSeconds,
+    floors: RowSeconds,
     /// The rows whose first-seen seconds and floor are write-once receipts':
     /// a fold past the base carries them unread. Each is a row of the base
     /// with first-seen seconds.
-    pinned: BTreeSet<AuthorityEntryHash>,
+    pinned: im::OrdSet<AuthorityEntryHash>,
     /// Every other row of the base: a fold past it reads these again (FIX
     /// 12282), and finds them without a walk over the pinned rows.
     unpinned: BTreeSet<AuthorityEntryHash>,
@@ -192,30 +216,32 @@ impl FoldBase {
         view: &AuthorityFold,
     ) -> Self {
         let expired = once
-            .fold
-            .valid_entries
+            .valid
             .iter()
             .filter(|hash| !view.valid_entries.contains(*hash))
             .copied()
             .collect();
         Self {
-            inputs,
+            inputs: Arc::new(inputs),
             rows: rows
                 .iter()
-                .map(|(hash, entry)| (*hash, RowSummary::of(entry)))
+                .map(|(hash, entry)| (*hash, Arc::new(RowSummary::of(entry))))
                 .collect(),
             projected: rows
                 .iter()
                 .filter(|(_, entry)| is_projected(&entry.op))
-                .map(|(hash, entry)| (*hash, (*entry).clone()))
+                .map(|(hash, entry)| (*hash, Arc::new((*entry).clone())))
                 .collect(),
             revokes_roster_keys: rows
                 .iter()
                 .any(|(_, entry)| super::stale_roster::revokes_roster_key(&entry.op)),
             receipts: BaseReceipts {
-                first_seen: first_seen.clone(),
-                floors: floors.clone(),
-                pinned: BTreeSet::new(),
+                first_seen: first_seen
+                    .iter()
+                    .map(|(hash, secs)| (*hash, *secs))
+                    .collect(),
+                floors: floors.iter().map(|(hash, floor)| (*hash, *floor)).collect(),
+                pinned: im::OrdSet::new(),
                 unpinned: rows.iter().map(|(hash, _)| *hash).collect(),
             },
             once,
@@ -230,7 +256,7 @@ impl FoldBase {
         mut self,
         pinned: BTreeSet<AuthorityEntryHash>,
     ) -> Self {
-        let pinned: BTreeSet<_> = pinned
+        let pinned: im::OrdSet<_> = pinned
             .into_iter()
             .filter(|hash| {
                 self.rows.contains_key(hash) && self.receipts.first_seen.contains_key(hash)
@@ -337,7 +363,7 @@ impl FoldBase {
 /// rows with none of these the window expires no approval and finds no
 /// deadline, so then it reads none.
 fn stale_roster_rows(
-    projected: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    projected: &ProjectedRows,
     revokes: bool,
 ) -> Vec<(AuthorityEntryHash, &AuthorityLogEntry)> {
     if !revokes {
@@ -345,7 +371,7 @@ fn stale_roster_rows(
     }
     projected
         .iter()
-        .map(|(hash, entry)| (*hash, entry))
+        .map(|(hash, entry)| (*hash, &**entry))
         .collect()
 }
 
@@ -358,7 +384,7 @@ impl BaseReceipts {
     fn past(
         &self,
         log: &StoredTail<'_>,
-        base_rows: &BTreeMap<AuthorityEntryHash, RowSummary>,
+        base_rows: &BaseRows,
         new_rows: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     ) -> Self {
         let read = log.first_seen_at_secs;
@@ -367,7 +393,7 @@ impl BaseReceipts {
             |hash: &AuthorityEntryHash| base_rows.contains_key(hash) || new_rows.contains_key(hash);
         if self.pinned.is_empty() {
             // The base carries nothing: every value is `log`'s.
-            let pinned: BTreeSet<_> = log
+            let pinned: im::OrdSet<_> = log
                 .pinned
                 .iter()
                 .filter(|&hash| is_row(hash) && read.contains_key(hash))
@@ -380,12 +406,17 @@ impl BaseReceipts {
                 .copied()
                 .collect();
             return Self {
-                first_seen: read.clone(),
-                floors: read_floors.clone(),
+                first_seen: read.iter().map(|(hash, secs)| (*hash, *secs)).collect(),
+                floors: read_floors
+                    .iter()
+                    .map(|(hash, floor)| (*hash, *floor))
+                    .collect(),
                 pinned,
                 unpinned,
             };
         }
+        // Each map is shared with the base: only the rows read and the
+        // unpinned ones are visited (FIX 12308).
         let (mut first_seen, mut floors) = (self.first_seen.clone(), self.floors.clone());
         let mut pinned = self.pinned.clone();
         for hash in self.unpinned.iter().chain(read.keys()) {
@@ -393,12 +424,13 @@ impl BaseReceipts {
             floors.remove(hash);
             pinned.remove(hash);
         }
-        first_seen.extend(read);
-        floors.extend(read_floors);
+        first_seen.extend(read.iter().map(|(hash, secs)| (*hash, *secs)));
+        floors.extend(read_floors.iter().map(|(hash, floor)| (*hash, *floor)));
         pinned.extend(
             log.pinned
                 .iter()
-                .filter(|&hash| is_row(hash) && first_seen.contains_key(hash)),
+                .filter(|&hash| is_row(hash) && first_seen.contains_key(hash))
+                .copied(),
         );
         let mut unpinned = self.unpinned.clone();
         unpinned.extend(new_rows.keys());
@@ -561,7 +593,7 @@ impl FoldBase {
             pinned,
             ..
         } = log;
-        if *inputs != self.inputs {
+        if *inputs != *self.inputs {
             return None;
         }
         let once = &self.once;
@@ -621,8 +653,9 @@ impl FoldBase {
                 add_bound_keys(&mut bound_keys, state);
             }
         }
-        let mut valid_entries = once.fold.valid_entries.clone();
-        valid_entries.extend(tail.order.iter().copied());
+        // The view's own valid entries: the one copy of the base's a fold
+        // past it makes (FIX 12308).
+        let valid_entries: BTreeSet<_> = once.valid.iter().chain(&tail.order).copied().collect();
         // The projection reads each world-key envelope from the rows read
         // whole, the base's and the tail's.
         let tail_rows: Vec<_> = tail
@@ -633,7 +666,7 @@ impl FoldBase {
         let mut projected = self.projected.clone();
         for (hash, entry) in &tail_rows {
             if is_projected(&entry.op) {
-                projected.insert(*hash, (*entry).clone());
+                projected.insert(*hash, Arc::new((*entry).clone()));
             }
         }
         let rows = Resumed {
@@ -650,7 +683,7 @@ impl FoldBase {
             writers: &writers,
             missed: Cell::new(false),
         };
-        let (fold, final_merged) = super::fold_project::project_once(
+        let (mut fold, final_merged) = super::fold_project::project_once(
             Settled {
                 merged: Some(merged.clone()),
                 valid_entries,
@@ -675,6 +708,7 @@ impl FoldBase {
         {
             return None;
         }
+        let kept = without_valid_entries(&mut fold);
         // The install's own view, in its first and only round, over the
         // rows its stale-roster window reads.
         let receipts = self.receipts.past(&log, &self.rows, &new_rows);
@@ -684,7 +718,7 @@ impl FoldBase {
                 .any(|(_, entry)| super::stale_roster::revokes_roster_key(&entry.op));
         let (mut view, expired) = super::install_fold::install_view_expiring(
             &stale_roster_rows(&projected, revokes_roster_keys),
-            fold.clone(),
+            fold,
             &receipts.first_seen,
             Some(now_secs),
             observations.policy.stale_roster_window_secs,
@@ -705,15 +739,18 @@ impl FoldBase {
                 heads::LogHeads::of(&view, expired)
             }
         };
-        let mut judged = once.judged.clone();
+        // Each row-sized part of the next base is this one's, shared, with
+        // the tail's rows added (FIX 12308).
+        let (mut judged, mut valid) = (once.judged.clone(), once.valid.clone());
         judged.extend(tail.order.iter().copied());
+        valid.extend(tail.order.iter().copied());
         let mut rows = self.rows.clone();
         for (hash, entry) in &tail_rows {
-            rows.insert(*hash, RowSummary::of(entry));
+            rows.insert(*hash, Arc::new(RowSummary::of(entry)));
         }
         let frontier = tail.take_frontier(once, &new_rows);
         let next = Self {
-            inputs: self.inputs.clone(),
+            inputs: Arc::clone(&self.inputs),
             rows,
             projected,
             revokes_roster_keys,
@@ -733,10 +770,21 @@ impl FoldBase {
                 bound_keys,
                 confirm_ids: tail.confirms.0,
                 confirm_nonces: tail.confirms.1,
-                fold,
+                valid,
+                fold: kept,
             },
             heads,
         };
         Some((view, next))
     }
+}
+
+/// A copy of `fold` without its valid entries, which move out and back and
+/// are never copied: what the next base keeps of a once fold beside the
+/// persistent set of them it shares (FIX 12308).
+fn without_valid_entries(fold: &mut AuthorityFold) -> AuthorityFold {
+    let valid_entries = std::mem::take(&mut fold.valid_entries);
+    let kept = fold.clone();
+    fold.valid_entries = valid_entries;
+    kept
 }

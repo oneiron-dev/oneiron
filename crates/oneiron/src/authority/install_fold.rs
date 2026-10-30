@@ -133,7 +133,7 @@ pub(super) fn fold_as_install(
 pub(super) fn install_view<E: super::stale_roster::LogRow>(
     entries: &[E],
     once: AuthorityFold,
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    first_seen_at_secs: &dyn super::stale_roster::FirstSeenMap,
     now_secs: Option<u64>,
     stale_roster_window_secs: u64,
     pin: Option<&PinnedRoot>,
@@ -154,7 +154,7 @@ pub(super) fn install_view<E: super::stale_roster::LogRow>(
 pub(super) fn install_view_expiring<E: super::stale_roster::LogRow>(
     entries: &[E],
     once: AuthorityFold,
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    first_seen_at_secs: &dyn super::stale_roster::FirstSeenMap,
     now_secs: Option<u64>,
     stale_roster_window_secs: u64,
     pin: Option<&PinnedRoot>,

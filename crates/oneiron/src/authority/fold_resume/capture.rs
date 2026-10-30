@@ -120,8 +120,10 @@ pub(super) struct Settlement {
 }
 
 /// One settled once fold, and what its projection read of each row's state.
+/// Its row-sized sets are persistent: the next base shares them and adds
+/// only the tail's rows (FIX 12308).
 pub(super) struct Once {
-    pub(super) judged: BTreeSet<AuthorityEntryHash>,
+    pub(super) judged: im::OrdSet<AuthorityEntryHash>,
     pub(super) head: AuthorityEntryHash,
     /// The main head and each side leaf, with its state and ancestor counts.
     pub(super) frontier: BTreeMap<AuthorityEntryHash, super::side_tail::FrontierPoint>,
@@ -133,7 +135,7 @@ pub(super) struct Once {
     /// The judged rows' slip issuers. No op a tail admits names a root or
     /// a consent device, so a tail never adds one.
     pub(super) issuers: BTreeSet<AuthorityKey>,
-    pub(super) uncounted: BTreeSet<AuthorityEntryHash>,
+    pub(super) uncounted: im::OrdSet<AuthorityEntryHash>,
     pub(super) pairs: u64,
     pub(super) counted_pairs: u64,
     /// Every binding any state holds, by key.
@@ -142,7 +144,10 @@ pub(super) struct Once {
     pub(super) bound_keys: BTreeSet<AuthorityKey>,
     pub(super) confirm_ids: BTreeSet<[u8; 32]>,
     pub(super) confirm_nonces: BTreeSet<[u8; 16]>,
-    /// The projected once fold, before this install's stale window.
+    /// The projected once fold's valid entries.
+    pub(super) valid: im::OrdSet<AuthorityEntryHash>,
+    /// The projected once fold, before this install's stale window, with no
+    /// valid entries: [`Self::valid`] holds them.
     pub(super) fold: AuthorityFold,
 }
 
@@ -240,6 +245,9 @@ impl Once {
             .filter(|parent| !by_hash.contains_key(*parent))
             .copied()
             .collect();
+        // The base shares `valid` in place of the fold's own (FIX 12308).
+        let mut fold = fold.clone();
+        fold.valid_entries.clear();
         Some(Self {
             judged: by_hash.keys().copied().collect(),
             head,
@@ -258,12 +266,13 @@ impl Once {
             pairs: entry_ancestors.values().map(|past| past.len() as u64).sum(),
             counted_pairs: counted_ancestor_pairs,
             issuers,
-            uncounted,
+            uncounted: uncounted.into_iter().collect(),
             writers,
             bound_keys,
             confirm_ids,
             confirm_nonces,
-            fold: fold.clone(),
+            valid: valid_entries.into_iter().collect(),
+            fold,
         })
     }
 

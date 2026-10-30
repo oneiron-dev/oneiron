@@ -51,6 +51,18 @@ impl LogRow for (AuthorityEntryHash, &AuthorityLogEntry) {
     }
 }
 
+/// Each row's first-seen seconds, as the window reads them: a map built for
+/// one fold, or the persistent one a resumed fold's base shares (FIX 12308).
+pub(super) trait FirstSeenMap {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&u64>;
+}
+
+impl FirstSeenMap for BTreeMap<AuthorityEntryHash, u64> {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&u64> {
+        BTreeMap::get(self, hash)
+    }
+}
+
 /// Whether `op` revokes a device, rotates a key or re-roots the vault: the
 /// rows the window reads revocations from. Over rows with none of these it
 /// expires no approval and finds no deadline.
@@ -69,7 +81,7 @@ pub(super) fn revokes_roster_key(op: &AuthorityOp) -> bool {
 fn stale_roster_approval_deadlines<E: LogRow>(
     entries: &[E],
     fold: &AuthorityFold,
-    first_seen: &BTreeMap<AuthorityEntryHash, u64>,
+    first_seen: &dyn FirstSeenMap,
     window_secs: u64,
 ) -> BTreeMap<AuthorityEntryHash, u64> {
     let mut revoked_at = BTreeMap::<AuthorityKey, u64>::new();
@@ -148,7 +160,7 @@ fn stale_roster_approval_deadlines<E: LogRow>(
 fn expired_stale_roster_approvals<E: LogRow>(
     entries: &[E],
     fold: &AuthorityFold,
-    first_seen: &BTreeMap<AuthorityEntryHash, u64>,
+    first_seen: &dyn FirstSeenMap,
     now_secs: Option<u64>,
     window_secs: u64,
 ) -> BTreeSet<AuthorityEntryHash> {
@@ -183,7 +195,7 @@ pub(super) fn stale_roster_subject_approvals<E: LogRow>(
 pub(super) fn next_stale_roster_deadline<E: LogRow>(
     entries: &[E],
     fold: &AuthorityFold,
-    first_seen: &BTreeMap<AuthorityEntryHash, u64>,
+    first_seen: &dyn FirstSeenMap,
     now_secs: u64,
     window_secs: u64,
 ) -> Option<u64> {
@@ -199,7 +211,7 @@ pub(super) fn next_stale_roster_deadline<E: LogRow>(
 pub(super) fn apply_stale_roster_window<E: LogRow>(
     entries: &[E],
     mut fold: AuthorityFold,
-    first_seen: &BTreeMap<AuthorityEntryHash, u64>,
+    first_seen: &dyn FirstSeenMap,
     now_secs: Option<u64>,
     window_secs: u64,
 ) -> (AuthorityFold, BTreeSet<AuthorityEntryHash>) {
