@@ -400,15 +400,25 @@ pub(super) fn persisted_artifact(
     artifact_id: &str,
 ) -> Result<CritiqueArtifact> {
     let txn = vault.store.env.read_txn()?;
+    persisted_artifact_in_txn(vault, &txn, verdict, artifact_id)
+}
+
+/// [`persisted_artifact`] in the caller's snapshot.
+pub(super) fn persisted_artifact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    verdict: &EntityId,
+    artifact_id: &str,
+) -> Result<CritiqueArtifact> {
     let pointer = RESULT_ID
-        .get(&vault.store, &txn, verdict)?
+        .get(&vault.store, txn, verdict)?
         .ok_or(Error::EntityNotFound)?;
     let hash: [u8; 32] = pointer
         .strip_prefix(RESULT.decl().prefix)
         .and_then(|hash| hash.try_into().ok())
         .ok_or(Error::EntityNotFound)?;
     let stored = RESULT
-        .get(&vault.store, &txn, &hash)?
+        .get(&vault.store, txn, &hash)?
         .ok_or(Error::EntityNotFound)?;
     if stored.verdict != verdict.to_hex() {
         return Err(Error::CorruptedIndex("review result identity"));
