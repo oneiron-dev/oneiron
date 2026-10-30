@@ -7,8 +7,8 @@ use super::{
     Materializer, McpConnectorActorRegistry, McpCredentialHashKey, Mutex,
     NEXT_LIFECYCLE_SESSION_ID, Ordering, ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext,
     SyncServer, SyncServerConfig, UsageLedger, WindowManager, add_window_to_root, broadcast,
-    host_root_secret, init_window_list, live_rows, mcp_registry_hash_key, read_window_list,
-    schema_version_bytes, server_state, spawn_local_change_producer,
+    host_root_secret, init_window_list, insert_root_schema_version, live_rows,
+    mcp_registry_hash_key, read_window_list, server_state, spawn_local_change_producer,
 };
 
 impl SyncServer {
@@ -71,13 +71,11 @@ impl SyncServer {
                 let doc = LoroDoc::new();
                 // Initialize root doc meta map
                 let meta = doc.get_map("meta");
-                // i64-LE BYTES (Loro Binary), conforming to the shared schema
-                // (`schema::create_root_doc`) — NOT a Loro i64, which the
-                // byte-only schema readers would not decode.
-                meta.insert("schema_version", schema_version_bytes().as_slice())
-                    .map_err(|e| {
-                        oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
-                    })?;
+                // A native Loro I64, the shared schema's own encoding
+                // (`schema::create_root_doc`).
+                insert_root_schema_version(&meta).map_err(|e| {
+                    oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
+                })?;
                 // `meta.windows` must use the shared schema-owned encoding so
                 // fresh server docs, root-doc creation, and client decoding
                 // cannot drift.
@@ -245,6 +243,7 @@ impl SyncServer {
         // Another vault of this process reads this one through this handle
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
+        let hyde_queue_wait = config.limits.queue_wait();
         Ok(Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
@@ -257,6 +256,9 @@ impl SyncServer {
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
             usage_ledger: UsageLedger::new(vault.clone()),
+            retrieval_buffer: crate::usage::RetrievalMeterBuffer::new(UsageLedger::new(
+                vault.clone(),
+            )),
             // Each resident's share of the allocation, kept in the vault (FIX 7767).
             host_account: oneiron::llm::run_admission::HostAccount::with_residents(
                 oneiron::llm::VaultResidentLedger::new(vault.clone()),
@@ -280,7 +282,7 @@ impl SyncServer {
             reassert_manager,
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
-            lifecycle_in_flight: Mutex::new(HashSet::new()),
+            lifecycle_in_flight: std::sync::Mutex::new(HashSet::new()),
             housekeeping_passes: Default::default(),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
@@ -330,7 +332,9 @@ impl SyncServer {
             ai: crate::ai_host::AiHandle::inert(),
             pattern_launch_runner: None,
             rerank_runtime: Default::default(),
-            hyde_host: Default::default(),
+            // Engine 00:59 for parked L14: the configured queue wait bounds
+            // admission, not a new timeout of its own.
+            hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
             owner_host: None,
             feedback: None,

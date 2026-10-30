@@ -299,10 +299,9 @@ impl Vault {
         let id = self.store.clock.entity_id()?;
         let mut wtxn = self.store.env.write_txn()?;
         // FIX 7592: the embedded handle's live owner binds an import-fetch
-        // binding that names no actor; a fault reading it binds none.
-        if let Ok(owner) = crate::vault::embedded_owner_actor_id()
-            && let Ok(true) = crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &owner)
-        {
+        // binding that names no actor. FIX 9325: a fault reading that owner
+        // keeps the binding for the vault's one recorded Owner.
+        if let Some(owner) = import_fetch_default_owner(self, &wtxn) {
             super::owner_door::default_import_fetch_actor(&mut rec.bindings, &owner);
         }
         register_secret_in_txn(self, &mut wtxn, &id, &mut rec)?;
@@ -364,6 +363,25 @@ impl Vault {
             }));
         }
         Ok(Some(rec.value_bytes))
+    }
+}
+
+/// The actor an import-fetch binding that names none takes at
+/// [`Vault::register_secret`]: the embedded owner while it is a live vault
+/// owner. A fault reading that owner (its id or the live-owner census) keeps
+/// the binding for the vault's one recorded Owner, so the import still runs
+/// instead of answering `binding_actor_missing` (FIX 9325). A vault that
+/// records several owners, or none, binds none on a fault.
+fn import_fetch_default_owner(vault: &Vault, txn: &heed::RoTxn<'_>) -> Option<EntityId> {
+    let live = crate::vault::embedded_owner_actor_id().and_then(|owner| {
+        crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)
+            .map(|live| live.then_some(owner))
+    });
+    match live {
+        Ok(owner) => owner,
+        Err(_) => crate::policy_model::sole_recorded_owner_in_txn(vault, txn)
+            .ok()
+            .flatten(),
     }
 }
 

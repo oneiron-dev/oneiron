@@ -56,6 +56,27 @@ impl LensText {
         Ok(Self(value))
     }
 
+    /// `value` as the lens texts it frames into (FIX 11257): each at most
+    /// [`MAX_LENS_TEXT_BYTES`], cut on a character boundary, in order, so a
+    /// text of any length is carried whole across them. An empty value is
+    /// one empty text.
+    #[must_use]
+    pub fn frames(value: &str) -> Vec<Self> {
+        let mut frames = Vec::new();
+        let mut rest = value;
+        while rest.len() > MAX_LENS_TEXT_BYTES {
+            let mut cut = MAX_LENS_TEXT_BYTES;
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let (head, tail) = rest.split_at(cut);
+            frames.push(Self(head.to_owned()));
+            rest = tail;
+        }
+        frames.push(Self(rest.to_owned()));
+        frames
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0

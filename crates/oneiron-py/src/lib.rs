@@ -162,6 +162,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             retry_after: None,
             resets_at: Vec::new(),
             reason_codes: Vec::new(),
+            legal_hold: None,
         })
     })
 }
@@ -181,6 +182,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         retry_after: None,
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
+        legal_hold: None,
     })
 }
 
@@ -1585,6 +1587,23 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.export")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_export_transfer_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.export.transfer.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.export.transfer.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_export_transfer_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.export.transfer.release")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.export.transfer.release", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
@@ -3011,6 +3030,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.mesh.dial")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.mesh.dial", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_outbox_diverged_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.outbox.diverged.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.outbox.diverged.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_outbox_diverged_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.outbox.diverged.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.outbox.diverged.answer", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -6264,6 +6297,16 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.origin.mirror.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_plan(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.plan")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.mirror.plan", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

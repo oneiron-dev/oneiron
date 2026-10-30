@@ -240,6 +240,7 @@ impl ServerProbeAuthor<'_> {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality,
+                host_keyless: false,
             },
             operation: AiOperation::Transcribe,
             parts,
@@ -264,6 +265,7 @@ impl ServerProbeAuthor<'_> {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality: self.locality,
+                host_keyless: false,
             },
             messages: vec![
                 LlmMessage {
@@ -303,6 +305,7 @@ impl ServerProbeAuthor<'_> {
             binding: HostInferenceBinding::Advertised {
                 model: model.clone(),
                 locality: *locality,
+                keyless: false,
             },
             extraction_egress: self.server.extraction_egress.as_deref(),
         };

@@ -5,7 +5,7 @@
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::{FOUND, FoundKey, FoundKeyAction, FoundKeyCard, FoundKeySettled, FoundKeys};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -21,6 +21,7 @@ use crate::secret_custody::reveal::{
     not_active, resolve_handle_in_txn, reveal_bound, reveal_connection, unknown,
 };
 use crate::secret_custody::types::SecretCustodyStatus;
+use crate::secret_custody::{put_secret_custody_in_txn, read_secret_custody_meta_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
@@ -231,6 +232,63 @@ impl Vault {
         })?;
         self.mirror_custody_change(&carried);
         Ok(settled)
+    }
+
+    /// Re-enters the kept value of a found key the owner ruled no secret,
+    /// the way out of `credential_leaf_unreadable` for it (FIX 7404): while
+    /// its custody key does not open the value, every batch write to the
+    /// record it was found in answers that, and no other door reaches a
+    /// revoked record's value. `value` is sealed again at the record's
+    /// generation, under a key minted here when custody holds none, and the
+    /// ruling stands as it was, so the write door again reads `value` as no
+    /// hit in that record. The owner enters it as it sits there; nothing can
+    /// compare it with the value that no longer opens. A key still active
+    /// (a mask-on-write lift) is re-entered, or reissued at its provider and
+    /// entered, through the rotate door. Returns the standing ruling.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
+    /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
+    /// [`GateError::InvalidConsentBound`] for an empty value, or a key the
+    /// owner has not ruled no secret. `credential_custody_unavailable` when
+    /// custody cannot take the value's key. What the custody write returns.
+    pub fn reenter_found_key_value(
+        &self,
+        owner: &AuthenticatedOwner,
+        handle: &str,
+        value: &[u8],
+    ) -> Result<FoundKeySettled> {
+        if value.is_empty() {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "a re-entered value must not be empty",
+            )));
+        }
+        self.with_write_txn_grouped(|txn| {
+            live_owner_in_txn(
+                self,
+                owner,
+                txn,
+                "only the vault owner re-enters a kept value",
+            )?;
+            let found = Located::find_in_txn(&self.store, txn, handle)?;
+            let settled = match &found.key().settled {
+                Some(settled) if settled.action == FoundKeyAction::NotASecret => settled.clone(),
+                _ => {
+                    return Err(Error::Gate(GateError::InvalidConsentBound(
+                        "only a key the owner ruled no secret re-enters its kept value here; \
+                         rotate any other key to re-enter or reissue it",
+                    )));
+                }
+            };
+            let mut rec = read_secret_custody_meta_in_txn(&self.store, txn, &found.custody)?
+                .ok_or_else(|| unknown(&found.handle))?;
+            rec.value_bytes = value.to_vec();
+            let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            let written = put_secret_custody_in_txn(self, txn, &found.custody, &rec, at);
+            rec.value_bytes.zeroize();
+            written?;
+            Ok(settled)
+        })
     }
 }
 

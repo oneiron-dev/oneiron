@@ -150,6 +150,10 @@ struct Paired {
     pin: Option<oneiron::authority::AuthorityCheckpointPin>,
     #[serde(default)]
     home: Option<PairedHome>,
+    /// The home paired again a machine it already holds, credential only
+    /// (FIX 8636): this machine's identity and class stand as they were.
+    #[serde(default)]
+    re_paired: bool,
 }
 
 #[derive(Deserialize)]
@@ -164,13 +168,16 @@ const REDEEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Redeems the owner's machine pairing `link` for this vault's machine, then
 /// stores the enrolment and its credential in `files`. The link is spent once
 /// the home answers. The fresh connection key signs the link's code, holder
-/// and pin reference; this machine's key signs its enrolment request, and a
-/// pin the home returns must be exactly the one the link names.
+/// and pin reference; this machine's key signs its enrolment request and its
+/// possession of that request over the same redemption, and a pin the home
+/// returns must be exactly the one the link names. With the possession proof
+/// a home that already holds this machine live in its class pairs it again,
+/// credential only (FIX 8636); the answer says whether it did.
 pub(crate) fn enrol(
     vault: &oneiron::Vault,
     files: &EnrolmentFiles,
     link: &str,
-) -> anyhow::Result<DeviceEnrolment> {
+) -> anyhow::Result<(DeviceEnrolment, bool)> {
     use base64::Engine as _;
     use ed25519_dalek::Signer;
 
@@ -219,6 +226,7 @@ pub(crate) fn enrol(
         &holder_ref,
         pin_ref.as_ref(),
     )?;
+    let possession = vault.machine_possession_proof(&request, &transcript)?;
     let body = serde_json::json!({
         "code": code,
         "holder_ref": holder_ref,
@@ -234,6 +242,7 @@ pub(crate) fn enrol(
                 .encode(&request.encryption_key.key),
             "machine_proof": hex(&request.machine_proof),
         },
+        "machine_possession": hex(&possession),
     });
     let response = reqwest::blocking::Client::builder()
         // A redirect would send the code and the signed request on to
@@ -285,7 +294,7 @@ pub(crate) fn enrol(
     };
     record.validate()?;
     files.write(&format!("v2.cred.{slip}.{}", hex(key.as_bytes())), &record)?;
-    Ok(record)
+    Ok((record, paired.re_paired))
 }
 
 /// Whether a redemption may go to `origin`: `https`, whose certificate and

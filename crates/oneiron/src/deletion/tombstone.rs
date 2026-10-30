@@ -97,6 +97,15 @@ impl TombstoneReason {
     pub const fn is_hard(self) -> bool {
         !matches!(self, Self::UserDelete | Self::ArchivedByCleanup)
     }
+
+    /// KS-7 (FIX 5688): whether a delete under this reason erases its
+    /// owner's checkpoint payload compartments, so that no old checkpoint
+    /// opens the owner's bytes again. The privacy erase does. An ordinary
+    /// hard delete and a policy delete keep them for the restore window, as
+    /// a soft delete and an archive do (Engine 10-20 08:4x, ruling 1).
+    pub(crate) const fn erases_checkpoint_payloads(self) -> bool {
+        matches!(self, Self::GdprDelete)
+    }
 }
 
 impl From<DeleteReason> for TombstoneReason {

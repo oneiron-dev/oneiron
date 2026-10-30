@@ -67,6 +67,8 @@ mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
 
+#[cfg(target_os = "linux")]
+pub(super) use self::carrier_watch::carrier_recipient;
 pub use self::coordinator::serve_managed;
 pub use self::ingress::build_managed_app;
 pub(super) use self::ingress::build_managed_artifact_app;
@@ -284,6 +286,21 @@ impl ManagedOwnerSession {
     }
 
     /// The owner whose socket this is.
+    pub(crate) fn holder(&self) -> oneiron::EntityId {
+        self.0
+    }
+}
+
+/// The member a held MCP socket serves (FIX 1302 stage 2): the person his
+/// supervisor signed the socket's upgrade for (`ManagedPersonAction`). Not
+/// [`ManagedPersonHolder`], which signs one request and its exact body: this
+/// signs no later body. It names whose socket a call came on, and each call
+/// reaches the member doors alone, where the engine judges him again.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedPersonSession(pub(crate) oneiron::EntityId);
+
+impl ManagedPersonSession {
+    /// The member whose socket this is.
     pub(crate) fn holder(&self) -> oneiron::EntityId {
         self.0
     }

@@ -36,6 +36,7 @@ struct Leg<'c> {
     ctx: &'c WakeAttemptContext<'c>,
     call: &'c RoleCall<'c>,
     locality: ModelLocality,
+    keyless: bool,
     policy: &'c WakeRecipePolicy,
     sizing: Sizing,
     key: [u8; 32],
@@ -176,6 +177,7 @@ impl ConsolidationExecutor<'_> {
                 DreamerParkCause::Retry,
             ));
         };
+        let keyless = call.inference.selected_keyless();
         let writer = Writer {
             attempt: attempt.status.attempt.id,
             generation: attempt.status.attempt.attempt_count,
@@ -200,6 +202,7 @@ impl ConsolidationExecutor<'_> {
                 ctx,
                 call: &call,
                 locality,
+                keyless,
                 policy: &policy,
                 sizing: Sizing::new(
                     self.roles.follower_window_tokens(),
@@ -245,10 +248,11 @@ impl ConsolidationExecutor<'_> {
             return Err(Error::InvariantViolation("a follower suffix asks nothing"));
         };
         let labels = request::labels(&work.asked);
-        let request = match request::ask_request(leg.call.model, leg.locality, work, &labels) {
-            Ok(request) => request,
-            Err(error) => return Ok(Some(charges.park_on_error(&error))),
-        };
+        let request =
+            match request::ask_request(leg.call.model, leg.locality, leg.keyless, work, &labels) {
+                Ok(request) => request,
+                Err(error) => return Ok(Some(charges.park_on_error(&error))),
+            };
         let (request, step_hash) = match admit(leg, request) {
             Ok(admitted) => admitted,
             Err(refusal) => return Ok(Some(refused(charges, &refusal))),
@@ -436,6 +440,7 @@ impl ConsolidationExecutor<'_> {
         let request = request::fold_request(
             leg.call.model,
             leg.locality,
+            leg.keyless,
             &leg.policy.follower_keyframe_instruction,
             group,
             pins,

@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::config::{ROW_VERSION, SKILL_EDIT_VERDICT_ACCEPTED, SKILL_EDIT_VERDICT_REJECTED};
 use super::target::CompilationTarget;
-use crate::edit_distance::RetainedProposal;
 use crate::edit_distance::attribution::AmendmentJudgment;
 use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef};
+use crate::edit_distance::{RetainedProposal, StoredProposal};
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
@@ -274,31 +274,32 @@ impl Bucket {
 
 /// What one judged amendment contributes: the routing facts and the texts
 /// its Δ's refs name.
-pub(super) struct AmendmentSource<'a> {
+pub(super) struct AmendmentSource {
     pub(super) actor: EntityId,
     pub(super) skill: Option<EntityId>,
-    pub(super) ends: SourceEnds<'a>,
+    pub(super) ends: SourceEnds,
 }
 
 /// The texts a Δ's refs name, read through the rows that retain them.
-pub(super) enum SourceEnds<'a> {
+pub(super) enum SourceEnds {
     /// A recorded window: one artifact holds both ends and every change.
-    Recorded(&'a RetainedProposal),
+    Recorded(RetainedProposal),
     /// Two endpoint texts, each read through its own row.
     Endpoints(String, String),
 }
 
 /// Every persisted proposal row (finalized windows and endpoint-only
-/// imports) with its retained document, by row id.
+/// imports), unopened, by row id. Each row opens only when a judgment
+/// resolves it.
 pub(super) struct ArtifactIndex {
-    pub(super) records: BTreeMap<EntityId, RetainedProposal>,
+    pub(super) records: BTreeMap<EntityId, StoredProposal>,
 }
 
 impl ArtifactIndex {
     /// The texts a Δ's refs name, through the lane it was measured on: a
     /// recorded-ops Δ's one artifact, or a reconstructed Δ's two ends. A
     /// field-diff Δ names no text.
-    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<SourceEnds<'_>> {
+    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<SourceEnds> {
         match delta.source {
             DeltaSource::RecordedOps => {
                 let artifact = delta.proposed_ref.proposal_artifact()?;
@@ -307,6 +308,8 @@ impl ArtifactIndex {
                 }
                 self.records
                     .get(&artifact.entity_id())
+                    .cloned()
+                    .map(RetainedProposal::open)
                     .map(SourceEnds::Recorded)
             }
             DeltaSource::Reconstructed => Some(SourceEnds::Endpoints(
@@ -319,7 +322,9 @@ impl ArtifactIndex {
 
     fn end_text(&self, end: &EndpointRef) -> Option<String> {
         self.records
-            .get(&end.proposal_artifact()?.entity_id())?
+            .get(&end.proposal_artifact()?.entity_id())
+            .cloned()
+            .map(RetainedProposal::open)?
             .end_text(end)
             .into_text()
     }

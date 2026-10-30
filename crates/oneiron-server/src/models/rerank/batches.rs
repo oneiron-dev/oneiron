@@ -4,8 +4,10 @@
 //! meters and settles the whole call once, on its usage summed over every
 //! batch. Each batch's scores land at their documents' places in one full
 //! result, every document scored once, in the caller's order and never cut
-//! to a top few. A batch that fails fails the call: a shorter list is never
-//! an answer.
+//! to a top few. A first batch that fails fails the call. A later batch that
+//! would overrun the call's line is not sent, and one that fails ends the
+//! call: either way the call answers its finished batches' scores as a
+//! partial, never as a full list ([`super::outcome`], FIX 11228).
 //! Entry: `rerank_batches`.
 use std::collections::BTreeMap;
 

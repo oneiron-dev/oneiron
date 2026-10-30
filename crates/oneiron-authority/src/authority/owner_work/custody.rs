@@ -247,7 +247,7 @@ pub(super) fn custody_work_value(
     ])
 }
 
-fn permit_value(permit: &CustodyRecipientPermit) -> Value {
+pub(super) fn permit_value(permit: &CustodyRecipientPermit) -> Value {
     Value::Map(vec![
         (Value::from("machine"), Value::from(permit.machine.to_hex())),
         (Value::from("profile"), binary_value(permit.profile)),
@@ -297,7 +297,7 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
     })
 }
 
-fn decode_permit(value: &Value) -> Result<CustodyRecipientPermit> {
+pub(super) fn decode_permit(value: &Value) -> Result<CustodyRecipientPermit> {
     let entries = map_entries(value)?;
     validate_keys(entries, &PERMIT_KEYS)?;
     Ok(CustodyRecipientPermit {

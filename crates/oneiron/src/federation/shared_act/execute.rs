@@ -273,6 +273,7 @@ impl Vault {
                         format: crate::batch::export::VAULT_ARCHIVE_FORMAT.to_owned(),
                         archive: archive.bytes,
                         digest: summary.digest.clone(),
+                        holder_requests: Vec::new(),
                     },
                 };
                 let row_key = removal_export_key(&copy.member, &copy.receipt_id);
@@ -284,6 +285,9 @@ impl Vault {
             _ => None,
         };
         txn.commit()?;
+        if !receipt.revoked_slips.is_empty() {
+            self.store.notify_credential_revocations();
+        }
         Ok(SharedActExecution {
             receipt,
             delivery,

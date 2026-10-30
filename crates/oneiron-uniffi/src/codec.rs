@@ -60,6 +60,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         retry_after: None,
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
+        legal_hold: None,
     }
 }
 
@@ -73,6 +74,12 @@ fn internal(message: String) -> OneironError {
         message,
         "This is an Oneiron SDK bug; please report it.",
     )
+}
+
+pub(crate) fn lift_legal_hold_notice(
+    notice: oneiron::error::LegalHoldNotice,
+) -> Result<crate::facade_types_generated::LegalHoldNotice, OneironError> {
+    lift_record("legal_hold", &notice)
 }
 
 // ── the WireJson leaf ───────────────────────────────────────────────────
@@ -634,6 +641,10 @@ impl Lift<engine::RecordRefusal> for RecordRefusal {
             message: value.message,
             suggestions: value.suggestions,
             field: value.field,
+            legal_hold: value
+                .legal_hold
+                .map(|notice| lift_legal_hold_notice(*notice))
+                .transpose()?,
         })
     }
 }
@@ -783,7 +794,7 @@ impl Lower<sdk::NeighborsRequest> for (String, NeighborOpts) {
 impl Lift<oneiron::claim::ReadScope> for ReadScope {
     fn lift(scope: oneiron::claim::ReadScope) -> Result<Self, OneironError> {
         Ok(Self {
-            entity_types: scope.entity_types.map(|types| types.into_iter().collect()),
+            entity_types: scope.entity_kinds(),
             max_sensitivity_band: scope.max_sensitivity_band,
             include_stale: scope.include_stale,
             min_confidence: scope.min_confidence,
