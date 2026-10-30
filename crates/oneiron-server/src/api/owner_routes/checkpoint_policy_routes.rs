@@ -27,7 +27,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -42,18 +41,60 @@ use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/checkpoint-policy", get(view).post(select))
-        .route("/checkpoint-policy/clear", post(clear))
-        .route("/checkpoint-policy/roots", get(roots))
-        .route("/checkpoint-policy/roots/deliveries", get(deliveries))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/checkpoint-policy",
+                summary: "The checkpoint root policy in force, the revision a surface presents back as seen, the owner's choice in force, every live choice and any conflict among them.",
+                row: None,
+            },
+            get(view),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/checkpoint-policy",
+                summary: "The owner selects the roots that attest his checkpoint images and their quorum, on any host; a stale seen is a conflict.",
+                row: None,
+            },
+            post(select),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/checkpoint-policy/clear",
+                summary: "The owner clears his checkpoint policy choice; the policy his hosting posture fixes holds again. A stale seen is a conflict.",
+                row: None,
+            },
+            post(clear),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/checkpoint-policy/roots",
+                summary: "Which roots this host's checkpoint head awaits under the root policy in force: each root accepted, signed_not_counted or pending, the quorum, the hardware rule, the awaited roots and the shortfall; head is null when no head is kept.",
+                row: None,
+            },
+            get(roots),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/checkpoint-policy/roots/deliveries",
+                summary: "For each root held here, each home checkpoint head it signed: the home's machine (null for a home that proved none), the head image and its state, signed_not_uploaded, delivered or accepted.",
+                row: None,
+            },
+            get(deliveries),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

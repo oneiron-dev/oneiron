@@ -8,23 +8,38 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, put};
 use oneiron::commitment_wake::CommitmentReminderRoute;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route(
-        "/commitments/reminder-route",
-        get(reminder_route).put(set_reminder_route),
-    )
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/commitments/reminder-route",
+                summary: "Reminder route.",
+                row: None,
+            },
+            get(reminder_route),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/commitments/reminder-route",
+                summary: "Set reminder route.",
+                row: None,
+            },
+            put(set_reminder_route),
+        ),
+    ]
 }
 
 /// The route as the owner sees it; `route: null` when none is set.

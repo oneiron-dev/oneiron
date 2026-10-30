@@ -416,6 +416,8 @@ impl Store {
     where
         E: From<Error>,
     {
+        // A keyed request's intent open here counts this write (FIX 10379).
+        let write = super::idempotency_intent::counting_commits(self, write);
         if active_write_txn_depth() > 0 {
             drop(announced);
             return self.solo_write(write);
