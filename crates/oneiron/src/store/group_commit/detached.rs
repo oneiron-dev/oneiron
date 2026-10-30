@@ -39,6 +39,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Instant;
 
 use heed::RwTxn;
 
@@ -202,6 +203,19 @@ impl DetachedWrites {
                 .wait_while(counts, |now| now.settled < queued)
                 .unwrap_or_else(PoisonError::into_inner),
         );
+    }
+
+    /// [`Self::wait_settled`] until `deadline` at most (FIX 12023 W0):
+    /// whether every write queued when it began is decided by then.
+    pub(super) fn wait_settled_until(&self, deadline: Instant) -> bool {
+        let counts = self.counts();
+        let queued = counts.queued;
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        let (counts, _) = self
+            .settled
+            .wait_timeout_while(counts, timeout, |now| now.settled < queued)
+            .unwrap_or_else(PoisonError::into_inner);
+        counts.settled >= queued
     }
 }
 
