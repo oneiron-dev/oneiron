@@ -670,7 +670,7 @@ pub(super) fn no_keystore_for_pad_machine() -> oneiron::Error {
 /// that holds no seed has no other ground to trust a backup on.
 pub(super) fn backup_key(
     backup: &Path,
-    vault_path: &Path,
+    _vault_path: &Path,
     keystore: Option<&Arc<dyn DeviceKeystore>>,
     unlock: &HostUnlock,
     pins: Option<Vec<CheckpointSigner>>,
