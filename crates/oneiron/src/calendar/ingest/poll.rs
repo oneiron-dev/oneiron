@@ -230,7 +230,12 @@ fn pending_poll_record(
     config: &IcsFeedPollConfig,
 ) -> Result<Option<AttemptRecord>, CalendarError> {
     let dedupe_key = ics_feed_poll_dedupe_key(config);
-    for record in AttemptQueue::new(vault).list()? {
+    // Only the poll kind's rows are read, not the whole ledger (FIX 11940).
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        AttemptQueue::new(vault).kind_working_rows_in_txn(&txn, ICS_POLL_ATTEMPT_KIND)?
+    };
+    for record in rows {
         let pending = matches!(
             record.state,
             AttemptState::Queued
@@ -441,7 +446,12 @@ fn pause_feed(
     )?;
     let dedupe_key = ics_feed_poll_dedupe_key(config);
     let queue = AttemptQueue::new(vault);
-    for record in queue.list()? {
+    // The read ends before the first pause writes (FIX 11940).
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        queue.kind_working_rows_in_txn(&txn, ICS_POLL_ATTEMPT_KIND)?
+    };
+    for record in rows {
         if !is_feed_poll_row(&record, &dedupe_key) {
             continue;
         }
