@@ -16,6 +16,7 @@ use crate::edit_distance::escalation::{
 use crate::entity_id::EntityId;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryResult, verify_actor_binding,
+    verify_actor_binding_in_txn,
 };
 use crate::outbound_chokepoint::{
     FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow, FanoutPlan,
@@ -80,8 +81,8 @@ impl Memory<'_> {
         self.vault()
             .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
-                verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
+                verify_actor_binding_in_txn(self.vault(), txn, self.actor(), self.actor_class())?;
                 let mut run = load_run(self.vault(), txn, correlation)?;
                 if run.plan.actor_ref != self.actor().to_hex() {
                     return Err(consult_refusal(
