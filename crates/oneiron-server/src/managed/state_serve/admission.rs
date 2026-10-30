@@ -333,10 +333,11 @@ impl ManagedState {
         Arc::new(move || state.admit_background(kind))
     }
 
-    /// Admits a new voice call (FIX 12039): an `OwnerWrite` for its whole
-    /// length, as a served write. Once the vault's deletion marker is present
-    /// no new call is admitted, logged once; a call in flight runs on under
-    /// the freeze as today. Every other `OwnerWrite` stays as
+    /// Admits a new voice call (FIX 12039) or public live voice session
+    /// (FIX 12053): an `OwnerWrite` for its whole length, as a served
+    /// write. Once the vault's deletion marker is present no new call or
+    /// session is admitted, logged once; one in flight runs on under the
+    /// freeze as today. Every other `OwnerWrite` stays as
     /// [`Self::admit_background`] leaves it.
     pub(super) fn admit_voice_call(&self) -> Option<Box<dyn Send>> {
         if self.admission.deletion.stops_pass(self.server.vault()) {
@@ -345,7 +346,8 @@ impl ManagedState {
         self.admit_pass(WriteKind::OwnerWrite)
     }
 
-    /// [`Self::admit_voice_call`] as the admission the voice loop takes per call.
+    /// [`Self::admit_voice_call`] as the admission the voice loop takes per
+    /// call, and each new live voice session takes at its start.
     pub(super) fn voice_admission(self: &Arc<Self>) -> HousekeepingAdmission {
         let state = Arc::clone(self);
         Arc::new(move || state.admit_voice_call())

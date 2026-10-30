@@ -305,6 +305,13 @@ pub(crate) async fn start_desktop_workers(
         None,
         admitted(),
     );
+    // A public live voice session (`ai.voice.start`) on plain serve: a new
+    // one takes the deletion-gated admission, as a voice loop call does
+    // (FIX 12053); one in flight runs on. Embedded serve admits every
+    // session as today. Bound before anything serves.
+    if plain_serve {
+        sync_server.live_voice.admit_with(admitted());
+    }
     let tagger = sync_server
         .tagger
         .as_ref()
