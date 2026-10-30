@@ -64,8 +64,8 @@ pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CAN
 pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
-    CustodyPermitPieces, CustodyRecipientPermit, CustodyRequestAuthority, custody_recipient_set,
-    custody_recipients_encoded_len,
+    CustodyPermitPieces, CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
+    custody_recipient_set, custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
 pub use self::import_mark::{
@@ -287,7 +287,8 @@ impl RootChange {
 
 /// The work one request asks for. Closed: each kind is one variant, with the
 /// fields its own wire map states. `Clone`, not `Copy`: a custody change
-/// carries its recipients inline (CALLS CUSTODY_SHARED_BODY).
+/// carries its recipients inline (CALLS CUSTODY_SHARED_BODY), one shared
+/// set a clone copies no permit of (FIX 12281).
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -325,12 +326,14 @@ pub enum OwnerWorkBody {
     /// one row ride in pieces (FIX 11866): `pieces` is then their commitment,
     /// `recipients` is empty as the entry carries it, and the fold fills it
     /// from the [`CustodyPermitPiece`] rows in the request's causal past.
+    /// Every request the fold keeps on one joined set shares its permits
+    /// ([`CustodyRecipientPermits`], FIX 12281).
     Custody {
         change: CustodyChange,
         generation: u32,
         input: Option<[u8; 32]>,
         holder: Option<EntityId>,
-        recipients: Vec<CustodyRecipientPermit>,
+        recipients: CustodyRecipientPermits,
         pieces: Option<CustodyPermitPieces>,
         authority: CustodyRequestAuthority,
     },
