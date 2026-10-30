@@ -33,7 +33,7 @@ impl LiveQueries {
                     subscription_id: id,
                     cursor: cursor.clone(),
                     kind: "data",
-                    rows: derived_rows(&derived.dependencies),
+                    rows: self.lent_rows(&derived.dependencies)?,
                     result: Some(derived.value),
                 };
                 let bytes = push_bytes(std::slice::from_ref(&push))?;
@@ -75,11 +75,14 @@ impl LiveQueries {
         }
         // Owner feeds were re-derived above. Any other ring is re-judged
         // right before it is sent: one that names a row a device-local world
-        // keeps since its derivation is retired for a gap.
+        // keeps since its derivation, or a row its caller's live credential,
+        // grants or an erase no longer admit (the run's re-admission, FIX
+        // 10500), is retired for a gap.
         for (id, sub) in &mut state.subs {
             if sub.channel != Channel::OwnerFeed
                 && !sub.needs_resync
-                && self.source.withholds(sub.ring.make_contiguous())?
+                && (self.source.withholds(sub.ring.make_contiguous())?
+                    || !self.source.readmits(sub.ring.make_contiguous())?)
             {
                 sub.resync(*id);
             }
@@ -160,7 +163,7 @@ impl LiveQueries {
             let current = fingerprint(&derived.value)?;
             let changed = sub.current != current;
             let cursor = state.cursor(derived.cursor)?;
-            let rows = derived_rows(&derived.dependencies);
+            let rows = self.lent_rows(&derived.dependencies)?;
             let sub = state.subs.get_mut(&id).ok_or_else(state_error)?;
             sub.dependencies = derived.dependencies;
             sub.current = current;

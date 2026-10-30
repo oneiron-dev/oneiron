@@ -92,8 +92,7 @@ pub(super) fn close_owner_answer_obligation_by_owner_revision_in_txn(
 }
 
 /// A fresh local confirm on the claim's current revision is the item its
-/// owner answers now. It also ends the demotion of peer revisions that a peer
-/// overwrite of an earlier local confirm started.
+/// owner answers now.
 pub(super) fn rebind_owner_answer_obligation_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -112,23 +111,6 @@ pub(super) fn rebind_owner_answer_obligation_in_txn(
             "owner answer obligation not opened",
         ))?;
     obligation.item = owner_answer_item_hash(&item.diff_handle);
-    obligation.demotes_peer_revisions = false;
-    store.put_owner_answer_obligation_in_txn(wtxn, &obligation)
-}
-
-/// Marks `claim_id`'s obligation so the peer revisions that follow land
-/// demoted: a peer overwrote a confirm this device attached.
-pub(super) fn demote_peer_revisions_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    claim_id: &EntityId,
-) -> Result<()> {
-    let mut obligation = store
-        .owner_answer_obligation_in_txn(wtxn, claim_id)?
-        .ok_or(Error::InvariantViolation(
-            "owner answer obligation not opened",
-        ))?;
-    obligation.demotes_peer_revisions = true;
     store.put_owner_answer_obligation_in_txn(wtxn, &obligation)
 }
 

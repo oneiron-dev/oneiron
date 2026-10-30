@@ -528,7 +528,8 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_frame_size: Option<usize>,
 
-    /// Maximum CRDT update payload in bytes.
+    /// Maximum CRDT update bytes in one received frame or part; default the
+    /// 8 MiB frame floor (L14 s45 10:34).
     #[arg(long)]
     pub max_update_payload: Option<usize>,
 

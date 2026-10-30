@@ -55,14 +55,17 @@ use crate::world_keys::{
     pad_body_world, refused, world_keys_destroyed_in_txn,
 };
 
+mod bodies;
 mod checkpoint;
+mod reader;
 mod restore_pads;
+use self::reader::Reader;
 pub use checkpoint::RecoveryCheckpointTrust;
 
 /// The base section's encoding version.
-const SEALED_BUNDLE_BASE_VERSION: u8 = 2;
+const SEALED_BUNDLE_BASE_VERSION: u8 = 3;
 /// A world section's encoding version.
-const SEALED_BUNDLE_WORLD_VERSION: u8 = 1;
+const SEALED_BUNDLE_WORLD_VERSION: u8 = 2;
 const BASE_LABEL: &[u8] = b"oneiron/sealed-bundle-base\0";
 const WORLD_LABEL: &[u8] = b"oneiron/sealed-bundle-world\0";
 
@@ -109,6 +112,9 @@ pub struct SealedBundleTake {
 /// that world's authority capsule seals (FIX 4211). Its settings ride the main
 /// log and the base (PR1a #2961).
 type WorldSides = BTreeMap<EntityId, Vec<Vec<u8>>>;
+
+/// A world section's windows and the bodies they bind by reference.
+type WorldSection = (Vec<(WindowKey, Vec<u8>)>, Vec<bodies::CarriedBody>);
 
 /// What a kit restore from the sealed cloud bundle did.
 #[derive(Debug, Default)]
@@ -181,7 +187,8 @@ impl WindowManager {
             for window in &held {
                 snapshots.push((window.clone(), self.sealed_mirror_snapshot(world, window)?));
             }
-            fresh.push((world, encode_world_section(world, &snapshots)?));
+            let parts = bodies::carried(vault, &snapshots)?;
+            fresh.push((world, encode_world_section(world, &snapshots, &parts)?));
         }
         // A section whose world this machine knows goes when that world has a
         // fresh one or the carry filter drops it.
@@ -351,6 +358,7 @@ impl WindowManager {
             self.unload_window(key)?;
             restore.windows += 1;
         }
+        bodies::land(self, &windows, base.bodies);
         // Before every section that opens with them, less what current
         // retirement names now the base windows are in (PAD-1).
         restore_pads::admit_kit_pads(vault, &mut pads);
@@ -394,7 +402,7 @@ impl WindowManager {
             let Some(section) = latest.open_section(key).ok()? else {
                 continue;
             };
-            let carried = decode_world_section(&section.payload, world).ok()?;
+            let (carried, _) = decode_world_section(&section.payload, world).ok()?;
             for (window, snapshot) in carried {
                 let landed = materialize
                     && self
@@ -421,18 +429,21 @@ impl WindowManager {
         take: &mut SealedBundleTake,
     ) {
         let world = section.key.world;
-        let Ok(windows) = decode_world_section(&section.payload, world) else {
+        let Ok((windows, carried)) = decode_world_section(&section.payload, world) else {
             take.skipped += 1;
             return;
         };
         take.sections += 1;
-        for (window, snapshot) in windows {
-            match self.merge_bundle_mirror(world, &window, &snapshot, materialize) {
+        for (window, snapshot) in &windows {
+            match self.merge_bundle_mirror(world, window, snapshot, materialize) {
                 Ok(false) => take.unchanged += 1,
                 Ok(true) if materialize => take.merged += 1,
                 Ok(true) => take.mirrored += 1,
                 Err(_) => take.skipped += 1,
             }
+        }
+        if materialize {
+            bodies::land(self, &windows, carried);
         }
     }
 
@@ -494,7 +505,8 @@ impl WindowManager {
                 snapshots.push((key.clone(), snapshot));
             }
         }
-        let base = encode_base(adopted.as_ref(), &authority, &snapshots)?;
+        let parts = bodies::carried(vault, &snapshots)?;
+        let base = encode_base(adopted.as_ref(), &authority, &snapshots, &parts)?;
         Ok((base, eligible, sides))
     }
 
@@ -626,15 +638,17 @@ struct BundleBase {
     /// The signed authority entries, parents first.
     authority: Vec<Vec<u8>>,
     windows: Vec<(WindowKey, Vec<u8>)>,
+    bodies: Vec<bodies::CarriedBody>,
 }
 
-/// label ‖ version (2) ‖ the adopted image ([`checkpoint::encode`]) ‖
+/// label ‖ version (3) ‖ the adopted image ([`checkpoint::encode`]) ‖
 /// authority entry count (4) ‖ each entry `u32`-length-prefixed ‖ windows
-/// ([`encode_windows`]).
+/// ([`encode_windows`]) ‖ their by-reference bodies ([`bodies::encode`]).
 fn encode_base(
     adopted: Option<&checkpoint::CarriedCheckpoint>,
     authority: &[Vec<u8>],
     windows: &[(WindowKey, Vec<u8>)],
+    carried: &[bodies::CarriedBody],
 ) -> Result<Zeroizing<Vec<u8>>> {
     let mut out = Zeroizing::new(Vec::new());
     out.extend_from_slice(BASE_LABEL);
@@ -646,6 +660,7 @@ fn encode_base(
         out.extend_from_slice(entry);
     }
     encode_windows(&mut out, windows)?;
+    bodies::encode(&mut out, carried)?;
     Ok(out)
 }
 
@@ -661,29 +676,35 @@ fn decode_base(bytes: &[u8]) -> Result<BundleBase> {
         authority.push(reader.take(len)?.to_vec());
     }
     let windows = decode_windows(&mut reader, None)?;
+    let carried = bodies::decode(&mut reader)?;
     reader.finish()?;
     Ok(BundleBase {
         checkpoint,
         authority,
         windows,
+        bodies: carried,
     })
 }
 
-/// label ‖ version (1) ‖ world (16) ‖ windows ([`encode_windows`]).
+/// label ‖ version (2) ‖ world (16) ‖ windows ([`encode_windows`]) ‖ their
+/// by-reference bodies ([`bodies::encode`]).
 fn encode_world_section(
     world: EntityId,
     windows: &[(WindowKey, Vec<u8>)],
+    carried: &[bodies::CarriedBody],
 ) -> Result<Zeroizing<Vec<u8>>> {
     let mut out = Zeroizing::new(Vec::new());
     out.extend_from_slice(WORLD_LABEL);
     out.push(SEALED_BUNDLE_WORLD_VERSION);
     out.extend_from_slice(world.as_bytes());
     encode_windows(&mut out, windows)?;
+    bodies::encode(&mut out, carried)?;
     Ok(out)
 }
 
-/// The windows of `world`'s section, each one of the world's.
-fn decode_world_section(bytes: &[u8], world: EntityId) -> Result<Vec<(WindowKey, Vec<u8>)>> {
+/// The windows of `world`'s section, each one of the world's, and the
+/// bodies they bind by reference.
+fn decode_world_section(bytes: &[u8], world: EntityId) -> Result<WorldSection> {
     let mut reader = Reader { bytes, at: 0 };
     if reader.take(WORLD_LABEL.len())? != WORLD_LABEL
         || reader.u8()? != SEALED_BUNDLE_WORLD_VERSION
@@ -692,8 +713,9 @@ fn decode_world_section(bytes: &[u8], world: EntityId) -> Result<Vec<(WindowKey,
         return Err(malformed());
     }
     let windows = decode_windows(&mut reader, Some(world))?;
+    let carried = bodies::decode(&mut reader)?;
     reader.finish()?;
-    Ok(windows)
+    Ok((windows, carried))
 }
 
 /// count (4) ‖ each window: its key `u16`-length-prefixed, then its snapshot
@@ -738,52 +760,4 @@ fn put_u32(out: &mut Vec<u8>, value: usize) -> Result<()> {
 
 fn malformed() -> Error {
     refused("a sealed bundle section is malformed")
-}
-
-/// A forward reader over a section's payload.
-struct Reader<'a> {
-    bytes: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn take(&mut self, len: usize) -> Result<&'a [u8]> {
-        let end = self
-            .at
-            .checked_add(len)
-            .filter(|end| *end <= self.bytes.len())
-            .ok_or_else(malformed)?;
-        let slice = &self.bytes[self.at..end];
-        self.at = end;
-        Ok(slice)
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
-        self.take(N)?.try_into().map_err(|_| malformed())
-    }
-
-    fn u8(&mut self) -> Result<u8> {
-        self.array().map(u8::from_be_bytes)
-    }
-
-    fn u16(&mut self) -> Result<u16> {
-        self.array().map(u16::from_be_bytes)
-    }
-
-    fn u32(&mut self) -> Result<u32> {
-        self.array().map(u32::from_be_bytes)
-    }
-
-    fn u64(&mut self) -> Result<u64> {
-        self.array().map(u64::from_be_bytes)
-    }
-
-    /// Nothing may follow the last field.
-    fn finish(&self) -> Result<()> {
-        if self.at == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(malformed())
-        }
-    }
 }
