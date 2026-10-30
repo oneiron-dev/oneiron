@@ -5,7 +5,7 @@ use zip::result::ZipError;
 use zip::write::FileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use crate::admission::{Hold, Operation, Refusal, bytes_of, wide};
+use crate::admission::{HeldBuffer, Hold, Operation, Refusal, bytes_of, wide};
 
 /// Archive workload limits, supplied by the host policy on native edit and
 /// settlement doors. The standalone fork uses `DEFAULT` as its fallback; a
@@ -131,6 +131,47 @@ impl From<Refusal> for DocxError {
     }
 }
 
+/// The most bytes one read of an inflating entry takes before they are
+/// appended to its data.
+const INFLATE_CHUNK: usize = 32 * 1024;
+
+/// Inflate `source` to its end in chunks of [`INFLATE_CHUNK`], each chunk's
+/// room taken from `hold` before it is appended (FIX 10656): measured, the
+/// bytes inflated so far and the capacity the data allocates for them.
+fn inflate_held(source: &mut impl Read, hold: &mut Hold) -> Result<Vec<u8>, DocxError> {
+    let mut data = Vec::new();
+    let mut chunk = [0u8; INFLATE_CHUNK];
+    loop {
+        let read = match source.read(&mut chunk) {
+            Ok(0) => return Ok(data),
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(DocxError::Io(error)),
+        };
+        hold.grow(&mut data, read)?;
+        data.extend_from_slice(&chunk[..read]);
+    }
+}
+
+/// A ZIP writer's error, the refusal of its output's memory typed as such.
+fn zip_write_error(error: ZipError) -> DocxError {
+    match error {
+        ZipError::Io(error) => match Refusal::from_io(&error) {
+            Some(refusal) => DocxError::Resource(refusal),
+            None => DocxError::ZipWrite(ZipError::Io(error)),
+        },
+        error => DocxError::ZipWrite(error),
+    }
+}
+
+/// An I/O error, the refusal of an output's memory typed as such.
+fn io_error(error: std::io::Error) -> DocxError {
+    match Refusal::from_io(&error) {
+        Some(refusal) => DocxError::Resource(refusal),
+        None => DocxError::Io(error),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DocxFile {
     pub name: String,
@@ -224,15 +265,11 @@ impl DocxArchive {
                     limit: limits.max_total_bytes,
                 });
             }
-            // The declared size is the header's word, an estimate: nothing of
-            // it is measured until it is inflated.
-            hold.take_estimate(declared, 0)?;
-            let mut data = Vec::new();
+            // The declared size is the header's word and reserves nothing:
+            // the entry inflates in chunks, each taken from the hold as the
+            // bytes grow to hold it, measured (FIX 10656).
             let cap = limits.max_part_bytes.min(remaining);
-            (&mut file)
-                .take(cap.saturating_add(1))
-                .read_to_end(&mut data)
-                .map_err(DocxError::Io)?;
+            let data = inflate_held(&mut (&mut file).take(cap.saturating_add(1)), &mut hold)?;
             let actual = wide(data.len());
             if actual > cap {
                 return Err(if actual > limits.max_part_bytes {
@@ -249,8 +286,6 @@ impl DocxArchive {
                     }
                 });
             }
-            // What inflated past the header's word, measured now.
-            hold.take(actual.saturating_sub(declared))?;
             total_bytes = total_bytes.saturating_add(actual);
 
             files.push(DocxFile { name, data });
@@ -267,6 +302,8 @@ impl DocxArchive {
         })
     }
 
+    /// Write the package as classic ZIP bytes, its output reserved through
+    /// the operation it runs in as it grows (FIX 10657).
     pub fn write(&self) -> Result<Vec<u8>, DocxError> {
         // This writer emits classic ZIP only: past its widths the package is
         // refused as that format's limit, before the writer would switch to
@@ -290,8 +327,10 @@ impl DocxArchive {
                 limit: CLASSIC_ZIP_BYTES,
             });
         }
-        let cursor = Cursor::new(Vec::new());
-        let mut writer = ZipWriter::new(cursor);
+        // The written package grows in a buffer that takes each growth from
+        // the operation's port before it allocates (FIX 10657): measured as
+        // it is written, since no compressed byte is known before it is.
+        let mut writer = ZipWriter::new(HeldBuffer::new(Operation::current().hold()));
         // Pin the per-entry modification time to a fixed epoch. With the `time`
         // feature enabled (transitively), `FileOptions::default()` stamps
         // `OffsetDateTime::now_utc()` into every local file header, so two writes
@@ -304,16 +343,16 @@ impl DocxArchive {
             if file.name.ends_with('/') {
                 writer
                     .add_directory(file.name.as_str(), options)
-                    .map_err(DocxError::ZipWrite)?;
+                    .map_err(zip_write_error)?;
                 continue;
             }
             writer
                 .start_file(file.name.as_str(), options)
-                .map_err(DocxError::ZipWrite)?;
-            writer.write_all(&file.data).map_err(DocxError::Io)?;
+                .map_err(zip_write_error)?;
+            writer.write_all(&file.data).map_err(io_error)?;
         }
-        let cursor = writer.finish().map_err(DocxError::ZipWrite)?;
-        let mut bytes = cursor.into_inner();
+        let buffer = writer.finish().map_err(zip_write_error)?;
+        let mut bytes = buffer.into_inner()?;
         if wide(bytes.len()) > CLASSIC_ZIP_BYTES {
             return Err(DocxError::Capacity {
                 ceiling: Ceiling::ZipBytes,

@@ -464,6 +464,7 @@ impl KeyRead<'_> {
             task: self.asker.task.clone(),
             attempt: self.asker.attempt,
             scope: None,
+            collected: None,
         }
     }
 

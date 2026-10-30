@@ -448,7 +448,22 @@ pub(super) async fn chat_turn(
             let body = turn_invocation_body(&auth, locality, request);
             match facade::claim_door_invocation(&server, named, body).await {
                 DoorClaim::Run(claim) => Some(claim),
-                DoorClaim::Answered(outcome) => return facade::door_replay(outcome),
+                DoorClaim::Answered(outcome) => {
+                    // The waiter's credential is judged again once the wait
+                    // is over, before a reply is its (FIX 8212): a revoked
+                    // or expired one gets the refusal it gets anywhere.
+                    if !auth.credential_is_live(server.vault()) {
+                        return refusal(
+                            StatusCode::UNAUTHORIZED,
+                            "credential_revoked",
+                            "the admission credential is no longer live",
+                        );
+                    }
+                    // The first call's reply, released again for this
+                    // waiter through the same release record as a facade
+                    // waiter's (FIX 10499).
+                    return facade::door_replay_for(server.vault(), &auth, "chat", outcome);
+                }
                 DoorClaim::InFlight => {
                     return refusal(
                         StatusCode::CONFLICT,

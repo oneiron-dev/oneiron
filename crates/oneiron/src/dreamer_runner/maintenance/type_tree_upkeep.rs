@@ -175,9 +175,9 @@ fn axis_value(receipt: &TeamReceipt, axis: DecisionAxis) -> Option<String> {
                 _ => None,
             }
         }
-        // A team receipt names no critic; its decision needs its own anchored
-        // source.
-        DecisionAxis::TrustedCritic => None,
+        // The one critic whose review of the deliverable the outcome settled
+        // (FIX 2970); a panel, like a mix, is not one critic's win.
+        DecisionAxis::TrustedCritic => receipt.trusted_critic(),
     }
 }
 

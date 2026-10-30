@@ -29,10 +29,11 @@ use oneiron::skill_optimize::offer_pilot::{
     training_destination as destination,
 };
 use oneiron::skill_optimize::{
-    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
-    OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers, union_source_rows,
+    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCheckOutcome, OfferCost,
+    OfferEvidence, OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer,
+    TrainingOfferDraft, model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role,
+    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
+    union_source_rows,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};

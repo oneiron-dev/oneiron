@@ -366,8 +366,7 @@ fn keep_owner_parts(captured: Captured, keeps: &dyn Fn(RowDb, &[u8], &[u8]) -> b
             .rows
             .iter()
             .filter(|part| {
-                actors::image_row(rows, part)
-                    .is_some_and(|(db, key, value)| keeps(db, key, value))
+                actors::image_row(rows, part).is_some_and(|(db, key, value)| keeps(db, key, value))
             })
             .collect();
         if parts.is_empty() {
