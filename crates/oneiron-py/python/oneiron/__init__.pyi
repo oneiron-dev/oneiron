@@ -395,6 +395,7 @@ class OneironError(RuntimeError):
     resets_at: tuple[int, ...] | None
     # The refusal's stable reason codes, in its producer's order (FIX 7398).
     reason_codes: tuple[str, ...] | None
+    legal_hold: Facade.LegalHoldNotice | None
     def __init__(
         self,
         code: str,
@@ -405,6 +406,7 @@ class OneironError(RuntimeError):
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
+        legal_hold: Facade.LegalHoldNotice | None = None,
     ) -> None: ...
 
 class Oneiron:
@@ -2572,6 +2574,8 @@ class Oneiron:
     class _VaultCodeOriginMirrorVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorView:
             """Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."""
+        def plan(self, spec: Facade.OriginMirrorPlanRequest) -> Facade.OriginMirrorPlanView:
+            """Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review."""
         def set(self, spec: Facade.OriginMirrorSetRequest) -> Facade.OriginMirrorTarget:
             """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."""
         def strategy(self, spec: Facade.OriginMirrorStrategyRequest) -> Facade.OriginMirrorTarget:

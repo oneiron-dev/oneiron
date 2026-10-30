@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority.rs` | src | s | 1 type · 1 const | — | Authority-log hash vocabulary the write path shares |
 | `src/claim.rs` | src | s | 1 fn · 3 re-export | — | Claim status axes and the scoped-read receipt |
 | `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 8 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
-| `src/claim/receipt.rs` | src | s | 2 struct · 4 fn | ReadScope, ScopedReadReceipt | Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed |
+| `src/claim/receipt.rs` | src | s | 2 struct · 5 fn · 3 crate-vis | ReadScope, ScopedReadReceipt | Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed |
 | `src/claim/status.rs` | src | s | 3 enum · 7 fn | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
 | `src/code_run.rs` | src | s | 1 mod | — | Shared vocabulary of the code-run vault-read contract |
 | `src/code_run/vault_read.rs` | src | s | 4 re-export | — | The vault-read contract table, the method vocabulary it generates, the request shapes and the error taxonomy… |
@@ -52,6 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 10 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
 | `src/memory/error.rs` | src | m | 4 struct · 7 fn · 1 type · 22 const · 1 re-export | MemoryError, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory/error/engine.rs` | src | m | — | — | — |
 | `src/memory/error/gate_denial.rs` | src | s | 1 struct | MemoryGateDenial | The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |

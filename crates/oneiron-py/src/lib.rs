@@ -162,6 +162,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             retry_after: None,
             resets_at: Vec::new(),
             reason_codes: Vec::new(),
+            legal_hold: None,
         })
     })
 }
@@ -181,6 +182,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         retry_after: None,
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
+        legal_hold: None,
     })
 }
 
@@ -6281,6 +6283,16 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.origin.mirror.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_plan(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.plan")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.mirror.plan", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

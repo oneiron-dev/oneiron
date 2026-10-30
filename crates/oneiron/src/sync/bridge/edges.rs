@@ -704,7 +704,9 @@ pub(super) fn materialize_edges_from_delta(
                 _ => None,
             })
             .collect();
+        let linked_facts = crate::task_verb::scoped_to_sources(&ops);
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones)?;
+        crate::task_verb::wake_linked_facts_in_txn(vault, wtxn, linked_facts)?;
         for (src, tgt) in considered_child_of {
             // The candidate has reached the winner arbiter or its terminal
             // rejection, so no earlier missing-endpoint obligation remains.

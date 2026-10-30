@@ -151,7 +151,9 @@ impl Vault {
             crate::sync::window::reject_held_rebootstrap(self, &doc, &actor)?;
         }
         // The artifact envelope round trip, in memory: what recovers is what
-        // a written snapshot would have held, byte for byte.
+        // a written snapshot would have held, byte for byte, its pads
+        // prepared into current custody first (KS-5, FIX 7313).
+        super::canonical::prepare_artifact_pads(self);
         let bytes = capture_canonical_window_within(self, window, &doc, budget.max_bytes)?
             .encode_within(budget.max_bytes)?;
         let snapshot_blake3 = *blake3::hash(&bytes).as_bytes();
