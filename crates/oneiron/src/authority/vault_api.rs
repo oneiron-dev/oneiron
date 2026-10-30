@@ -429,6 +429,22 @@ impl Vault {
             .map(|view| (*view).clone())
     }
 
+    /// Whether the authority fold holds `key` in the provider's custody
+    /// (FIX 12196): admitted by a provider-marked key, directly or through
+    /// others, whatever its own marks say. The SDK's owner-local host-root
+    /// open refuses such a root (FIX 5344). It only reads, as
+    /// [`Self::authority_vault_id`] does.
+    ///
+    /// # Errors
+    ///
+    /// Storage and fold errors.
+    pub fn authority_key_in_host_custody(&self, key: &AuthorityKey) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .authority_view_readonly_in_txn(&rtxn)?
+            .in_host_custody(key))
+    }
+
     /// This vault's authority id, as the shared verified fold of the current
     /// snapshot names it; `None` until the vault is rooted. It only reads:
     /// unlike [`Self::authority_fold`] it moves no first-seen clock, so a
