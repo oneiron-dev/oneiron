@@ -10,9 +10,10 @@
 //! executes it (its carrier and executor fields name the secret itself),
 //! no profile is asked for, and no other change takes the kit's signature.
 //! The transition then names that request, and a receiver admits it only on
-//! it ([`kit_request_admits`]). A fault recording it leaves the push as it
-//! was, its request zero, warned: never a refusal, never a demand for a
-//! profile. Its permits are measured as an install's request's are, and past
+//! it ([`kit_request_admits`]). A fault recording it aborts the push's
+//! transaction, warned (FIX 12016): its staged pieces and frontier join
+//! leave with the request, never orphaned. Its permits are measured as an
+//! install's request's are, and past
 //! one row ride in pieces the anchor signs ahead of the request (FIX 11866).
 
 use ed25519_dalek::SigningKey;
@@ -33,9 +34,9 @@ use crate::temporal::TimeRange;
 /// What the kit push records (CALLS `KS-6 kit request authority`): one
 /// custody request for the owner `actor`'s push of record `id` at
 /// `generation` to `permits`, signed with `anchor`, the anchor of `root`,
-/// in `wtxn`. Returns its entry hash once the fold here counts it; zero,
-/// warned, when it cannot be recorded or has no effect here, so the push
-/// goes on as it did (CUSTODY_NEW_CHECK_FAULT = WarnAndKeepCurrentPath).
+/// in `wtxn`. Returns its entry hash once the fold here counts it; the
+/// error, warned, when it cannot be recorded or has no effect here, so the
+/// push's transaction aborts with its staged pieces and join (FIX 12016).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_kit_request_in_txn(
     vault: &Vault,
@@ -46,7 +47,7 @@ pub(super) fn record_kit_request_in_txn(
     generation: u32,
     permits: &[CustodyRecipientPermit],
     (anchor, root): (&SigningKey, RecoveryRootId),
-) -> AuthorityEntryHash {
+) -> Result<AuthorityEntryHash> {
     match record_in_txn(
         vault,
         wtxn,
@@ -57,14 +58,14 @@ pub(super) fn record_kit_request_in_txn(
         permits,
         (anchor, root),
     ) {
-        Ok(hash) => hash,
+        Ok(hash) => Ok(hash),
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
-                "the kit push's custody request was not recorded; the push carries no request, \
-                 as before (FIX 6053 pending here)"
+                "the kit push's custody request was not recorded; the push aborts with it \
+                 (FIX 12016)"
             );
-            [0; 32]
+            Err(error)
         }
     }
 }

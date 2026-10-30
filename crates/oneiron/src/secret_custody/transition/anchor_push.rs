@@ -122,7 +122,8 @@ impl Vault {
                 keyed
             };
             // FIX 6053: the push records the custody request it enacts, under
-            // the pinned kit's authority; a fault leaves it as before.
+            // the pinned kit's authority; a fault aborts the push with its
+            // staged pieces and join (FIX 12016).
             let request = if keyed.is_empty() {
                 [0; 32]
             } else {
@@ -135,7 +136,7 @@ impl Vault {
                     record.0.rotation_generation,
                     &permits,
                     (&anchor, root.id),
-                )
+                )?
             };
             let enactment = Enactment {
                 request,
