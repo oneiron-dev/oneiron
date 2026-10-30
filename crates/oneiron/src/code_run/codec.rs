@@ -236,6 +236,7 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         live_run: decode_live_run(required(fields[8], "missing replay live_run")?)?,
         // A pre-carrier record cannot prove its callable/result reads.
         callable_rows: decode_optional_entity_rows(fields[9])?,
+        verb_rows_cache: Default::default(),
     };
     validate_code_run_replay_record(&record)?;
     Ok(record)

@@ -62,6 +62,7 @@ impl EngineNativeExecutor<'_> {
                 .find(|call| crate::code_run::parks_on(&call.outcome, wait.wait_id))
         {
             crate::code_run::keep_wait_rows(&mut call.outcome, rows);
+            record.invalidate_verb_rows();
         }
         let mut resumed = json!({
             "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
