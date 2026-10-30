@@ -91,16 +91,20 @@ impl Vault {
     /// served worker sleeps until (OF-187): the same readiness instant the
     /// claim reads. `None` while nothing is queued.
     pub fn next_connector_send_ready_at(&self) -> Result<Option<u64>, Error> {
-        Ok(AttemptQueue::new(self)
-            .list()?
+        // Only the outbound kind's rows are read (FIX 11940).
+        let rows = {
+            let txn = self.store.env.read_txn()?;
+            AttemptQueue::new(self)
+                .kind_working_rows_in_txn(&txn, crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND)?
+        };
+        Ok(rows
             .into_iter()
             .filter(|attempt| {
-                attempt.kind == crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND
-                    && matches!(
-                        attempt.state,
-                        crate::attempt_queue::AttemptState::Queued
-                            | crate::attempt_queue::AttemptState::Scheduled
-                    )
+                matches!(
+                    attempt.state,
+                    crate::attempt_queue::AttemptState::Queued
+                        | crate::attempt_queue::AttemptState::Scheduled
+                )
             })
             .map(|attempt| {
                 attempt
