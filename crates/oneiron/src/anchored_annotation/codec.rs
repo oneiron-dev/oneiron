@@ -3,8 +3,8 @@
 
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
-    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, DriftMarker, FORMAT_DOCX, FORMAT_PPTX,
-    FORMAT_XLSX, Locator, TaskBrief, ThreadState,
+    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_DOCX,
+    FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -29,6 +29,10 @@ const KEY_DRIFT: &str = "drift";
 const KEY_DRIFTED_AT_VERSION: &str = "drifted_at_version";
 
 const KEY_PINNED_VERSION: &str = "pinned_version";
+
+const KEY_BODY: &str = "body";
+
+const KEY_FRONTIER: &str = "frontier";
 
 const KEY_AUTHOR: &str = "author";
 
@@ -74,6 +78,7 @@ pub(super) struct ThreadHead {
     pub(super) state: ThreadState,
     pub(super) locator: Locator,
     pub(super) drift: Option<DriftMarker>,
+    pub(super) body: Option<BodyAnchor>,
 }
 
 pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
@@ -175,6 +180,15 @@ pub(super) fn encode_thread_head_value(head: &ThreadHead) -> Value {
             ]),
         ));
     }
+    if let Some(body) = &head.body {
+        entries.push((
+            Value::from(KEY_BODY),
+            Value::Map(vec![
+                (Value::from(KEY_FRONTIER), Value::Binary(body.frontier.clone())),
+                (Value::from(KEY_LOCATOR), encode_locator(&body.locator)),
+            ]),
+        ));
+    }
     Value::Map(entries)
 }
 
@@ -195,6 +209,21 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
             pinned_version: map_u64(drift_value, KEY_PINNED_VERSION)?,
         }),
     };
+    // A version-only anchor writes no body key.
+    let body = match map_get(value, KEY_BODY) {
+        None | Some(Value::Nil) => None,
+        Some(body_value) => {
+            let Some(Value::Binary(frontier)) = map_get(body_value, KEY_FRONTIER) else {
+                return Err(Error::Artifact(ArtifactError::InvalidAnchor(KEY_FRONTIER)));
+            };
+            Some(BodyAnchor {
+                frontier: frontier.clone(),
+                locator: decode_locator(map_get(body_value, KEY_LOCATOR).ok_or(
+                    Error::Artifact(ArtifactError::InvalidAnchor("body anchor missing locator")),
+                )?)?,
+            })
+        }
+    };
     Ok(ThreadHead {
         thread_id,
         origin_version,
@@ -202,6 +231,7 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
         state,
         locator,
         drift,
+        body,
     })
 }
 
@@ -281,11 +311,7 @@ pub(super) fn decode_brief_value(value: &Value, artifact_id: EntityId) -> Result
         brief_ref,
         task_id,
         thread_id,
-        anchor: Anchor {
-            artifact_id,
-            version: anchor_version,
-            locator,
-        },
+        anchor: Anchor::new(artifact_id, anchor_version, locator),
         artifact_version: anchor_version,
         thread_text,
         assignee,
