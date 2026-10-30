@@ -128,9 +128,9 @@ pub(super) fn record_review_outcome_in_txn(
                     write_claim(vault, txn, &id, &body, actor, at)?;
                     actor
                 }
-                OutcomeWriter::Review => settled_actor::write_settled_outcome_in_txn(
-                    vault, txn, &id, &body, actor, at,
-                )?,
+                OutcomeWriter::Review => {
+                    settled_actor::write_settled_outcome_in_txn(vault, txn, &id, &body, actor, at)?
+                }
             };
             if let Some((old, _)) = &standing {
                 let old_start = vault
@@ -356,8 +356,7 @@ pub(super) fn finish_owed_outcomes(vault: &Vault, at: u64) -> Result<()> {
 /// Whether `actor` is an active human owner of the vault.
 fn active_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> bool {
     actor.actor_class() == crate::EdgeActorClass::Human
-        && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
-            .is_ok()
+        && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_ok()
 }
 
 pub(super) fn calibration_receipt(verdict: &EntityId, artifact: &str) -> String {

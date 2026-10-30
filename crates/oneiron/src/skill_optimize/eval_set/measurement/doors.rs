@@ -385,7 +385,12 @@ impl Vault {
             if cohort.seat != row.request.seat || cohort_moved(&cohort, &row.request) {
                 return Ok(row);
             }
-            MEASUREMENTS.put(&self.store, txn, &again, &pending(&again, &row.request, now))?;
+            MEASUREMENTS.put(
+                &self.store,
+                txn,
+                &again,
+                &pending(&again, &row.request, now),
+            )?;
             enqueue_coach_eval_measurement_in_txn(self, txn, &again, now)?;
             Ok(row)
         })

@@ -34,7 +34,9 @@ use super::{
     add_recipients,
 };
 use crate::attempt_queue::AttemptId;
-use crate::edit_distance::attribution::{AmendmentCauseRecord, amendment_causes_for_attempt_in_txn};
+use crate::edit_distance::attribution::{
+    AmendmentCauseRecord, amendment_causes_for_attempt_in_txn,
+};
 use crate::receipt::attempt_pack_receipt_id;
 use crate::skill_attribution::{
     AttributionCauseRecord, AttributionVerdict, attempt_attribution_causes,

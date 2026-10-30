@@ -238,7 +238,9 @@ pub fn run_attribution_projector_with_decisions(
             // while its evidence stands as the judge read it, and never beside
             // a judgment an earlier pass made.
             if let Some(receipts) = receipts
-                && current.as_ref().is_some_and(|row| row.evidence == *evidence)
+                && current
+                    .as_ref()
+                    .is_some_and(|row| row.evidence == *evidence)
                 && !JUDGMENT.contains(&vault.store, wtxn, sequence)?
             {
                 keep_decision_receipts_in_txn(vault, wtxn, *sequence, receipts)?;

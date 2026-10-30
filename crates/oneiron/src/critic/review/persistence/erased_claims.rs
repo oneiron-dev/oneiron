@@ -44,9 +44,7 @@ pub(super) fn erase_review_claims_in_txn(
         let key = candidate_evidence(&body)
             .and_then(Value::as_str)
             .and_then(|key| key.split_once(':'))
-            .and_then(|(verdict, artifact)| {
-                Some((EntityId::from_hex(verdict).ok()?, artifact))
-            });
+            .and_then(|(verdict, artifact)| Some((EntityId::from_hex(verdict).ok()?, artifact)));
         if id == *entity
             || body.subject == about
             || key.is_some_and(|(verdict, _)| verdicts.contains(&verdict))

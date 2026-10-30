@@ -111,7 +111,10 @@ fn cases_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8
         }
     }
     if dropped > 0 {
-        tracing::warn!(dropped, "an erase deleted frozen callable cases that no longer decode");
+        tracing::warn!(
+            dropped,
+            "an erase deleted frozen callable cases that no longer decode"
+        );
     }
     Ok(rows)
 }
