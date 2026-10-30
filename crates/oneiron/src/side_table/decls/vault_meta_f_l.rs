@@ -187,6 +187,10 @@ side_tables! {
     /// and when. Node-local, as the cursor is. Key: id16 (identity) + bytes32 (sha256 of the
     /// provider message id).
     GMAIL_MAILBOX_SKIPPED: VaultMeta b"gmail:mailbox_skipped:v1:" Named;
+    /// A frozen Gmail member send plan its host kept for a send that dispatches later (FIX 1053):
+    /// its From, To, Subject, body, Date, Message-ID and reply headers; dropped once delivered.
+    /// Key: its content ref.
+    GMAIL_SEND_PLAN: VaultMeta b"gmail:send_plan:v1:" Named;
     /// Append-only offer-answer log for consent-graduation ramps, scope-major then UUIDv7 row id.
     /// Key: id16 + id16.
     EDIT_DISTANCE_GRADUATION_ANSWER: VaultMeta b"graduation_answer:v1:" Raw;
