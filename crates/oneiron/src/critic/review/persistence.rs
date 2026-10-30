@@ -4,6 +4,7 @@ use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::side_table::{self, Named, Raw, SideTable};
 
 mod dissent_rows;
+mod erased_claims;
 pub(super) use dissent_rows::{
     claim_dissent, dissent_state, release_dissent_claim, reviews_with_dissent,
     reviews_with_unkept_dissent, save_dissent,
@@ -105,6 +106,8 @@ pub(super) fn persist_review(
         let stored = StoredReview {
             principal: request.actor.entity_ref(),
             principal_class: Some(request.actor.actor_class() as u8),
+            principal_run_attempt: request.actor.run_attempt(),
+            principal_authority_frontier: request.actor.authority_frontier(),
             dissent: BTreeMap::new(),
             dissent_claims: BTreeMap::new(),
             verdict: id.to_hex(),
@@ -197,6 +200,12 @@ struct StoredReview {
     /// question it keeps (FIX 1588). None on a review stored before it was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     principal_class: Option<u8>,
+    /// The run attempt the review's actor wrote under, when its host bound
+    /// one (FIX 12188).
+    principal_run_attempt: Option<[u8; 16]>,
+    /// The authority state the review's actor observed, when it carried one
+    /// (FIX 12188).
+    principal_authority_frontier: Option<crate::authority::AuthorityEntryHash>,
     dissent: BTreeMap<String, ReviewDissent>,
     /// Each critique whose dissent a caller is authoring now, with the process
     /// run that claimed it (FIX 12161).
@@ -392,6 +401,9 @@ pub(crate) fn critique_review_refs_in_txn(
 }
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
 /// A synced or raw claim is not a calibration event and cannot train this projector.
+/// The stamp is the body as the write gate landed it. The gate's own approval of a
+/// held write changes only its approval, so a body that is the stamped one with its
+/// approval moved from proposed or auto to approved or auto stays trusted (FIX 12189).
 pub(super) fn trusted_claim(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -401,7 +413,26 @@ pub(super) fn trusted_claim(
     let Some(held) = CLAIM_TRUST.get(&vault.store, txn, id)? else {
         return Ok(false);
     };
-    Ok(held == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    let stamps = |body: &ClaimBody| -> Result<bool> {
+        Ok(held == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    };
+    if stamps(body)? {
+        return Ok(true);
+    }
+    if !matches!(
+        body.approval,
+        ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+    ) {
+        return Ok(false);
+    }
+    for landed in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Auto] {
+        let mut stamped = body.clone();
+        stamped.approval = landed;
+        if stamped.approval != body.approval && stamps(&stamped)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn persisted_artifact(
@@ -441,9 +472,9 @@ pub(super) fn persisted_artifact_in_txn(
 }
 
 /// The actor that wrote `verdict`'s review: its principal, as the class it
-/// authenticated as. It writes the outcome an anchored settlement no owner
-/// decided gives a critique of that review (FIX 12106). The review keeps no
-/// run attempt or authority frontier of that actor (FIX 12188).
+/// authenticated as, with the run attempt and authority frontier it carried
+/// (FIX 12188). It writes the outcome an anchored settlement no owner
+/// decided gives a critique of that review (FIX 12106).
 pub(super) fn review_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -457,7 +488,14 @@ pub(super) fn review_actor_in_txn(
         .principal_class
         .and_then(crate::EdgeActorClass::try_from_u8)
         .ok_or_else(|| invalid_critic_config("review keeps no principal class"))?;
-    Ok(WriteActor::new(stored.principal, class))
+    let mut actor = WriteActor::new(stored.principal, class);
+    if let Some(attempt) = stored.principal_run_attempt {
+        actor = actor.with_run_attempt(attempt);
+    }
+    if let Some(frontier) = stored.principal_authority_frontier {
+        actor = actor.with_authority_frontier(frontier);
+    }
+    Ok(actor)
 }
 
 fn result_hash(vault: &Vault, txn: &heed::RoTxn<'_>, verdict: &EntityId) -> Result<[u8; 32]> {
@@ -529,14 +567,17 @@ pub(crate) fn trusted_review_in_txn(
     }))
 }
 
-/// Re-keys the session tag of every review verdict, automatic outcome and outcome naming erased
-/// `entity` to one fresh opaque id (FIX 11363), its trust stamp with it. Gives back the
-/// verdicts it touched, for their cached rows' move.
+/// Tears every review claim about erased `entity` first (FIX 12073): its verdicts, their
+/// automatic outcomes and outcomes, and the outcomes of its session. Then re-keys the session
+/// tag of every review verdict and automatic outcome still naming `entity` to one fresh opaque
+/// id (FIX 11363), its trust stamp with it. Gives back the verdicts it re-keyed, for their
+/// cached rows' move.
 pub(crate) fn erase_review_session_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<Vec<EntityId>> {
+    erased_claims::erase_review_claims_in_txn(vault, wtxn, entity)?;
     let named = entity.to_hex();
     let mut opaque = None;
     let mut verdicts = Vec::new();
