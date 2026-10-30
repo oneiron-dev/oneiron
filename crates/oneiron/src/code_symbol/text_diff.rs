@@ -6,6 +6,7 @@ use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 
 use super::rust_source::{is_tree_sitter_rust_source, rust_code_embedding_inputs};
+use super::semantic_diff::FILE_RESIDUAL_UNIT;
 use super::types::{CodeChunk, CodeEmbeddingInput, CodeEmbeddingVector, CodeSymbolRevision};
 use super::validate::{validate_manifest_path, validate_symbol_indexes};
 use crate::error::CodeError;
@@ -34,11 +35,22 @@ pub fn derive_code_embedding_inputs_from_text_diff(
     if old_text == new_text || !is_tree_sitter_rust_source(path) {
         return Ok(Vec::new());
     }
+    // The file residual spans every line and changes whenever a sibling comes
+    // or goes: it stays a unit of the diff, but only the lines of each changed
+    // definition's own spans select embedding inputs (FIX 9719).
+    let newlines: Vec<usize> = new_text
+        .bytes()
+        .enumerate()
+        .filter_map(|(index, byte)| (byte == b'\n').then_some(index))
+        .collect();
+    let line = |byte: usize| newlines.partition_point(|newline| *newline < byte);
     let changed_ranges: Vec<_> =
         super::semantic_diff::semantic_code_diff(path, old_text, new_text)?
             .into_iter()
+            .filter(|change| change.symbol != FILE_RESIDUAL_UNIT)
             .filter_map(|change| change.after)
-            .map(|version| (version.start_line as usize - 1)..(version.end_line as usize))
+            .flat_map(|version| version.byte_spans)
+            .map(|(start, end)| line(start)..line(end) + 1)
             .collect();
     rust_code_embedding_inputs(repo_ref, path, new_text, &changed_ranges)
 }
