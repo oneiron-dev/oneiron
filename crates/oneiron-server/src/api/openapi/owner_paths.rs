@@ -16,10 +16,9 @@ pub(crate) struct OwnerRoute {
     pub(crate) row: Option<&'static str>,
 }
 
-/// The rows of the owner routes two modules still serve from their own
-/// routers: the origin cutover and mirror (`api::owner_origin`) and the
-/// pinned library's default restores (`api::packs::defaults`).
-const ORIGIN_AND_PACK_DEFAULT_ROUTES: &[OwnerRoute] = &[
+/// The rows of the owner routes one module still serves from its own
+/// router: the origin cutover and mirror (`api::owner_origin`).
+const ORIGIN_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/origin-authority",
@@ -62,24 +61,6 @@ const ORIGIN_AND_PACK_DEFAULT_ROUTES: &[OwnerRoute] = &[
         summary: "Set one origin mirror's sync strategy (FIX 6866): `repo` and `sync_strategy`, `ask_me` (nothing goes out until an exact publish request is approved; push refuses publish_request_required) or `schedule` (the cadenced push of every published ref). Changes the strategy and its revision only; answers the mirror target.",
         row: None,
     },
-    OwnerRoute {
-        method: "post",
-        path: "/packs/defaults/import",
-        summary: "Import hub skill.",
-        row: None,
-    },
-    OwnerRoute {
-        method: "post",
-        path: "/packs/defaults/restore",
-        summary: "Restore defaults.",
-        row: None,
-    },
-    OwnerRoute {
-        method: "post",
-        path: "/packs/defaults/restore-skill",
-        summary: "Restore hub skill.",
-        row: None,
-    },
 ];
 
 /// Adds each owner route to `spec`'s paths, in path order: owner-grade
@@ -94,7 +75,7 @@ pub(crate) fn merge_owner_paths(spec: &mut Value) {
     let tabled = crate::api::owner_routes::owner_route_rows();
     let mut routes: Vec<&OwnerRoute> = tabled
         .iter()
-        .chain(ORIGIN_AND_PACK_DEFAULT_ROUTES)
+        .chain(ORIGIN_ROUTES)
         .collect();
     routes.sort_by_key(|route| route.path);
     for route in routes {
