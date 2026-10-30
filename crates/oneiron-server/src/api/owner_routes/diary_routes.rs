@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -15,17 +14,42 @@ use oneiron::consent::{ConsentGrant, ConsentReceipt};
 use oneiron::memory::DiaryReadOutcome;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/diary/review", post(review))
-        .route("/diary/grants", post(grant))
-        .route("/diary/read", post(read))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/diary/review",
+                summary: "Whether an agent reviews each read first.",
+                row: None,
+            },
+            post(review),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/diary/grants",
+                summary: "A diary.read Grant for one reader.",
+                row: None,
+            },
+            post(grant),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/diary/read",
+                summary: "The owner reads a diary under its Grant.",
+                row: None,
+            },
+            post(read),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
