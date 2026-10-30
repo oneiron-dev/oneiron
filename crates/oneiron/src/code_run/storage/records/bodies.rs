@@ -40,9 +40,27 @@ impl Vault {
         complete: bool,
         owner: Option<EntityId>,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output(path, sink, complete, self.limit_watch(), |digest| {
-            self.pin_result_body(digest)
-        })?;
+        self.publish_code_run_output_sourced(path, sink, complete, owner, None)
+    }
+
+    /// [`Self::publish_code_run_output`] with the occurrence's complete
+    /// input rows, or `None` when any constituent is unknown (FIX 7104).
+    pub(crate) fn publish_code_run_output_sourced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: Option<EntityId>,
+        input_rows: Option<Vec<EntityId>>,
+    ) -> Result<CodeRunRawOutput> {
+        let finished = finish_output_sourced(
+            path,
+            sink,
+            complete,
+            input_rows,
+            self.limit_watch(),
+            |digest| self.pin_result_body(digest),
+        )?;
         let mut wtxn = self.store.env.write_txn()?;
         self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, owner)?;
         wtxn.commit()?;
@@ -223,10 +241,11 @@ impl Vault {
         let at = ResultOccurrence::of(owner, output)?;
         let mut sink = self.code_run_output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output(
+        let finished = finish_output_sourced(
             output.path.clone(),
             sink,
             true,
+            output.input_rows.clone(),
             self.limit_watch(),
             |digest| self.pin_result_body(digest),
         )?;
@@ -471,9 +490,23 @@ pub(in crate::code_run::storage) fn finish_output(
     watch: &LimitWatch,
     pin: impl FnOnce([u8; 32]) -> ResultBodyPin,
 ) -> Result<FinishedOutput> {
+    finish_output_sourced(path, sink, complete, None, watch, pin)
+}
+
+/// [`finish_output`] with the occurrence's complete input rows, or `None`
+/// when any constituent is unknown (FIX 7104).
+pub(in crate::code_run::storage) fn finish_output_sourced(
+    path: String,
+    sink: BodySink,
+    complete: bool,
+    input_rows: Option<Vec<EntityId>>,
+    watch: &LimitWatch,
+    pin: impl FnOnce([u8; 32]) -> ResultBodyPin,
+) -> Result<FinishedOutput> {
     let (facts, sunk, pin) =
         sink.finish_pinned(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS, pin)?;
-    let output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
+    let mut output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
+    output.input_rows = input_rows;
     let (body, key) = match sunk {
         SunkBody::Inline(bytes) => (StoredBody::Inline { bytes, held: false }, None),
         SunkBody::File { free_bytes, key } => {

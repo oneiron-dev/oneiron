@@ -9,7 +9,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
@@ -19,14 +18,21 @@ use oneiron::authority::{CapabilitySlip, SupportRepair};
 use oneiron::housekeeping::HousekeepingReport;
 use serde::Deserialize;
 
-use super::OwnerReply;
+use super::{OwnerReply, OwnerRoute, OwnerTable};
 use crate::auth::{BindingProof, SUPPORT_REPAIR_PATH, parse_signature};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    let path = SUPPORT_REPAIR_PATH.trim_start_matches("/v1/owner");
-    Router::new().route(path, post(run))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: SUPPORT_REPAIR_PATH.trim_start_matches("/v1/owner"),
+            summary: "The support holder runs one repair the customer selected in its support grant (FIX 4407; `repair`), with the support slip and its holder proof headers; no owner credential reaches it. Answers the report of that one sweep; a slip that does not stand, or whose grant names no such repair, is refused as unauthorized and runs nothing.",
+            row: None,
+        },
+        post(run),
+    )]
 }
 
 /// The repair the support holder asks for, by its id.

@@ -34,7 +34,7 @@ use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
 use super::input::{
-    Attached, InputBinding, WitnessJoin, assembled_input_in_txn, drop_input_in_txn, split_attached,
+    Attached, InputBinding, WitnessJoin, drop_input_in_txn, kept_input_in_txn,
     witness_joined_in_txn,
 };
 use super::manifest::{RegisterVerdict, check_register_in_txn, judgment_text};
@@ -389,7 +389,8 @@ impl Vault {
         }
     }
 
-    /// The input `digest` names, kept here, opened under `binding`.
+    /// The input `digest` names, kept here, opened under `binding`: its rows
+    /// read in order and let go, never joined (FIX 11140).
     fn opened_input_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -400,7 +401,7 @@ impl Vault {
         let Some(digest) = digest else {
             return Ok(Opened::Invalid);
         };
-        let Some(kept) = assembled_input_in_txn(&self.store, txn, &digest)? else {
+        let Some(kept) = kept_input_in_txn(&self.store, txn, &digest)? else {
             return Ok(Opened::Missing);
         };
         // A witness in parts proves its request whole before any effect;
@@ -408,12 +409,11 @@ impl Vault {
         if witness_joined_in_txn(&self.store, txn, &digest)? == WitnessJoin::Missing {
             return Ok(Opened::Missing);
         }
-        let Some((envelope, attached)) = split_attached(&kept) else {
-            return Ok(Opened::Invalid);
-        };
-        Ok(binding
-            .open(envelope, secret)
-            .map_or(Opened::Invalid, |body| Opened::Body(body, attached)))
+        Ok(kept
+            .open(binding, secret)?
+            .map_or(Opened::Invalid, |(body, attached)| {
+                Opened::Body(body, attached)
+            }))
     }
 
     /// A register: a new portable record under the request's id, at the

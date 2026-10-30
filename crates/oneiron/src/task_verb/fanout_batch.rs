@@ -194,6 +194,7 @@ impl Memory<'_> {
             self.actor_class(),
             origin,
             gate,
+            crate::agent_dispatch::QueuedRequester::of_memory(self),
         );
         WaveOrchestrator::new(port)
             .apply_gated(plan, crate::unix_seconds_now())
