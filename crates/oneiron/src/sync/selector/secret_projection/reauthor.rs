@@ -191,6 +191,7 @@ impl SyncSecretProjection {
         Some(InboundRow::Source {
             id: source,
             row: [header, stored.as_slice()].concat(),
+            landed: None,
         })
     }
 
@@ -226,6 +227,7 @@ impl SyncSecretProjection {
         Some(InboundRow::Source {
             id: *key,
             row: [header, body].concat(),
+            landed: None,
         })
     }
 }

@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use loro::json::{JsonOpContent, JsonSchema, ListOp, MapOp, MovableListOp, TextOp};
 use loro::{ContainerID, ContainerType, ID, LoroDoc, LoroValue, PeerID};
 
-use super::rows::HeldEdit;
+use super::rows::{HeldEdit, Landing};
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -54,6 +54,9 @@ pub(crate) struct TranslatedHistory {
     /// operations are left untranslated: the caller imports and applies
     /// nothing of the update, and keeps only its held record (FIX 10598).
     pub(crate) held: Vec<HeldEdit>,
+    /// The new bytes the translated operations land, for their writer to
+    /// mark (FIX 10732).
+    pub(crate) landings: Vec<Landing>,
 }
 
 impl SyncSecretProjection {
@@ -163,8 +166,11 @@ impl SyncSecretProjection {
                             None => self.source_row(&id, &bytes)?,
                         };
                         match inbound {
-                            InboundRow::Source { id, row } => {
+                            InboundRow::Source { id, row, landed } => {
                                 out.sources.insert(id);
+                                if let Some(blob) = landed {
+                                    out.landings.push(Landing::of(id, blob, &row));
+                                }
                                 *key = id.to_hex();
                                 *value = LoroValue::from(row);
                             }

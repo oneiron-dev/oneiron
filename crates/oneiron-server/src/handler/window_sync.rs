@@ -408,7 +408,7 @@ pub(super) async fn handle_window_sync(
                 Some(&doc),
             )
             .map_err(|e| ProtocolError::Persistence(format!("copy translation failed: {e}")))?;
-            let oneiron::sync::selector::RepoSyncAdmission::Admit(update) = admitted else {
+            let oneiron::sync::selector::RepoSyncAdmission::Admit(update, landings) = admitted else {
                 return super::window_copy::acknowledge_held(
                     window_key,
                     sub_tag,
@@ -444,7 +444,7 @@ pub(super) async fn handle_window_sync(
                 Some(&doc),
             );
             server
-                .persist_imported_update(&key, &persisted, write_auth)
+                .persist_imported_update(&key, &persisted, &landings, write_auth)
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             // Client sending Loro update bytes — import with origin for echo suppression.
             // The machine this own-device socket proved sent them: their MESSAGE rows

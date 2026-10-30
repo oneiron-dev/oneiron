@@ -42,10 +42,41 @@ pub(crate) enum InboundRow {
     Ordinary,
     /// The copy translated to its source: the row the canonical store takes
     /// under `id`, with the stored bytes or the visible diff applied to them.
-    Source { id: EntityId, row: Vec<u8> },
+    /// `landed` names the marked blob whose copy an applied diff edited: the
+    /// row's body is then new bytes its writer marks (FIX 10732).
+    Source {
+        id: EntityId,
+        row: Vec<u8>,
+        landed: Option<[u8; 32]>,
+    },
     /// A ruled hold: the edit never lands as masked or placeholder bytes and
     /// is never applied; its held record is all that is kept (FIX 10598).
     Held(HeldEdit),
+}
+
+/// New bytes a translated copy edit lands on the marked source `source`,
+/// made from the copy of the marked blob `blob`: what the writer that
+/// persists them marks (FIX 10732, L04 05:5x).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Landing {
+    pub(crate) source: EntityId,
+    pub(crate) blob: [u8; 32],
+    pub(crate) body: Vec<u8>,
+}
+
+impl Landing {
+    /// The landing of `row`, a translated row of `source` made from `blob`'s
+    /// copy: its body behind the stored header.
+    pub(crate) fn of(source: EntityId, blob: [u8; 32], row: &[u8]) -> Self {
+        Self {
+            source,
+            blob,
+            body: row
+                .get(ENTITY_METADATA_HEADER_LEN..)
+                .unwrap_or_default()
+                .to_vec(),
+        }
+    }
 }
 
 /// One copy edit held on its ruled cause: the source it would land on, the
@@ -94,9 +125,13 @@ impl SyncSecretProjection {
             return Ok(InboundRow::Ordinary);
         }
         let (header, body) = submitted.split_at(ENTITY_METADATA_HEADER_LEN);
-        let (id, blob) = match self.source_of_copy(key) {
-            Some(source) => match self.blob_of_source(&source) {
-                Some(blob) => (source, blob),
+        let (id, hash, blob) = match self.source_of_copy(key) {
+            Some(source) => match self
+                .sources
+                .get(&source)
+                .and_then(|hash| self.blobs.get(hash).map(|blob| (*hash, blob)))
+            {
+                Some((hash, blob)) => (source, hash, blob),
                 // Its copy is unread this pass: the edit cannot be translated,
                 // so it is not admitted and stays the peer's pending work.
                 None => {
@@ -110,9 +145,9 @@ impl SyncSecretProjection {
             None => match self
                 .copy_bodies
                 .get(blake3::hash(body).as_bytes())
-                .and_then(|hash| self.blobs.get(hash))
+                .and_then(|hash| self.blobs.get(hash).map(|blob| (*hash, blob)))
             {
-                Some(blob) if !self.sources.contains_key(key) => (*key, blob),
+                Some((hash, blob)) if !self.sources.contains_key(key) => (*key, hash, blob),
                 _ => return Ok(InboundRow::Ordinary),
             },
         };
@@ -126,6 +161,12 @@ impl SyncSecretProjection {
             Translated::Body(bytes) => InboundRow::Source {
                 id,
                 row: [header, bytes.as_slice()].concat(),
+                landed: None,
+            },
+            Translated::Landed(bytes) => InboundRow::Source {
+                id,
+                row: [header, bytes.as_slice()].concat(),
+                landed: Some(hash),
             },
             Translated::Held(cause) => InboundRow::Held(HeldEdit {
                 source: id,
@@ -137,7 +178,10 @@ impl SyncSecretProjection {
 }
 
 enum Translated {
+    /// The stored bytes, as they are.
     Body(Vec<u8>),
+    /// New bytes the visible diff applied.
+    Landed(Vec<u8>),
     Held(RepoProjectionDiffResult),
 }
 
@@ -155,7 +199,7 @@ fn translate_body(blob: &BlobCopy, stored: &[u8], submitted: &[u8]) -> Result<Tr
     };
     Ok(match apply_repo_projection_diff(stored, copy, submitted)? {
         RepoProjectionDiffResult::Unchanged => Translated::Body(stored.to_vec()),
-        RepoProjectionDiffResult::Applied(bytes) => Translated::Body(bytes),
+        RepoProjectionDiffResult::Applied(bytes) => Translated::Landed(bytes),
         held @ (RepoProjectionDiffResult::SealedFileEdited
         | RepoProjectionDiffResult::ProjectionEditConflict) => Translated::Held(held),
     })

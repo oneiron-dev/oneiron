@@ -36,7 +36,7 @@ use loro::{
     LoroValue, VersionVector,
 };
 
-use super::rows::HeldEdit;
+use super::rows::{HeldEdit, Landing};
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -59,8 +59,8 @@ const UNREAD_EDIT: &str = "a write of a marked repo row whose copy is unread is 
 /// What a peer's window blob becomes here.
 pub(crate) enum WindowAdmission<'a> {
     /// Import these bytes as today: the blob as it came, or translated onto
-    /// its sources.
-    Admit(Cow<'a, [u8]>),
+    /// its sources, with the new bytes they land (FIX 10732).
+    Admit(Cow<'a, [u8]>, Vec<Landing>),
     /// Edits of a copy the visible diff holds on a ruled cause: nothing of the
     /// blob persists, imports or relays, and no edit of it is ever applied.
     Held(Vec<HeldEdit>),
@@ -212,7 +212,7 @@ impl SyncSecretProjection {
         encoded: &'a [u8],
         context: Option<&LoroDoc>,
     ) -> Result<WindowAdmission<'a>> {
-        let as_sent = || Ok(WindowAdmission::Admit(Cow::Borrowed(encoded)));
+        let as_sent = || Ok(WindowAdmission::Admit(Cow::Borrowed(encoded), Vec::new()));
         if self.is_empty() {
             return as_sent();
         }
@@ -228,13 +228,14 @@ impl SyncSecretProjection {
                     return as_sent();
                 };
                 let mut held = Vec::new();
-                if !self.admit_parts(store, context, &mut parts, &mut held)? {
+                let mut landings = Vec::new();
+                if !self.admit_parts(store, context, &mut parts, &mut held, &mut landings)? {
                     return as_sent();
                 }
                 if !held.is_empty() {
                     return Ok(WindowAdmission::Held(held));
                 }
-                Ok(WindowAdmission::Admit(Cow::Owned(joined(&parts)?)))
+                Ok(WindowAdmission::Admit(Cow::Owned(joined(&parts)?), landings))
             }
             EncodedBlobMode::Updates => {
                 let Some((scratch, cut)) = with_update(context, encoded) else {
@@ -269,7 +270,10 @@ impl SyncSecretProjection {
                 let bytes = target
                     .export(ExportMode::updates_in_range(spans_of(&input)))
                     .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
-                Ok(WindowAdmission::Admit(Cow::Owned(bytes)))
+                Ok(WindowAdmission::Admit(
+                    Cow::Owned(bytes),
+                    translated.landings,
+                ))
             }
             EncodedBlobMode::OutdatedSnapshot | EncodedBlobMode::OutdatedRle => as_sent(),
         }
@@ -308,7 +312,8 @@ impl SyncSecretProjection {
     }
 
     /// Each copy row value of `parts` as its source row, and each copy key as
-    /// its source's, in place; whether any changed. Ruled holds go to `held`.
+    /// its source's, in place; whether any changed. Ruled holds go to `held`,
+    /// the new bytes an applied diff lands to `landings` (FIX 10732).
     ///
     /// # Errors
     /// The visible diff's own failure, or a row [`Self::unread_row`] cannot
@@ -319,6 +324,7 @@ impl SyncSecretProjection {
         context: Option<&LoroDoc>,
         parts: &mut Parts,
         held: &mut Vec<HeldEdit>,
+        landings: &mut Vec<Landing>,
     ) -> Result<bool> {
         let rows = parts.skeleton.roots.iter().position(|root| root == ROWS);
         let sites = sites(&parts.skeleton);
@@ -333,7 +339,10 @@ impl SyncSecretProjection {
             let raw: &[u8] = raw;
             let carrier = crate::world_keys::image_pad_row(store, raw);
             match self.source_row(&id, carrier.as_deref().unwrap_or(raw))? {
-                InboundRow::Source { row, .. } => {
+                InboundRow::Source { id, row, landed } => {
+                    if let Some(blob) = landed {
+                        landings.push(Landing::of(id, blob, &row));
+                    }
                     atom.payload = Payload::Value(LoroValue::Binary(row.into()));
                     changed = true;
                 }
