@@ -433,8 +433,8 @@ impl ReceiptRecord {
         let Some(encoded) = self.fields.get_mut(FIELD_MANIFEST_ATTRIBUTION) else {
             return false;
         };
-        let Ok(mut attribution) = serde_json::from_str::<super::PackAttributionFields>(encoded)
-        else {
+        let decoded = serde_json::from_str::<super::PackAttributionFields>(encoded.as_str());
+        let Ok(mut attribution) = decoded else {
             return false;
         };
         if attribution.project != Some(project) {
