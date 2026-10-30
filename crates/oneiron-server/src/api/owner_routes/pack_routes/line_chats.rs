@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -21,16 +20,33 @@ use oneiron::memory::channel_doors::{
 use oneiron::{EdgeActorClass, EntityId};
 use serde::Deserialize;
 
-use super::super::{OwnerReply, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, memory_refusal};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/packs/line/chats", get(chat_offers))
-        .route("/packs/line/chats/bind", post(bind_chat))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/packs/line/chats",
+                summary: "Every LINE group or room the served bot was seen in (FIX 3115), each an optional offer to bind it to an agent: the route key a bind provisions and the identity that already holds it, if any.",
+                row: None,
+            },
+            get(chat_offers),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/line/chats/bind",
+                summary: "Bind one observed LINE chat to an agent (`observation_ref`, `agent_ref`; the chat comes from the stored observation, never the request): provisions the chat's own route key through the owner's provision door and answers that door's lifecycle receipt as it stands (pending fulfillment, held or applied).",
+                row: None,
+            },
+            post(bind_chat),
+        ),
+    ]
 }
 
 /// The owner's accept of one offer: which observed chat, and which agent.

@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -26,7 +25,7 @@ use oneiron::memory::usage_repair::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails};
@@ -34,11 +33,36 @@ use crate::owner::{OwnerError, hooked_row, memory_refusal};
 use crate::server::SyncServer;
 use crate::usage::{UsageScope, removal_conflict_reason};
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/usage/events/undecodable", get(list))
-        .route("/usage/events/undecodable/remove", post(remove))
-        .route("/usage/repair/receipts", get(receipts))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/usage/events/undecodable",
+                summary: "The stored usage events of this server's metering scope that do not decode (FIX 6476), in key order: `events`, each `{rowRef, byteLength, hash, decodeReason}`, the row's opaque locator, its length, the BLAKE3 hash of its exact bytes (64 lowercase hex) and `stored_event_decode_failed`, none of its bytes. The owner, or an agent whose own Grant names the verb, lists them; a server that meters no usage answers `usage_metering_unbound`.",
+                row: Some("vault.usage.events.undecodable"),
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/usage/events/undecodable/remove",
+                summary: "Remove one listed row (`rowRef`, `expectedHash`, as the list gave them) while it still holds those bytes and still does not decode (FIX 6476): the row goes, the vault's usage rollup is rebuilt without it, and the receipt kept in the same write answers. A row that is gone is not found; one that changed is `usage_event_changed`, one that decodes now `usage_event_decodable`, and neither changes anything. Every other undecodable row stays counted as before.",
+                row: Some("vault.usage.events.remove_undecodable"),
+            },
+            post(remove),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/usage/repair/receipts",
+                summary: "Every receipt a removal of an undecodable usage row kept for this server's metering scope (FIX 7036, FIX 11302), in key order, as its write kept it; a kept row that no longer decodes is counted, never read as a receipt. A server that meters no usage answers `usage_metering_unbound`.",
+                row: Some("vault.usage.repair.receipts"),
+            },
+            get(receipts),
+        ),
+    ]
 }
 
 /// `GET /v1/owner/usage/events/undecodable`: every stored usage event of this

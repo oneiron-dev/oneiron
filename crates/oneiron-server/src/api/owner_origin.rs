@@ -23,18 +23,18 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use oneiron::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
 use oneiron::origin::mirror_strategy::OriginMirrorSyncStrategy;
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
 use oneiron::origin::secret_publication::RepoDestinationVisibility;
 use serde::{Deserialize, Serialize};
 
-use super::owner_routes::{blocking, owner};
+use super::openapi::OwnerRoute;
+use super::owner_routes::{OwnerTable, blocking, owner};
 use super::query_params;
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -42,20 +42,72 @@ use crate::error::EnvelopedApiError;
 use crate::owner::{OwnerError, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route(
-            "/origin-authority",
-            get(origin_authority).post(cut_origin_authority),
-        )
-        .route(
-            "/origin-mirror",
-            get(origin_mirror)
-                .post(set_origin_mirror)
-                .delete(clear_origin_mirror),
-        )
-        .route("/origin-mirror/push", post(push_origin_mirror))
-        .route("/origin-mirror/strategy", post(set_origin_mirror_strategy))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/origin-authority",
+                summary: "Origin authority.",
+                row: None,
+            },
+            get(origin_authority),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-authority",
+                summary: "Cut origin authority.",
+                row: None,
+            },
+            post(cut_origin_authority),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/origin-mirror",
+                summary: "Origin mirror.",
+                row: None,
+            },
+            get(origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-mirror",
+                summary: "Set origin mirror.",
+                row: None,
+            },
+            post(set_origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "delete",
+                path: "/origin-mirror",
+                summary: "Clear origin mirror.",
+                row: None,
+            },
+            delete(clear_origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-mirror/push",
+                summary: "Push origin mirror.",
+                row: None,
+            },
+            post(push_origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-mirror/strategy",
+                summary: "Set one origin mirror's sync strategy (FIX 6866): `repo` and `sync_strategy`, `ask_me` (nothing goes out until an exact publish request is approved; push refuses publish_request_required) or `schedule` (the cadenced push of every published ref). Changes the strategy and its revision only; answers the mirror target.",
+                row: None,
+            },
+            post(set_origin_mirror_strategy),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/origin-authority`'s body (FIX 11617): [`CutOriginAuthority`].

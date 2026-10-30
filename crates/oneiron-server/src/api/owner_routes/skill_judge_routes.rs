@@ -16,7 +16,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -32,7 +31,7 @@ use oneiron::skill_optimize::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -43,27 +42,144 @@ use crate::server::SyncServer;
 /// Most journal rows one read returns.
 const MAX_JOURNAL_ROWS: usize = 500;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/skills/judge/decisions", get(decisions))
-        .route("/skills/judge/person-time", post(person_time))
-        .route("/skills/judge/measure", post(measure))
-        .route(
-            "/skills/judge/goal-project",
-            get(goal_project).post(bind_goal_project),
-        )
-        .route("/skills/judge/preferences", get(preferences))
-        .route("/skills/judge/tradeoff-asks", get(tradeoff_asks))
-        .route("/skills/judge/tradeoff-asks/pick", post(pick))
-        .route("/skills/judge/goal-revisions", get(goal_revisions))
-        .route("/skills/judge/swaps", get(swaps))
-        .route("/skills/judge/swaps/pick", post(swap_pick))
-        .route("/skills/judge/pairs", get(pair_picks))
-        .route("/skills/judge/pairs/pick", post(pair_pick))
-        .route(
-            "/skills/judge/swap-policy",
-            get(swap_policy).post(set_swap_policy),
-        )
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/decisions",
+                summary: "The newest journal rows.",
+                row: None,
+            },
+            get(decisions),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/person-time",
+                summary: "One act's minutes on a run.",
+                row: None,
+            },
+            post(person_time),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/measure",
+                summary: "Measures an open proposal on its goal's plan with the registered judge and live arms, and keeps the report for the gate.",
+                row: None,
+            },
+            post(measure),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/goal-project",
+                summary: "The project a skill's goal is joined to.",
+                row: None,
+            },
+            get(goal_project),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/goal-project",
+                summary: "Joins a skill's goal to a project's goal record, or unbinds it.",
+                row: None,
+            },
+            post(bind_goal_project),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/preferences",
+                summary: "The tradeoff rules of a skill's goal, the ones its responsible person's picks taught included.",
+                row: None,
+            },
+            get(preferences),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/tradeoff-asks",
+                summary: "The tradeoff asks that have climbed to a role the owner holds.",
+                row: None,
+            },
+            get(tradeoff_asks),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/tradeoff-asks/pick",
+                summary: "The owner's A/B pick.",
+                row: None,
+            },
+            post(pick),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/goal-revisions",
+                summary: "The preferences the loop proposes for the project's goal in force, oldest first, for its goal interview to show.",
+                row: None,
+            },
+            get(goal_revisions),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/swaps",
+                summary: "The incumbent judge, the swap policy and every swap receipt, each disagreement's ruling included.",
+                row: None,
+            },
+            get(swaps),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/swaps/pick",
+                summary: "The owner's hand-test pick on one disagreement.",
+                row: None,
+            },
+            post(swap_pick),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/pairs",
+                summary: "Every pick the owner made between a blind preference pair's two responses.",
+                row: None,
+            },
+            get(pair_picks),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/pairs/pick",
+                summary: "The owner's pick between a blind preference pair's two responses.",
+                row: None,
+            },
+            post(pair_pick),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/swap-policy",
+                summary: "The tie-breakers, the pinned divergence rate and the hands-on setting in force.",
+                row: None,
+            },
+            get(swap_policy),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/swap-policy",
+                summary: "Replaces the swap policy; a field left out takes its default.",
+                row: None,
+            },
+            post(set_swap_policy),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/skills/judge/goal-project`'s body (FIX 11611):

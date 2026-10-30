@@ -23,11 +23,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, put};
 use oneiron::error::RecordError;
 use oneiron::federation::{
     SharedTrainingSetup, SharedTrainingSetupAnswer, SharedTrainingSetupQuestion,
@@ -37,7 +36,7 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
-use super::{OwnerReply, blocking};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::owner::{OwnerError, OwnerResult};
@@ -50,8 +49,27 @@ const SETUP_READS: CoreScope = CoreScope::Read;
 /// engine then judges who may.
 const SETUP_ACTS: CoreScope = CoreScope::Write;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/conversation-learning/setup", get(view).put(answer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning/setup",
+                summary: "A shared vault's one training question, asked once at setup, for its admin (its live owner, or an owner or admin holding the workspace-settings power): state unshared, pending (question_ref, 64 hex, and created_at) or answered (on, answered_by, setting_act, setting_revision and answered_at), with the setting's current revision as seen. A pending question reads the same until it is answered; reading consumes nothing. A counted admin choice made through PUT /conversation-learning since it was asked reads as its answer.",
+                row: None,
+            },
+            get(view),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/conversation-learning/setup",
+                summary: "The vault's admin answers the setup training question: body {question_ref, on, seen}, all required (a body missing one is a 400). Yes turns the setting on with people not allowed to opt out; no signs it off; the question is answered in the same commit. The same answer again returns the recorded one and signs nothing; a different one is refused (409) as already answered, and PUT /conversation-learning changes the setting from then on. A stale seen (64 hex) is a conflict and leaves the question pending; anyone else is refused.",
+                row: None,
+            },
+            put(answer),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

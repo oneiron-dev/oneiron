@@ -9,11 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
 use oneiron::EntityId;
 use oneiron::consent::ConsentReceipt;
 use oneiron::skill_hub::pack_catalog::{
@@ -43,48 +41,8 @@ use crate::server::SyncServer;
 mod line_chats;
 pub(crate) mod schema;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/packs", get(installed).post(put))
-        .route("/packs/install", post(install_from_hub))
-        .route("/packs/setup", get(setup_view))
-        .route("/packs/setup/prepare", post(setup_prepare))
-        .route("/packs/setup/answer", post(setup_answer))
-        .route("/packs/setup/verify", post(setup_verify))
-        .route("/packs/slack/manifest", get(slack_manifest))
-        .route("/packs/slack/install", post(slack_install))
-        .route("/packs/hooks", get(hook_bindings))
-        .route("/packs/hooks/bind", post(bind_hooks))
-        .route("/packs/hooks/qualify", post(qualify_hooks))
-        .route("/packs/agent/world", post(place_agent_world))
-        .route("/packs/hooks/enabled", post(set_hook_enabled))
-        .route("/packs/remove", post(remove_pack))
-        .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
-        .route("/packs/sync", post(sync_pack))
-        .route("/packs/organs", get(pack_organs))
-        .route("/packs/organs/build", post(put_organ_build))
-        .route("/packs/skills/import", post(import_skill))
-        .route("/packs/skills/restore", post(restore_skill))
-        .route(
-            "/packs/skills/restore-defaults",
-            post(restore_default_skills),
-        )
-        .route("/packs/skills/{entity}/sync", post(sync_skill))
-        .route(
-            "/packs/skills/{entity}/permissions/approve",
-            post(approve_skill_permissions),
-        )
-        .route("/packs/skills/{entity}/receipts", get(skill_receipts))
-        .route(
-            "/packs/skills/{entity}/activation/prepare",
-            post(prepare_skill_activation),
-        )
-        .route(
-            "/packs/skills/{entity}/activation/approve",
-            post(approve_skill_activation),
-        )
-        .merge(line_chats::routes())
-}
+mod table;
+pub(super) use self::table::owner_table;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

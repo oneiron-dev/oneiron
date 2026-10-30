@@ -4,25 +4,49 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::history::{self, EraseHistory, EraseOutcome, Erased, ExecuteErase};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/history", get(receipts))
-        .route("/history/erase", post(erase))
-        .route("/history/erase/execute", post(execute))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/history",
+                summary: "Every history erase filed for one text.",
+                row: None,
+            },
+            get(receipts),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/history/erase",
+                summary: "Drops one text's history below its oldest pin, or below through when that is no later.",
+                row: None,
+            },
+            post(erase),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/history/erase/execute",
+                summary: "Runs a waiting history erase the caller started, once its veto window passed with no objection.",
+                row: None,
+            },
+            post(execute),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/history/erase`'s body (FIX 11611):

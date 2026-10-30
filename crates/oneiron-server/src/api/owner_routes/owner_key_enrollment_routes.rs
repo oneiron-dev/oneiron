@@ -24,7 +24,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -37,17 +36,42 @@ use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/owner-signing-keys", get(list))
-        .route("/owner-signing-keys/challenge", post(challenge))
-        .route("/owner-signing-keys/enroll", post(enroll))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/owner-signing-keys",
+                summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live and whether a checkpoint policy may name it now. Empty before any enrollment.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/owner-signing-keys/challenge",
+                summary: "The bytes a device's new owner key signs to enrol (`machine`, 32 hex; `public_key`, 64 hex): the vault, the machine, the key and the owner this request proves. Answers `challenge` as hex.",
+                row: None,
+            },
+            post(challenge),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/owner-signing-keys/enroll",
+                summary: "The owner enrols a device's own Ed25519 owner signing key (`machine`, 32 hex; `public_key`, 64 hex; `proof`, 128 hex: the key's signature over its challenge). This install carries and cosigns the act, this host's root signs it as the predecessor; answers the receipt only once the fold counted it.",
+                row: None,
+            },
+            post(enroll),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

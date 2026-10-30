@@ -1,14 +1,11 @@
 //! The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner`
 //! route, with the SDK row whose input it takes where it mirrors one. The
-//! routes are axum handlers with no utoipa annotation, so these tables name
-//! them; a route added under `api/owner_routes` adds its line to the table
-//! its path sorts into.
+//! routes are axum handlers with no utoipa annotation, so each owner route
+//! leaf declares its rows beside its handlers, in the one table its router
+//! is built from; the document reads those tables through
+//! `owner_routes::owner_route_rows` (FIX 8931).
 
 use serde_json::{Map, Value, json};
-
-mod routes_a_to_e;
-mod routes_f_to_packs;
-mod routes_pads_to_w;
 
 /// One `/v1/owner` route: its method, its path under `/v1/owner`, what it
 /// does, and the SDK row whose input schema its body is.
@@ -19,23 +16,18 @@ pub(crate) struct OwnerRoute {
     pub(crate) row: Option<&'static str>,
 }
 
-/// Every `/v1/owner` route, the off-record ones included: three tables in
-/// path order, read one after another.
-pub(crate) const OWNER_ROUTE_TABLES: &[&[OwnerRoute]] = &[
-    routes_a_to_e::ROUTES,
-    routes_f_to_packs::ROUTES,
-    routes_pads_to_w::ROUTES,
-];
-
-/// Adds each owner route to `spec`'s paths: owner-grade bearer, its row's
-/// input schema as the JSON body where it has one, its row's output schema as
-/// the answer where the SDK publishes one (else a JSON answer of unstated
-/// shape), and the one 403 the owner door answers every refusal with.
+/// Adds each owner route to `spec`'s paths, in path order: owner-grade
+/// bearer, its row's input schema as the JSON body where it has one, its
+/// row's output schema as the answer where the SDK publishes one (else a JSON
+/// answer of unstated shape), and the one 403 the owner door answers every
+/// refusal with.
 pub(crate) fn merge_owner_paths(spec: &mut Value) {
     let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
         return;
     };
-    for route in OWNER_ROUTE_TABLES.iter().copied().flatten() {
+    let mut routes = crate::api::owner_routes::owner_route_rows();
+    routes.sort_by_key(|route| route.path);
+    for route in &routes {
         let path = format!("/v1/owner{}", route.path);
         let item = paths
             .entry(path.clone())

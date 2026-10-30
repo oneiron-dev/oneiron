@@ -13,7 +13,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -21,17 +20,42 @@ use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{self, AgentGrantMintRequest, AgentGrantRevokeRequest, EmptyRequest};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{hooked_row, memory_refusal};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/agent-grants/mint", post(mint))
-        .route("/agent-grants/revoke", post(revoke))
-        .route("/agents/base", get(base))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/agent-grants/mint",
+                summary: "Grant one named agent an explicit verb list (FIX 5628): a live agent principal of the vault (`agent`, 32 hex: an agent definition, or a base agent such as the Coach), the owner's complete six-axis scope stored exactly as given (`authority_scope`, its verbs a nonempty explicit set; it confers only with `read` among them) and an optional `expires_at` (Unix seconds; omitted, the grant stands until revoked). A second mint adds a second grant. Answers the grant, with its one-tap revoke command, and the signed act's ref.",
+                row: Some("vault.agents.grants.mint"),
+            },
+            post(mint),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/agent-grants/revoke",
+                summary: "Revoke one agent grant (`grant_ref`, 32 hex; optional `seen`, 64 hex): the grant stops conferring at once. A repeat answers `changed: false`; an id that names no agent grant (an owner, own-device, guest or member grant included) is not found.",
+                row: Some("vault.agents.grants.revoke"),
+            },
+            post(revoke),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/agents/base",
+                summary: "The base agents' principal ids for the owner (FIX 5734): `agents`, each `{name, id}`, the Coach first, then the Dreamer; `id` (32 hex) is what `/agent-grants/mint` takes as `agent`.",
+                row: Some("vault.agents.base"),
+            },
+            get(base),
+        ),
+    ]
 }
 
 /// `POST /v1/owner/agent-grants/mint`: grants one live agent principal

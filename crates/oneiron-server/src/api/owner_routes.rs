@@ -21,7 +21,7 @@ use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::MethodRouter;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::housekeeping::HousekeepingReport;
 use oneiron::run_tree::GateConsentBundleAction;
@@ -29,6 +29,7 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
+use super::openapi::OwnerRoute;
 use super::query_params;
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -72,6 +73,7 @@ mod guest_routes;
 mod handoff_alarm_routes;
 pub(super) mod history_routes;
 pub(super) mod house_routes;
+mod hub_table;
 mod inbox_routes;
 pub(super) mod intent_routes;
 pub(super) mod learning_setting_routes;
@@ -114,140 +116,132 @@ pub(super) mod world_privacy_work_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
+/// One owner route leaf's table: each route's OpenAPI row beside the
+/// handler that serves it, one entry per method and path (FIX 8931).
+pub(super) type OwnerTable = Vec<(OwnerRoute, MethodRouter<Arc<SyncServer>>)>;
+
+/// Every `/v1/owner` route outside the off-record ones, each leaf's table
+/// read once: [`routes`] serves this list and [`owner_route_rows`] hands its
+/// rows to the OpenAPI document, so no route is served without its row.
+fn owner_tables() -> OwnerTable {
+    [
+        hub_table::owner_table(),
+        account_routes::owner_table(),
+        authority_clock_routes::owner_table(),
+        budget_hold_routes::owner_table(),
+        checkpoint_policy_routes::owner_table(),
+        commitment_routes::owner_table(),
+        conflict_routes::owner_table(),
+        connector_admission_routes::owner_table(),
+        connector_consent_routes::owner_table(),
+        connector_slate_routes::owner_table(),
+        connector_subscription_routes::owner_table(),
+        diary_routes::owner_table(),
+        disclosure_routes::owner_table(),
+        dreamer_maintenance_routes::owner_table(),
+        dreamer_routes::owner_table(),
+        free_time_routes::owner_table(),
+        embedding_space_routes::owner_table(),
+        export_audit_routes::owner_table(),
+        history_routes::owner_table(),
+        house_routes::owner_table(),
+        inbox_routes::owner_table(),
+        intent_routes::owner_table(),
+        concern_routes::owner_table(),
+        learning_setting_routes::owner_table(),
+        machine_routes::owner_table(),
+        model_setting_routes::owner_table(),
+        room_thread_setting_routes::owner_table(),
+        backup_setting_routes::owner_table(),
+        widen_proposal_routes::owner_table(),
+        craft_candidate_routes::owner_table(),
+        pad_routes::owner_table(),
+        legal_hold_routes::owner_table(),
+        guest_routes::owner_table(),
+        support_grant_routes::owner_table(),
+        support_repair_routes::owner_table(),
+        agent_grant_routes::owner_table(),
+        proactivity_routes::owner_table(),
+        weave_routes::owner_table(),
+        pack_routes::owner_table(),
+        pack_preview_routes::owner_table(),
+        courtesy_delete_routes::owner_table(),
+        federation_connect_routes::owner_table(),
+        feedback_triage_routes::owner_table(),
+        decision_ask_routes::owner_table(),
+        desktop_takeover_routes::owner_table(),
+        browser_takeover_routes::owner_table(),
+        peer_confidence_routes::owner_table(),
+        skill_judge_routes::owner_table(),
+        wire_health_routes::owner_table(),
+        handoff_alarm_routes::owner_table(),
+        space_posting_routes::owner_table(),
+        vault_key_routes::owner_table(),
+        recovery_kit_routes::owner_table(),
+        secret_control_routes::owner_table(),
+        secret_use_routes::owner_table(),
+        secret_reveal_routes::owner_table(),
+        secret_found_routes::owner_table(),
+        secret_lift_routes::owner_table(),
+        steer_routes::owner_table(),
+        training_swap_routes::owner_table(),
+        usage_repair_routes::owner_table(),
+        conversation_learning_routes::owner_table(),
+        shared_training_setup_routes::owner_table(),
+        world_privacy_routes::owner_table(),
+        world_privacy_work_routes::owner_table(),
+        owner_key_enrollment_routes::owner_table(),
+        owner_work_routes::owner_table(),
+        root_routes::owner_table(),
+        recovery_kit_target_routes::owner_table(),
+        super::owner_origin::owner_table(),
+        super::packs::owner_table(),
+        carrier_table(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/status", get(status))
-        .route("/backups", get(list_backups).post(take_backup))
-        .route("/backups/rehearse", post(rehearse_backup))
-        .route("/maintain", post(run_housekeeping))
-        .route("/secret-scan", get(secret_scan).post(set_secret_scan))
-        .route("/healer/oversight", get(healer_oversight))
-        .route("/healer/failures", get(healer_failures))
-        .route("/healer/failures/drill", get(drill_failure))
-        .route("/healer/residue", get(healer_residue))
-        .route("/imports/preview", post(preview_import))
-        .route("/imports/approve", post(approve_import))
-        .route("/imports/decline", post(decline_import))
-        .route("/runs", get(pending_runs))
-        .route("/runs/review", get(review_run))
-        .route("/runs/approve", post(approve_run))
-        .route("/runs/decline", post(decline_run))
-        .route("/cleanup", get(cleanup_review).post(configure_cleanup))
-        .route("/cleanup/accept", post(accept_cleanup))
-        .route("/cleanup/reject", post(reject_cleanup))
-        .route("/cleanup/restore", post(restore_archived))
-        .route("/cleanup/revert-run", post(revert_cleanup_run))
-        .route("/cleanup/review", post(cleanup_decide::review_proposal))
-        .route("/cleanup/decide", post(cleanup_decide::decide_proposal))
-        .route("/notes/tombstones", get(note_tombstone_review))
-        .route("/notes/tombstones/accept", post(accept_note_tombstone))
-        .route("/notes/tombstones/decline", post(decline_note_tombstone))
-        .route("/persona", get(preview_persona))
-        .route("/persona/export", post(export_persona))
-        .route("/graph-fs", get(read_graph_fs))
-        .route("/feedback/preview", post(preview_feedback))
-        .route("/feedback/send", post(send_feedback))
-        .route("/feedback/inbox", get(feedback_inbox))
-        .route("/pack-drift", get(pack_drift_repairs))
-        .route("/model-catalog", get(model_catalog).put(set_model_catalog))
-        .route("/model-catalog/sync", post(sync_model_catalog))
-        .merge(account_routes::routes())
-        .merge(authority_clock_routes::routes())
-        .merge(budget_hold_routes::routes())
-        .merge(checkpoint_policy_routes::routes())
-        .merge(commitment_routes::routes())
-        .merge(conflict_routes::routes())
-        .merge(connector_admission_routes::routes())
-        .merge(connector_consent_routes::routes())
-        .merge(connector_slate_routes::routes())
-        .merge(connector_subscription_routes::routes())
-        .merge(diary_routes::routes())
-        .merge(disclosure_routes::routes())
-        .merge(dreamer_maintenance_routes::routes())
-        .merge(dreamer_routes::routes())
-        .merge(free_time_routes::routes())
-        .merge(embedding_space_routes::routes())
-        .merge(export_audit_routes::routes())
-        .merge(history_routes::routes())
-        .merge(house_routes::routes())
-        .merge(inbox_routes::routes())
-        .merge(intent_routes::routes())
-        .merge(concern_routes::routes())
-        .merge(learning_setting_routes::routes())
-        .merge(machine_routes::routes())
-        .merge(model_setting_routes::routes())
-        .merge(room_thread_setting_routes::routes())
-        .merge(backup_setting_routes::routes())
-        .merge(widen_proposal_routes::routes())
-        .merge(craft_candidate_routes::routes())
-        .merge(pad_routes::routes())
-        .merge(legal_hold_routes::routes())
-        .merge(guest_routes::routes())
-        .merge(support_grant_routes::routes())
-        .merge(support_repair_routes::routes())
-        .merge(agent_grant_routes::routes())
-        .merge(proactivity_routes::routes())
-        .merge(weave_routes::routes())
-        .merge(pack_routes::routes())
-        .merge(pack_preview_routes::routes())
-        .merge(courtesy_delete_routes::routes())
-        .merge(federation_connect_routes::routes())
-        .merge(feedback_triage_routes::routes())
-        .merge(decision_ask_routes::routes())
-        .merge(desktop_takeover_routes::routes())
-        .merge(browser_takeover_routes::routes())
-        .merge(peer_confidence_routes::routes())
-        .merge(skill_judge_routes::routes())
-        .merge(wire_health_routes::routes())
-        .merge(handoff_alarm_routes::routes())
-        .merge(space_posting_routes::routes())
-        .merge(vault_key_routes::routes())
-        .merge(recovery_kit_routes::routes())
-        .merge(secret_control_routes::routes())
-        .merge(secret_use_routes::routes())
-        .merge(secret_reveal_routes::routes())
-        .merge(secret_found_routes::routes())
-        .merge(secret_lift_routes::routes())
-        .merge(steer_routes::routes())
-        .merge(training_swap_routes::routes())
-        .merge(usage_repair_routes::routes())
-        .merge(conversation_learning_routes::routes())
-        .merge(shared_training_setup_routes::routes())
-        .merge(world_privacy_routes::routes())
-        .merge(world_privacy_work_routes::routes())
-        .merge(owner_key_enrollment_routes::routes())
-        .merge(owner_work_routes::routes())
-        .merge(root_routes::routes())
-        .merge(recovery_kit_target_routes::routes())
-        .merge(super::owner_origin::routes())
-        .merge(super::packs::routes())
-        .merge(carrier_routes())
+    serve(owner_tables())
 }
 
 /// The vault VM outbox carrier's owner routes (FIX 11074); none off Linux,
 /// where no vault VM runs.
-fn carrier_routes() -> Router<Arc<SyncServer>> {
+fn carrier_table() -> OwnerTable {
     #[cfg(target_os = "linux")]
-    let routes = outbox_diverged_routes::routes();
+    let table = outbox_diverged_routes::owner_table();
     #[cfg(not(target_os = "linux"))]
-    let routes = Router::new();
-    routes
+    let table = Vec::new();
+    table
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
 /// participant routes, they stay out of the wire receipts, which keep who
 /// called which route in the vault (ARCH-0052: no durable session trace).
 pub(super) fn off_record_routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route(
-            "/off-record",
-            get(off_record_session).post(enter_off_record),
-        )
-        .route("/off-record/mode", post(flip_off_record))
-        .route("/off-record/witness", post(witness_off_record))
-        .route("/off-record/promote", post(promote_off_record))
-        .route("/off-record/save", post(save_off_record))
-        .route("/off-record/close", post(close_off_record))
+    serve(hub_table::off_record_table())
+}
+
+/// Every row the owner route tables declare, the off-record ones included:
+/// the `/v1/owner` routes the OpenAPI document lists (FIX 8931).
+pub(super) fn owner_route_rows() -> Vec<OwnerRoute> {
+    owner_tables()
+        .into_iter()
+        .chain(hub_table::off_record_table())
+        .map(|(route, _)| route)
+        .collect()
+}
+
+/// A router that serves each entry of `table` at its path; axum merges the
+/// methods one path takes into one method router.
+fn serve(table: OwnerTable) -> Router<Arc<SyncServer>> {
+    table
+        .into_iter()
+        .fold(Router::new(), |router, (route, method_router)| {
+            router.route(route.path, method_router)
+        })
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
