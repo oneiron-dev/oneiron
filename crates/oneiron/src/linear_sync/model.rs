@@ -381,6 +381,23 @@ pub enum LinearSyncError {
     /// sends it.
     #[error("linear work waits: {0}")]
     Waiting(LinearWait),
+    /// The Gate holds the mutation for an owner's approve-once press (FIX
+    /// 6824): nothing was sent, and the press naming `approval_digest`
+    /// releases it. The fields are those of the recorded door's
+    /// [`super::LinearEffectHold`].
+    #[error(
+        "linear mutation held for the {} approve-once press {approval_digest}",
+        .role.as_str()
+    )]
+    Held {
+        /// The actor whose decision held it: the scheduler's when both did.
+        role: super::LinearEffectRole,
+        actor: EntityId,
+        /// That actor's recorded decision, `gate:<hex>`.
+        gate_decision_ref: String,
+        /// The digest that actor's press names, 64 lower-hex.
+        approval_digest: String,
+    },
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),
