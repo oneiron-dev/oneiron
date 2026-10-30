@@ -1,6 +1,7 @@
 //! Message parsers for `get_conversation` output: explicit message objects,
 //! the plain-text conversation fallback, and their timestamp and time-label
-//! readers.
+//! readers. Each parser returns every message with its sender as the output
+//! names it: an object's `sender`, or the name heading a page-text turn.
 
 use std::collections::HashSet;
 
@@ -15,7 +16,7 @@ use super::verified_send::normalize_whitespace;
 pub(super) fn explicit_conversation_messages(
     thread_id: &str,
     message_values: &[Value],
-) -> Result<Vec<LinkedInConversationMessage>> {
+) -> Result<Vec<(Option<String>, LinkedInConversationMessage)>> {
     let mut messages = Vec::new();
     let mut seen_message_ids = HashSet::new();
     for value in message_values {
@@ -41,12 +42,16 @@ pub(super) fn explicit_conversation_messages(
             object,
             &["occurred_at", "timestamp", "created_at", "sent_at"],
         )?;
-        messages.push(LinkedInConversationMessage {
-            thread_id: thread_id.to_owned(),
-            message_id,
-            occurred_at,
-            text,
-        });
+        let sender = first_string_field(object, &["sender"]).map(str::to_owned);
+        messages.push((
+            sender,
+            LinkedInConversationMessage {
+                thread_id: thread_id.to_owned(),
+                message_id,
+                occurred_at,
+                text,
+            },
+        ));
     }
     Ok(messages)
 }
@@ -54,7 +59,7 @@ pub(super) fn explicit_conversation_messages(
 pub(super) fn fallback_conversation_messages(
     thread_id: &str,
     conversation_text: &str,
-) -> Result<Vec<LinkedInConversationMessage>> {
+) -> Result<Vec<(Option<String>, LinkedInConversationMessage)>> {
     let lines = conversation_text
         .lines()
         .map(normalize_whitespace)
@@ -73,6 +78,7 @@ pub(super) fn fallback_conversation_messages(
     let mut index = start;
     while index < lines.len() {
         if index + 2 < lines.len() && looks_like_linkedin_time(&lines[index + 1]) {
+            let sender = &lines[index];
             let timestamp = &lines[index + 1];
             index += 2;
             let body_start = index;
@@ -84,21 +90,23 @@ pub(super) fn fallback_conversation_messages(
             }
             let body = lines[body_start..index].join(" ");
             if !body.is_empty() {
-                messages.push(fallback_message(
-                    thread_id,
-                    [timestamp.as_str(), body.as_str()].as_slice(),
-                    Some(body.clone()),
-                )?);
+                messages.push((
+                    Some(sender.clone()),
+                    fallback_message(
+                        thread_id,
+                        [timestamp.as_str(), body.as_str()].as_slice(),
+                        Some(body.clone()),
+                    )?,
+                ));
             }
             continue;
         }
 
         let body = lines[index].clone();
-        messages.push(fallback_message(
-            thread_id,
-            [body.as_str()].as_slice(),
-            Some(body.clone()),
-        )?);
+        messages.push((
+            None,
+            fallback_message(thread_id, [body.as_str()].as_slice(), Some(body.clone()))?,
+        ));
         index += 1;
     }
     Ok(messages)
@@ -160,7 +168,7 @@ fn normalize_epoch_timestamp_secs(value: u64) -> Result<u64> {
     Ok(value)
 }
 
-fn looks_like_linkedin_time(value: &str) -> bool {
+pub(super) fn looks_like_linkedin_time(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
     if lower.contains(':') && (lower.ends_with("am") || lower.ends_with("pm")) {
         return true;
