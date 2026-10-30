@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use super::{corrections, resolved_outputs};
-use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
+use crate::dreamer_consolidation::evidence::{ResolvedConflictOutput, VerifiedEvidenceSet};
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
 use crate::edge::EdgeKind;
 use crate::ports::EdgeStoreRead;
@@ -67,6 +67,13 @@ pub fn promote_scoped_consolidation(
             outcome.held.push(head);
             continue;
         }
+        // The answers this head gives ride on its support assertion (FIX
+        // 7381); a replay that meets the assertion again reads them back.
+        let bound: Vec<_> = answers
+            .iter()
+            .filter(|answer| answer.outputs.contains(&head))
+            .cloned()
+            .collect();
         match attach_evidence(
             vault,
             run,
@@ -75,8 +82,10 @@ pub fn promote_scoped_consolidation(
             &candidate,
             &evidence,
             checker,
+            &bound,
         ) {
-            Ok(()) => {
+            Ok(stored) => {
+                answers.extend(stored);
                 stood.insert(head, candidate.evidence_turn_refs);
                 outcome.landed.push(head);
             }
@@ -222,6 +231,16 @@ fn log_rejected(
 /// reaches, so the sealed consolidation write names it itself.
 const ATTACHMENT_REFUSAL_ROW: &str = "dreamer.attach_evidence";
 
+/// The support assertion's scope key its derived evidence sits under.
+const DERIVED_EVIDENCE_KEY: &str = "derived_evidence";
+
+/// Attaches `evidence` to `head`, each support assertion carrying the
+/// `answers` the head gives. Returns the answers a support assertion this
+/// attempt already wrote keeps, for a replay that meets it again.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one sealed attachment: its run, fence, head, candidate, evidence, checker and answers"
+)]
 fn attach_evidence(
     vault: &Vault,
     run: &DreamerRunContext,
@@ -230,7 +249,8 @@ fn attach_evidence(
     candidate: &PromotionCandidate,
     evidence: &VerifiedEvidenceSet,
     checker: Option<&BoundedAutoChecker>,
-) -> Result<()> {
+    answers: &[ResolvedConflictOutput],
+) -> Result<Vec<ResolvedConflictOutput>> {
     let source = evidence.meet();
     let envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
@@ -308,9 +328,18 @@ fn attach_evidence(
         )?;
         // The gate is not an authority-granting preflight: all materialization
         // below and its receipt share this transaction, including live pins.
+        let mut stored = Vec::new();
         for source_id in &refs {
             let cited = evidence.for_source(*source_id);
-            attach_ref(vault, txn, run, head, *source_id, &cited, auto_write_rate)?;
+            stored.extend(attach_ref(
+                vault,
+                txn,
+                run,
+                (head, *source_id),
+                &cited,
+                answers,
+                auto_write_rate,
+            )?);
         }
         crate::dreamer_consolidation::strength::record_verified_in_txn(
             vault, txn, head, evidence, run.now_ms,
@@ -320,7 +349,7 @@ fn attach_evidence(
                 "evidence attachment altered its head",
             ));
         }
-        Ok(())
+        Ok(stored)
     });
     match outcome {
         Err(error) => {
@@ -337,19 +366,23 @@ fn attach_evidence(
             }
             Err(error)
         }
-        Ok(()) => Ok(()),
+        Ok(stored) => Ok(stored),
     }
 }
 
+/// One support assertion of `source` for `head`, carrying the `answers` the
+/// head gives (FIX 7381). Returns the answers the assertion already keeps
+/// when this attempt wrote it before: a replay compares everything else
+/// exactly, and reads its binding back.
 fn attach_ref(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     run: &DreamerRunContext,
-    head: EntityId,
-    source: EntityId,
+    (head, source): (EntityId, EntityId),
     evidence: &VerifiedEvidenceSet,
+    answers: &[ResolvedConflictOutput],
     auto_write_rate: crate::own_rate::OwnRate,
-) -> Result<()> {
+) -> Result<Vec<ResolvedConflictOutput>> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
     if locators.is_empty()
@@ -434,8 +467,18 @@ fn attach_ref(
                 Value::from(crate::claim::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
                 Value::from(evidence_meet.as_str()),
             ),
-            (Value::from("derived_evidence"), derived_evidence),
+            (Value::from(DERIVED_EVIDENCE_KEY), derived_evidence),
         ]);
+        // The answers binding is compared apart: a replay may carry more or
+        // fewer answers than the try that wrote it, and reads back the rest.
+        let (stored_scope, stored_answers) = match existing.scope.as_ref() {
+            Some(scope) => {
+                let (scope, answers) =
+                    super::resolved_outputs::split_attachment_answers(scope, DERIVED_EVIDENCE_KEY);
+                (Some(scope), answers)
+            }
+            None => (None, Vec::new()),
+        };
         let edge_consistent =
             vault
                 .store
@@ -449,7 +492,7 @@ fn attach_ref(
                 }
                 error => error,
             })?;
-        if existing.scope.as_ref() != Some(&expected_scope)
+        if stored_scope.as_ref() != Some(&expected_scope)
             || existing.scope_project != project
             || existing.approval != ClaimApprovalStatus::Auto
             || !edge_consistent
@@ -477,7 +520,7 @@ fn attach_ref(
             run.agent_actor.actor_class(),
             &policy,
         )?;
-        return Ok(());
+        return Ok(stored_answers);
     }
     if vault
         .store
@@ -501,7 +544,10 @@ fn attach_ref(
             learned_at: run.now_ms,
             explicit_prior: None,
             imported_evidence: None,
-            generated_evidence: Some(derived_evidence),
+            generated_evidence: Some(super::resolved_outputs::with_answers(
+                derived_evidence,
+                &answers.iter().collect::<Vec<_>>(),
+            )),
         },
     )?;
     // The new evidence assertion is an Auto write by the Dreamer actor, so it
@@ -517,5 +563,6 @@ fn attach_ref(
     )?;
     #[cfg(test)]
     crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Attachment);
-    evidence.record_message_dependencies_in_txn(vault, txn, &id)
+    evidence.record_message_dependencies_in_txn(vault, txn, &id)?;
+    Ok(Vec::new())
 }
