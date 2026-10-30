@@ -271,7 +271,7 @@ impl DecisionBand {
 }
 
 /// Owner ceiling; a resident can select a cheaper rung but never widen it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionDial {
     pub first: DecisionRung,

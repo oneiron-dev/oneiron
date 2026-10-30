@@ -325,7 +325,7 @@ pub(super) async fn create(
     payload: Result<Json<CreateArtifact>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let request = json_payload(payload)?;
     let made_by = request
         .made_by
@@ -436,7 +436,7 @@ pub(super) async fn append(
     payload: Result<Json<AppendVersion>, JsonRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let request = json_payload(payload)?;
     let bytes = decode_content(&request.content_base64)?;
@@ -636,7 +636,7 @@ pub(super) async fn export_version(
         ("agent_run" = Option<String>, Query, description = "An agent run ref, as its versions' provenance names it.")
     ),
     responses(
-        (status = 200, description = "`born`: the rows the source created; `versions`: every artifact version it made, in artifact then version order. A credential with record caveats is shown only the rows its lane admits, and nothing for a task, ask, run or skill it does not.", body = Object, content_type = "application/json"),
+        (status = 200, description = "`born`: the rows the source created; `born_records`: each of them as a typed record ref of its kind; `versions`: every artifact version it made, in artifact then version order. A credential with record caveats is shown only the rows its lane admits, and nothing for a task, ask, run or skill it does not.", body = Object, content_type = "application/json"),
         (status = 400, description = "Name exactly one of task, ask, run, skill or agent_run.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -680,7 +680,7 @@ pub(super) async fn born_from(
             .into());
         }
     };
-    let (born, versions) = blocking_read(move || {
+    let (born, born_records, versions) = blocking_read(move || {
         let vault = server.vault();
         let failed = |error: oneiron::Error| core_engine_error("born-from read failed", error);
         let lane = caveat_lane(vault, &auth)?;
@@ -691,13 +691,21 @@ pub(super) async fn born_from(
             BornFromSource::AgentRun(_) => Vec::new(),
         };
         let versions = vault.artifacts_born_from(&source).map_err(failed)?;
-        match lane {
-            None => Ok((born, versions)),
-            Some(lane) => admitted_born_from(vault, lane, &source, born, versions).map_err(failed),
-        }
+        let (born, versions) = match lane {
+            None => (born, versions),
+            Some(lane) => {
+                admitted_born_from(vault, lane, &source, born, versions).map_err(failed)?
+            }
+        };
+        // Each born row the answer keeps, named by the kind its row is
+        // (FIX 9340); one whose kind no longer reads is in `born` alone.
+        let born_records = vault.born_records(&born).map_err(failed)?;
+        Ok((born, born_records, versions))
     })
     .await?;
-    Ok(Json(json!({ "born": born, "versions": versions })))
+    Ok(Json(
+        json!({ "born": born, "born_records": born_records, "versions": versions }),
+    ))
 }
 
 /// List an artifact's pending proposals.
@@ -863,7 +871,7 @@ fn settle_request(payload: Option<Json<Settle>>) -> Settle {
     ),
     request_body(content = Object, description = "Optional body: `brief_ref` and `reason`.", content_type = "application/json"),
     responses(
-        (status = 200, description = "The kept `version`, whether a stranded proposal was left, the comments `remapped` and `drifted`, and the settle `receipt`.", body = Object, content_type = "application/json"),
+        (status = 200, description = "The kept `version`, whether a stranded proposal was left, the comments `remapped` and `drifted`, the settle `receipt`, its `reconciliation` when it forked, and the `review` it settled, typed.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "The caller is not the vault owner (Keep, Discard, Undo and Restore are the owner's consent).", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -900,6 +908,7 @@ pub(super) async fn keep(
         "drifted": outcome.reanchor.drifted.len(),
         "receipt": outcome.receipt,
         "reconciliation": outcome.reconciliation,
+        "review": outcome.review,
     })))
 }
 
@@ -1194,7 +1203,7 @@ pub(super) async fn reattach(
     payload: Result<Json<Reattach>, JsonRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let thread = parse_entity_id_param(&thread, "thread")?;
     let request = json_payload(payload)?;
