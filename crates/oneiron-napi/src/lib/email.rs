@@ -4,7 +4,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oneiron::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, EmailThreadHeaders,
 };
 
 use super::boundary::{parse_entity_id, to_napi_err, ts_to_u64};
@@ -24,12 +24,20 @@ pub(super) fn core_email_adapter(
 }
 
 pub(super) fn core_email_inbound(input: NapiEmailInboundEvent) -> EmailProviderInbound {
-    let inbound = EmailProviderInbound::new(
+    let mut inbound = EmailProviderInbound::new(
         input.provider_event_id,
         input.envelope_to,
         input.envelope_from,
         ts_to_u64(input.received_at),
     );
+    // Threading headers ride only on a message that names its own id.
+    if let Some(message_id) = input.message_id {
+        inbound = inbound.with_thread_headers(EmailThreadHeaders::new(
+            message_id,
+            input.references.unwrap_or_default(),
+            input.in_reply_to,
+        ));
+    }
     if let Some(payload_ref) = input.payload_ref {
         inbound.with_payload_ref(payload_ref)
     } else {
