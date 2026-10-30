@@ -4,12 +4,16 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::storage::{SUBMISSION_KEY_TAG, decode_row, encode_row, engine_failure, to_codec_error};
+use super::storage::{
+    QUARANTINE_RESTORE_REASON_CODE, SUBMISSION_KEY_TAG, decode_row, encode_row, engine_failure,
+    to_codec_error,
+};
 use crate::booking::agent_api::BookingIntakeAnswer;
 use crate::booking::lifecycle::{
     OpaqueLifecycleToken, SessionKey, booking_writer, live_hold_in_txn,
 };
 use crate::booking::{BookingError, ConstraintObject, EventTypeKey};
+use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
@@ -128,19 +132,29 @@ pub fn booking_quarantined_submission(
 }
 
 /// Records the booking EVENT an owner restore made from one quarantined
-/// submission, so the submission reads as restored and a second restore
-/// books nothing.
+/// submission and resolves the submission's inbox card, in one write: the
+/// submission reads as restored, so a second restore books nothing, and its
+/// pending review row closes as approved with its receipt. `owner` is
+/// checked again inside that write.
 ///
 /// # Errors
 ///
-/// [`BookingError::InvalidConstraint`] when the claim kept no submission or
-/// it was already restored; storage failures.
+/// [`BookingError::InvalidConstraint`] when the owner proof no longer holds,
+/// the claim kept no submission, or it was already restored; storage
+/// failures.
 pub fn record_quarantined_submission_restored(
     vault: &Vault,
+    owner: &AuthenticatedOwner,
     claim_ref: &EntityId,
     event_ref: EntityId,
+    now: u64,
 ) -> Result<(), BookingError> {
     booking_writer(vault, |wtxn| {
+        owner.revalidate_in_txn(vault, &*wtxn).map_err(|error| {
+            BookingError::InvalidConstraint(format!(
+                "the restoring owner is not authenticated: {error}"
+            ))
+        })?;
         let key = (*SUBMISSION_KEY_TAG, *claim_ref.as_bytes());
         let Some(mut submission) = SUBMISSION
             .get(&vault.store, &*wtxn, &key)
@@ -158,7 +172,19 @@ pub fn record_quarantined_submission_restored(
         submission.restored_event_ref = Some(event_ref);
         SUBMISSION
             .put(&vault.store, wtxn, &key, &submission)
-            .map_err(|error| engine_failure("quarantined submission write", error))
+            .map_err(|error| engine_failure("quarantined submission write", error))?;
+        vault
+            .store
+            .close_pending_gate_consent_in_txn(
+                wtxn,
+                claim_ref,
+                now,
+                "approved",
+                vec![QUARANTINE_RESTORE_REASON_CODE.to_owned()],
+                Some(format!("booking_event:{}", event_ref.to_hex())),
+            )
+            .map_err(|error| engine_failure("quarantine card close", error))?;
+        Ok(())
     })
 }
 

@@ -306,9 +306,9 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                 "service": "oneiron-server",
                 "modes": ["flash", "thinking", "pro", "ultra"],
                 "capabilities": {
-                    "total": 2228,
+                    "total": 2229,
                     "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
-                    "counts": {"booking": 5, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
+                    "counts": {"booking": 6, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
                 },
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {
