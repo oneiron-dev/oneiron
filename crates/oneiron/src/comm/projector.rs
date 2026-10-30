@@ -12,6 +12,7 @@ use super::projection_writes::{
     latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
     put_projected_comm_claim_in_txn,
 };
+use super::receipt_import::import_delivered_send_receipts;
 use super::records::{
     CommEventKind, CommRecord, comm_records_in_txn, decode_comm_record, next_event_sequence_in_txn,
     put_comm_record_in_txn, read_comm_record_in_txn, validate_channel_class, validate_key_string,
@@ -28,8 +29,7 @@ use crate::Vault;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind};
-use crate::ports::{EntityStoreRead, TombstoneStore};
-use crate::receipt::FIELD_TASK_REF;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
 #[derive(Debug, Clone, Copy)]
@@ -87,7 +87,33 @@ const PROJECTOR_RULES: [ProjectorRule; 6] = [
 /// RECORDED after this pass's snapshot are not observed at all; they are the
 /// next pass's business.
 pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
-    import_delivered_send_receipts(vault)?;
+    run_comm_projector_capped(vault, usize::MAX)
+}
+
+/// The most new delivered receipts one housekeeping pass imports, and the
+/// most pending events it projects; the rest wait for the next pass.
+const HOUSEKEEPING_PROJECTOR_BATCH: usize = 256;
+
+/// The housekeeping pass's projector step: one [`run_comm_projector`] pass
+/// capped at [`HOUSEKEEPING_PROJECTOR_BATCH`], so messages no connector reply
+/// job follows (inbound mail, provider sends, thread events) still project.
+/// A pass with no new receipt and no pending event opens no write. A failed
+/// pass is logged and never fails the caller; the next pass retries what it
+/// left.
+pub(crate) fn run_comm_projector_housekeeping_step(vault: &Vault) {
+    if let Err(error) = run_comm_projector_capped(vault, HOUSEKEEPING_PROJECTOR_BATCH) {
+        tracing::warn!(
+            %error,
+            "housekeeping: communication projector pass failed; it is retried on the next pass"
+        );
+    }
+}
+
+/// [`run_comm_projector`] importing at most `max_writes` new delivered
+/// receipts and projecting at most `max_writes` pending events, in sequence
+/// order; the rest wait for the next pass.
+fn run_comm_projector_capped(vault: &Vault, max_writes: usize) -> CommResult<()> {
+    import_delivered_send_receipts(vault, max_writes)?;
     let (records, pending_stops) = {
         let rtxn = vault.store.env.read_txn()?;
         (
@@ -98,7 +124,7 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     let mut index = CommProjectorIndex::from_records(&records, &pending_stops);
     drop(records);
     let mut first_refusal = None;
-    for event_id in index.pending_event_ids() {
+    for event_id in index.pending_event_ids().into_iter().take(max_writes) {
         // Each event keeps its own write transaction, so a later bad event
         // cannot roll back what earlier events already projected.
         match project_event(vault, event_id, &index) {
@@ -125,119 +151,11 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     first_refusal.map_or(Ok(()), Err)
 }
 
-fn storage_failure(error: &Error) -> bool {
+pub(super) fn storage_failure(error: &Error) -> bool {
     matches!(
         error.kind(),
         ErrorKind::Storage | ErrorKind::Io | ErrorKind::MapFull
     )
-}
-
-/// Folds durable connector receipts into this projector. TASK identity fixes the
-/// source event; its original PERSON subject is never changed by later party
-/// merges or deletion. A new delivery without an explicit counterparty is not
-/// a communication fact: transport destinations can be group channels.
-fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
-    for receipt in crate::receipt::durable_send_receipts(vault)? {
-        if receipt.outcome != "delivered_to_channel" {
-            continue;
-        }
-        let channel = receipt
-            .fields
-            .get("channel")
-            .ok_or(CommError::InvalidRecord)?;
-        let verb = receipt.fields.get("verb").ok_or(CommError::InvalidRecord)?;
-        if !is_delivered_message(channel, verb) {
-            continue;
-        }
-        let Some(party) = receipt.fields.get("counterparty_ref") else {
-            continue;
-        };
-        validate_channel_class(channel).map_err(|_| CommError::InvalidRecord)?;
-        validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
-        let task_ref = EntityId::from_hex(
-            receipt
-                .fields
-                .get(FIELD_TASK_REF)
-                .ok_or(CommError::InvalidRecord)?,
-        )
-        .map_err(|_| CommError::InvalidRecord)?;
-        let event_id = EntityId::derive(
-            crate::entity_id::derived_domains::COMM_CONNECTOR_SEND_EVENT,
-            &[task_ref.as_bytes()],
-        )
-        .map_err(|_| CommError::InvalidRecord)?;
-        vault.try_with_write_txn_grouped(|txn| {
-            // Check the immutable source event BEFORE resolving today's party.
-            // A merged shell keeps its original body, and a deleted subject has
-            // no body at all. Neither should remint a PERSON or block STOPs.
-            if let Some(raw) = vault.store.port_entity_record(&*txn, &event_id)? {
-                if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
-                    return Err(CommError::InvalidRecord);
-                }
-                match decode_comm_record(&raw.body)? {
-                    CommRecord::Event {
-                        kind: CommEventKind::SendSucceeded,
-                        party_ref: original_party,
-                        channel_class: Some(resident_channel),
-                        thread_ref: None,
-                        occurred_at,
-                        ..
-                    } if resident_channel == *channel && occurred_at == receipt.occurred_at => {
-                        // A soft delete keeps a headerful PERSON shell with
-                        // scrubbed body bytes. It is not a live party to
-                        // compare against the frozen receipt; the already
-                        // imported event must remain replay-idempotent.
-                        if !vault.port_tombstone_is_deleted(&*txn, &original_party)?
-                            && let Some(original) =
-                                vault.store.port_entity_record(&*txn, &original_party)?
-                        {
-                            if original.entity_type != crate::registry::ENTITY_TYPE_PERSON {
-                                return Err(CommError::InvalidRecord);
-                            }
-                            let value = rmpv::decode::read_value(&mut original.body.as_slice())
-                                .map_err(|_| CommError::InvalidRecord)?;
-                            let key = super::records::required_string(
-                                super::records::value_map(&value)
-                                    .map_err(|_| CommError::InvalidRecord)?,
-                                super::claims::KEY_PARTY_KEY,
-                            )
-                            .map_err(|_| CommError::InvalidRecord)?;
-                            if key != party {
-                                return Err(CommError::InvalidRecord);
-                            }
-                        }
-                        return Ok(());
-                    }
-                    _ => return Err(CommError::InvalidRecord),
-                }
-            }
-            let party_ref = resolve_or_create_party_in_txn(vault, txn, party)?;
-            let sequence = next_event_sequence_in_txn(vault, txn)?;
-            put_comm_record_in_txn(
-                vault,
-                txn,
-                event_id,
-                &CommRecord::Event {
-                    sequence,
-                    kind: CommEventKind::SendSucceeded,
-                    party_ref,
-                    channel_class: Some(channel.clone()),
-                    thread_ref: None,
-                    occurred_at: receipt.occurred_at,
-                    projected: false,
-                },
-            )
-        })?;
-    }
-    Ok(())
-}
-
-/// A message operation projects one delivered receipt into comm history.
-/// The connector manifest declares the eligible verbs; edits, reactions,
-/// invitations and presence never become touches just because they delivered.
-fn is_delivered_message(channel: &str, verb: &str) -> bool {
-    crate::outbound::outbound_capability_manifest(channel)
-        .is_some_and(|manifest| manifest.message_verbs.iter().any(|kind| kind == verb))
 }
 
 /// Records a successful send receipt without directly writing standing-state claims.
