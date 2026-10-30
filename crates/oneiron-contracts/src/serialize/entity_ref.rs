@@ -63,7 +63,7 @@ pub mod optional_set {
             .map(|ids| {
                 ids.iter()
                     .map(|value| EntityId::from_hex(value).map_err(serde::de::Error::custom))
-                    .collect()
+                    .collect::<Result<BTreeSet<EntityId>, D::Error>>()
             })
             .transpose()
     }
