@@ -638,6 +638,8 @@ export class Oneiron {
         quotas: (input: Facade.RunnerSeatQuotasRequest): Facade.RunnerSeatQuotasView => this.#call(() => this.#client.vaultRunnersSeatsQuotas(input) as Facade.RunnerSeatQuotasView),
         /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
         top_up: (input: Facade.RunnerSeatCreditTopUpRequest): Facade.RunnerSeatTopUpReceipt => this.#call(() => this.#client.vaultRunnersSeatsTopUp(input) as Facade.RunnerSeatTopUpReceipt),
+        /** The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write. */
+        resume: (input: Facade.RunnerWorkResumeRequest): Facade.RunnerWorkResumeView => this.#call(() => this.#client.vaultRunnersSeatsResume(input) as Facade.RunnerWorkResumeView),
       },
     },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
@@ -1949,6 +1951,8 @@ export class Oneiron {
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),
+      /** Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it. */
+      propose_from_pack: (input: Facade.PackLensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesProposeFromPack(input) as Facade.LensProposalReceipt),
       /** The owner selects a proposed lens revision for its pack slot. */
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
       /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
@@ -3105,7 +3109,7 @@ export class Oneiron {
         close: (input: Facade.NoteEditorCloseRequest): Facade.NoteEditorClosed => this.#call(() => this.#client.vaultNotesEditorClose(input) as Facade.NoteEditorClosed),
       },
       /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
-      edit: (input: Facade.EditNoteRequest): Facade.NoteEditOutcome => this.#call(() => this.#client.vaultNotesEdit(input) as Facade.NoteEditOutcome),
+      edit: (input: Facade.EditNoteRequest): Facade.NoteProgramEditOutcome => this.#call(() => this.#client.vaultNotesEdit(input) as Facade.NoteProgramEditOutcome),
       /** Seals one NOTE: its document freezes, and a later edit opens a fork. */
       seal: (request: Facade.NoteRefRequest): Facade.NoteSeal => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSeal(keyedJson(request))) as Facade.NoteSeal; return result }),
       /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal. */

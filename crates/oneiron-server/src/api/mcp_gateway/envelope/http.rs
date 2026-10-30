@@ -17,15 +17,17 @@ pub(crate) async fn mcp_gateway(
     body: Bytes,
 ) -> impl IntoResponse {
     // What a tool's answer holds (a deck preview's renderer) is kept until
-    // the reply is encoded (FIX 8238).
-    crate::api::answer_hold::until_encoded(mcp_endpoint(
+    // the reply is encoded (FIX 8238). The endpoint's future lives on the
+    // heap, so the route's handler future holds a pointer through every
+    // layer, not the whole dispatch (FIX 12072).
+    crate::api::answer_hold::until_encoded(Box::pin(mcp_endpoint(
         McpSurfaceMode::Primary,
         headers,
         locality,
         connection,
         server,
         body,
-    ))
+    )))
     .await
 }
 
@@ -41,15 +43,16 @@ pub(crate) async fn mcp_tool_first_gateway(
     body: Bytes,
 ) -> impl IntoResponse {
     // What a tool's answer holds (a deck preview's renderer) is kept until
-    // the reply is encoded (FIX 8238).
-    crate::api::answer_hold::until_encoded(mcp_endpoint(
+    // the reply is encoded (FIX 8238); the endpoint's future on the heap
+    // (FIX 12072).
+    crate::api::answer_hold::until_encoded(Box::pin(mcp_endpoint(
         McpSurfaceMode::ToolFirst,
         headers,
         locality,
         connection,
         server,
         body,
-    ))
+    )))
     .await
 }
 
@@ -329,7 +332,9 @@ pub(super) async fn mcp_endpoint(
         }
     };
     let method = request.method.clone();
-    let call = handle_mcp_request(
+    // The method dispatch, `tools/call` and every verb under it, on the heap
+    // (FIX 12072).
+    let call = Box::pin(handle_mcp_request(
         mode,
         &headers,
         locality,
@@ -337,7 +342,7 @@ pub(super) async fn mcp_endpoint(
         &server,
         request,
         raw_arguments.as_deref(),
-    );
+    ));
     // A claimed call keeps the answer its release judged, for the calls
     // waiting on it (FIX 7914).
     let (mut result, judged) = if claim.is_some() {

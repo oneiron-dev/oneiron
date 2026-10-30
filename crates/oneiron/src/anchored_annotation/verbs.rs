@@ -19,7 +19,7 @@ use crate::write_envelope::WriteActor;
 
 impl Memory<'_> {
     fn annotation_actor(&self) -> WriteActor {
-        WriteActor::new(self.actor(), self.actor_class())
+        self.write_actor()
     }
 
     fn annotation_moment(&self) -> (TimeRange, u64) {

@@ -308,7 +308,8 @@ impl Once {
 /// agent Grant act (it moves no fold state, FIX 5628), a setting's act (only
 /// its target's acts) or an export act (it moves no state but its own
 /// refusal, FIX 4624), an owner
-/// work request, result or cancel (each judges only its own work), a world
+/// work request, result or cancel (each judges only its own work), a custody
+/// permit piece (it keeps only its own place, FIX 11866), a world
 /// key record (it fills only its own key's slots, or is refused as a no-op,
 /// FIX 4881), a frontier join (it moves no state, FIX 7908), a residence
 /// directive (it adds only its own id and machine, which only a result past
@@ -355,6 +356,7 @@ pub(super) fn admits_past(
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::ResidenceDirective(_)

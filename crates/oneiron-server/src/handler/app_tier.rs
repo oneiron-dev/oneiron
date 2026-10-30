@@ -34,6 +34,14 @@ pub(super) async fn handle_sync_message(
         SyncMessage::LfsChunks(payload) => {
             super::lfs_chunks::handle(server, payload, direct_tx, conn_state, session_gone).await
         }
+        SyncMessage::AssetBody { tag, payload } => {
+            super::asset_bodies::handle(server, conn_state, tag, &payload, direct_tx)
+                .map(ControlFlow::Continue)
+        }
+        SyncMessage::LeafKey { tag, payload } => {
+            super::leaf_keys::handle(server, conn_id, conn_state, tag, &payload, direct_tx)
+                .map(ControlFlow::Continue)
+        }
         SyncMessage::Doc {
             entity,
             kind,
@@ -43,7 +51,13 @@ pub(super) async fn handle_sync_message(
         )
         .map(ControlFlow::Continue),
         SyncMessage::Batch(members) => {
-            for member in members {
+            for (index, member) in members.into_iter().enumerate() {
+                // FIX 10163: a batch past one processing quantum gives the
+                // worker back between quanta, so a large validated batch
+                // shares it; no member is refused for the count.
+                if index > 0 && index % oneiron::sync::transport::MAX_NODE_BATCH_MEMBERS == 0 {
+                    tokio::task::yield_now().await;
+                }
                 // FIX 6313: an earlier member's window load may have waited,
                 // so each member runs only while the session still stands.
                 if session_gone() {
@@ -493,6 +507,7 @@ fn answer_app_message(
                 peer,
                 request,
                 &mut state.residence_index,
+                &mut state.authority_append_stage,
             )?
             .queued(conn)
         } else {

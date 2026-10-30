@@ -5,20 +5,27 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::house;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/workspace/finish", post(finish))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/workspace/finish",
+            summary: "Finish one stored workspace (`workspace_ref`): the house its stored preset names takes the root project's lead. A repeat leaves the root as the first finish signed it.",
+            row: None,
+        },
+        post(finish),
+    )]
 }
 
 /// `POST /v1/owner/workspace/finish`.

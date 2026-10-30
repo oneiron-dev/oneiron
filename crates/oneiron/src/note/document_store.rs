@@ -1,8 +1,8 @@
 //! Actor-bound NOTE editor verbs and atomic entity-document persistence.
 
 use super::document::{
-    NoteDocument, NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution,
-    frontier, invalid,
+    NoteDocument, NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome,
+    NoteSpanResolution, frontier, invalid,
 };
 use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
 use super::side_keys::HexHexHash;
@@ -72,12 +72,15 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
+/// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
 pub(super) fn persist_replica(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
+    super::replica::seal::refuse_frozen_motion(vault, txn, doc)?;
     super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
     persist_structural(vault, txn, doc, false)
 }
@@ -305,7 +308,7 @@ impl Memory<'_> {
         let kind = NoteKind::Plugin("brief".into());
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.vault().new_entity_id()?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let body = encode_note_body(&NoteBody {
             kind,
             author_ref: super::NoteActor::Actor(self.actor()),
@@ -415,7 +418,7 @@ impl Memory<'_> {
         &self,
         note: EntityId,
         title: impl Into<String>,
-    ) -> MemoryResult<NoteEditOutcome> {
+    ) -> MemoryResult<NoteScalarEditOutcome> {
         Ok(self
             .apply_local_note_operation(
                 note,
@@ -434,8 +437,8 @@ impl Memory<'_> {
         &self,
         note: EntityId,
         base: &[u8],
-        edits: &[NoteEdit],
-    ) -> MemoryResult<NoteEditOutcome> {
+        edits: &[NoteScalarEdit],
+    ) -> MemoryResult<NoteScalarEditOutcome> {
         Ok(self
             .apply_local_note_operation(
                 note,
@@ -642,12 +645,7 @@ pub(super) fn require_note_writer(
     }
     let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
     if !body.author_ref.is(memory.actor())
-        && !super::proposals::automatic_edit_grant(
-            memory.vault(),
-            txn,
-            id,
-            crate::WriteActor::new(memory.actor(), memory.actor_class()),
-        )?
+        && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
     {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(

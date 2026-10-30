@@ -73,6 +73,7 @@ impl Vault {
         {
             return Err(invalid("invalid folder ask selection"));
         }
+        let base_live = self.office_body_pin(output)?;
         let (version, bytes, mut read_rows) = self.office_head(output, OfficeFormat::Xlsx)?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
@@ -104,6 +105,7 @@ impl Vault {
                 });
                 continue;
             }
+            let judged_live = self.office_body_pin(&item.artifact)?;
             let (Some(head), Some(body)) = (
                 self.blob_artifact_head(&item.artifact)?,
                 self.get_blob_artifact(&item.artifact)?,
@@ -175,6 +177,7 @@ impl Vault {
                 decision,
                 source: Some(pin),
                 judged_version: Some(head.version),
+                judged_live,
             });
         }
         let bundle = SheetAnswerBundle {
@@ -194,6 +197,7 @@ impl Vault {
             answers,
             max_count_override: request.max_count_override,
             reads: None,
+            base_live,
         };
         Ok(ArtifactAskRun {
             proposal: self.stage_sheet_answers(output, bundle, ask.run_ref, version, frontier)?,
