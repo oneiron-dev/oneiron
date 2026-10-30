@@ -7,6 +7,11 @@
 //! completes unpolled; a poll that fails runs again one cadence step later.
 //! A vault with no standing local owner (a managed one) leaves its rows
 //! queued for the owner's own poll door.
+//!
+//! The same pass runs each due `calendar.ics.property_continuation` row
+//! (FIX 11997): the next pass of an event's property admissions, read again
+//! from the archived feed version, under the owner's CAL-09 dial as a poll
+//! runs. One that fails runs again [`CONTINUATION_RETRY`] later.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +22,9 @@ use oneiron::attempt_queue::{
 };
 use oneiron::calendar::ingest::feed_door::{self, CalendarIcsFeedRequest};
 use oneiron::calendar::ingest::{
-    CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedPollConfig, IcsFeedPollPayload,
+    CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
+    IcsFeedPollConfig, IcsFeedPollPayload, IcsPropertyContinuationPayload,
+    run_ics_property_continuation,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::{EdgeActorClass, Vault};
@@ -31,8 +38,11 @@ const LEASE_OWNER: &str = "oneiron-serve.calendar-ics-poll";
 /// The custody effector a feed's secret URL is read for, as the owner's own
 /// poll door names it.
 const EFFECTOR: &str = "calendar.ics.poll";
-/// Polls one pass runs before it waits for the next tick.
+/// Polls one pass runs before it waits for the next tick, and property
+/// continuations likewise.
 const PASS_LIMIT: usize = 16;
+/// How long a property continuation that failed waits before it runs again.
+const CONTINUATION_RETRY: u64 = 300;
 
 /// Starts the worker. Each pass is admitted through `admit`, the way a
 /// housekeeping pass is, so a vault frozen for reap polls nothing. Its first
@@ -72,17 +82,23 @@ pub(crate) fn spawn_ics_feed_polls(
 }
 
 fn recover_polls(vault: &Vault) -> anyhow::Result<()> {
-    AttemptQueue::new(vault).cleanup_kind_leases(
+    for kind in [
         ICS_POLL_ATTEMPT_KIND,
-        CleanupAttemptLeases {
-            now: vault.now_recorded_at(),
-            lease_timeout_secs: 1,
-        },
-    )?;
+        ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
+    ] {
+        AttemptQueue::new(vault).cleanup_kind_leases(
+            kind,
+            CleanupAttemptLeases {
+                now: vault.now_recorded_at(),
+                lease_timeout_secs: 1,
+            },
+        )?;
+    }
     Ok(())
 }
 
-/// Claims, polls and settles up to [`PASS_LIMIT`] due rows.
+/// Claims, polls and settles up to [`PASS_LIMIT`] due rows, then runs up to
+/// [`PASS_LIMIT`] due property continuations.
 fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
     let owner = match crate::owner::local_owner(vault) {
         Ok(owner) => owner,
@@ -101,9 +117,86 @@ fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
             },
         )?;
         let ClaimOutcome::Claimed(attempt) = claimed else {
-            return Ok(());
+            break;
         };
         settle(&queue, vault, &owner, &attempt)?;
+    }
+    for _ in 0..PASS_LIMIT {
+        let claimed = queue.claim_kind(
+            ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: LEASE_OWNER.to_owned(),
+                now: vault.now_recorded_at(),
+            },
+        )?;
+        let ClaimOutcome::Claimed(attempt) = claimed else {
+            break;
+        };
+        settle_continuation(&queue, vault, &owner, &attempt)?;
+    }
+    Ok(())
+}
+
+/// Runs one claimed property continuation and settles it: done, run again
+/// [`CONTINUATION_RETRY`] later, or, for a payload that does not decode,
+/// failed for good.
+fn settle_continuation(
+    queue: &AttemptQueue<'_>,
+    vault: &Arc<Vault>,
+    owner: &AuthenticatedOwner,
+    attempt: &AttemptRecord,
+) -> anyhow::Result<()> {
+    let payload = match serde_json::from_slice::<IcsPropertyContinuationPayload>(&attempt.payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            queue.fail(FailAttempt {
+                id: attempt.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                reason: format!("calendar property continuation payload did not decode: {error}"),
+                now: vault.now_recorded_at(),
+            })?;
+            return Ok(());
+        }
+    };
+    let ran = owner
+        .actor_for_read(vault)
+        .map_err(anyhow::Error::from)
+        .and_then(|actor| {
+            let memory = vault.memory(actor, EdgeActorClass::Human);
+            let safeguard_enabled = feed_door::inbound_safeguard_enabled(&memory)?;
+            run_ics_property_continuation(
+                vault,
+                super::calendar_body_screener(),
+                safeguard_enabled,
+                &payload,
+            )
+            .map_err(anyhow::Error::from)
+        });
+    match ran {
+        Ok(()) => {
+            queue.complete(CompleteAttempt {
+                id: attempt.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now: vault.now_recorded_at(),
+            })?;
+        }
+        Err(error) => {
+            let reason = format!("{error:#}");
+            tracing::warn!(
+                system = %payload.system,
+                error = %reason,
+                "calendar property continuation failed; it runs again later"
+            );
+            queue.requeue(RequeueAttempt {
+                id: attempt.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                reason,
+                due_at: vault.now_recorded_at().saturating_add(CONTINUATION_RETRY),
+            })?;
+        }
     }
     Ok(())
 }
