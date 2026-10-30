@@ -423,6 +423,19 @@ impl Running {
         count_lines(&self.log, text)
     }
 
+    /// The lines of the server's log so far that contain `text`.
+    pub(super) fn log_lines(&self, text: &str) -> Vec<String> {
+        fs::read_to_string(&self.log).map_or_else(
+            |_| Vec::new(),
+            |log| {
+                log.lines()
+                    .filter(|line| line.contains(text))
+                    .map(str::to_owned)
+                    .collect()
+            },
+        )
+    }
+
     /// [`Self::log_count`] as a function another thread can call.
     pub(super) fn log_counter(&self, text: &'static str) -> PassCount {
         let log = self.log.clone();
