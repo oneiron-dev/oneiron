@@ -179,9 +179,8 @@ pub(super) struct StoredExecutor {
     /// The head the fold counted on, in aggregate-key wire form, so the
     /// settle-time refold moves the outcome count off the old head when a
     /// receipt is re-judged onto another executor or scope (FIX 11707).
-    /// Absent on a row folded before the head was kept, and on a fold that
-    /// counted nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Absent (`None`) only on a fold that counted nothing yet: the named
+    /// row encodes the head always, `None` as explicit nil (FIX 11916).
     pub(super) head: Option<StoredHead>,
 }
 
