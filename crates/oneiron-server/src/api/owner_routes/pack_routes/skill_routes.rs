@@ -255,7 +255,7 @@ pub(super) async fn approve_skill_permissions(
 /// A hub skill's receipts: one import receipt per hub source, and the
 /// held-out activation ruling once one landed.
 #[derive(Serialize)]
-struct SkillReceipts {
+pub(super) struct SkillReceipts {
     imports: Vec<HubImportReceipt>,
     admission: Option<HubAdmissionReceipt>,
 }
