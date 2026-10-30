@@ -53,6 +53,9 @@ pub struct PackManifest {
     /// Organ folders under `organs/`, by name (ARCH-0075 §9, OF-575). Each
     /// pins its builds by platform; the builds travel as blob assets.
     pub organs: BTreeSet<String>,
+    /// Lens folders under `lenses/`, by name (OF-250). Each binds one of the
+    /// pack's skills as its slot; a compiled build travels as a blob asset.
+    pub lenses: BTreeSet<String>,
     /// Predicate migration maps this source ships for moves from earlier
     /// sources of the pack (ARCH-0059 §4, rung 1).
     pub migrations: Vec<PackMigration>,
@@ -238,6 +241,10 @@ impl PackManifest {
         for organ in &organs {
             super::organs::validate_organ_name(organ)?;
         }
+        let lenses = list("lenses")?;
+        for lens in &lenses {
+            super::lenses::validate_lens_name(lens)?;
+        }
         let migrations = fields
             .get("migrations")
             .map(|line| super::migrations::parse(line, &name, &version, &predicates))
@@ -267,6 +274,7 @@ impl PackManifest {
             wake_subscriptions: list("wakes")?,
             hooks,
             organs,
+            lenses,
             migrations,
             setup,
         })
@@ -303,6 +311,7 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "wakes"
                 | "hooks"
                 | "organs"
+                | "lenses"
                 | "facets"
                 | "migrations"
                 | "setup"

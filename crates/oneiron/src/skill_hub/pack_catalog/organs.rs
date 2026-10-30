@@ -296,14 +296,15 @@ pub(super) fn parse_source_organs(
         .collect()
 }
 
-/// A fetched or put pack tree: its text source and the organ builds it
-/// carried, each checked against its pin.
+/// A fetched or put pack tree: its text source and the organ builds and lens
+/// components it carried, each checked against its pin.
 pub struct PackTree {
     pub source: PackSource,
     /// The canonical hash of every file, builds included: what a hub
     /// content pin names.
     pub tree_hash: SkillContentHash,
     pub(super) builds: Vec<Vec<u8>>,
+    pub(super) lens_components: Vec<Vec<u8>>,
 }
 
 impl From<PackSource> for PackTree {
@@ -312,25 +313,38 @@ impl From<PackSource> for PackTree {
             tree_hash: source.content_hash(),
             source,
             builds: Vec::new(),
+            lens_components: Vec::new(),
         }
     }
 }
 
 impl PackSource {
-    /// A tree that may carry organ builds at `organs/<name>/<platform>`. The
-    /// builds leave the source, and each must match its facet's pin.
+    /// A tree that may carry organ builds at `organs/<name>/<platform>` and
+    /// lens components at `lenses/<name>/lens.wasm`. Both leave the source,
+    /// and each must match its facet's pin.
     pub fn from_tree(files: Vec<HubFile>) -> Result<PackTree> {
         let tree_hash = canonical_skill_tree_hash(
             files
                 .iter()
                 .map(|file| (file.path.as_str(), file.content.as_slice())),
         )?;
-        let (carried, text): (Vec<_>, Vec<_>) = files
-            .into_iter()
-            .partition(|file| organ_build_path(&file.path).is_some());
+        let (carried, text): (Vec<_>, Vec<_>) = files.into_iter().partition(|file| {
+            organ_build_path(&file.path).is_some()
+                || super::lenses::lens_component_folder(&file.path).is_some()
+        });
         let source = Self::from_files(text)?;
         let mut builds = Vec::new();
+        let mut lens_components = Vec::new();
         for file in carried {
+            if let Some(lens) = super::lenses::lens_component_folder(&file.path) {
+                source
+                    .lens(lens)
+                    .and_then(|declared| declared.component.as_ref())
+                    .ok_or_else(|| invalid("lens component is not a pinned build"))?
+                    .verify(&file.content)?;
+                lens_components.push(file.content);
+                continue;
+            }
             let (organ, platform) = organ_build_path(&file.path).expect("partitioned");
             source
                 .organs()
@@ -345,6 +359,7 @@ impl PackSource {
             source,
             tree_hash,
             builds,
+            lens_components,
         })
     }
 }

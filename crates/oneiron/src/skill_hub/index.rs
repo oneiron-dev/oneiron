@@ -40,8 +40,6 @@ pub(super) const SCHEMA_VERSION: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::SKILL_HUB_CONTENT_HASH_INDEX_SCHEMA_VERSION);
 pub(super) const CONTENT_HASH_INDEX_SCHEMA_VERSION: u8 = 1;
 
-pub(super) const MAX_HUB_SKILL_SCAN_ENTRIES: usize = 100_000;
-
 impl RawValue for SkillCapabilitySurface {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
         Ok(encode_value(
@@ -79,6 +77,8 @@ impl Vault {
         // Explicit restore may have minted a newer live holder for these exact
         // bytes. Prefer it; otherwise ordinary re-import preserves an inactive
         // holder and adds the new provenance without reviving it (owner ruling A).
+        // Every source is eligible: an authored or converted holder of the exact
+        // tree is named as-is, its lifecycle and approval untouched.
         let mut exact_live = None;
         let mut other_live = None;
         let mut exact_inactive = None;
@@ -86,9 +86,6 @@ impl Vault {
         for (entity, record) in
             self.structured_skills_for_content_hash_in_txn(rtxn, content_hash)?
         {
-            if record.source != ClaimSource::Imported {
-                continue;
-            }
             let exact = if let Some(source) = source {
                 self.default_skill_present_for_entity_in_txn(rtxn, &entity, source)?
             } else {
@@ -127,13 +124,7 @@ impl Vault {
         content_hash: SkillContentHash,
     ) -> Result<Vec<(EntityId, SkillRecord)>> {
         let mut skills = Vec::new();
-        for (scanned, entry) in CONTENT_HASH_INDEX
-            .iter_from(&self.store, rtxn, content_hash.as_bytes())?
-            .enumerate()
-        {
-            if scanned >= MAX_HUB_SKILL_SCAN_ENTRIES {
-                return Err(Error::IndexOverflow("skill_entity_for_content_hash"));
-            }
+        for entry in CONTENT_HASH_INDEX.iter_from(&self.store, rtxn, content_hash.as_bytes())? {
             let ((_, entity), ()) = entry?;
             // User delete can retain an erased body as a tombstone shell.
             // The hash-index entry may still exist, but a shell is not a
@@ -178,14 +169,10 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         mut find: impl FnMut(EntityId, &SkillRecord) -> Result<Option<T>>,
     ) -> Result<Option<T>> {
-        for (scanned, entry) in self
+        for entry in self
             .store
             .port_entity_ids_by_type(rtxn, ENTITY_TYPE_SKILL, None)?
-            .enumerate()
         {
-            if scanned >= MAX_HUB_SKILL_SCAN_ENTRIES {
-                return Err(Error::IndexOverflow("skill_entity_for_content_hash"));
-            }
             let id = entry?;
             if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &id)?
                 .deleted

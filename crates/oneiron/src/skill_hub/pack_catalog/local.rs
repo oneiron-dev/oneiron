@@ -36,7 +36,8 @@ impl Vault {
     /// `vault.packs.put`: the owner installs a pack folder, or replaces the
     /// one installed under its name. The put is the consent for its hooks.
     /// A script adapter still lands Candidate until its sandbox qualifies it.
-    /// Organ builds in the folder are held as blob assets of the source.
+    /// Organ builds and lens components in the folder are held as blob
+    /// assets of the source.
     pub fn put_pack(
         &self,
         owner: &AuthenticatedOwner,
@@ -107,6 +108,7 @@ impl Vault {
             let occurred = TimeRange { start: at, end: at };
             let source_id = self.stage_pack_source_in_txn(txn, source, occurred, at)?;
             self.hold_organ_builds_in_txn(txn, &source_id, &tree, occurred, at)?;
+            self.hold_lens_components_in_txn(txn, &source_id, &tree, occurred, at)?;
             self.scan_and_ingest_pack_source_in_txn(txn, source, occurred, at)?;
             self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, at)?;
             if let Some(reason) = self.screen_pack_in_txn(txn, source, &[], &holder)? {
