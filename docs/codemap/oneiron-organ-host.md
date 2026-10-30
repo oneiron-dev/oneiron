@@ -22,6 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host/outputs.rs` | src | s | 3 crate-vis | — | A call's reply, checked: its outputs mapped, hashed and kept in the call's room, which grows to hold them… |
 | `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 10 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
 | `src/host/sized.rs` | src | s | 2 struct · 1 fn · 6 crate-vis | CallMeasure, CallSize | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
+| `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
 | `src/landing.rs` | src | s | 3 fn | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
 | `src/lib.rs` | src | s | 2 mod · 18 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/measure.rs` | src | s | 1 crate-vis | — | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
@@ -38,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
 | `src/resource_memory.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 crate-vis | FloorRefusal, MachineFloor, MemoryGrow | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 6 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
-| `src/sandbox.rs` | src | m | 1 struct · 2 enum · 5 crate-vis | DescendantFence, NamespaceFact, OrganIsolation | What the host does to an organ process between fork and exec |
+| `src/sandbox.rs` | src | s | 5 crate-vis | — | What the host does to an organ process between fork and exec |
 | `src/sandbox/fence.rs` | src | s | 5 crate-vis | — | The descendant fence (FIX 7887): a cgroup of its own for each organ process, made under the engine's own… |
 | `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 7 const · 1 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `src/seal/binding.rs` | src | m | 9 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |

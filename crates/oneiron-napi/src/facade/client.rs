@@ -358,6 +358,7 @@ fn open_options(
     Ok(oneiron_remote::OpenOptions {
         dimensions,
         device_class,
+        hold_checkpoint_root_signer: false,
     })
 }
 

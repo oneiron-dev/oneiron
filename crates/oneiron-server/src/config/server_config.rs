@@ -26,12 +26,11 @@ use crate::usage::UsageMode;
 /// envelope's header allowance and a window frame's lead (tag, key length,
 /// key, sub-tag), so no frame the protocol sends within its floor is refused
 /// at the socket.
-const DEFAULT_MAX_FRAME_SIZE: usize = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
-    .div_ceil(3)
-    * 4
-    + oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
-    + 3
-    + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
+const DEFAULT_MAX_FRAME_SIZE: usize =
+    oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES.div_ceil(3) * 4
+        + oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
+        + 3
+        + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
 
 /// The two configs' redacting `Debug`.
 mod debug;

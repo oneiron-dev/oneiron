@@ -149,7 +149,10 @@ pub(in crate::recovery::checkpoint) fn write_payload_inventory(
     out.push(VERSION);
     put_frame(&mut out, &sealer.seal(MANIFEST_STREAM, ROOT_INDEX, &root)?)?;
     for (at, piece) in pieces.into_iter().enumerate() {
-        put_frame(&mut out, &sealer.seal(MANIFEST_STREAM, piece_index(at)?, piece)?)?;
+        put_frame(
+            &mut out,
+            &sealer.seal(MANIFEST_STREAM, piece_index(at)?, piece)?,
+        )?;
     }
     let (dir, name) = place(artifact, &snapshot);
     Ok(write_private_file(&dir, &name, &out)?)

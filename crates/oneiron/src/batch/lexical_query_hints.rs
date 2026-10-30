@@ -233,6 +233,13 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
             Vec::new()
         }
     };
+    // A machine signature binds the parent's transcript, not a derived stale
+    // hint CLAIM's. Signed machine claims still land; their hints stay empty.
+    let normalized_hints = if envelope.machine_signature().is_some() {
+        Vec::new()
+    } else {
+        normalized_hints
+    };
 
     ops.push(BatchOp::ClaimCandidate {
         id: *id,

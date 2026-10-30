@@ -159,6 +159,11 @@ impl Seat {
             .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned)))
             .collect()
     }
+
+    /// The owner-named fallback rungs a parked call on this seat may use.
+    pub(crate) fn fallback_rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        self.ladder.fallback_rung_models()
+    }
 }
 
 /// Every seat the config fills, plus a router over every configured model,

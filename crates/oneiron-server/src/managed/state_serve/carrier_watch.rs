@@ -153,7 +153,10 @@ pub(super) fn spawn_argv_watch(
 ) {
     let files: Vec<(EscrowRole, PathBuf)> = [
         (EscrowRole::Managed, managed.escrow_recipient.clone()),
-        (EscrowRole::BreakGlass, managed.break_glass_recipient.clone()),
+        (
+            EscrowRole::BreakGlass,
+            managed.break_glass_recipient.clone(),
+        ),
     ]
     .into_iter()
     .filter_map(|(role, path)| path.map(|path| (role, path)))

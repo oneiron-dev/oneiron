@@ -10,11 +10,11 @@ use crate::error::{Error, Result, SyncError};
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 
-use super::staged_lane;
 #[cfg(feature = "sync")]
 use super::super::edge::{
     EarlyStamps, HeldStamp, ReleasedStamps, hold_stamps, pending_births, release_born_stamps,
 };
+use super::staged_lane;
 
 /// An update the federation door admitted, and the facet stamps it sent onto
 /// rows this vault lacks, which wait out of its bytes: the ones whose rows it

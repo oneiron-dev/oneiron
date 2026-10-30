@@ -17557,6 +17557,8 @@ pub struct JevTradeoffVerdict {
 pub struct SkillTradeoffAsk {
     #[serde(rename = "pending")]
     pub pending: String,
+    #[serde(rename = "skill")]
+    pub skill: String,
     #[serde(rename = "question")]
     pub question: SkillTradeoffQuestion,
     #[serde(rename = "jev", default, skip_serializing_if = "Option::is_none")]

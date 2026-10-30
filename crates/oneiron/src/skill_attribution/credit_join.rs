@@ -639,8 +639,8 @@ pub(super) fn credit_roots_in_txn(
 }
 
 /// The uses that landed late for the try of the run `attempt_receipt` that
-/// closed it, its attempt's last lease generation; none for a receipt that
-/// names no attempt.
+/// closed it, every lease generation of its attempt's try, oldest first;
+/// none for a receipt that names no attempt.
 fn landed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -652,7 +652,12 @@ fn landed_in_txn(
     let Some(record) = AttemptQueue::from_store(&vault.store).get_in_txn(txn, attempt)? else {
         return Ok(Vec::new());
     };
-    super::derivation_witness::landed_pairs_in_txn(&vault.store, txn, attempt, record.attempt_count)
+    super::derivation_witness::landed_all_pairs_in_txn(
+        &vault.store,
+        txn,
+        attempt,
+        record.attempt_count,
+    )
 }
 
 /// The attempt a terminal pack receipt names, when it is one.

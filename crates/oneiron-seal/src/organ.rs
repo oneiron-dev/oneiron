@@ -48,7 +48,7 @@ use async_trait::async_trait;
 use oneiron_organ_protocol::{
     ASK_MEMORY_GROW, ASK_NET_FETCH, Answer, AnswerMemory, AskCode, AskRefusal, AskReply, Asker,
     ByteBuf, CallContext, ErrorCode, FetchAnswer, FetchAsk, MemoryAnswer, MemoryAsk, Organ,
-    OrganError, OrganIdentity, OutputBytes, VerbSpec, frame_body_len,
+    OrganError, OrganIdentity, OutputBytes, VerbSpec, decoded_len, frame_body_len,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -378,6 +378,8 @@ impl ReplyMemory {
     /// as much again, reserved first.
     fn args<T: DeserializeOwned>(&self, value: &rmpv::Value, what: &str) -> Result<T, OrganError> {
         let encoded = frame_body_len(value).map_err(|err| bad(format!("{what}: {err}")))?;
+        // A typed `T` holds its fields, not a Value for each marker, so its
+        // encoding's size again measures it; `decoded_len` counts Values.
         self.reserve(encoded.saturating_mul(2))?;
         from_value(value, what)
     }
@@ -717,17 +719,25 @@ fn bad(detail: impl Into<String>) -> OrganError {
 }
 
 /// The outcome as the report's one tagged entry, and the call's counts
-/// beside it as `observed`. Its encoded copy and the value it becomes,
-/// about as much again, are reserved before either is made (FIX 6195).
+/// beside it as `observed`. Its encoded copy is reserved before it is made,
+/// then the value it becomes, as its markers count it (`decoded_len`; its
+/// encoding's size again where the count refuses it), before that is
+/// decoded (FIX 6195, 10576).
 fn report<T: Serialize>(
     report: &T,
     observed: &SealObservations,
     memory: &ReplyMemory,
 ) -> Result<Answer, OrganError> {
-    let encoded = frame_body_len(report)
-        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))?;
-    memory.reserve(encoded.saturating_mul(2))?;
-    let mut value = to_value(report)?;
+    let internal = |err: &dyn std::fmt::Display| {
+        OrganError::new(ErrorCode::Internal, format!("encode: {err}"))
+    };
+    let encoded = frame_body_len(report).map_err(|err| internal(&err))?;
+    memory.reserve(encoded)?;
+    let bytes = rmp_serde::to_vec_named(report).map_err(|err| internal(&err))?;
+    memory.reserve(decoded_len(&bytes).unwrap_or(encoded))?;
+    let mut value =
+        rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| internal(&err))?;
+    drop(bytes);
     if let rmpv::Value::Map(entries) = &mut value {
         entries.push((
             rmpv::Value::from("observed"),
