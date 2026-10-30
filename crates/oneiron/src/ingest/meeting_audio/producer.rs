@@ -8,7 +8,7 @@ use crate::ingest::MEETING_TRANSCRIPT_SCHEMA_V1;
 
 use super::alignment::make_turns;
 use super::cleanup::{AcousticCandidate, apply_cleanup};
-use super::packing::{pack_speech_cut, packed_audio, quietest_ms, source_times};
+use super::packing::{pack_speech, packed_audio, source_times};
 use super::provenance::{execution_mode, pcm_sha256, sha256, validate_receipt};
 use super::{
     AsrPackRequest, AsrRole, AsrRoute, AudioError, AudioFile, AudioResult, BatchAsrRequest,
@@ -39,10 +39,8 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     let mut invocation_ids = HashSet::new();
     let vad = host.silero_vad(&audio, &pcm_hash)?;
     validate_receipt(&vad.provenance, &pcm_hash, &mut invocation_ids)?;
-    // An utterance longer than a pack is cut at its quietest point (Rule 5).
-    let packs = pack_speech_cut(&vad.spans, duration_ms, |lo, hi| {
-        quietest_ms(&audio, lo, hi)
-    })?;
+    // An utterance longer than a pack stays whole in its own pack.
+    let packs = pack_speech(&vad.spans, duration_ms)?;
     let route = route_meeting_asr(host, options)?;
 
     let mut words = Vec::new();
