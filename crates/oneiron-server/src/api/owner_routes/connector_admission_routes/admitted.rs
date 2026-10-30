@@ -1,5 +1,6 @@
-//! `/refresh` and `/enabled`: the owner's doors on a connector already
-//! admitted. [`super`] is past the file-size bar, so they live here.
+//! `/refresh`, `/slate/staged/accept` and `/enabled`: the owner's doors on
+//! a connector already admitted. [`super`] is past the file-size bar, so
+//! they live here.
 
 use super::*;
 
@@ -8,7 +9,10 @@ use super::*;
 /// nothing moves. Changed: a delta slate carries the unchanged and narrowed
 /// rows with their settings and drafts the new and expanded ones, and the
 /// key goes back to Pending with its per-grant keys held, for the owner's
-/// stamp (when a row re-asks) and a fresh `/qualify`.
+/// stamp (when a row re-asks) and a fresh `/qualify`. A delta at the pinned
+/// revision that reaches further on an admitted key is staged instead: the
+/// key keeps routing on its slate until the owner stamps the delta
+/// (`/slate/staged/accept`) and `/qualify` passes on it (FIX 11677).
 pub(super) async fn refresh(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -109,16 +113,45 @@ fn refresh_connector(
         vault.revise_connector_protocol(&catalog.key, &discovery.revision, delta.slate_id, now)
     }
     .map_err(engine)?;
-    let (_, next) = slate_of(vault, &record)?;
+    let next = vault
+        .connector_slate(delta.slate_id)?
+        .ok_or_else(|| OwnerError::NotFound("grant slate", delta.slate_id.to_hex()))?;
     Ok(Refreshed {
         connector: name,
         changed: true,
+        staged: record.staged_slate_ref == Some(delta.slate_id),
         key: KeyView::new(catalog.key, record)?,
         slate: SlateView::new(vault, delta.slate_id, &next)?,
         reask: delta.reask.into_iter().collect(),
         carried: delta.carried.into_iter().collect(),
         dropped: delta.dropped.into_iter().collect(),
     })
+}
+
+/// `POST /v1/owner/connectors/slate/staged/accept`: the owner's stamp on the
+/// slate a refresh staged beside an admitted connector's routing one, at
+/// the revision reviewed (FIX 11677). The key keeps routing as it was;
+/// `/qualify` or `/attest` swaps the stamped slate in.
+pub(super) async fn accept_staged(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<AcceptRequest>,
+) -> OwnerReply<SlateView> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let reply = blocking(move || accept_staged_slate(server.vault(), &owner, request)).await?;
+    Ok(Json(reply))
+}
+
+fn accept_staged_slate(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    request: AcceptRequest,
+) -> OwnerResult<SlateView> {
+    let catalog = catalog(vault, &normalize_name(&request.connector))?;
+    let (id, current) = staged_slate_of(vault, &catalog.record)?
+        .ok_or_else(|| OwnerError::Invalid("the connector has no staged slate".to_owned()))?;
+    stamp_reviewed(vault, owner, id, &current, request)
 }
 
 /// `POST /v1/owner/connectors/enabled`: the owner's on/off switch for an

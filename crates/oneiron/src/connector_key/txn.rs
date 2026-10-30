@@ -266,9 +266,9 @@ pub(crate) fn rewrite_connector_key_in_txn(
 /// EXACTLY ONE `gate.connector_key.remove` and never a revoke record. The
 /// caller owns the status-transition check.
 ///
-/// Revocation is terminal, so any staged (unapproved) charter and every
-/// advisory budget suggestion drop here: a revoked key carries no mutable
-/// state. The `catalog` entry deliberately SURVIVES — removal is catalog
+/// Revocation is terminal, so any staged (unapproved) charter, a staged
+/// slate and every advisory budget suggestion drop here: a revoked key
+/// carries no mutable state. The `catalog` entry deliberately SURVIVES — removal is catalog
 /// HISTORY, not catalog erasure.
 pub(super) fn revoke_connector_key_in_txn(
     store: &Store,
@@ -283,6 +283,7 @@ pub(super) fn revoke_connector_key_in_txn(
         suspended_reason: None,
         pending_charter: None,
         pending_manifest: None,
+        staged_slate_ref: None,
         suggested_budgets: Vec::new(),
         ..record.clone()
     };
