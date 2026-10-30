@@ -73,7 +73,8 @@ mod tests;
 pub use contracts::*;
 #[cfg(feature = "sync")]
 pub(crate) use integrity::{
-    holds_withdrawn_generation_in, withdraw_received_epoch_generation_in_txn,
+    holds_withdrawn_generation_in, mark_received_withdrawn_in_txn,
+    withdraw_received_epoch_generation_in_txn,
 };
 pub(crate) use integrity::{
     invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,

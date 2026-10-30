@@ -230,6 +230,7 @@ impl WindowManager {
                 && let Err(error) = crate::sync::room_facts::mirror_carriers(
                     &self.vault,
                     &window.doc,
+                    &key,
                     &carriers,
                     &[],
                 )

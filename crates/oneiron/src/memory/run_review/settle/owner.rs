@@ -3,6 +3,7 @@
 //! `memory::run_review` defines the review, settlement and decision records it writes.
 
 use super::*;
+use crate::task_verb::settlement_anchor::anchor_reviewed_run_in_txn;
 
 impl Memory<'_> {
     /// Both answers use the existing per-kind admission and one atomic
@@ -207,6 +208,7 @@ impl Memory<'_> {
             self.vault()
                 .store
                 .append_gate_decision_in_txn(txn, &record)?;
+            anchor_reviewed_run_in_txn(self.vault(), txn, &run, &record)?;
             let reference = format!("gate:{}", record.decision_id.to_hex());
             // The owner act's own durable word, not a caller-supplied person
             // id or an invented rule/grant attribution.

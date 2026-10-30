@@ -320,6 +320,12 @@ impl Vault {
                     && pact.peer_owner_key == offer.gesture.signer
             });
             if let Some(pact) = logged {
+                // The offer's opening key re-checks the logged commitment
+                // (FIX 7907): a live pact that logs another scope under this
+                // keyed digest was never dual-signed over it.
+                if !pact.status.is_terminal() && pact.pact_scope != offer.pact_scope {
+                    return Err(invalid_authority());
+                }
                 return Ok((pact.clone(), counter));
             }
             self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
