@@ -381,7 +381,8 @@ pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
-    adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
+    adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn, adopted_image_row_key,
+    adopted_pin_row_key,
 };
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
