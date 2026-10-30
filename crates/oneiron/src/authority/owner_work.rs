@@ -129,10 +129,11 @@ pub(super) struct OwnerWorkState {
     /// verified here, with that request as the fold keeps it: the `Arc`
     /// `requests` holds (FIX 12014, 12139). A later join of the same request
     /// hands it out and copies no permit; one of another request on the set
-    /// hashes no bytes again. The first join still verifies. A piece that
-    /// changes a set drops its entry, and a merge keeps only the left's
-    /// entries on unchanged sets. An entry whose request is superseded or
-    /// whose secret is revoked is pruned (FIX 12140).
+    /// shares its permits, copying and hashing none (FIX 12281). The first
+    /// join still verifies. A piece that changes a set drops its entry, and
+    /// a merge keeps only the left's entries on unchanged sets. An entry
+    /// whose request is superseded or whose secret is revoked is pruned (FIX
+    /// 12140).
     verified_permit_sets: BTreeMap<([u8; 32], CustodyPermitPieces), permit_pieces::JoinedPermitSet>,
 }
 
