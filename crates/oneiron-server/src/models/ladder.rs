@@ -288,6 +288,38 @@ impl OfferLadder {
             .map(|rung| (&rung.model, rung.prompt.as_deref()))
     }
 
+    /// The rung models and prompts of each live fallback the owner named for
+    /// this seat's offers, limited to targets that are not resting and keep
+    /// the seat's wire and on-device rule (FIX 10916).
+    pub(super) fn fallback_rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        let mut models = Vec::new();
+        for rung in &self.rungs {
+            let Some(target) = self
+                .rests
+                .fallback_for(&rung.offer.binding, &rung.wire_model)
+            else {
+                continue;
+            };
+            if target.rests_now() || target.scope.wire != self.scope.wire {
+                continue;
+            }
+            if self.scope.stays_on_device
+                && target
+                    .rungs
+                    .iter()
+                    .any(|rung| leaves_device(&rung.offer.binding))
+            {
+                continue;
+            }
+            models.extend(
+                target
+                    .rung_models()
+                    .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned))),
+            );
+        }
+        models
+    }
+
     /// The offers of the rungs that could serve `request` (FIX 3194): each
     /// rung whose row serves it that holds its banked voice, or for a stock
     /// or raw voice the first such rung alone, as the walk sends it.
