@@ -142,10 +142,10 @@ impl Carrier {
     }
 
     /// On the guest: takes the host's answer to a keep of its copy, under
-    /// this end's gate (FIX 12010). A move that went through changes
-    /// nothing, as the copy was recorded aside when the owner answered; a
-    /// move that failed marks the entry with why, while the copy stays at
-    /// the member's name until the next put moves it.
+    /// this end's gate (FIX 12010). A move that failed marks the entry with
+    /// why, while the copy stays at the member's name until the next put
+    /// moves it; a move that went through, at the keep or at that later put,
+    /// clears the mark (FIX 12028).
     pub(super) fn aside_kept(&mut self, frame: VmOutboxFrame) {
         let VmOutboxFrame::AsideKept {
             kind,
@@ -156,9 +156,6 @@ impl Carrier {
         else {
             return;
         };
-        let Some(why) = failed else {
-            return;
-        };
         let gate = Arc::clone(&self.gate);
         let mode = gate.hold();
         if *mode == Mode::Draining {
@@ -166,13 +163,18 @@ impl Carrier {
         }
         let host = self.side.peer();
         let mut record = self.store.get(kind, &member);
-        let what = format!("{why}; it stays at the member's name until the next put moves it");
+        let what = failed
+            .map(|why| format!("{why}; it stays at the member's name until the next put moves it"));
+        let mut changed = false;
         for entry in &mut record.aside {
-            if entry.held_by == host && entry.held.blake3 == held {
-                entry.failed = Some(what.clone());
+            if entry.held_by == host && entry.held.blake3 == held && entry.failed != what {
+                entry.failed = what.clone();
+                changed = true;
             }
         }
-        self.write_record(kind, &member, record);
+        if changed {
+            self.write_record(kind, &member, record);
+        }
         drop(mode);
     }
 
@@ -284,6 +286,9 @@ impl Carrier {
             record_kept_aside(&mut moved, self.side, &diverged.held, aside);
         }
         self.settled(kind, member);
+        // The guest's entry for this copy drops the failed move's mark
+        // (FIX 12028).
+        self.queue_aside_kept(kind, member, &held.blake3, None);
         match self.store.put(kind, member, moved.clone()) {
             Ok(()) => Some(None),
             Err(error) => {
