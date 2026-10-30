@@ -29,6 +29,7 @@ pub(in crate::sync) use self::entity::{
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
 pub(crate) use self::own_device::VerifiedOwnDeviceLane;
 pub(in crate::sync) use self::own_device::with_own_device_import;
+pub use self::own_device::with_own_device_push;
 pub(crate) use self::peer_import::forget_stale_peer_origins;
 pub(in crate::sync) use self::peer_import::{
     PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_peer_origin_map, carried_origin_in_txn,

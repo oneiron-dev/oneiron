@@ -440,9 +440,17 @@ pub(super) async fn handle_window_sync(
             server
                 .persist_imported_update(&key, &persisted, write_auth)
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
-            // Client sending Loro update bytes — import with origin for echo suppression
+            // Client sending Loro update bytes — import with origin for echo suppression.
+            // The machine this own-device socket proved sent them: their MESSAGE rows
+            // take the own-device lane as they land (FIX 12112).
             let origin = format!("conn:{conn_id}");
-            let imported = match doc.import_with(update, &origin) {
+            let imported = match oneiron::sync::with_own_device_push(
+                server.vault(),
+                conn_state.peer_machine(server.vault()),
+                (&key, &doc),
+                update,
+                || doc.import_with(update, &origin),
+            ) {
                 Ok(imported) => imported,
                 Err(e) => {
                     // The accepted update stays durable: the window reloads
