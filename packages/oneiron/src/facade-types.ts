@@ -1499,7 +1499,7 @@ export type CallOutcome = "ok" | { refused: { code: string } }
 /** `oneiron::receipt::call::CallAttemptRef` */
 export type CallAttemptRef = { attempt: EntityId; generation: number }
 /** `oneiron::receipt::call::CallReceipt` */
-export type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; attempt_ref?: CallAttemptRef | null; served: string[]; served_records?: RecordRef[] }
+export type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; carrier_machine?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; attempt_ref?: CallAttemptRef | null; served: string[]; served_records?: RecordRef[] }
 /** `oneiron::receipt::admission::AdmissionStatusRequest` */
 export type AdmissionStatusRequest = { intent_key: string }
 /** `oneiron::receipt::admission::AdmissionStatus` */

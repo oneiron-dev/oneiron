@@ -3870,6 +3870,7 @@ class CallReceipt(TypedDict):
     actor_ref: str
     actor_class: str
     credential_ref: NotRequired[str | None]
+    carrier_machine: NotRequired[str | None]
     outcome: CallOutcome
     request_digest: str
     result_digest: NotRequired[str | None]
