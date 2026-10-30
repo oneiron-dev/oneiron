@@ -127,9 +127,7 @@ fn with_isolation_stamps(mut candidate: ClaimCandidate, head: &ClaimBody) -> Cla
     if let Some(world) = head.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(relationship) = head.rel {
-        candidate = candidate.with_relationship(relationship);
-    }
+    candidate = candidate.with_relationships(head.rel.clone());
     if let Some(scope) = &head.scope {
         candidate = candidate.with_scope(scope.clone());
     }

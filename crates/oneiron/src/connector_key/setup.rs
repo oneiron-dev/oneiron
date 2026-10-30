@@ -49,6 +49,8 @@ pub const SLACK_AUTH_TEST_CHECK: &str = "slack.auth_test";
 pub const LINE_BOT_INFO_CHECK: &str = "line.bot_info";
 pub const GMAIL_PROFILE_CHECK: &str = "gmail.profile";
 pub const LINKEDIN_SESSION_CHECK: &str = "linkedin.session";
+/// Telegram's `getMe` with the bot token: the bot it belongs to.
+pub const TELEGRAM_GET_ME_CHECK: &str = "telegram.get_me";
 /// Local readiness, not a provider call: the host's browser guest starts a
 /// session and closes it. Only a served host with a `[browser]` guest runs it.
 pub const BROWSER_SESSION_CHECK: &str = "browser.session";
@@ -113,11 +115,12 @@ pub struct ProviderConnectionChecks {
 
 impl ProviderConnectionChecks {
     /// Every check name this verifier answers.
-    pub const CHECKS: [&'static str; 4] = [
+    pub const CHECKS: [&'static str; 5] = [
         SLACK_AUTH_TEST_CHECK,
         LINE_BOT_INFO_CHECK,
         GMAIL_PROFILE_CHECK,
         LINKEDIN_SESSION_CHECK,
+        TELEGRAM_GET_ME_CHECK,
     ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
@@ -146,9 +149,19 @@ impl ProviderConnectionChecks {
     ) -> Result<CheckReply> {
         let credential =
             std::str::from_utf8(value).map_err(|_| invalid("the stored credential is not text"))?;
-        let request = self.client.request(method.clone(), url);
+        // Telegram takes its bot token in the method's path, never a header.
+        let request = if check == TELEGRAM_GET_ME_CHECK {
+            self.client.request(
+                method.clone(),
+                format!("{url}/bot{}/getMe", credential.trim()),
+            )
+        } else {
+            self.client.request(method.clone(), url)
+        };
         let request = if check == LINKEDIN_SESSION_CHECK {
             linkedin_session(request, credential)
+        } else if check == TELEGRAM_GET_ME_CHECK {
+            request
         } else {
             request.bearer_auth(credential.trim())
         };
@@ -363,6 +376,7 @@ fn provider_call(check: &str) -> std::result::Result<(reqwest::Method, &'static 
             "https://gmail.googleapis.com/gmail/v1/users/me/profile",
         ),
         LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
+        TELEGRAM_GET_ME_CHECK => (reqwest::Method::GET, "https://api.telegram.org"),
         BROWSER_SESSION_CHECK => {
             return Err(
                 "this host runs no browser guest; a served host with a [browser] guest checks it"
@@ -418,6 +432,17 @@ fn evidence_of(
             field("displayName").unwrap_or("Official Account"),
             field("basicId").unwrap_or("unknown")
         ),
+        TELEGRAM_GET_ME_CHECK => {
+            let bot = reply
+                .get("result")
+                .filter(|_| reply.get("ok").and_then(serde_json::Value::as_bool) == Some(true))
+                .ok_or_else(|| "Telegram refused the bot token".to_owned())?;
+            format!(
+                "{} (@{})",
+                reply_field(bot, "first_name").unwrap_or("bot"),
+                reply_field(bot, "username").unwrap_or("unknown")
+            )
+        }
         LINKEDIN_SESSION_CHECK => {
             let profile = |name| {
                 reply
@@ -442,7 +467,13 @@ fn evidence_of(
     };
     // The provider's stable id a served host binds inbound events to:
     // the workspace a Slack event names, the bot a LINE webhook is for.
+    // The bot's numeric id, the one a Telegram update's bot is named by.
+    let telegram_bot = reply
+        .pointer("/result/id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|id| id.to_string());
     let provider_account = match check {
+        TELEGRAM_GET_ME_CHECK => telegram_bot.as_deref(),
         SLACK_AUTH_TEST_CHECK => field("team_id"),
         LINE_BOT_INFO_CHECK => field("userId"),
         LINKEDIN_SESSION_CHECK => reply

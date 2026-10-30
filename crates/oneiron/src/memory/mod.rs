@@ -276,9 +276,9 @@ pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
-    CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, OutboundDraftInput, OutboundIntentReceipt,
-    OutboundScheduleContext,
+    CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteOrigin,
+    CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod, OutboundDraftInput,
+    OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};

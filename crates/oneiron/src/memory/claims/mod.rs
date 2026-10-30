@@ -49,9 +49,11 @@ pub struct ClaimInput {
     pub source: String,
     /// Optional WORLD entity ref.
     pub world_ref: Option<String>,
-    /// Optional RELATIONSHIP ref; unknown or wrong-kind refs are rejected.
+    /// Optional RELATIONSHIP refs: absent means all relationships, `[]` the
+    /// explicit empty set, otherwise every listed relationship. Unknown or
+    /// wrong-kind refs are rejected.
     #[serde(default)]
-    pub relationship_ref: Option<String>,
+    pub relationship_ref: Option<Vec<String>>,
     /// Optional scope map (e.g. `{"sensitivity": 0}`).
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).

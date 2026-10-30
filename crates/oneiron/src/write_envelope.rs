@@ -9,6 +9,7 @@ use crate::claim::ClaimBody;
 use crate::claim::ClaimLifecycleStatus;
 use crate::claim::ClaimSource;
 use crate::claim::ClaimSubject;
+use crate::claim::RelationshipScope;
 use crate::entity_id::EntityId;
 
 pub mod carry_forward;
@@ -297,7 +298,7 @@ pub struct ClaimCandidate {
     valid_from: Option<u64>,
     valid_to: Option<u64>,
     world: Option<EntityId>,
-    relationship: Option<EntityId>,
+    relationship: RelationshipScope,
     scope: Option<Value>,
     facet_stamp: Option<EntityId>,
     project_stamp: Option<EntityId>,
@@ -409,12 +410,21 @@ impl ClaimCandidate {
     /// Limits the claim to one RELATIONSHIP. Validated at the write door.
     #[must_use]
     pub fn with_relationship(mut self, relationship: EntityId) -> Self {
-        self.relationship = Some(relationship);
+        self.relationship = Some(BTreeSet::from([relationship]));
         self
     }
 
-    pub(crate) const fn relationship(&self) -> Option<EntityId> {
-        self.relationship
+    /// Sets the whole relationship scope: `None` is `all`, `Some(empty)` the
+    /// explicit empty set, `Some(ids)` every listed RELATIONSHIP. Validated at
+    /// the write door.
+    #[must_use]
+    pub fn with_relationships(mut self, relationships: RelationshipScope) -> Self {
+        self.relationship = relationships;
+        self
+    }
+
+    pub(crate) const fn relationship(&self) -> Option<&BTreeSet<EntityId>> {
+        self.relationship.as_ref()
     }
 
     /// Adds an optional opaque scope value.

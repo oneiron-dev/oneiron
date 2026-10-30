@@ -21,7 +21,7 @@ impl Memory<'_> {
             subject,
             ref value,
             world,
-            relationship,
+            ref relationship,
             ref scope_rmpv,
             source,
             occurred_at,
@@ -43,9 +43,7 @@ impl Memory<'_> {
         if let Some(world) = world {
             candidate = candidate.with_world(world);
         }
-        if let Some(relationship) = relationship {
-            candidate = candidate.with_relationship(relationship);
-        }
+        candidate = candidate.with_relationships(relationship.clone());
         if let Some(scope) = scope_rmpv.clone() {
             candidate = candidate.with_scope(scope);
         }

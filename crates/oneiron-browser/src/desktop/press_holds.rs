@@ -66,6 +66,15 @@ impl DesktopSession {
         self.press_holds.armed.take().is_some()
     }
 
+    /// The policy a classified send runs under now: the grants read again
+    /// where the host reads them live, less the sends already paid, as a
+    /// browser session's press runs (FIX 4613, 4615, 12133). With no live
+    /// read given, it is the policy as last set, less those paid sends.
+    pub(super) fn press_policy(&mut self) -> &mut SendPolicy {
+        self.policy = self.presses.refresh();
+        &mut self.policy
+    }
+
     /// The press act `act` of `class` on `row`, given `operands` (the
     /// act's own input as its verb received it), runs under on the window
     /// `read` read. An armed press is taken first: the same act, with the
@@ -111,7 +120,10 @@ impl DesktopSession {
         let (Some(class), Some(row)) = (class, row) else {
             return Ok(PressMode::None);
         };
-        let pressed = press_for(&mut self.policy, class, row);
+        let pressed = press_for(self.press_policy(), class, row);
+        if let Ok(PressMode::PerBatch) = pressed {
+            self.presses.paid(class);
+        }
         if pressed.is_err() {
             let need = if SendPolicy::person_only(class) {
                 PressNeed::PersonOnly

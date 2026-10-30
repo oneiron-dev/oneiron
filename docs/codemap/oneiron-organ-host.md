@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handlers.rs` | src | s | 3 struct · 1 trait · 4 fn · 5 crate-vis | Answered, AskHandler, AskHandlers, AskRequest | The handlers a caller supplies for an organ's asks (protocol 1.1) |
 | `src/host.rs` | src | m | 1 struct · 17 fn · 1 re-export · 2 crate-vis | OrganHost | The organ host: install, call, unload, revoke |
 | `src/host/outputs.rs` | src | s | 3 crate-vis | — | A call's reply, checked: its outputs mapped, hashed and kept in the call's room, which grows to hold them… |
-| `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 10 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
+| `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 11 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
 | `src/host/sized.rs` | src | s | 2 struct · 1 fn · 6 crate-vis | CallMeasure, CallSize | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
 | `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
 | `src/landing.rs` | src | s | 3 fn | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |

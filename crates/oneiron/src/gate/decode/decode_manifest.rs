@@ -143,6 +143,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(in crate::gate) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    pub(in crate::gate) booking_anti_abuse_rows:
+        Vec<crate::booking::anti_abuse::BookingAntiAbuseRuleRow>,
     pub(in crate::gate) dreamer_failure_rules: Vec<DreamerFailureRule>,
     pub(in crate::gate) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,

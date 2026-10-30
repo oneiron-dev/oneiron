@@ -9,10 +9,14 @@
 //! holds reads as [`TextRead::Unavailable`]: never a guessed or stale string,
 //! and never an error that fails the listing around it.
 //!
-//! One fallback keeps today's read: when the side-row wall refuses the
-//! document, the record keeps the endpoint and change texts as the wall
-//! admitted them ([`LiftedTexts`], a custody handle where it lifted a
-//! secret), and those texts read in its place.
+//! When the side-row wall refuses the document for a secret in its history,
+//! and every secret its served texts hold can be placed, the texts are
+//! custody-marked and the raw document is kept outside the wall, as an entity
+//! document is (OF-067, FIX 11539): its op stream and versions stay, and
+//! every text read of it shows each lifted value as its handle. Otherwise one
+//! fallback keeps today's read: the record keeps the endpoint and change
+//! texts as the wall admitted them ([`LiftedTexts`], a custody handle where
+//! it lifted a secret), and those texts read in its place.
 
 use heed::RoTxn;
 use rmpv::Value;
@@ -22,9 +26,18 @@ use super::{
     FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, PROPOSAL_ARTIFACT, ProposalArtifactRef,
 };
 use crate::Vault;
+use crate::batch::secret_scan::{CarrierText, LiftedKeys, mark_carrier_texts_in_txn};
 use crate::entity_doc::EntityDoc;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
+use crate::store::Store;
+
+/// The raw documents of proposals whose served texts were custody-marked
+/// before they were kept, outside the side-row wall (FIX 11539), keyed by
+/// artifact ref. The record stays in the walled artifact table.
+const PROPOSAL_DOCUMENT: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_PROPOSAL_DOCUMENT);
 
 /// One stored proposal artifact: the ref-only record, and the retained
 /// document its refs resolve in.
@@ -68,6 +81,31 @@ impl LiftedTexts {
             finalized: at(&record.final_ref)?,
             changes,
         })
+    }
+
+    /// Every text kept: both ends, then each change's (before, after).
+    fn served(&self) -> Vec<String> {
+        let mut texts = vec![self.proposed.clone(), self.finalized.clone()];
+        for (before, after) in &self.changes {
+            texts.push(before.clone());
+            texts.push(after.clone());
+        }
+        texts
+    }
+
+    /// The texts as a reader other than the owner reads them: each value
+    /// `keys` holds as its handle.
+    fn masked(self, keys: &LiftedKeys) -> Self {
+        let mask = |text: String| keys.masked(&text).unwrap_or(text);
+        Self {
+            proposed: mask(self.proposed),
+            finalized: mask(self.finalized),
+            changes: self
+                .changes
+                .into_iter()
+                .map(|(before, after)| (mask(before), mask(after)))
+                .collect(),
+        }
     }
 
     /// The text `record` names at `frontier`.
@@ -227,21 +265,25 @@ impl RetainedProposal {
     }
 
     /// The text at `frontier` of this proposal's document; with the
-    /// document withheld, the wall-admitted text the record kept for it.
+    /// document withheld, the wall-admitted text the record kept for it. A
+    /// document kept outside the wall reads only through its masked texts,
+    /// so a frontier they do not name reads as unreadable.
     #[must_use]
     pub fn text_at(&self, frontier: &LoroOpRef) -> TextRead {
+        if let Some(text) = self
+            .lifted
+            .as_ref()
+            .and_then(|lifted| lifted.at(&self.record, frontier))
+        {
+            return TextRead::Text(text.to_owned());
+        }
         match self.document() {
-            Ok(document) => document.text_at(frontier.as_bytes()).map_or(
+            Ok(document) if self.lifted.is_none() => document.text_at(frontier.as_bytes()).map_or(
                 TextRead::Unavailable(TextUnavailable::Unreadable),
                 TextRead::Text,
             ),
-            Err(reason) => self
-                .lifted
-                .as_ref()
-                .and_then(|lifted| lifted.at(&self.record, frontier))
-                .map_or(TextRead::Unavailable(reason), |text| {
-                    TextRead::Text(text.to_owned())
-                }),
+            Ok(_) => TextRead::Unavailable(TextUnavailable::Unreadable),
+            Err(reason) => TextRead::Unavailable(reason),
         }
     }
 
@@ -345,7 +387,8 @@ pub fn put_finalized_proposal_text(
         // failure falls back, and only the record's own put keeps its
         // contract.
         if let Ok(snapshot) = &snapshot
-            && put_optional(vault, wtxn, &key, &stored(Some(snapshot.clone()), None))
+            && (put_optional(vault, wtxn, &key, &stored(Some(snapshot.clone()), None))
+                || put_marked_document(vault, wtxn, &key, record, document, snapshot))
         {
             return Ok(());
         }
@@ -356,6 +399,97 @@ pub fn put_finalized_proposal_text(
         }
         PROPOSAL_ARTIFACT.put(vault, wtxn, &key, &stored(None, None))
     })
+}
+
+/// The wall withheld the document for a secret in its history: when every
+/// secret its served texts hold can be placed, the texts are custody-marked
+/// and the raw document is kept outside the wall, as an entity document is
+/// (FIX 11539), in one savepoint with its record; `true` once it landed.
+/// Texts with no secret (the wall withheld the document for another
+/// reason), a secret no span places, or any failure lands nothing: no
+/// unmarked document is kept, and the caller falls back.
+fn put_marked_document(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &EntityId,
+    record: &FinalizedProposalText,
+    document: &EntityDoc,
+    snapshot: &[u8],
+) -> bool {
+    let Some(texts) = LiftedTexts::read(document, record) else {
+        return false;
+    };
+    let landed = vault
+        .store
+        .env
+        .nested_write_txn(wtxn)
+        .map_err(Error::from)
+        .and_then(|mut savepoint| {
+            let marked = mark_carrier_texts_in_txn(
+                vault,
+                &mut savepoint,
+                &side_table::EDIT_DISTANCE_PROPOSAL_DOCUMENT,
+                key.as_bytes(),
+                &texts.served(),
+            )?;
+            if !matches!(marked, CarrierText::Minted(_) | CarrierText::Marked) {
+                return Ok(false);
+            }
+            PROPOSAL_DOCUMENT.put(vault, &mut savepoint, key, &snapshot.to_vec())?;
+            let stored = StoredProposal {
+                record: record.clone(),
+                document: None,
+                lifted: None,
+            };
+            PROPOSAL_ARTIFACT.put(vault, &mut savepoint, key, &stored)?;
+            savepoint.commit()?;
+            Ok(true)
+        });
+    match landed {
+        Ok(landed) => landed,
+        Err(Error::Gate(_)) => false,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a proposal's marked document did not land; the record falls back"
+            );
+            false
+        }
+    }
+}
+
+/// `stored` as its readers read it: a document kept outside the wall (FIX
+/// 11539) joins it, with its served texts as a reader other than the owner
+/// reads them, each lifted value as its handle. Its text reads go through
+/// those masked texts only, and its document serves its structure (op
+/// stream, birth). A document whose served texts do not all read is not
+/// joined, so its raw text is never read. Any other record is as stored.
+///
+/// # Errors
+///
+/// Storage errors, and a lifted text's mark that does not resolve.
+pub(crate) fn joined_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    mut stored: StoredProposal,
+) -> Result<StoredProposal> {
+    if stored.document.is_some() || stored.lifted.is_some() {
+        return Ok(stored);
+    }
+    let Some(bytes) = PROPOSAL_DOCUMENT.get(store, txn, &stored.record.artifact_ref.entity_id())?
+    else {
+        return Ok(stored);
+    };
+    let Some(lifted) = EntityDoc::from_snapshot(&bytes)
+        .ok()
+        .and_then(|document| LiftedTexts::read(&document, &stored.record))
+    else {
+        return Ok(stored);
+    };
+    let keys = LiftedKeys::of_in_txn(store, txn, lifted.served())?;
+    stored.lifted = Some(lifted.masked(&keys));
+    stored.document = Some(bytes);
+    Ok(stored)
 }
 
 /// Puts `stored` in a savepoint; `true` once it landed. A wall refusal, or
@@ -389,10 +523,11 @@ fn put_optional(
     }
 }
 
-/// The proposal-artifact table's declared scrub: the erase of `id` (an actor
-/// a recorded change is attributed to, a proposal's source turn, or the
-/// artifact itself) takes each such proposal's retained document and kept
-/// texts, so every read of them is unavailable, and its changes attributed to
+/// The proposal-artifact table's declared scrub, and the proposal-document
+/// table's: the erase of `id` (an actor a recorded change is attributed to, a
+/// proposal's source turn, or the artifact itself) takes each such proposal's
+/// retained document (in either table) and kept texts, so every read of them
+/// is unavailable, and its changes attributed to
 /// `id` read as unknown. A restored image's replay of every erased id runs it
 /// again. A row that does not decode is passed over with a WARN.
 ///
@@ -436,7 +571,9 @@ pub(crate) fn erase_proposal_texts_in_txn(
         reached.push(stored);
     }
     for stored in reached {
-        PROPOSAL_ARTIFACT.put(vault, txn, &stored.record.artifact_ref.entity_id(), &stored)?;
+        let key = stored.record.artifact_ref.entity_id();
+        PROPOSAL_DOCUMENT.delete(vault, txn, &key)?;
+        PROPOSAL_ARTIFACT.put(vault, txn, &key, &stored)?;
     }
     Ok(())
 }
@@ -506,9 +643,10 @@ pub(crate) fn retained_proposal_in_txn(
     txn: &RoTxn<'_>,
     artifact: ProposalArtifactRef,
 ) -> Result<Option<RetainedProposal>> {
-    Ok(PROPOSAL_ARTIFACT
+    PROPOSAL_ARTIFACT
         .get(&vault.store, txn, &artifact.entity_id())?
-        .map(RetainedProposal::open))
+        .map(|stored| joined_in_txn(&vault.store, txn, stored).map(RetainedProposal::open))
+        .transpose()
 }
 
 /// [`retained_proposal_in_txn`] in its own read transaction.

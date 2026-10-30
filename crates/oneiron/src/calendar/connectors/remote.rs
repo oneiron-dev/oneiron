@@ -12,7 +12,7 @@ use super::seat::CalendarConnectorError;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarBusyTransparency, CalendarPassportPresence, CalendarPassportValue, CalendarStatus,
-    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, decode_status_value,
+    CalendarTimeKind, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, decode_status_value,
     decode_time_kind_value,
 };
 use crate::calendar::ics::{ParsedVEvent, parse_ics_feed};
@@ -296,7 +296,8 @@ pub(super) fn ics_content_hash(ics: &[u8], uid: &str) -> Result<[u8; 32], Calend
     Ok(hash.finalize().into())
 }
 
-/// Renders the owner-calendar `VCALENDAR` document for one EVENT.
+/// Renders the owner-calendar `VCALENDAR` document for one EVENT, over the
+/// archived `source` the resource was last read from when there is one.
 ///
 /// Private on purpose: CAL-04 owns the universal invite-out emit half in
 /// [`super::ics`]. This is the minimum a conditional own-calendar PUT needs, and
@@ -308,8 +309,9 @@ pub(super) fn render_owner_vevent(
     uid: &str,
     sequence: u32,
     now: u64,
+    source: Option<&[u8]>,
 ) -> Result<super::resource::RenderedResource, CalendarConnectorError> {
-    super::resource::render(vault, event_ref, uid, sequence, now)
+    super::resource::render(vault, event_ref, uid, sequence, now, source)
 }
 
 pub(super) fn render_component(
@@ -331,6 +333,7 @@ pub(super) fn render_component(
     let mut transparency = CalendarBusyTransparency::Busy;
     let mut timezone = None;
     let mut time_kind = None;
+    let mut wall = None;
     let mut cancelled = false;
     for claim_id in vault.claims_for_subject(event_ref)? {
         let Some(claim) = vault.get_claim(&claim_id)? else {
@@ -348,6 +351,12 @@ pub(super) fn render_component(
         if claim.predicate == crate::calendar::claims::PREDICATE_CALENDAR_TZ {
             timezone = claim.value.as_str().map(str::to_owned);
         }
+        if claim.predicate == crate::calendar::claims::PREDICATE_CALENDAR_WALL_TIME {
+            wall = Some((
+                crate::calendar::claims::decode_wall_time_value(&claim.value)?,
+                crate::calendar::claims::decode_wall_time_end(&claim.value)?,
+            ));
+        }
         if claim.predicate == crate::calendar::claims::PREDICATE_CALENDAR_SERIES_MASTER {
             timezone = Some(crate::calendar::claims::decode_series_master_value(&claim.value)?.tz);
         }
@@ -363,32 +372,45 @@ pub(super) fn render_component(
     );
     out.push_str(&format!("UID:{}\r\n", escape_ics_text(uid)));
     out.push_str(&format!("DTSTAMP:{}\r\n", format_utc(now)?));
-    if matches!(
-        time_kind,
-        Some(
-            crate::calendar::claims::CalendarTimeKind::Floating
-                | crate::calendar::claims::CalendarTimeKind::AllDay
-        )
-    ) {
-        return Err(ingest_error(
-            "owner write requires an anchored interval; floating or all-day duration is not stored",
-        ));
-    }
-    for (name, instant) in [
-        ("DTSTART", header.occurred_start),
-        ("DTEND", header.occurred_end.max(header.occurred_start)),
-    ] {
-        if let Some(zone) = timezone.as_deref().filter(|zone| *zone != "UTC") {
-            if zone.contains(['\r', '\n', ';', ':', '"']) {
-                return Err(ingest_error("invalid calendar timezone parameter"));
+    if let Some(kind @ (CalendarTimeKind::Floating | CalendarTimeKind::AllDay)) = time_kind {
+        // No UTC bounds exist for these kinds: the stored wall start and its
+        // exclusive end print as written, an all-day pair as DATE values.
+        let (start, end) = wall.ok_or_else(|| {
+            ingest_error("owner write of a floating or all-day event needs its stored wall time")
+        })?;
+        for (name, value) in [("DTSTART", Some(start)), ("DTEND", end)] {
+            let Some(value) = value else {
+                continue;
+            };
+            out.push_str(&if kind == CalendarTimeKind::AllDay {
+                format!(
+                    "{name};VALUE=DATE:{:04}{:02}{:02}\r\n",
+                    value.y, value.mo, value.d
+                )
+            } else {
+                format!(
+                    "{name}:{:04}{:02}{:02}T{:02}{:02}{:02}\r\n",
+                    value.y, value.mo, value.d, value.h, value.mi, value.s
+                )
+            });
+        }
+    } else {
+        for (name, instant) in [
+            ("DTSTART", header.occurred_start),
+            ("DTEND", header.occurred_end.max(header.occurred_start)),
+        ] {
+            if let Some(zone) = timezone.as_deref().filter(|zone| *zone != "UTC") {
+                if zone.contains(['\r', '\n', ';', ':', '"']) {
+                    return Err(ingest_error("invalid calendar timezone parameter"));
+                }
+                let wall = utc_to_wall(instant, zone)?;
+                out.push_str(&format!(
+                    "{name};TZID={zone}:{:04}{:02}{:02}T{:02}{:02}{:02}\r\n",
+                    wall.y, wall.mo, wall.d, wall.h, wall.mi, wall.s
+                ));
+            } else {
+                out.push_str(&format!("{name}:{}\r\n", format_utc(instant)?));
             }
-            let wall = utc_to_wall(instant, zone)?;
-            out.push_str(&format!(
-                "{name};TZID={zone}:{:04}{:02}{:02}T{:02}{:02}{:02}\r\n",
-                wall.y, wall.mo, wall.d, wall.h, wall.mi, wall.s
-            ));
-        } else {
-            out.push_str(&format!("{name}:{}\r\n", format_utc(instant)?));
         }
     }
     out.push_str(&format!("SEQUENCE:{sequence}\r\n"));

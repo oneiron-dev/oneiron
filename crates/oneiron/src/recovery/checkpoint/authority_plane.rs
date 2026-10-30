@@ -598,7 +598,7 @@ enum Compared {
     /// A claim's read scope, and, for a claim of an authority family, the
     /// family's name and the claim's whole body.
     Claim {
-        space: Option<EntityId>,
+        space: crate::claim::RelationshipScope,
         private: bool,
         authority: Option<(&'static str, Vec<u8>)>,
     },
@@ -622,24 +622,26 @@ enum Compared {
     /// A skill scan verdict claim: its read scope, and the verdict, compared
     /// as a posture.
     ScanVerdict {
-        access: (Option<EntityId>, bool),
+        access: (crate::claim::RelationshipScope, bool),
         verdict: ScanVerdictFacts,
     },
     /// A `comm.jurisdiction` claim: its read scope, and its observation,
     /// compared as part of the selection the campaign gate makes for each
     /// subject it reaches.
     Jurisdiction {
-        access: (Option<EntityId>, bool),
+        access: (crate::claim::RelationshipScope, bool),
         observation: Observation,
     },
 }
 
 impl Compared {
     /// The read scope of a claim of any kind.
-    fn access(&self) -> Option<(Option<EntityId>, bool)> {
+    fn access(&self) -> Option<(crate::claim::RelationshipScope, bool)> {
         match self {
-            Self::Claim { space, private, .. } => Some((*space, *private)),
-            Self::ScanVerdict { access, .. } | Self::Jurisdiction { access, .. } => Some(*access),
+            Self::Claim { space, private, .. } => Some((space.clone(), *private)),
+            Self::ScanVerdict { access, .. } | Self::Jurisdiction { access, .. } => {
+                Some(access.clone())
+            }
             _ => None,
         }
     }

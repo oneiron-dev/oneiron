@@ -69,6 +69,12 @@ impl BodySpool {
         json::decode_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
     }
 
+    /// The spool's bytes from its start, read as they lie on the disk, a
+    /// piece at a time (FIX 12086).
+    pub(super) fn reader(&mut self) -> BufReader<&mut File> {
+        BufReader::with_capacity(SPOOL_PIECE, &mut self.file)
+    }
+
     /// The room the spool holds on the disk floor, kept past the spool.
     pub(super) fn into_room(self) -> Option<Arc<DiskClaim>> {
         self.room
