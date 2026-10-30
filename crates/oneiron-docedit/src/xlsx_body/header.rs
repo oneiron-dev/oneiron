@@ -3,7 +3,10 @@
 //! column too; a rename writes both, and the structured references naming
 //! the column follow, as Excel's own header edit does. Every other table
 //! header or totals cell stays read-only.
-use super::{Book, Result, SML, XlsxChange, XlsxLock, XlsxSheet, XlsxTable, XlsxValue, refused};
+use super::{
+    Book, Result, SML, XlsxChange, XlsxLock, XlsxSheet, XlsxTable, XlsxValue, encode_escapes,
+    refused,
+};
 use crate::edit::xml::{set_attribute, splice};
 use crate::ooxml::XmlTree;
 use crate::xlsx_shift::rename_table_column;
@@ -51,14 +54,14 @@ pub fn header_rename(
 }
 
 /// Whether column `index` of `table` may take `name`: a worksheet table
-/// whose columns match its range, and a name that is not blank, holds no
-/// control character and no other column of the table has (without case).
+/// whose columns match its range, and a name that is not blank and no other
+/// column of the table has (without case). A control character, a line
+/// break included, is written as its `_xHHHH_` escape ([`column_attribute`]).
 fn column_name_free(table: &XlsxTable, index: usize, name: &str) -> bool {
     let lower = name.to_lowercase();
     table.worksheet
         && table.columns.len() == (table.last.0 - table.first.0 + 1) as usize
         && !name.trim().is_empty()
-        && !name.chars().any(char::is_control)
         && table
             .columns
             .iter()
@@ -130,8 +133,12 @@ impl Book {
                 .nth(index)
                 .map(|(_, node)| node)
                 .ok_or(refused("no such table column"))?;
-            let value = splice(&bytes, vec![set_attribute(&bytes, node, "name", name)])
-                .map_err(|_| refused("a table could not be rewritten"))?;
+            let attribute = column_attribute(name);
+            let value = splice(
+                &bytes,
+                vec![set_attribute(&bytes, node, "name", &attribute)],
+            )
+            .map_err(|_| refused("a table could not be rewritten"))?;
             self.package.replace_xml_part(&rel.target, value)?;
             break;
         }
@@ -145,4 +152,19 @@ impl Book {
         }
         Ok((col, row))
     }
+}
+
+/// `name` as a `tableColumn` name carries it: Excel's `_xHHHH_` escape for
+/// each control character, a line break included, and for a literal escape's
+/// underscore, as the header cell's own text decodes to `name`.
+fn column_attribute(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in encode_escapes(name).chars() {
+        if c.is_control() {
+            out.push_str(&format!("_x{:04X}_", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
