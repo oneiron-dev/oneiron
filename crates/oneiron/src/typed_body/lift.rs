@@ -79,16 +79,18 @@ fn body_in_txn(
 }
 
 /// `doc`'s state as the write door reads it whole, and each text in it. A
-/// deck's log keeps each operation as its JSON spelling, and a view shows
-/// the values it decodes to, so the decoded operations stand beside the
-/// stored state and each of their strings is a text marked under its own
-/// hash (FIX 2940); the stored spelling stays a text too.
+/// deck's log keeps each operation as its JSON spelling, and its tree and
+/// charts each node's and chart's fields, and a view shows the values they
+/// decode to, so the decoded operations and values stand beside the stored
+/// state and each of their strings is a text marked under its own hash
+/// (FIX 2940, FIX 8995); the stored spelling stays a text too.
 fn state_of(doc: &LoroDoc) -> Result<(serde_json::Value, Vec<String>)> {
     let mut state = serde_json::to_value(doc.get_deep_value())
         .map_err(|_| Error::InvariantViolation("typed body state did not encode"))?;
-    let ops = crate::office_body::deck_log_ops(&state);
-    if !ops.is_empty() {
-        state = serde_json::Value::Array(vec![state, serde_json::Value::Array(ops)]);
+    let mut decoded = crate::office_body::deck_log_ops(&state);
+    decoded.extend(crate::office_body::deck_json_values(&state));
+    if !decoded.is_empty() {
+        state = serde_json::Value::Array(vec![state, serde_json::Value::Array(decoded)]);
     }
     let mut texts = Vec::new();
     collect_texts(&state, &mut texts);
