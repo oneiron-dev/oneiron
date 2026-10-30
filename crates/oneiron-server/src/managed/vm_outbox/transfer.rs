@@ -45,7 +45,8 @@ impl Carrier {
     /// The guest's session: its hello, then turns until the connection ends
     /// or the end drains. Each turn opens with the engine's registered
     /// backup label, once there is one, so the host learns a registration
-    /// made after the session began.
+    /// made after the session began, and the owner's answers to diverged
+    /// copies the host is still to be told of.
     pub(super) fn guest_session<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -72,9 +73,11 @@ impl Carrier {
             if let Some(label) = self.roots.backup_label() {
                 link.send(&VmOutboxFrame::BackupRegistered { label })?;
             }
+            let told = self.send_divergence_notices(link)?;
             let sent = self.send_sets(link)?;
             link.send(&VmOutboxFrame::Pull)?;
             link.flush()?;
+            self.divergence_notices_told(told);
             let mut taken = false;
             loop {
                 match link.read()? {
@@ -145,6 +148,12 @@ impl Carrier {
                 Some(VmOutboxFrame::BackupRegistered { label }) => {
                     self.bind_backup_label(vault, label);
                 }
+                Some(VmOutboxFrame::DivergenceCleared {
+                    kind,
+                    member,
+                    held,
+                    held_by,
+                }) => self.take_divergence_cleared(kind, &member, &held, held_by),
                 Some(VmOutboxFrame::Transfer(first)) => self.receive_set(link, first)?,
                 Some(VmOutboxFrame::Pull) => {
                     if self.gate.proceed() {
