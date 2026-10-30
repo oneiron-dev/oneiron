@@ -9,7 +9,8 @@
 //! keeps no link: nothing is kept or dropped by id alone.
 //!
 //! One rule, [`dependencies`], fills a capture's links and recounts them
-//! from the image a restore lands.
+//! from the image a restore lands; a mixed sync family's structure rows are
+//! recounted with the port's own placement (`sync::prune_carrier_structure`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -160,6 +161,10 @@ pub(super) fn prune(
             });
             pruned += before - rows.len();
         }
+    }
+    #[cfg(feature = "sync")]
+    {
+        pruned += super::sync::prune_carrier_structure(databases, gone);
     }
     pruned
 }
