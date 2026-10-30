@@ -69,10 +69,10 @@ pub struct EmailProviderInbound {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
     /// The reply's own words: the trimmed top of its decoded plain-text body,
-    /// above its first quoted block or signature, cut to
-    /// [`EMAIL_REPLY_TOP_TEXT_MAX_BYTES`]; absent when the provider read no
-    /// body or the body holds nothing above its quote. What the sender wrote:
-    /// foreign inbound data, never instructions.
+    /// above its first quoted block or signature and without trailing client
+    /// sign-offs, cut to [`EMAIL_REPLY_TOP_TEXT_MAX_BYTES`]; absent when the
+    /// provider read no body or the body holds nothing above its quote. What
+    /// the sender wrote: foreign inbound data, never instructions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_top_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,6 +157,20 @@ pub const EMAIL_SIGNATURE_DELIMITER: &str = "--";
 /// brackets and ending with one of these opens the quoted block.
 pub const EMAIL_ATTRIBUTION_COLONS: &[char] = &[':', '：'];
 
+/// The mobile client sign-off lines a reply's top text drops from its end,
+/// each compared after trimming: a final line that is one of these is not
+/// the reply's own words.
+pub const EMAIL_CLIENT_SIGNOFFS: &[&str] = &[
+    "Sent from my iPhone",
+    "Sent from my iPad",
+    "Sent from my Android",
+    "Get Outlook for iOS",
+    "Get Outlook for Android",
+    "iPhoneから送信",
+    "iPadから送信",
+    "Androidから送信",
+];
+
 /// Whether `line` (trimmed) attributes the quote below it in any language:
 /// it names an address in angle brackets and ends with an attribution colon.
 fn is_email_attribution_line(line: &str) -> bool {
@@ -170,7 +184,8 @@ fn is_email_attribution_line(line: &str) -> bool {
 /// An email reply's top text: its body above the first line that opens a
 /// quoted block ([`EMAIL_QUOTE_MARKERS`], or an attribution line in any
 /// language) or its signature ([`EMAIL_SIGNATURE_DELIMITER`]); the whole
-/// body when none does.
+/// body when none does. Trailing client sign-offs
+/// ([`EMAIL_CLIENT_SIGNOFFS`]) are dropped, with the blank lines around them.
 fn email_reply_top_text(body: &str) -> &str {
     let mut at = 0;
     let mut lines = body.split_inclusive('\n').peekable();
@@ -187,7 +202,17 @@ fn email_reply_top_text(body: &str) -> &str {
         }
         at += line.len();
     }
-    &body[..at]
+    let mut end = at;
+    loop {
+        let current = body[..end].trim_end();
+        let Some(last) = current.rsplit('\n').next() else {
+            return current;
+        };
+        if !EMAIL_CLIENT_SIGNOFFS.contains(&last.trim()) {
+            return current;
+        }
+        end = current.len() - last.len();
+    }
 }
 
 /// Slack Events API payload fields needed for shared-presence routing.
