@@ -24,19 +24,32 @@ impl BatchBuilder<'_> {
     /// callers must abort the transaction (drop without committing) to discard
     /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None)
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None)
+    }
+
+    /// [`Self::apply`] judging each replicated AUTHORITY_LOG put beside
+    /// `beside`, the other authority rows its sync window carries (FIX
+    /// 11764), so history that arrives in two or more rows together lands as
+    /// the ingest door admitted it.
+    #[cfg(feature = "sync")]
+    pub(crate) fn apply_with_authority_beside(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        beside: crate::authority::RowsBeside<'_>,
+    ) -> Result<()> {
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, Some(beside))
     }
 
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None)
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None, None)
     }
 
     /// Local actor-bound batch: every direct record and reducer-touched parent
     /// is captured from the operation set, then gated before commit.
     pub(crate) fn apply_actor(self, wtxn: &mut RwTxn<'_>, actor: &crate::WriteActor) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), Some(actor))
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), Some(actor), None)
     }
 
     fn apply_with_gate_mode(
@@ -44,6 +57,7 @@ impl BatchBuilder<'_> {
         wtxn: &mut RwTxn<'_>,
         gate_mode: ApplyOpsGateMode,
         actor: Option<&crate::WriteActor>,
+        authority_beside: Option<crate::authority::RowsBeside<'_>>,
     ) -> Result<()> {
         // The commit-only checks stay behind: this terminal's puts meet the
         // same gates inside `wtxn` (see `CommitCheck`).
@@ -104,7 +118,7 @@ impl BatchBuilder<'_> {
                 self.origin,
             )?;
         } else {
-            apply_ops_with_origin(
+            apply_ops_with_authority_beside(
                 &vault.store,
                 &vault.config,
                 &vault.analyzer,
@@ -113,6 +127,7 @@ impl BatchBuilder<'_> {
                 text_index_trusted,
                 gate_mode,
                 self.origin,
+                authority_beside,
             )?;
         }
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;

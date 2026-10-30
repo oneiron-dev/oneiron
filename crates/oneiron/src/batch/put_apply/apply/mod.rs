@@ -13,8 +13,8 @@ use super::{
     plan_short_id_update_hashed, reject_overlay_member_base_write, stage_claim_projection,
     stage_entity_body_row, stage_entity_index_rows, stage_optional_side_row,
     validate_immutable_task_record, validate_local_agent_definition_create,
-    validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
-    validate_skill_body_overwrite,
+    validate_local_skill_create, validate_replicated_authority_log_beside_for_local_vault,
+    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::entity_id::EntityId;
@@ -45,6 +45,18 @@ pub(in crate::batch) fn apply_put(
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'_>,
 ) -> Result<AppliedPut> {
+    apply_put_beside(store, wtxn, request, None)
+}
+
+/// [`apply_put`] for a put whose batch carries other authority rows
+/// (`authority_beside`, FIX 11764): a replicated AUTHORITY_LOG row is judged
+/// beside them, as the ingest door judged it.
+pub(in crate::batch) fn apply_put_beside<'a>(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    request: PutRequest<'a>,
+    authority_beside: Option<crate::authority::RowsBeside<'a>>,
+) -> Result<AppliedPut> {
     let data = request.row.data;
     let admission::Admission {
         fixed,
@@ -54,7 +66,7 @@ pub(in crate::batch) fn apply_put(
         incoming_claim_body,
         project_revisions,
         mut portable_agent_source,
-    } = admission::admit_put(store, wtxn, request)?;
+    } = admission::admit_put(store, wtxn, request, authority_beside)?;
     let data = owners.normalized_policy.as_deref().unwrap_or(data);
     let data = owners.project.as_deref().unwrap_or(data);
     let dispatch::DispatchCarry {

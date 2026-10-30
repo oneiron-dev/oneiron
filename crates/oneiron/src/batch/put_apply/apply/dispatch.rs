@@ -128,7 +128,21 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
         pad_stored_body = crate::world_keys::admit_pad_put_in_txn(store, wtxn, &fixed.id, data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-        if fixed.replicated {
+        // History a window carries in two or more rows lands together: the
+        // row is judged beside the batch's other authority rows, as the
+        // ingest door judged it (FIX 11764).
+        if fixed.replicated
+            && let Some(beside) = fixed.authority_beside
+        {
+            validate_replicated_authority_log_beside_for_local_vault(
+                store,
+                wtxn,
+                &fixed.id,
+                data,
+                fixed.posture,
+                beside,
+            )?;
+        } else if fixed.replicated {
             validate_replicated_authority_log_for_local_vault(
                 store,
                 wtxn,
