@@ -98,6 +98,8 @@ const CASE_PLACE: &str = "side:SKILL_OPTIMIZE_EVAL_CASE";
 const LABEL: &str = "eval set row";
 
 const MAX_REF_BYTES: usize = 256;
+/// An eval label value holds an owner-pick option verbatim (FIX 10143).
+const MAX_LABEL_VALUE_BYTES: usize = 512;
 const MAX_NAME_BYTES: usize = 64;
 
 /// A model function the vault keeps a test set for: "The seats are the
@@ -684,7 +686,7 @@ pub(super) fn append_label_in_txn(
     label: EvalLabel,
 ) -> Result<EvalCase> {
     if label.value.trim().is_empty()
-        || label.value.len() > MAX_REF_BYTES
+        || label.value.len() > MAX_LABEL_VALUE_BYTES
         || label.reference.len() > MAX_REF_BYTES
         || !label.weight.is_finite()
         || !(0.0..=1.0).contains(&label.weight)

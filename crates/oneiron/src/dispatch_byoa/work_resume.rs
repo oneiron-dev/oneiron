@@ -12,8 +12,10 @@
 //! on, is running or ended without a spend is answered as it stands, and a
 //! replay of the old spent capture never takes it back (`moved_on_in_txn`).
 //!
-//! There is no served resume door: the trusted dispatcher calls it under its
-//! own authority, and the owner through [`ByoaDispatcher::resume_runner_work_as_owner`].
+//! The served resume door is `vault.runners.seats.resume`
+//! ([`Vault::resume_runner_work_as_owner`]): the trusted dispatcher calls the
+//! act under its own authority, and the owner through
+//! [`ByoaDispatcher::resume_runner_work_as_owner`].
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};

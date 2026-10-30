@@ -13,7 +13,9 @@
 //! present and every byte hashes to its name, so a served file is the pinned
 //! file. Until then it answers `Staged`, and the device sends it again.
 
-use super::serving_blob::{ServingBlobDescriptor, put_serving_blob_in_txn};
+use super::serving_blob::{
+    ServingBlobDescriptor, put_serving_blob_in_txn, retire_unpointed_version_in_txn,
+};
 use super::*;
 use crate::side_table::Named;
 
@@ -306,7 +308,17 @@ impl Vault {
             artifact: wire.artifact.clone(),
         };
         let Some(published) = wire.published else {
+            // What the pointer served goes with it, unless the other channel
+            // still serves it (FIX 8504).
+            let unpointed = ARTIFACT_POINTERS.get(&self.store, wtxn, &key)?;
             ARTIFACT_POINTERS.delete(&self.store, wtxn, &key)?;
+            if let Some(ArtifactExportRef::BlobVersion {
+                artifact_id,
+                version,
+            }) = unpointed.map(|row| row.export)
+            {
+                retire_unpointed_version_in_txn(&self.store, wtxn, &artifact_id, version)?;
+            }
             return Ok(Applied);
         };
         let Ok(pointer) = ARTIFACT_POINTERS.decode_value(&published.pointer) else {

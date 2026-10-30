@@ -12,6 +12,7 @@
 //!        ├─ a launch estimate in the goal budget's unit
 //!        ├─ inside the goal claim's slice ─▶ reserve, route, load the PROPOSAL
 //!        └─ past it ─▶ the incumbent loads; the trial asks about that charge
+//! pinned load of the proposal ─▶ the same charge, reserved; the pinned arm loads
 //! spend scope settles ─▶ the reservation becomes what the run spent
 //! unmetered launch ─▶ the estimate is the run's final charge at its route
 //! bound reached · live report kept · verdict recorded ─▶ trial closes
@@ -50,7 +51,7 @@ use self::overrun_ask::{answer_in_txn, climb_stale_ask};
 use self::routing::lineage_route_in_txn;
 
 pub(crate) use self::overrun_ask::queue_trial_ask;
-pub(crate) use self::routing::route_in_txn;
+pub(crate) use self::routing::{charge_pinned_in_txn, route_in_txn};
 
 /// Each proposal's trial. Key: the proposal.
 const TRIALS: SideTable<EntityId, ExplorationTrial, Named> =
