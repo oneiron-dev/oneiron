@@ -218,7 +218,7 @@ pub(crate) fn admit_custody_carrier(
         return witness::admit_witness_part(key, row_key, bytes);
     }
     if let Some(row_key) = map_key.strip_prefix(export_output::EXPORT_OUTPUT_ROW_PREFIX) {
-        return export_output::admit_export_output(key, row_key, bytes);
+        return export_output::admit_export_output(vault, key, row_key, bytes);
     }
     let transition = CustodyTransition::decode(bytes)?;
     if transition.row_key() != map_key {

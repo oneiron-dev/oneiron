@@ -5,8 +5,10 @@
 //! owner's server reads it whether or not it is the holder.
 //!
 //! - Admission takes a row only whole, filed under its own request, in its
-//!   sealing month's base window, within one row's bound. Whether the
-//!   request's signed result names it is judged where it is kept.
+//!   sealing month's base window, within one row's bound, and, once this
+//!   vault folds the request's signed result, only the copy that result
+//!   names (FIX 12065). With no result folded yet, whether it names the
+//!   copy is judged where the copy is kept.
 //! - Reverse rematerialization relays each copy this vault keeps that stands
 //!   on its fold (`KeptExportOutput::stands`), and drops a row once its
 //!   request is refused here, its result names another copy, or its secret
@@ -24,9 +26,9 @@ use loro::{LoroDoc, LoroValue, ValueOrContainer};
 
 use super::super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::super::types::WindowKey;
-use super::{CUSTODY_MAP, commit_custody, holds_custody_map, refused};
+use super::{CUSTODY_MAP, admission_read_fault, commit_custody, holds_custody_map, refused};
 use crate::Vault;
-use crate::authority::AuthorityFold;
+use crate::authority::{AuthorityFold, SealedWorkOutput};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::secret_custody::holder_export::{
@@ -50,8 +52,11 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
 
 /// Admits one sealed copy under `row_key`, the map key after its prefix:
 /// one that decodes within one row's bound, filed under its own request, in
-/// its sealing month's base window.
+/// its sealing month's base window, and that the request's signed result
+/// names when `vault` folds one (FIX 12065): a forged copy under a real
+/// request is refused here, not carried until its window retires.
 pub(super) fn admit_export_output(
+    vault: &Vault,
     key: Option<&WindowKey>,
     row_key: &str,
     bytes: &[u8],
@@ -71,7 +76,35 @@ pub(super) fn admit_export_output(
             "export secret supplement outside its sealing month's base window",
         ));
     }
+    // Reading this vault's own authority is the store's work: its fault is
+    // this machine's, never the peer's refused update (FIX 5925).
+    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let fold = vault
+        .authority_view_readonly_in_txn(&rtxn)
+        .map_err(admission_read_fault)?;
+    if fold
+        .owner_work_result(&kept.request)
+        .is_some_and(|answer| !names_copy(answer.outcome.sealed_output(), &kept.sealed))
+    {
+        // The row's key alone: never a byte of the copy.
+        tracing::warn!(
+            request = row_key,
+            "an export secret supplement row its request's signed result does not name was refused"
+        );
+        return Err(refused(
+            "export secret supplement its request's signed result does not name",
+        ));
+    }
     Ok(())
+}
+
+/// Whether `output`, what a signed result names, is the copy `sealed`: its
+/// digest and length.
+fn names_copy(output: Option<&SealedWorkOutput>, sealed: &[u8]) -> bool {
+    output.is_some_and(|output| {
+        output.digest == *blake3::hash(sealed).as_bytes()
+            && usize::try_from(output.bytes).is_ok_and(|bytes| bytes == sealed.len())
+    })
 }
 
 /// Relays each copy this vault keeps into window `key`, the base window of
