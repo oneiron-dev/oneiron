@@ -23,8 +23,10 @@
 //!   the caller is in it; otherwise they read base, as before. Its searches,
 //!   builder runs, type scans and ChildOf walks do too (`composed_reads`).
 //!
-//! A delete is the owner's own act and runs the `vault.delete` row on base,
-//! as before. Authority and policy always read base.
+//! A delete is the owner's own act. A row only the off-record room staged,
+//! which base never held, is deleted in the room (FIX 10763); any other
+//! runs the `vault.delete` row on base, as before. Authority and policy
+//! always read base.
 
 use heed::RoTxn;
 
@@ -245,6 +247,66 @@ impl Memory<'_> {
                 }
             }
             Ok(())
+        });
+        staged.map_err(|error| refusal.take().unwrap_or_else(|| error.into()))?;
+        Ok(true)
+    }
+
+    /// Deletes `id` in the room this surface's session names while it is
+    /// off record, when the room staged the row and base never held it (FIX
+    /// 10763), and answers `true`; `false` when the delete is base's, as
+    /// before: no live room, a room on record, or a row base holds or the
+    /// room does not stage. Deletion stays an owner verb: the caller's
+    /// deletion authority is proved in the room's writer.
+    ///
+    /// # Errors
+    ///
+    /// The room's own refusals (anonymous, closing, gone, a caller off its
+    /// roster), the deletion authority's refusal, and the session apply's.
+    pub(super) fn raw_delete_in_session(&self, id: &EntityId) -> MemoryResult<bool> {
+        let room_only = self.raw_session_read(|session| {
+            if session.write_route()?.target() != RouteTarget::Overlay {
+                return Ok(false);
+            }
+            session.read_composed_in_vault(|vault, view, txn| {
+                Ok(view.entities.stages_row(id.as_bytes())
+                    && EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.is_none())
+            })
+        })?;
+        if room_only != Some(true) {
+            return Ok(false);
+        }
+        let Some(session) = self.raw_session()? else {
+            return Ok(false);
+        };
+        let route = session.write_route()?;
+        let conversation = session.overlay_conversation_shell()?;
+        let now = self.vault().store.clock.now_recorded_at();
+        // Its own row is its scope's turn, as a raw put's: no promote or save
+        // replays it; close drops it.
+        let entry = JournalEntry {
+            scope: JournalScope::new(conversation, *id),
+            role: JournalRole::TurnOwnedArtifact,
+            learned_at: now,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            op: BatchOp::Delete { id: *id },
+            source_run: crate::skill_attribution::current_run_write_token(),
+        };
+        let mut refusal = None;
+        let staged = session.overlay_write_routed(&route, |wtxn, apply| {
+            if let Err(error) = crate::memory::verify_deletion_authority_in_txn(
+                self.vault(),
+                wtxn,
+                self.actor(),
+                self.actor_class(),
+            ) {
+                refusal = Some(error);
+                return Err(Error::InvariantViolation("a bound raw delete was refused"));
+            }
+            apply(wtxn, entry)
         });
         staged.map_err(|error| refusal.take().unwrap_or_else(|| error.into()))?;
         Ok(true)
