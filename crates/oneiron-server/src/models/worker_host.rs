@@ -170,6 +170,7 @@ impl BoundWork {
             return Ok(None);
         };
         let mut tried = BTreeSet::new();
+        let mut victim_changes = Vec::new();
         loop {
             match ticket.resolve_pressure_excluding(&tried) {
                 PressureDecision::Grant(grant) => {
@@ -178,6 +179,9 @@ impl BoundWork {
                 }
                 PressureDecision::Stop(stop) => return Err(stop),
                 PressureDecision::UnloadIdle(worker) => {
+                    if let Some(victim) = hosted_worker(&worker) {
+                        victim_changes.push(victim.subscribe_changed());
+                    }
                     let _ = unload_idle_worker(&worker).await;
                     tried.insert(worker);
                     continue;
@@ -191,11 +195,6 @@ impl BoundWork {
             let changed = ticket.pressure_change();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            let mut victim_changes: Vec<_> = tried
-                .iter()
-                .filter_map(|worker| hosted_worker(worker))
-                .map(|worker| worker.subscribe_changed())
-                .collect();
             match ticket.resolve_pressure_excluding(&tried) {
                 PressureDecision::Grant(grant) => {
                     self.armed = false;
@@ -205,15 +204,13 @@ impl BoundWork {
                 PressureDecision::UnloadIdle(_) => continue,
                 PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
             }
-            let victim_wake = async {
+            let victim_wake = async move {
                 if victim_changes.is_empty() {
                     std::future::pending::<()>().await;
                 } else {
-                    select_all(
-                        victim_changes
-                            .iter_mut()
-                            .map(|changes| Box::pin(changes.changed())),
-                    )
+                    select_all(victim_changes.into_iter().map(|mut receiver| async move {
+                        let _ = receiver.changed().await;
+                    }))
                     .await;
                 }
             };
@@ -234,6 +231,7 @@ impl BoundWork {
                 }
             }
             tried.clear();
+            victim_changes = Vec::new();
         }
     }
 
