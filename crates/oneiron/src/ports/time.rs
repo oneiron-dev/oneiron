@@ -317,6 +317,7 @@ impl crate::store::Store {
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
+        let _l15 = crate::stage_timing::stage("recall.grant_clock_write");
         // A preliminary read would consume one reader slot per concurrent
         // caller before writers serialize, exhausting small reader budgets.
         // Persist ONLY clock authority here: a read must not also commit the
