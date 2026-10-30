@@ -1219,7 +1219,7 @@
      "purpose": "The leased child's planned spawn (DOOR-111 S4c-1): a leased agent's `self.agents.spawn` with an ask…",
      "surface": {
       "crate-vis": 2,
-      "fn": 4
+      "fn": 6
      }
     },
     {
@@ -3563,6 +3563,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExportSecretSupplement",
+      "HolderExportRequest",
+      "HolderExportState",
+      "HolderExportUnassigned",
+      "OpenedSecretSupplement",
+      "SecretSupplementImport"
+     ],
+     "path": "src/authority/export_secret_work.rs",
+     "purpose": "Holder-mediated export (FIX 4624(b)): what an owner export records for each custody secret its install could…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -4292,8 +4312,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 43,
-      "re-export": 67
+      "crate-vis": 44,
+      "re-export": 69
      }
     },
     {
@@ -4428,7 +4448,7 @@
      "path": "src/authority/owner_work/custody.rs",
      "purpose": "Custody work in the fold (WILL L04 row 04): the revision a custody request's `seen` is over, and the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -6566,7 +6586,7 @@
       "const": 1,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 18
      }
     },
@@ -6785,6 +6805,16 @@
      "purpose": "The body instances an archive import's run results spill into (KS-2A, FIX 5683 part A): minted before the…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/secret_supplement.rs",
+     "purpose": "The owner's import of one export secret supplement (FIX 4624(b)): the custody secret an owner export carried…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -60266,6 +60296,27 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/secret_custody/holder_export.rs",
+     "purpose": "The holder's side of a holder-mediated export (FIX 4624(b)), and the owner's fetch and open of what it sealed",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/holder_export/sealed.rs",
+     "purpose": "The bytes of a sealed export secret supplement (FIX 4624(b)): the archive row of one custody secret, sealed…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/secret_custody/known_values.rs",
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
@@ -60304,7 +60355,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 14
      }
     },
@@ -60526,7 +60577,7 @@
      "path": "src/secret_custody/storage_seal.rs",
      "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 24
      }
     },
     {
@@ -73406,7 +73457,7 @@
      "path": "src/task_verb/settlement_anchor.rs",
      "purpose": "The anchor a settled TASK's lifecycle row names (FIX 11620)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -74005,6 +74056,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ErasedPackSpan",
       "FrozenPackFile",
       "FrozenPatternPack",
       "LeasedSpawnRequest",
@@ -74021,7 +74073,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 7,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -80887,7 +80939,7 @@
      "path": "src/world_keys/owner_work/record.rs",
      "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor; and…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -82194,7 +82246,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 233,
+     "files": 234,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82208,7 +82260,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 153,
+     "files": 154,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83279,7 +83331,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 59,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83673,7 +83725,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5605,
+   "source_files": 5609,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84124,7 +84176,7 @@
       "crate-vis": 5,
       "enum": 4,
       "fn": 14,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 2
      }
     },
@@ -84155,9 +84207,22 @@
      "purpose": "A custody work map: one change to one portable secret's custody (WILL L04 row 04), asked of the install the…",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportSecretWork"
+     ],
+     "path": "src/authority/owner_work/export.rs",
+     "purpose": "An export secret work map (FIX 4624(b)): one custody secret the owner's whole-vault export met that its…",
+     "surface": {
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -84169,15 +84234,16 @@
       "CustodyUncheckedReason",
       "OwnerWorkOutcome",
       "OwnerWorkRefusal",
-      "OwnerWorkResult"
+      "OwnerWorkResult",
+      "SealedWorkOutput"
      ],
      "path": "src/authority/owner_work/result.rs",
      "purpose": "An executor's result for one owner work request, and its wire codec: the work was enacted, or refused for a…",
      "surface": {
       "crate-vis": 3,
       "enum": 4,
-      "fn": 10,
-      "struct": 1
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -84515,7 +84581,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -84545,7 +84611,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 50,
+   "source_files": 51,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -118547,6 +118613,9 @@
       "HeldOutEvidence",
       "HeldOutResult",
       "HeldOutSelection",
+      "HolderExportRequest",
+      "HolderExportState",
+      "HolderExportUnassigned",
       "HolderKind",
       "HookActorClass",
       "HookAuthor",
@@ -121179,8 +121248,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1077,
-      "struct": 3293
+      "enum": 1079,
+      "struct": 3294
      }
     },
     {
