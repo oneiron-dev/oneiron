@@ -1822,7 +1822,7 @@ declare namespace Sdk {
   type Of360CaseEvalReport = { case_id: string; metrics: Of360ParsedMetrics; omitted_gold_memory_ids: string[]; partial_gold_memory_ids: string[]; hallucinated_extraction_ids: string[]; overreach_extraction_ids: string[]; redundant_extraction_ids: string[] };
   type Of360EvalReport = { schema_version: number; metric_set_id: string; metric_definition_envelope: Of360DerivationEnvelope; dataset_id: string; dataset_revision: string; run_id: string; system_id: string; metrics: Of360ParsedMetrics; cases: Of360CaseEvalReport[]; warnings: string[] };
   type Of360Ar3MetricTier = { interface_version: number; metric_definitions: Of360MetricDefinitionSet; report: Of360EvalReport };
-  type EvidenceVersion = { id: string; body_hash: number[] };
+  type EvidenceVersion = { id: string; body_hash: string };
   type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
   type StopCause = "done" | "deadline" | "provider_failure";
   type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
@@ -2866,7 +2866,7 @@ declare namespace Sdk {
   type SlideReviewAnchor = { slide_part: string; sld_id: number; slide_fingerprint: string; render_fingerprint: string; shape?: ShapeReviewAnchor | null };
   type SlideLocation = { slide_width: number; slide_height: number; left: number; top: number; right: number; bottom: number };
   type BandMode = "shadow" | "enforce";
-  type ImageRef = { evidence: EvidenceVersion; hash: number[]; media_type: string; width: number; height: number; frame?: PixelRegion | null };
+  type ImageRef = { evidence: EvidenceVersion; hash: string; media_type: string; width: number; height: number; frame?: PixelRegion | null };
   type SpeechSpan = { start_ms: number; end_ms: number };
   type SourceSpan = { source_start_ms: number; source_end_ms: number; pack_start_ms: number; pack_end_ms: number };
   type SpeakerTrack = { start_ms: number; end_ms: number; speaker_cluster: string };

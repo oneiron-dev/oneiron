@@ -3609,7 +3609,7 @@ export type Of360EvalReport = { schema_version: number; metric_set_id: string; m
 /** `oneiron_model::extraction_eval::types::Of360Ar3MetricTier` */
 export type Of360Ar3MetricTier = { interface_version: number; metric_definitions: Of360MetricDefinitionSet; report: Of360EvalReport }
 /** `oneiron::llm::decision::types::EvidenceVersion` */
-export type EvidenceVersion = { id: string; body_hash: number[] }
+export type EvidenceVersion = { id: string; body_hash: string }
 /** `oneiron::llm::decision::types::PairedReading` */
 export type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number }
 /** `oneiron::llm::decision::types::StopCause` */
@@ -5697,7 +5697,7 @@ export type SlideLocation = { slide_width: number; slide_height: number; left: n
 /** `oneiron::llm::decision::policy::BandMode` */
 export type BandMode = "shadow" | "enforce"
 /** `oneiron::llm::decision::media_ref::ImageRef` */
-export type ImageRef = { evidence: EvidenceVersion; hash: number[]; media_type: string; width: number; height: number; frame?: PixelRegion | null }
+export type ImageRef = { evidence: EvidenceVersion; hash: string; media_type: string; width: number; height: number; frame?: PixelRegion | null }
 /** `oneiron::ingest::meeting_audio::types::SpeechSpan` */
 export type SpeechSpan = { start_ms: number; end_ms: number }
 /** `oneiron::ingest::meeting_audio::types::SourceSpan` */
