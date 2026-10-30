@@ -61241,6 +61241,8 @@ pub enum SeriesField {
     Values,
     #[serde(rename = "family")]
     Family,
+    #[serde(rename = "plot")]
+    Plot,
     #[serde(rename = "x")]
     X,
     #[serde(rename = "bubble_size")]
