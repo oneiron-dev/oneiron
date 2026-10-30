@@ -40,6 +40,12 @@ impl<'a> RunTreeAdapter<'a> {
         render_run_tree_presorted(self.queue.list_run(run_id)?)
     }
 
+    /// Renders one TASK's working rows and their run-tree descendants (FIX 11970).
+    pub fn read_task(&self, task_ref: &str) -> Result<RunTree> {
+        let txn = self.vault.store.env.read_txn()?;
+        render_run_tree_presorted(self.queue.task_subtree_in_txn(&txn, task_ref)?)
+    }
+
     /// Engine-generated display name and agent label for one run's consent
     /// bundle, as `(name, agent_label)`.
     ///
