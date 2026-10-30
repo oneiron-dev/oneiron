@@ -4,8 +4,10 @@ use crate::ports::EntityStoreRead;
 use std::sync::atomic::Ordering;
 
 use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
@@ -16,7 +18,58 @@ use super::{
     decode_commitment_claim, decode_commitment_value,
 };
 
+/// Whether a status change mints a successor claim carrying the new status and
+/// supersedes its predecessor through the claim lifecycle (FIX 9726), rather
+/// than rewriting the value under the predecessor's id.
+///
+/// The commitment, schedule and wake readers follow a commitment to the head
+/// of that chain ([`Vault::commitment_head_in_txn`]). `false` until the
+/// readers outside them that still read a commitment's status at the id they
+/// were given (the memory commitment views, receipt families, the close
+/// helpers' close instant) and the batched lapse write follow it too.
+const STATUS_CHANGE_MINTS_SUCCESSOR: bool = false;
+
 impl Vault {
+    /// The head of a commitment's status chain: `id` itself, or the
+    /// `commitment.record` claim that superseded it carrying the same promise
+    /// under its next status, followed to the end.
+    ///
+    /// A replacement that changes the promise itself (a series edit) is a
+    /// different commitment and is not followed.
+    pub(crate) fn commitment_head_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<EntityId> {
+        let Some(mut record) = self
+            .get_claim_in_txn(txn, id)?
+            .and_then(|body| decode_commitment_claim(&body).ok().flatten())
+        else {
+            return Ok(*id);
+        };
+        let mut head = *id;
+        let mut seen = std::collections::HashSet::from([head]);
+        'chain: loop {
+            for successor in
+                self.port_edge_peers(txn, &head, EdgeDirection::In, EdgeKind::Supersedes)?
+            {
+                let successor = successor?;
+                let Some(next) = self
+                    .get_claim_in_txn(txn, &successor)?
+                    .and_then(|body| decode_commitment_claim(&body).ok().flatten())
+                else {
+                    continue;
+                };
+                if same_promise(&record, &next) && seen.insert(successor) {
+                    head = successor;
+                    record = next;
+                    continue 'chain;
+                }
+            }
+            return Ok(head);
+        }
+    }
+
     /// Writes a new open `commitment.record` claim using the gated claim
     /// candidate path. `valid_time` is the due/active valid-time; `learned_at`
     /// is the transaction-time.
@@ -38,10 +91,13 @@ impl Vault {
         self.apply_commitment_candidate(id, candidate, envelope, valid_time, learned_at)
     }
 
-    /// Reads a `commitment.record` claim. Missing claims return `Ok(None)`;
-    /// non-commitment CLAIM entities fail typed.
+    /// Reads a `commitment.record` claim at the head of its status chain, so
+    /// the status is the commitment's current one. Missing claims return
+    /// `Ok(None)`; non-commitment CLAIM entities fail typed.
     pub fn get_commitment_claim(&self, id: &EntityId) -> Result<Option<CommitmentRecord>> {
-        let Some(body) = self.get_claim(id)? else {
+        let txn = self.store.env.read_txn()?;
+        let head = self.commitment_head_in_txn(&txn, id)?;
+        let Some(body) = self.get_claim_in_txn(&txn, &head)? else {
             return Ok(None);
         };
         decode_commitment_claim(&body)?
@@ -111,6 +167,10 @@ impl Vault {
 
     /// The status writer shared by the native lifecycle and credential-bound
     /// doors. Target, transition, evidence and Gate are judged in this writer.
+    ///
+    /// With [`STATUS_CHANGE_MINTS_SUCCESSOR`], the new status is a successor
+    /// claim that supersedes `id` in this transaction, and a retry that finds
+    /// the chain already closed with `next` writes nothing.
     pub(crate) fn update_commitment_status_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -120,6 +180,15 @@ impl Vault {
         learned_at: u64,
         evidence: Option<rmpv::Value>,
     ) -> Result<()> {
+        if STATUS_CHANGE_MINTS_SUCCESSOR {
+            let head = self.commitment_head_in_txn(wtxn, id)?;
+            if head != *id
+                && let Some(body) = self.get_claim_in_txn(wtxn, &head)?
+                && decode_commitment_claim(&body)?.is_some_and(|record| record.status == next)
+            {
+                return Ok(());
+            }
+        }
         let body = self.require_named_claim_target_active_in(wtxn, id)?;
         if body.predicate != PREDICATE_COMMITMENT_RECORD {
             return Err(Error::InvalidClaimBody(
@@ -144,18 +213,22 @@ impl Vault {
         if let Some(evidence) = evidence {
             candidate = candidate.with_evidence(evidence);
         }
+        let occurred = TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        };
+        if !STATUS_CHANGE_MINTS_SUCCESSOR {
+            return apply_commitment_ops(
+                self, wtxn, *id, candidate, envelope, occurred, learned_at,
+            );
+        }
+        // The predecessor keeps the status it held; the successor carries the
+        // new one, and the lifecycle closes and links the two together.
+        let successor = EntityId::now();
         apply_commitment_ops(
-            self,
-            wtxn,
-            *id,
-            candidate,
-            envelope,
-            TimeRange {
-                start: header.occurred_start,
-                end: header.occurred_end,
-            },
-            learned_at,
-        )
+            self, wtxn, successor, candidate, envelope, occurred, learned_at,
+        )?;
+        self.supersede_claim_in_txn(wtxn, &successor, id, learned_at)
     }
 
     fn apply_commitment_candidate(
@@ -178,6 +251,16 @@ impl Vault {
         wtxn.commit()?;
         Ok(())
     }
+}
+
+/// Whether two records are one promise: everything but the status agrees.
+fn same_promise(record: &CommitmentRecord, next: &CommitmentRecord) -> bool {
+    record.obligor == next.obligor
+        && record.beneficiary == next.beneficiary
+        && record.content == next.content
+        && record.schedule == next.schedule
+        && record.strength == next.strength
+        && record.birth_provenance == next.birth_provenance
 }
 
 fn apply_commitment_ops(
