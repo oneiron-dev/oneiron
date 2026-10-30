@@ -241,7 +241,7 @@ impl Store {
                     core.retrieval_writes_disabled
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
-                staged.map(|()| None)
+                staged
             },
         ));
         Ok(())
@@ -369,7 +369,6 @@ impl Store {
                     wtxn,
                     finalize,
                 )
-                .map(|()| None)
             },
         ));
         Ok(())

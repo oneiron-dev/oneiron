@@ -349,9 +349,12 @@ impl crate::store::Store {
     /// every decision this store took before, so it never stands below
     /// either, and it does not wait for the writer: the floor and lease rows
     /// its own writer committed here before are renewed by a detached write,
-    /// which commits with the next group after the decision. The lease is
-    /// held from that commit, not from its queueing, so it keeps its 5 s;
-    /// one renewal is queued at a time.
+    /// which commits with the next group after the decision. That write
+    /// takes its floor and lease at its stage, from the highest time a
+    /// decision took by then, so they cover every decision before it. The
+    /// lease is held from its commit, not from its queueing, so it keeps its
+    /// 5 s; one renewal is queued at a time, and one that does not commit is
+    /// said in a warn and queued again by the next lapsed decision.
     pub(crate) fn authorization_now(&self) -> Result<u64> {
         let clock = crate::store::ManifestDbs::clock(self);
         if let Some(now) = clock.leased_now() {
@@ -367,11 +370,16 @@ impl crate::store::Store {
         };
         let judged = clock.judge(now);
         if let Some(renewal) = clock.claim_lease_renewal() {
+            let staged = Arc::new(AtomicU64::new(0));
+            let lease = Arc::clone(&staged);
             self.group_write_detached(
                 DetachedWrite::of_core("authorization lease renewal", move |core, txn| {
-                    renew_authorization_lease_in_txn(core, txn, renewal)
+                    let leased = renew_authorization_lease_in_txn(core, txn)?;
+                    lease.store(leased, Ordering::Release);
+                    Ok(())
                 })
-                .replay_only(),
+                .replay_only()
+                .after_commit(renewal.hold_on_commit(staged)),
             );
         }
         Ok(judged)
@@ -386,13 +394,22 @@ struct LeaseRenewal {
 }
 
 impl LeaseRenewal {
-    /// What runs once the renewal's group commit is decided: `lease` held
-    /// from that commit, when the renewal's rows landed.
-    fn hold_on_commit(self, lease: u64) -> AfterCommit {
+    /// The renewal's after-commit callback: once its group commit is
+    /// decided, the lease its stage put in `staged` is held when its rows
+    /// landed, and a renewal that did not land is said in a warn. The flag
+    /// clears either way, after the hold, so the next lapsed decision queues
+    /// a failed renewal again.
+    fn hold_on_commit(self, staged: Arc<AtomicU64>) -> AfterCommit {
         Box::new(move |landed| {
-            if landed && let Err(error) = self.clock.hold_lease(lease) {
+            let renewal = self;
+            if !landed {
+                tracing::warn!(
+                    "an authorization lease renewal did not commit; the next lapsed decision queues it again"
+                );
+            } else if let Err(error) = renewal.clock.hold_lease(staged.load(Ordering::Acquire)) {
                 tracing::warn!(%error, "a renewed authorization lease was not held");
             }
+            drop(renewal);
         })
     }
 }
@@ -405,13 +422,10 @@ impl Drop for LeaseRenewal {
 
 /// A lapsed lease's renewal, in its group's transaction (FIX 12023): the
 /// clock floor and lease rows the decision's own writer committed before,
-/// read and observed here. Only clock authority: never the floor of ids
-/// allocated in RAM but not yet used by a mutation.
-fn renew_authorization_lease_in_txn(
-    core: &StoreCore,
-    txn: &mut heed::RwTxn<'_>,
-    renewal: LeaseRenewal,
-) -> Result<Option<AfterCommit>> {
+/// read and observed here, at the stage. Only clock authority: never the
+/// floor of ids allocated in RAM but not yet used by a mutation. Returns the
+/// lease it commits.
+fn renew_authorization_lease_in_txn(core: &StoreCore, txn: &mut heed::RwTxn<'_>) -> Result<u64> {
     let dbs = core.canonical_dbs();
     let (persisted, lease) = clock_floor_and_lease_in_txn(&dbs, txn)?;
     // Never below a time a lapsed decision already took, even past a clock
@@ -429,7 +443,7 @@ fn renew_authorization_lease_in_txn(
     if (now, leased) != (persisted, lease) {
         put_clock_floor_in_txn(&dbs, txn, now, leased)?;
     }
-    Ok(Some(renewal.hold_on_commit(leased)))
+    Ok(leased)
 }
 
 pub(crate) const ID_FLOOR: &[u8] = b"ports:id_floor:v1";

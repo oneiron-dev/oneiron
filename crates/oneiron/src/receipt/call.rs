@@ -482,7 +482,7 @@ impl Vault {
         self.store.group_write_detached(DetachedWrite::of_vault(
             "call receipt",
             self,
-            move |vault, txn| vault.put_call_receipt_in_txn(txn, id, input).map(|_| None),
+            move |vault, txn| vault.put_call_receipt_in_txn(txn, id, input).map(drop),
         ));
         Ok(receipt_ref)
     }
