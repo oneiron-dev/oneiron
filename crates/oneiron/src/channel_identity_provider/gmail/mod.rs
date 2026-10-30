@@ -45,6 +45,7 @@ mod http;
 mod provider;
 mod run;
 mod send;
+mod send_as;
 pub use self::http::HttpGmailSendWire;
 pub use self::run::GmailReadAuthority;
 pub use self::send::{
@@ -228,6 +229,9 @@ pub struct GmailDelegatedAdapterConfig {
     custody_record_ref: String,
     scopes: Vec<DelegatedGrantScope>,
     placement_policy: PlacementPolicy,
+    /// The mailbox's verified send-as aliases, a send may name as its From
+    /// (FIX 1055); see `send_as.rs`.
+    send_as: Vec<String>,
 }
 
 impl GmailDelegatedAdapterConfig {
@@ -261,6 +265,7 @@ impl GmailDelegatedAdapterConfig {
             custody_record_ref: grant.custody_record_ref,
             scopes: grant.scopes,
             placement_policy: PlacementPolicy::default(),
+            send_as: Vec::new(),
         })
     }
 

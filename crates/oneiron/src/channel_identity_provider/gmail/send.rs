@@ -209,8 +209,24 @@ impl GmailSendPlan {
         Ok(plan)
     }
 
+    /// Sends as `alias`, one of the mailbox's verified send-as aliases the
+    /// adapter's config lists (`users.settings.sendAs`, FIX 1055), in place
+    /// of the mailbox itself as From.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for an address the config does not list.
+    pub fn with_send_as(mut self, adapter: &GmailDelegatedAdapter, alias: &str) -> Result<Self> {
+        let alias = adapter.config().send_as_address(alias).ok_or_else(|| {
+            Error::InvalidConfig("gmail send-as alias is not one the mailbox lists".to_owned())
+        })?;
+        self.from_mailbox = alias.to_owned();
+        self.seal();
+        Ok(self)
+    }
+
     /// Sets the From display name (the member's own name, e.g. "Yura"). The
-    /// address stays the member's mailbox; only the phrase is added.
+    /// address stays the plan's From address; only the phrase is added.
     ///
     /// # Errors
     ///
@@ -591,7 +607,12 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
         if plan.to != recipient || plan.to != request.intent.target {
             return OutboundExecutionOutcome::failed("gmail_send_target_mismatch");
         }
-        if plan.from_mailbox != self.adapter.config().mailbox_address() {
+        if self
+            .adapter
+            .config()
+            .send_as_address(&plan.from_mailbox)
+            .is_none()
+        {
             return OutboundExecutionOutcome::failed("gmail_send_sender_mismatch");
         }
         let Ok(raw) = plan.render(&request.hygiene_headers) else {
