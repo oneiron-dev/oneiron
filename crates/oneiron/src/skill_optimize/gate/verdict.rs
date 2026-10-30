@@ -278,14 +278,11 @@ pub struct HeldOutVerdict {
     pub skill: EntityId,
     pub disposition: SkillEditDisposition,
     pub cycle: String,
-    /// The reserved receipts the scores were computed over — a bounded DISPLAY
-    /// list, newest [`SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE`] first-dropped-last.
+    /// The reserved receipts the scores were computed over — the whole scored
+    /// set, kept whole and measured (FIX 5099).
     ///
-    /// [`Self::held_out_truncated`] says when it is a window rather than the
-    /// whole basis; [`Self::held_out_count`] and [`Self::held_out_digest`] are
-    /// the basis itself and are what every comparison in this module actually
-    /// uses. A row that showed 64 of 300 receipts with no count and no digest
-    /// was claiming an evidence basis it did not have.
+    /// [`Self::held_out_count`] and [`Self::held_out_digest`] are the basis
+    /// itself and are what every comparison in this module actually uses.
     pub held_out_receipts: Vec<String>,
     /// How many reserved receipts the scores were ACTUALLY computed over.
     pub held_out_count: u64,
@@ -293,6 +290,7 @@ pub struct HeldOutVerdict {
     /// ([`held_out_receipt_set_digest`]).
     pub held_out_digest: String,
     /// Whether [`Self::held_out_receipts`] is a bounded window on the basis.
+    /// Always false on rows ruled since FIX 5099; kept for rows ruled before.
     pub held_out_truncated: bool,
     /// Canonical content digest of the candidate body that was scored.
     pub proposal_digest: String,

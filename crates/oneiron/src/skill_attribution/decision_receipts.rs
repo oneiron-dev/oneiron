@@ -1,6 +1,9 @@
 //! The decision receipts behind each attempt-lane judgment (FIX 11512): the
 //! judgment row is immutable by equality, so the receipts its judge's
-//! decisions gave are kept beside it, written once with it.
+//! decisions gave are kept beside it, written once with it. An outcome the
+//! judge left unclear or labelled environment makes no judgment; its
+//! receipts are kept the same way, beside its unclear and cause rows under
+//! the same sequence (FIX 12075).
 
 use serde::{Deserialize, Serialize};
 
@@ -48,16 +51,14 @@ pub(super) fn keep_decision_receipts_in_txn(
     )
 }
 
-/// The receipt of each decision that gave the attempt-lane judgment routed
-/// under `sequence`, in hunk order; empty when no ladder answered it.
+/// The receipt of each decision that gave the attempt-lane judgment, or the
+/// unclear or environment label, routed under `sequence`, in hunk order;
+/// empty when no ladder answered it.
 ///
 /// # Errors
 ///
 /// Storage errors; a row that does not decode.
-pub fn attribution_decision_receipts(
-    vault: &Vault,
-    sequence: u64,
-) -> Result<Vec<DecisionReceipt>> {
+pub fn attribution_decision_receipts(vault: &Vault, sequence: u64) -> Result<Vec<DecisionReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(DECISION_RECEIPTS
         .get(&vault.store, &rtxn, &sequence)?
@@ -78,7 +79,11 @@ pub(crate) fn erase_decision_receipts_entity_in_txn(
     entity: &EntityId,
 ) -> Result<()> {
     for (sequence, mut row) in super::erase_scan_in_txn(vault, wtxn, DECISION_RECEIPTS)? {
-        if row.receipts.iter().any(|receipt| receipt.principal == *entity) {
+        if row
+            .receipts
+            .iter()
+            .any(|receipt| receipt.principal == *entity)
+        {
             DECISION_RECEIPTS.delete(&vault.store, wtxn, &sequence)?;
             continue;
         }

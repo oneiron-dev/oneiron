@@ -2,8 +2,14 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::memory::{MessageResultAttachment, WitnessReceipt};
+use crate::code_run::dispatcher::HostSelfDispatcher;
+use crate::code_run::storage::ExecutorStorage;
+use crate::code_run::types::SelfDispatchOutcome;
+use crate::lens::RecordRef;
+use crate::memory::{CommitReceipt, MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::ExecutorUtterance;
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::task_verb::{TaskCreateReceipt, sdk::AgentVerb};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 /// A result MESSAGE's typed attachment (FIX 365), and the rows its run's
@@ -18,6 +24,134 @@ impl ResultSpeech<'_> {
     /// The MESSAGE metadata that carries the attachment.
     pub(crate) fn metadata(&self) -> Result<serde_json::Value> {
         self.attachment.to_metadata()
+    }
+}
+
+/// The committed-write refs a run's next speech bubble asserts (FIX 11456).
+/// `cited` stays empty: served/read rows are never citations.
+#[derive(Default)]
+pub(crate) struct RunAssertionCollector {
+    created: Vec<RecordRef>,
+}
+
+impl RunAssertionCollector {
+    fn note(&mut self, reference: RecordRef) {
+        if !self.created.contains(&reference) {
+            self.created.push(reference);
+        }
+    }
+
+    fn take(&mut self) -> WitnessAssertions {
+        WitnessAssertions {
+            cited: Vec::new(),
+            created: std::mem::take(&mut self.created),
+        }
+    }
+
+    fn restore(&mut self, assertions: WitnessAssertions) {
+        let pending = std::mem::take(&mut self.created);
+        for reference in assertions.created.into_iter().chain(pending) {
+            self.note(reference);
+        }
+    }
+}
+
+impl HostSelfDispatcher<'_> {
+    /// Notes created records from a successful committed write. Typed DTOs
+    /// only: no prose extraction and no served/read rows.
+    pub(crate) fn note_created_from_outcome(
+        &self,
+        verb: Option<AgentVerb>,
+        outcome: &SelfDispatchOutcome,
+    ) {
+        match outcome {
+            SelfDispatchOutcome::MemoryWrite(result) => {
+                self.note_created_ref(RecordRef::from_id(ENTITY_TYPE_CLAIM, &result.id, None));
+            }
+            SelfDispatchOutcome::MemoryEdgeWrite(result) => {
+                for id in [result.src, result.tgt] {
+                    if let Some(reference) = self.record_ref_for(id) {
+                        self.note_created_ref(reference);
+                    }
+                }
+            }
+            SelfDispatchOutcome::AgentVerb(answer) => match verb {
+                Some(AgentVerb::TasksCreate) => {
+                    if let Ok(receipt) =
+                        serde_json::from_value::<TaskCreateReceipt>(answer.output.clone())
+                    {
+                        self.note_created_refs([receipt.task_record, receipt.proposal_record]);
+                    }
+                }
+                Some(AgentVerb::VaultClaimsUpsert | AgentVerb::VaultOffRecordClaimsUpsert) => {
+                    if let Ok(receipt) =
+                        serde_json::from_value::<CommitReceipt>(answer.output.clone())
+                    {
+                        let claim = receipt.claim.or_else(|| {
+                            receipt
+                                .receipt_ref
+                                .strip_prefix("claim:")
+                                .and_then(|hex| EntityId::from_hex(hex).ok())
+                                .map(|id| RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None))
+                        });
+                        self.note_created_refs([claim, receipt.superseded]);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn note_created_refs(&self, refs: impl IntoIterator<Item = Option<RecordRef>>) {
+        for reference in refs.into_iter().flatten() {
+            self.note_created_ref(reference);
+        }
+    }
+
+    fn note_created_ref(&self, reference: RecordRef) {
+        self.assertions_created.borrow_mut().note(reference);
+    }
+
+    fn record_ref_for(&self, id: EntityId) -> Option<RecordRef> {
+        let kind = match &self.storage {
+            ExecutorStorage::Canonical(vault) => {
+                let txn = vault.store.env.read_txn().ok()?;
+                Self::entity_type_of(&vault.store, &txn, &id).ok()?
+            }
+            ExecutorStorage::Session(binding) => binding
+                .session
+                .read_composed(|view, txn| Self::entity_type_of(view, txn, &id))
+                .ok()?,
+        }?;
+        Some(RecordRef::from_id(kind, &id, None))
+    }
+
+    fn entity_type_of(
+        dbs: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<u8>> {
+        use crate::ports::EntityStoreRead;
+        let Some(raw) = dbs.port_entity_raw(txn, id)? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("entity metadata"))?
+                .entity_type,
+        ))
+    }
+
+    /// Takes the refs for one witness attempt. On error the caller restores
+    /// them, so a retry asserts the same set.
+    pub(crate) fn take_run_assertions(&self) -> WitnessAssertions {
+        self.assertions_created.borrow_mut().take()
+    }
+
+    /// Restores a failed witness attempt's refs ahead of any later writes.
+    pub(crate) fn restore_run_assertions(&self, assertions: WitnessAssertions) {
+        self.assertions_created.borrow_mut().restore(assertions);
     }
 }
 
@@ -163,7 +297,7 @@ pub(super) fn executor_speech_message_id_for_run(
     reason = "every parameter is a distinct axis the witness envelope binds; folding them into a \
               struct would hide which ones the host owns"
 )]
-pub(super) fn canonical_witness_executor_turn(
+pub(super) fn canonical_witness_executor_turn_sourced(
     vault: &Vault,
     run_ref: &str,
     run_id: Option<EntityId>,
@@ -174,6 +308,7 @@ pub(super) fn canonical_witness_executor_turn(
     order: u32,
     message_id: EntityId,
     actor: WriteActor,
+    assertions: WitnessAssertions,
 ) -> Result<WitnessReceipt> {
     let conversation_id = canonical_speech_conversation_id_for_run(run_ref, run_id)?;
     let turn_id = executor_speech_turn_id(run_ref, run_id)?;
@@ -195,7 +330,7 @@ pub(super) fn canonical_witness_executor_turn(
                     quote: None,
                 }],
                 occurred_at,
-                assertions: Default::default(),
+                assertions,
             },
             None,
             |wtxn| {

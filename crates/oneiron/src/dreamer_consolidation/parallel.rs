@@ -20,7 +20,6 @@ use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
 use super::stage_log::{PartitionStages, ms_since};
 use super::step_charge::StepChargeTally;
 use super::thing_agent::{ThingPass, ThingPassEnd};
-use crate::{Result, Vault};
 use crate::attempt_queue::{AttemptId, ReadSetProducer};
 use crate::autoreason_campaign::authoring::{ClaimAuthoringChoice, authoring_campaign};
 use crate::autoreason_campaign::beam_promotion::default_strategy;
@@ -46,6 +45,7 @@ use crate::llm::{
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+use crate::{Result, Vault};
 
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
@@ -478,14 +478,15 @@ impl ConsolidationExecutor<'_> {
 
     /// The incumbent confidence when `candidate` is admitted to the
     /// tournament and carries a string value the judges can read; `None`
-    /// when it stays single-pass.
+    /// when it stays single-pass. Contested is the conflict loop's outcome
+    /// (FIX 12084), never invented: an accumulated member or a merged head.
     fn tournament_admitted(
         &self,
         vault: &Vault,
         selector: &BoundClaimAuthoringSelector,
         candidate: &VerifiedCandidate,
     ) -> Option<f32> {
-        let claim = tournament_claim_of_verified(candidate, false).ok()?;
+        let claim = tournament_claim_of_verified(candidate, candidate.contested).ok()?;
         let admission = selector
             .claim_admission(vault, ClaimAuthoringChoice::Tournament, &claim)
             .ok()?;
@@ -599,8 +600,7 @@ impl ConsolidationExecutor<'_> {
                 ranking,
             )?],
         )?;
-        let fork =
-            DreamerTournamentAuthorFork::new(run_id.clone(), attempt_id, branch_attempts)?;
+        let fork = DreamerTournamentAuthorFork::new(run_id.clone(), attempt_id, branch_attempts)?;
         DreamerTournamentRun::new(
             run_id,
             fork,
