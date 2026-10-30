@@ -8,7 +8,10 @@
 //! re-wraps, the row and the vault key's `world-kit` escrow wrap commit in one
 //! transaction. No seed, point or passphrase is ever stored, and no piece but
 //! this machine's own, in its device-only key slots (FIX 2063); a restore
-//! here reads that piece back, and a confirm never does.
+//! here reads that piece back, and a confirm never rebuilds from it. A draw
+//! keeps it in the pending pair, and the confirm's commit moves it to the
+//! current pair (FIX 11977): a drawn kit the owner never confirms leaves the
+//! current kit's piece in place.
 //!
 //! The escrow wrap runs one way: the kit's root opens the vault key, so a kit
 //! restore on a new host opens a sealed backup. Nothing wraps the root under
@@ -44,7 +47,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::recovery::{
     CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase,
-    KitPiece, KitSecretKind, PieceHome, RestoredKitSecret, issue_recovery_root_kit, restore_kit,
+    KitPiece, KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret, issue_recovery_root_kit,
+    restore_kit,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -302,8 +306,10 @@ impl Vault {
 
     /// Kit issue's draw: a fresh root's seed split over the homes, held in
     /// memory only. Nothing is written to the vault; a `ThisMachine` home's
-    /// piece goes to this install's key slots, replacing an earlier world
-    /// kit's piece there, and the other homes' pieces are returned (FIX 2063).
+    /// piece goes to this install's pending key slots, replacing only an
+    /// earlier draw's piece there, and the other homes' pieces are returned
+    /// (FIX 2063, 11977). The current kit's piece stays until this kit's
+    /// confirm; a confirmed kit's piece still pending moves first.
     pub(super) fn draw_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -341,11 +347,17 @@ impl Vault {
         )
         .map_err(kit_refused)?;
         drop(prepared);
+        if store.is_some() {
+            self.settle_pending_kit_piece();
+        }
+        let manifest = kit.manifest().clone();
+        let pieces =
+            keep_this_machine_piece(store.as_ref(), KitPiecePair::Pending, kit.into_pieces())?;
         Ok(IssuedWorldKit {
             vault_id,
             root,
-            manifest: kit.manifest().clone(),
-            pieces: keep_this_machine_piece(store.as_ref(), kit.into_pieces())?,
+            manifest,
+            pieces,
         })
     }
 
@@ -419,6 +431,8 @@ impl Vault {
     /// escrow wrap commit in the activation's transaction. A vault with a
     /// data key needs it held on this handle: the new wrap replaces the old
     /// kit's, so a locked key refuses the confirm before anything is written.
+    /// Once it commits, this machine's piece of the kit leaves the pending
+    /// key slots for the current ones (FIX 11977).
     pub fn confirm_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -435,6 +449,7 @@ impl Vault {
             self.activate_owner_root_with(owner, prepared, carry, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
+        self.settle_pending_kit_piece();
         transition.finish()?;
         Ok(ConfirmedWorldKit {
             kit: row.kit,
@@ -557,6 +572,15 @@ impl Vault {
             .restore_kit_here(vault_id, KitSecretKind::RecoveryRoot, pieces, passphrase)
             .map_err(kit_refused)?;
         kit_seed_of(&vault_id, secret)
+    }
+
+    /// Whether `kit` is this vault's current world kit, read from this
+    /// install's inventory (FIX 11977).
+    pub(super) fn world_kit_current(&self, kit: KitId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(KITS
+            .get(&self.store, &txn, &kit_key(kit))?
+            .is_some_and(|row| row.current()))
     }
 
     /// Whether a kit this install issued for `root` still waits for its

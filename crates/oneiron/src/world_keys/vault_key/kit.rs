@@ -30,7 +30,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::recovery::{
-    KitIssue, KitManifest, KitPassphrase, KitPiece, KitSecretKind, RestoredKitSecret,
+    KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitSecretKind, RestoredKitSecret,
     issue_vault_key_kit, restore_kit,
 };
 use crate::world_keys::kit::{kit_refused, resolve_homes};
@@ -156,7 +156,8 @@ impl Vault {
         )
         .map_err(kit_refused)?;
         let manifest = kit.manifest().clone();
-        let pieces = keep_this_machine_piece(store.as_ref(), kit.into_pieces())?;
+        let pieces =
+            keep_this_machine_piece(store.as_ref(), KitPiecePair::Current, kit.into_pieces())?;
         // The pieces never depend on the row: a write refused here (a vault
         // that takes none, a proof gone since the snapshot) is said, and the
         // kit is handed over all the same.
