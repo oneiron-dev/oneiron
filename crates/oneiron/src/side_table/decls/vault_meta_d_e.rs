@@ -171,6 +171,10 @@ side_tables! {
     /// The original mention and its resolving evidence, written with the link.
     /// Key: id16(turn) + hash32(message, span).
     DREAMER_IDENTITY_RESOLUTION: VaultMeta b"dreamer:identity:v1:resolution:" Named;
+    /// The first try of one Dreamer retry's lineage, pinned when the retry is minted (FIX 9350)
+    /// so a compaction that folds that try never moves the namespace its people mint under. Key:
+    /// id16(retry); value: the origin attempt id.
+    DREAMER_LINEAGE_ORIGIN: VaultMeta b"dreamer:lineage-origin:v1:" Named;
     /// OF-023: one Dreamer maintenance write applied at once: its kind, attempt, the finding's
     /// revision, the before-state its effect changed, its receipt and, once the owner reverts
     /// it, the revert. Key: id16 (finding).

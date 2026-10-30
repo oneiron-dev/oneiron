@@ -637,6 +637,9 @@ impl<'a> DreamerRunnerStore<'a> {
             crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
                 self.vault, txn, source.id, record.id,
             )?;
+            crate::dreamer_consolidation::pin_lineage_origin_in_txn(
+                self.vault, txn, source.id, record.id,
+            )?;
             // The source never runs again; its retry lists afresh.
             crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, txn, source.id)?;
             ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
@@ -820,6 +823,9 @@ impl<'a> DreamerRunnerStore<'a> {
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
             crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
+                self.vault, txn, source.id, record.id,
+            )?;
+            crate::dreamer_consolidation::pin_lineage_origin_in_txn(
                 self.vault, txn, source.id, record.id,
             )?;
             ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
