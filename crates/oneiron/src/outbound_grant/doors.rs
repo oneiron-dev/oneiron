@@ -1,10 +1,11 @@
-//! The owner's mint of a standing outbound grant, its withdrawal by the
+//! The owner's mint of a standing outbound grant, a system path's mint of
+//! one it derives from the owner's setting, the grant's withdrawal by the
 //! owner or the engine, and the reads, all over the standing consent Grant
 //! rows the grants are.
 
 use super::bound::{StandingOutboundGrant, StandingOutboundGrantScope};
 use crate::Vault;
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{AuthenticatedOwner, DerivedGrantOrigin, DerivedGrantSetting};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -59,7 +60,54 @@ impl Vault {
         let bound = scope.grant_bound(principal_ref, id, &frontier)?;
         let grant_ref = bound.digest().to_hex();
         self.create_outbound_standing_grant_in_txn(wtxn, owner, bound)?;
-        self.consent_grant_in_txn(&*wtxn, &grant_ref)?
+        self.minted_standing_outbound_grant_in_txn(&*wtxn, &grant_ref)
+    }
+
+    /// Mints one standing outbound grant a system path derives from a
+    /// setting the owner made earlier, in the caller's write transaction,
+    /// bound to the policy frontier that transaction reads. No owner is
+    /// present: the derived consent door
+    /// ([`Self::create_derived_outbound_standing_grant_in_txn`]) admits only
+    /// the dial `origin`'s path mints, and stamps the row with the owner
+    /// `setting` names. `None`: the vault records no owner to stamp it, and
+    /// nothing was written.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::GateError::InvalidConsentBound`] for a dial `origin`'s
+    /// path never mints, [`crate::error::RecordError::InvalidOutboundGrantBody`]
+    /// for a dial that fails validation, and storage errors.
+    pub(crate) fn mint_derived_outbound_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        origin: DerivedGrantOrigin,
+        setting: &DerivedGrantSetting,
+        id: EntityId,
+        principal_ref: &str,
+        scope: StandingOutboundGrantScope,
+    ) -> Result<Option<StandingOutboundGrant>> {
+        let frontier =
+            crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?.read_frontier_hash()?;
+        let bound = scope.grant_bound(principal_ref, id, &frontier)?;
+        let grant_ref = bound.digest().to_hex();
+        if self
+            .create_derived_outbound_standing_grant_in_txn(wtxn, origin, setting, bound)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.minted_standing_outbound_grant_in_txn(&*wtxn, &grant_ref)
+            .map(Some)
+    }
+
+    /// The standing outbound grant just minted under `grant_ref`, read back
+    /// on the minting transaction.
+    fn minted_standing_outbound_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: &str,
+    ) -> Result<StandingOutboundGrant> {
+        self.consent_grant_in_txn(txn, grant_ref)?
             .as_ref()
             .and_then(StandingOutboundGrant::from_row)
             .ok_or(Error::InvariantViolation(
@@ -68,8 +116,9 @@ impl Vault {
     }
 
     /// Ends one live standing outbound grant row in the caller's write
-    /// transaction: the owner's revoke, receipted, when `owner` is present;
-    /// else the engine's reduce-only retire. `false`: the row was not live.
+    /// transaction: the owner's revoke when `owner` is present, else the
+    /// engine's reduce-only retire; either is receipted. `false`: the row was
+    /// not live.
     ///
     /// # Errors
     ///
@@ -84,9 +133,9 @@ impl Vault {
             Some(owner) => Ok(self
                 .revoke_consent_grant_in_txn(wtxn, owner, &grant.grant_ref())?
                 .is_some()),
-            None => {
-                crate::consent::revoke_standing_grant_in_txn(&self.store, wtxn, &grant.grant_ref())
-            }
+            None => Ok(self
+                .revoke_standing_grant_as_engine_in_txn(wtxn, &grant.grant_ref())?
+                .is_some()),
         }
     }
 

@@ -30,7 +30,10 @@ mod queue_check;
 mod read;
 mod request_credential;
 
-pub(crate) use grants::{record_standing_grant_use_for_store_in_txn, standing_grant_rows_in_txn};
+pub(crate) use grants::{
+    DerivedGrantOrigin, DerivedGrantSetting, record_standing_grant_use_for_store_in_txn,
+    standing_grant_rows_in_txn,
+};
 pub(crate) use queue_check::QueuedCheckApproval;
 
 // ---------------------------------------------------------------------------
