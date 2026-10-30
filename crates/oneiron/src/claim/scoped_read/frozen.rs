@@ -97,10 +97,23 @@ impl FrozenReadLane {
             .proof
             .as_ref()
             .map(crate::authority::VerifiedSlip::claims);
-        let records = claims
+        let mut records = claims
             .map(|claims| claims.records.clone())
             .unwrap_or_default();
-        let channel_refused = claims.is_some_and(|claims| !lane.credential_channel_allows(claims));
+        // A key rebuilt from a frozen lane holds its records caveat as a
+        // bound, not in its proof: keep it, met with the proof's caveat. A
+        // bound that meets to no row reads nothing.
+        let mut bound_reads_nothing = false;
+        if let Some(bound) = &key.record_bound {
+            records = if records.is_empty() {
+                bound.clone()
+            } else {
+                records.intersection(bound).cloned().collect()
+            };
+            bound_reads_nothing = records.is_empty();
+        }
+        let channel_refused = claims.is_some_and(|claims| !lane.credential_channel_allows(claims))
+            || bound_reads_nothing;
         let scope_narrows = key.authority_scope().is_some_and(|scope| {
             Scope {
                 verbs: ScopeAxis::All,
