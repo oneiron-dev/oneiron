@@ -194,7 +194,8 @@ pub(crate) fn validate_machine_history_put(
             return Err(invalid_history());
         };
         let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
-        match super::history_projection::resolved_machine_history(store, txn, &fold, *id) {
+        // An advance's heal lands here: it reads what the advance carried.
+        match super::history_advance::resolved_machine_history_carried(store, txn, &fold, *id) {
             Ok(projection)
                 if incoming == &super::history_projection::project_machine_claim(&projection) => {}
             // A superseded history leaves the live row to its same-id
@@ -410,6 +411,7 @@ fn target_prefix(target: EntityId) -> Vec<u8> {
 
 /// Add one verified immutable control id to a target-local index. The index
 /// is a navigation hint only; every fetched row is revalidated on read/fold.
+/// The put chains into the target's seal (`history_seal`, FIX 4296).
 pub(crate) fn maintain_machine_history_index(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -425,7 +427,7 @@ pub(crate) fn maintain_machine_history_index(
     let mut key = target_prefix(target);
     key.extend_from_slice(id.as_bytes());
     store.vault_meta.put(txn, &key, &[])?;
-    Ok(())
+    super::history_seal::chain_index_seal_in_txn(store, txn, target, id, body)
 }
 
 /// Every control id in `target`'s index. The index grows with the claim's
@@ -513,6 +515,7 @@ pub(crate) fn retire_machine_history_for_delete(
         key.extend_from_slice(control.as_bytes());
         store.vault_meta.delete(txn, &key)?;
     }
+    super::history_seal::drop_index_seal_in_txn(store, txn, target)?;
     Ok(controls)
 }
 
