@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::llm::manifest::{ModelBinding, ModelManifest, ModelRole, TeacherProbeApproval};
 use crate::skill_optimize::{EvalExposure, EvalExposureKind, EvalSeat};
 
-use super::custody::read_pin;
+use super::custody::verify_pin;
 use super::{
     HeldOutResult, PinnedCheckpoint, ROLES, RUNS, RoleSwapReceipt, SWAPS, SourcePin, SplitSide,
     SwapChoice, TrainingOwner, TrainingRun, TrainingState, hash_json, invalid, run_in_txn,
@@ -279,7 +279,7 @@ impl Vault {
             }
             validate_eval(&run, evaluation)?;
             for log in &evaluation.verifier_logs {
-                read_pin(self, txn, log)?;
+                verify_pin(self, txn, log)?;
             }
             // The scores are the verifier logs' (FIX 5760), less a source an
             // erase reached since (FIX 6933).

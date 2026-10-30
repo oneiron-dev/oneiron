@@ -379,9 +379,10 @@ impl Carrier {
             return;
         }
         let mut record = self.store.get(kind, member);
-        let kept = record.diverged.as_ref().is_some_and(|diverged| {
-            diverged.held_by == held_by && diverged.held.blake3 == held
-        });
+        let kept = record
+            .diverged
+            .as_ref()
+            .is_some_and(|diverged| diverged.held_by == held_by && diverged.held.blake3 == held);
         if !kept {
             return;
         }
@@ -428,12 +429,7 @@ impl Carrier {
 
 /// Says that `side`'s copy of `kind`'s `member` the owner kept moved aside to
 /// `aside`, or was no longer at the member's name.
-fn said_moved_aside(
-    side: VmOutboxSide,
-    kind: VmOutboxKind,
-    member: &str,
-    aside: Option<&str>,
-) {
+fn said_moved_aside(side: VmOutboxSide, kind: VmOutboxKind, member: &str, aside: Option<&str>) {
     tracing::info!(
         reason = "vm_outbox_diverged_moved_aside",
         ?side,

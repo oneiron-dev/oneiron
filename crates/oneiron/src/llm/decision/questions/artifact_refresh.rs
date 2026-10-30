@@ -367,7 +367,8 @@ impl Asking<'_> {
                 only = self.changed_units(artifact, &selection, &baseline, &observed)?;
                 // An edit to a live body never exported moves no version (FIX 2115).
                 if let Some(only) = only.as_mut()
-                    && let Some(live) = self.live_changed_units(artifact, &selection, &stamp.live)?
+                    && let Some(live) =
+                        self.live_changed_units(artifact, &selection, &stamp.live)?
                 {
                     only.merge(live);
                 }
@@ -503,18 +504,31 @@ impl Asking<'_> {
                     let txn = vault.store.env.read_txn()?;
                     vault.docx_archive_limits_in_txn(&txn, Some(self.record.principal))?
                 };
+                // The DOCX reads run in the host's memory (FIX 10651); a resource
+                // refusal is the engine's error, never a quiet re-ask of all (FIX 10587).
+                let resources = crate::office_body::document_resources();
                 let texts = |bytes: &[u8]| {
-                    let read = oneiron_docedit::docx_body::read_docx_blocks(bytes, limits).ok()?;
-                    Some(
+                    let read = match resources
+                        .docx(|| oneiron_docedit::docx_body::read_docx_blocks(bytes, limits))
+                    {
+                        Ok(read) => read,
+                        Err(error) => {
+                            if let Some(refusal) = error.resource() {
+                                return Err(crate::office_body::document_refused(refusal));
+                            }
+                            return Ok(None);
+                        }
+                    };
+                    Ok(Some(
                         read.into_iter()
                             .map(|block| {
                                 let text = *blake3::hash(block.text.as_bytes()).as_bytes();
                                 (block.id, text)
                             })
                             .collect::<std::collections::BTreeMap<_, _>>(),
-                    )
+                    ))
                 };
-                let (Some(then), Some(now)) = (texts(&then), texts(&now)) else {
+                let (Some(then), Some(now)) = (texts(&then)?, texts(&now)?) else {
                     return Ok(None);
                 };
                 Some(Changed::Blocks(

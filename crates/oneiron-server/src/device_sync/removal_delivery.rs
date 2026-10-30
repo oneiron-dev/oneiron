@@ -76,8 +76,14 @@ impl Receiver {
         let (stop, stopped) = oneshot::channel();
         if super::direct(&dial.url).is_ok() {
             let base = http_base(&dial.url)?;
-            let task =
-                tokio::spawn(receive(base, vault, admit, credential_file, archives, stopped));
+            let task = tokio::spawn(receive(
+                base,
+                vault,
+                admit,
+                credential_file,
+                archives,
+                stopped,
+            ));
             return Some(Self { stop, task });
         }
         let mesh = mesh?;

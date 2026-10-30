@@ -245,21 +245,9 @@ impl<'v> ScopedRead<'v> {
             .map(|revision| revision.raw))
     }
 
-    /// Historical bytes never inherit a later live body's authority, or vice versa.
-    pub(super) fn entity_raw_with_mode_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        id: &EntityId,
-        mode: ReadMode,
-    ) -> Result<Option<AdmittedRevision>> {
-        let authority = HeldAuthority::default();
-        self.entity_raw_with_mode_held_in(txn, policy, filter, id, mode, &authority)
-    }
-
-    /// [`Self::entity_raw_with_mode_in`] under the authority one serving txn
-    /// holds for all its rows (FIX 7462).
+    /// Historical bytes never inherit a later live body's authority, or vice
+    /// versa. Judged under the authority one serving txn holds for all its
+    /// rows (FIX 7462).
     pub(super) fn entity_raw_with_mode_held_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -360,19 +348,23 @@ impl<'v> ScopedRead<'v> {
         Ok(admitted.then_some(raw))
     }
 
+    /// Whether `entity`'s revision reads in `txn` under `authority`, the
+    /// serving txn's own (FIX 11915).
     pub(super) fn context_entity_revision_is_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         entity: &ContextEntity,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         let mode = entity
             .source_revision_ref
             .map_or(ReadMode::Live, |revision| {
                 ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
-        let Some(revision) = self.entity_raw_with_mode_in(txn, policy, filter, &entity.id, mode)?
+        let Some(revision) =
+            self.entity_raw_with_mode_held_in(txn, policy, filter, &entity.id, mode, authority)?
         else {
             return Ok(false);
         };

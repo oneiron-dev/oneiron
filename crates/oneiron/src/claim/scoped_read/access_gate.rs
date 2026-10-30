@@ -134,11 +134,16 @@ impl<'v> ScopedRead<'v> {
             })
     }
 
+    /// Whether the relationship gate admits the claim `id` in `txn`, judged
+    /// by the reader's grants and memberships `authority` holds for this
+    /// serving txn: loaded at the first claim that needs them, then reused,
+    /// as [`Self::relationship_raw_allowed_in`] reuses them (FIX 11915).
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         body: &ClaimBody,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
@@ -147,8 +152,14 @@ impl<'v> ScopedRead<'v> {
         if self.support_disclosure_admits_in(txn, id, &read)? {
             return Ok(true);
         }
-        let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(read.allowed_by(&context))
+        let mut held = authority.0.borrow_mut();
+        let context = match held.take() {
+            Some(context) => context,
+            None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
+        };
+        let allowed = read.allowed_by(&context);
+        *held = Some(context);
+        Ok(allowed)
     }
 
     /// [`Self::relationship_claim_allowed_in`] for a claim that may never

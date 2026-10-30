@@ -141,7 +141,7 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
         let status_text = receipt.status.text();
         let unassigned_text = receipt.unassigned.map(OwnerWorkUnassigned::text);
         let advice_text = receipt.status.advice();
-        let home_warning_text = receipt.home_warning.map(BundleHomeWarning::text);
+        let home_warning_text = receipt.home_warning.as_ref().map(BundleHomeWarning::text);
         let cancel_text = receipt.cancel.as_ref().map(|cancel| cancel.state.text());
         Self {
             status_text,
