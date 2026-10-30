@@ -3,7 +3,7 @@
 //! with. A cache of what the vault already decided, never a second pack
 //! authority: a webhook rechecks the pack and the check before it admits.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use oneiron::Vault;
 use oneiron::channel_identity_provider::{
@@ -11,8 +11,9 @@ use oneiron::channel_identity_provider::{
 };
 use oneiron::skill_hub::pack_catalog::{CheckedBuiltinConnection, PackSetupSecret};
 
+use super::native_mail::{NATIVE_MAIL_CHANNEL, NATIVE_MAIL_CONNECTION, NativeMailInboxes};
 use super::slack_app::{SlackInstalls, public_origin, slack_app_config};
-use crate::config::LineConfig;
+use crate::config::{LineConfig, NativeMailConfig};
 
 /// The built-in Slack pack's connection, its request-signing secret and the
 /// effector the pack declares for it (packs/builtin/slack/PACK.md).
@@ -30,6 +31,8 @@ pub(crate) struct BuiltinHandles {
     line: RwLock<Option<Arc<LineHandle>>>,
     /// The Slack app installs started by the owner, awaiting Slack's redirect.
     pub(crate) slack_installs: SlackInstalls,
+    /// The native mail pack's connection and each inbox's read progress.
+    native_mail: Mutex<NativeMailInboxes>,
 }
 
 pub(crate) struct SlackHandle {
@@ -89,6 +92,26 @@ impl BuiltinHandles {
             line_handle(checked, basis, plan).map(Arc::new)
         });
         replace(&self.line, line, LINE_CHANNEL);
+    }
+}
+
+impl BuiltinHandles {
+    /// One pass over the native mail pack's inboxes, while the host names its
+    /// `[native_mail]` server; the pack follows its check as a handle does.
+    pub(crate) fn poll_native_mail(&self, vault: &Vault, config: Option<&NativeMailConfig>) {
+        let mut inboxes = self
+            .native_mail
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(config) = config else {
+            *inboxes = NativeMailInboxes::default();
+            return;
+        };
+        let checked = checked(vault, NATIVE_MAIL_CHANNEL, NATIVE_MAIL_CONNECTION).map(|checked| {
+            let basis = basis(&checked);
+            (checked, basis)
+        });
+        inboxes.pass(vault, checked, config);
     }
 }
 
