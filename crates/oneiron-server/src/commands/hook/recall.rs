@@ -1,5 +1,6 @@
 //! Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time,
-//! and the short block a hook prints from its hits.
+//! and the short block a hook prints from its hits; and the admission check
+//! `oneiron hosted login` makes through the same bridge ([`admits`]).
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::unix::process::CommandExt as _;
@@ -18,10 +19,24 @@ const ITEM_CHARS: usize = 400;
 /// The block's text in all, in characters, bullets and newlines aside.
 const BLOCK_CHARS: usize = 6000;
 
+/// The environment variables a slip's bridge would read its credential
+/// from; an owner-mode bridge refuses to start beside them.
+const SLIP_ENV: [&str; 2] = ["ONEIRON_SECRET", "ONEIRON_BINDING_KEY"];
+
+/// Whom a recall's bridge runs as, by the file `oneiron mcp` reads itself.
+#[derive(Clone, Copy)]
+pub(super) enum RecallAuth<'a> {
+    /// A paired slip, from the file `token agent --out` wrote.
+    Slip(&'a Path),
+    /// The vault's owner, by the upgrade headers the surface he signed in
+    /// on wrote (`oneiron mcp --auth-mode owner`).
+    Owner(&'a Path),
+}
+
 pub(super) struct Recall<'a> {
     pub(super) oneiron: &'a Path,
     pub(super) url: &'a str,
-    pub(super) credential: &'a Path,
+    pub(super) auth: RecallAuth<'a>,
     pub(super) query: &'a str,
     pub(super) limit: usize,
     pub(super) effort: HookEffort,
@@ -91,23 +106,20 @@ impl Recall<'_> {
     }
 
     fn call(&self) -> anyhow::Result<Value> {
-        let mut bridge = Bridge::start(self)?;
+        let mut bridge = Bridge::start(
+            self.oneiron,
+            self.url,
+            self.auth,
+            self.deadline,
+            Stdio::null(),
+        )?;
         let result = self.exchange(&mut bridge);
         bridge.close();
         result
     }
 
     fn exchange(&self, bridge: &mut Bridge) -> anyhow::Result<Value> {
-        bridge.call(
-            1,
-            "initialize",
-            json!({
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "oneiron-claude-code-hooks", "version": "1"},
-            }),
-        )?;
-        bridge.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
+        bridge.initialize()?;
         let listed = bridge.call(2, "tools/list", json!({}))?;
         let (name, arguments) = self.tool_call(&listed)?;
         // One logical call under one invocation id (ARCH-0080 §3): this
@@ -166,6 +178,25 @@ impl Recall<'_> {
     }
 }
 
+/// Whether the server at `url` admits `auth` over `oneiron mcp` by
+/// `deadline`: its `initialize` answers, as it does only for a caller it
+/// admitted, and answers the authority vault id it serves (FIX 11695),
+/// `None` when it answers none. The bridge's own refusal, which never
+/// quotes a credential, goes to this process's stderr.
+pub(super) fn admits(
+    oneiron: &Path,
+    url: &str,
+    auth: RecallAuth<'_>,
+    deadline: Instant,
+) -> anyhow::Result<Option<String>> {
+    let mut bridge = Bridge::start(oneiron, url, auth, deadline, Stdio::inherit())?;
+    let answered = bridge
+        .initialize()
+        .map(|result| result.get("vault_id").and_then(Value::as_str).map(str::to_owned));
+    bridge.close();
+    answered
+}
+
 /// One `oneiron mcp` process in a process group of its own, so giving up
 /// also ends the `curl` it started.
 struct Bridge {
@@ -176,14 +207,35 @@ struct Bridge {
 }
 
 impl Bridge {
-    fn start(recall: &Recall<'_>) -> anyhow::Result<Self> {
-        let mut child = oneiron_spawn::command(recall.oneiron)
-            .args(["mcp", "--url", recall.url, "--surface", "tool-first"])
-            .arg("--credential-file")
-            .arg(recall.credential)
+    /// `oneiron mcp` at `url` as `auth`, its stderr to `stderr`, answering
+    /// until `deadline`.
+    fn start(
+        oneiron: &Path,
+        url: &str,
+        auth: RecallAuth<'_>,
+        deadline: Instant,
+        stderr: Stdio,
+    ) -> anyhow::Result<Self> {
+        let mut command = oneiron_spawn::command(oneiron);
+        command.args(["mcp", "--url", url, "--surface", "tool-first"]);
+        match auth {
+            RecallAuth::Slip(credential) => {
+                command.arg("--credential-file").arg(credential);
+            }
+            RecallAuth::Owner(headers) => {
+                command
+                    .args(["--auth-mode", "owner", "--owner-upgrade-headers-file"])
+                    .arg(headers);
+                // His socket stands on his sign-in alone.
+                for name in SLIP_ENV {
+                    command.env_remove(name);
+                }
+            }
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(stderr)
             .process_group(0)
             .spawn()?;
         let stdout = child
@@ -206,8 +258,24 @@ impl Bridge {
             stdin: child.stdin.take(),
             child,
             lines,
-            deadline: recall.deadline,
+            deadline,
         })
+    }
+
+    /// The MCP handshake: `initialize`, which the server answers only for a
+    /// caller it admitted, then `notifications/initialized`.
+    fn initialize(&mut self) -> anyhow::Result<Value> {
+        let initialized = self.call(
+            1,
+            "initialize",
+            json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "oneiron-claude-code-hooks", "version": "1"},
+            }),
+        )?;
+        self.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
+        Ok(initialized)
     }
 
     fn send(&mut self, message: &Value) -> anyhow::Result<()> {

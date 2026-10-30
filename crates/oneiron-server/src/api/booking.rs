@@ -65,6 +65,7 @@ mod offerability;
 mod page_token;
 mod public;
 mod public_availability;
+mod socket_gate;
 mod subject;
 mod transport;
 mod turn;
@@ -88,6 +89,7 @@ pub(super) use self::public::public_booking_router;
 pub(crate) use self::public::resolve_public_booking_page_listing;
 #[cfg(test)]
 pub(crate) use self::public::turn_tests::cross_the_booking_windows;
+pub(crate) use self::socket_gate::booking_socket_admits;
 use self::subject::{resolve_booker_contact, session_key};
 use self::transport::http_transport_context;
 pub(crate) use self::transport::{

@@ -148,7 +148,8 @@ fn asks_here(
             }
             OwnerWorkBody::WorldKey { .. }
             | OwnerWorkBody::Root { .. }
-            | OwnerWorkBody::Custody { .. } => false,
+            | OwnerWorkBody::Custody { .. }
+            | OwnerWorkBody::ExportSecret(_) => false,
         })
 }
 

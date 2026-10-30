@@ -12,6 +12,7 @@ mod settle_window;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::attribution::{
     AmendmentCause, AmendmentEvidence, AmendmentJudgment, PreferenceProposal,
@@ -24,7 +25,6 @@ use crate::edit_distance::delta::{
     AmendmentDelta, OpsSummary, amendment_delta, put_amendment_delta_in_txn,
     put_amendment_uncaptured_in_txn,
 };
-use crate::edit_distance::{ProposalArtifactRef, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::skill_attribution::{
@@ -589,9 +589,12 @@ pub struct ProposalDeltaRead {
     pub unclear: Vec<UnclearAttributionView>,
 }
 
+/// The owner's read of one settlement, from a caller at `locality`; its
+/// artifact is shown as `readable_artifact` judges it (FIX 11351, 11355).
 pub fn skill_attribution_read_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    locality: CallerLocality,
     input: &ProposalDeltaReadRequest,
 ) -> MemoryResult<ProposalDeltaRead> {
     owner.revalidate(vault)?;
@@ -603,10 +606,9 @@ pub fn skill_attribution_read_as_owner(
                 .strip_prefix("proposal-delta:")
                 .and_then(|hex| EntityId::from_hex(hex).ok())
         })
-        .map(|id| retained_proposal(vault, ProposalArtifactRef::new(id)))
+        .map(|id| artifact_view::readable_artifact(vault, owner, locality, id))
         .transpose()?
-        .flatten()
-        .map(Into::into);
+        .flatten();
     let judgment = amendment_judgments(vault)?
         .into_iter()
         .find(|judgment| judgment.receipt_id == input.receipt_id)

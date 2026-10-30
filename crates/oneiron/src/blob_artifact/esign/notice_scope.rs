@@ -70,10 +70,17 @@ impl Memory<'_> {
     /// A narrowed credential whose read lane does not open, as every read
     /// verb refuses it.
     pub(super) fn notice_scope(&self) -> MemoryResult<NoticeScope<'_>> {
+        // A whole-vault guest view a later pact narrowing reached past is
+        // judged by its lane (FIX 9117).
         match self.presented_credential() {
-            Some(proof) if !bounded_by_whole_vault(proof) => Ok(NoticeScope::Credential(
-                self.read_lane(ClaimReadStatus::Recorded)?,
-            )),
+            Some(proof)
+                if !bounded_by_whole_vault(proof)
+                    || !self.vault().guest_view_current(proof.claims())? =>
+            {
+                Ok(NoticeScope::Credential(
+                    self.read_lane(ClaimReadStatus::Recorded)?,
+                ))
+            }
             _ => Ok(NoticeScope::Unrestricted),
         }
     }

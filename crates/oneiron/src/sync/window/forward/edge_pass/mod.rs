@@ -482,6 +482,22 @@ fn gate(ctx: &RematCtx<'_>, key: &str, buf: Option<&[u8]>) -> Result<Gate> {
         return Ok(Gate::Skip);
     }
 
+    // A withdrawn Shell's structural edge has no body to prove it (FIX 931):
+    // it waits in the window, as an edge of an absent endpoint does.
+    let shell = {
+        let txn = vault.store.env.read_txn()?;
+        crate::sync::withdrawn_cutoffs::withdrawn_shell_edge_in(
+            &vault.store,
+            &txn,
+            kind,
+            &src,
+            &tgt,
+        )?
+    };
+    if shell {
+        return Ok(Gate::Skip);
+    }
+
     Ok(Gate::Queued(Queued::Main(EdgeWork {
         src,
         kind,

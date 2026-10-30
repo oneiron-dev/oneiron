@@ -201,8 +201,9 @@ pub(super) async fn run_conversation_check(
         }
     };
     let locality = judge_locality(&model)?;
+    let keyless = model.inference.selected_keyless();
     let input = judge_input(&declaration, &summary, &evidence);
-    let request = judge_request(&model, &input, locality)?;
+    let request = judge_request(&model, &input, locality, keyless)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -216,12 +217,16 @@ pub(super) async fn run_conversation_check(
         evidence: &cited,
         state: &input,
         locality,
+        keyless,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),
     };
-    let mut settled = match read(ctx.vault, &declaration)? {
+    let mut settled = match read(ctx.vault, &declaration).map_err(|error| {
+        verdict.spend.note_before_error(ctx);
+        error
+    })? {
         Reading::Ready { .. } => {
             let (reason, conflicts) = judged.map_or_else(
                 || (NO_DIAGNOSTIC.to_owned(), Vec::new()),
@@ -246,7 +251,10 @@ pub(super) async fn run_conversation_check(
         }
     };
     settled.judge = Some(judging.judge(&model));
-    record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+    if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, now) {
+        verdict.spend.note_before_error(ctx);
+        return Err(error);
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: verdict.spend.units,
         step_hashes: Vec::new(),
@@ -321,6 +329,7 @@ fn judge_request(
     model: &CompactionCheckModel<'_>,
     input: &serde_json::Value,
     locality: crate::llm::ModelLocality,
+    keyless: bool,
 ) -> Result<LlmRequest> {
     let schema = serde_json::json!({
         "type": "object", "additionalProperties": false,
@@ -338,7 +347,7 @@ fn judge_request(
             "reason": {"type": "string"}
         }
     });
-    judge_call(model, schema, input, locality)
+    judge_call(model, schema, input, locality, keyless)
 }
 
 /// What the judge reads: the span's length in turns, the summary and the

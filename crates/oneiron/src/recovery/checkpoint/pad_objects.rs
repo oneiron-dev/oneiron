@@ -11,13 +11,18 @@
 //! when it carries the same object ([`refill_pad_object`], its current
 //! provider source).
 //!
-//! An install never brings back a generation the copy does not keep (each
-//! one the source keeps is named not carried), never touches a bundle, and
-//! never stands for a pad: a world key pad lands only through `pad_custody`,
-//! and the epoch's pad debt is reconciled apart by the shared resolver. An erase's rewrite the source holds takes the place
-//! of the copy's older object, so an exact key the source's erase retired
-//! does not come back from the copy's (restricts, ruled). Every new fault
-//! keeps what the copy holds, with a value-free note: never a refusal.
+//! Before it installs, the copy's generations are brought to the source's
+//! (FIX 11294, `PadObjectMembership`): one only the source keeps is adopted,
+//! bundle and pad object, when the capture carries both whole, else named
+//! not carried; one only the copy keeps is retired where the source's own
+//! keep and age rule, over the generations its same read keeps, retires it,
+//! else it keeps its bytes and is named not retired. An install never stands
+//! for a pad: a world key pad lands only through `pad_custody`, and the
+//! epoch's pad debt is reconciled apart by the shared resolver. An erase's
+//! rewrite the source holds takes the place of the copy's older object, so
+//! an exact key the source's erase retired does not come back from the
+//! copy's (restricts, ruled). Every new fault keeps what the copy holds,
+//! with a value-free note: never a refusal.
 
 #[cfg(feature = "sync")]
 use std::collections::BTreeSet;
@@ -95,9 +100,12 @@ pub enum PadObjectNote {
     /// not give it whole: owed until a machine of the owner's refills it.
     Owed { generation: String },
     /// The source keeps a generation the vault does not: its pad object, and
-    /// the bundle it belongs to, were not carried, owed until a copy carries
-    /// current generations.
+    /// the bundle it belongs to, were not carried (the capture did not carry
+    /// both whole, or nothing installed), owed until a restore carries them.
     NotCarried { generation: String },
+    /// The vault keeps a generation its source does not, and the source's
+    /// read does not prove it retired: it keeps the objects it held.
+    NotRetired { generation: String },
 }
 
 impl std::fmt::Display for PadObjectNote {
@@ -122,8 +130,13 @@ impl std::fmt::Display for PadObjectNote {
             ),
             Self::NotCarried { generation } => write!(
                 f,
-                "generation {generation} the source keeps was not carried: owed until a copy \
-                 carries current generations"
+                "generation {generation} the source keeps was not carried: owed until a restore \
+                 carries it whole"
+            ),
+            Self::NotRetired { generation } => write!(
+                f,
+                "generation {generation} the source no longer keeps stays with the objects the \
+                 vault held: the source's read does not prove it retired"
             ),
         }
     }
@@ -194,13 +207,14 @@ pub(super) fn capture_open_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> PadOb
     #[cfg(feature = "sync")]
     {
         match crate::store::PAD_SOURCE_IDENTITY {
-            crate::store::PadSourceIdentity::OpenFoldInCustodyReadDiskUnproven => {}
+            crate::store::PadSourceIdentity::FoldedInCustodyRead => {}
         }
         let (vault_id, home) = match pad_objects_identity_in_txn(vault, txn) {
             Ok(identity) => identity,
             Err(error) => return not_captured(UncapturedPadObjects::IdentityUnread, &error),
         };
-        match capture_current_pad_objects_in_txn(&vault.store, txn, vault_id, home) {
+        // Every generation's bundle: a copy adopts the ones it does not keep.
+        match capture_current_pad_objects_in_txn(&vault.store, txn, vault_id, home, |_| true) {
             Ok(captured) => PadObjectsCapture::Captured(captured),
             Err(error) => not_captured(UncapturedPadObjects::RowsUnread, &error),
         }
@@ -350,7 +364,7 @@ fn finish(
             }
         };
         refill_short(vault, captured, notes);
-        note_not_carried(vault, captured, notes);
+        note_unmatched_generations(vault, captured, notes);
         installed
     }
     #[cfg(not(feature = "sync"))]
@@ -399,10 +413,16 @@ fn read_back_or_put_back(
     false
 }
 
-/// Names each generation `captured` carries that `vault` does not keep: the
-/// install skips it, so it is owed, never counted carried.
+/// Names each generation `captured` carries that `vault` does not keep once
+/// its install ran: not adopted, so it is owed, never counted carried. Then
+/// each `vault` keeps that `captured` does not: not retired, so it keeps the
+/// objects it held.
 #[cfg(feature = "sync")]
-fn note_not_carried(vault: &Vault, captured: &CapturedPadObjects, notes: &mut Vec<PadObjectNote>) {
+fn note_unmatched_generations(
+    vault: &Vault,
+    captured: &CapturedPadObjects,
+    notes: &mut Vec<PadObjectNote>,
+) {
     let held = vault
         .store
         .env
@@ -428,6 +448,18 @@ fn note_not_carried(vault: &Vault, captured: &CapturedPadObjects, notes: &mut Ve
         {
             let generation = sealed_generation_hex(&generation);
             push_note(notes, PadObjectNote::NotCarried { generation });
+        }
+    }
+    for meta in &held.entries {
+        let generation = meta.entry.generation;
+        if !captured
+            .index()
+            .entries
+            .iter()
+            .any(|source| source.entry.generation == generation)
+        {
+            let generation = sealed_generation_hex(&generation);
+            push_note(notes, PadObjectNote::NotRetired { generation });
         }
     }
 }

@@ -16,9 +16,9 @@ use crate::entity_id::EntityId;
 use crate::origin::mirror_strategy::OriginMirrorSyncStrategy;
 
 /// What one authenticated read saw at a mirror's ref before the plan froze.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub(crate) enum MirrorObservedTip {
+pub enum MirrorObservedTip {
     /// The mirror held no such ref: the push leases on its absence.
     Absent,
     /// The ref stood at this object, 40 lower hex: the push leases on it.
@@ -40,9 +40,9 @@ impl MirrorObservedTip {
 }
 
 /// Where one ref of a plan stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MirrorRefOutcome {
+pub enum MirrorRefOutcome {
     /// In a batch not yet claimed.
     Pending,
     /// Its batch (or its same-plan resend) was claimed and its child may be
@@ -165,9 +165,9 @@ pub(crate) struct MirrorPushPlan {
 }
 
 /// A batch's claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub(crate) enum MirrorBatchClaim {
+pub enum MirrorBatchClaim {
     Pending,
     /// Claimed at `at`, before its child ran.
     Claimed {

@@ -43,6 +43,11 @@ impl ScopedRead<'_> {
     /// (FIX 8245). Membership and deletion shells keep
     /// `Self::credential_allows_id`.
     pub(super) fn credential_allows_row_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> bool {
+        // A saved lane's frozen records caveat (OF-506) holds the row as named;
+        // it carries no proof for the cover to judge.
+        if !self.record_bound_allows(id) {
+            return false;
+        }
         let Some(proof) = self.actor_key.proof.as_ref() else {
             return true;
         };

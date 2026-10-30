@@ -122,6 +122,20 @@ pub(crate) async fn vault_code_origin_mirror_get(
     .await
 }
 
+pub(crate) async fn vault_code_origin_mirror_plan(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::origin::publish::OriginMirrorPlanRequest,
+) -> Listed<oneiron::origin::publish::OriginMirrorPlanView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.mirror.plan",
+        move |memory, owner| memory.origin_mirror_plan_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_origin_mirror_set(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

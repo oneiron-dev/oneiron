@@ -306,12 +306,9 @@ fn asker(lane: &ScopedRead<'_>) -> Result<EntityId> {
 }
 
 // A NOTE's author-only read requires an identity-checked actor class. The
-// asker is the reader even when a distinct agent performs the write.
-pub(super) fn asker_reader(vault: &Vault, principal: EntityId) -> Result<ScopedReadActorKey> {
-    let txn = vault.store.env.read_txn()?;
-    asker_reader_in_txn(vault, &txn, principal)
-}
-
+// asker is the reader even when a distinct agent performs the write. A
+// saved question narrows it to the lane its version keeps
+// (`saved_reader::saved_reader_in_txn`).
 pub(super) fn asker_reader_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -700,8 +697,10 @@ pub(crate) fn trial_unit_context_in_txn(
     locality: crate::claim::CallerLocality,
     answer: &AnswerRecord,
 ) -> Result<GraphUnitContext> {
-    let key = asker_reader_in_txn(vault, txn, principal)?.at(locality);
-    let lane = super::reader_authority::question_lane(vault, key);
+    // A trial reads inside the lane the answered version was saved under.
+    let read_lane = super::saved_reader::answer_lane_in_txn(vault, txn, principal, answer)?;
+    let key = super::saved_reader::saved_reader_in_txn(vault, txn, principal, &read_lane)?;
+    let lane = super::reader_authority::question_lane(vault, key.at(locality));
     let mut sources = Vec::new();
     for pin in &answer.decision.receipt.evidence_versions {
         let raw = lane
@@ -722,7 +721,7 @@ pub(crate) fn trial_unit_context_in_txn(
     if sources
         .first()
         .is_none_or(|source| source.id != answer.unit)
-        || super::refresh::trial_source_frontier(vault, txn, principal, answer.unit)?
+        || super::refresh::trial_source_frontier(vault, txn, principal, &read_lane, answer.unit)?
             != Some(answer.frontier)
     {
         return Err(Error::ConcurrentWrite(

@@ -207,6 +207,45 @@ pub struct GrantAskReceipt {
     pub status: String,
 }
 
+/// `self.grants.asked`'s input (FIX 11147): one page of the pending access
+/// requests that ask the caller.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GrantAskedRequest {
+    /// Exclusive request-id cursor (32-hex) from a prior page.
+    #[serde(default)]
+    pub after: Option<String>,
+    /// Page size, clamped to 1..=100; 50 when absent.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// One pending access request that asks the caller.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantAskedRow {
+    /// 32-hex request id, as `self.grants.answer` takes it.
+    pub request: String,
+    /// 32-hex id of the actor who asked; the grant would be theirs.
+    pub asker: String,
+    pub capability: String,
+    pub scope: crate::task_verb::sdk::GrantRequestedScope,
+    /// When the request was filed, in unix seconds.
+    pub created_at: u64,
+    /// When the requested grant would end, in unix seconds; none when it
+    /// would not.
+    pub expires_at: Option<u64>,
+}
+
+/// One page of the pending access requests that ask the caller, in request
+/// id order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantAskedPage {
+    pub requests: Vec<GrantAskedRow>,
+    /// The cursor of the next page; none when no more requests ask the
+    /// caller.
+    pub next_after: Option<String>,
+}
+
 fn unix_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

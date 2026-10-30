@@ -509,6 +509,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.coach.training_offers.pilots.prepare"
         | "vault.coach.training_offers.pilots.complete"
         | "vault.coach.training_offers.pilots.get"
+        | "vault.coach.training_offers.sources"
         | "vault.code.symbols.declare"
         | "vault.code.symbols.renew"
         | "vault.code.symbols.release"
@@ -535,6 +536,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.code.ingress.get"
         | "vault.code.origin.register"
         | "vault.code.origin.mirror.get"
+        | "vault.code.origin.mirror.plan"
         | "vault.code.origin.mirror.set"
         | "vault.code.origin.mirror.strategy"
         | "vault.code.origin.mirror.clear"
@@ -609,7 +611,11 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.secrets.rewrap"
         | "vault.secrets.revoke"
         | "vault.secrets.custody.get"
-        | "vault.secrets.custody.submit" => owner_proof(auth, server, verb).map(drop),
+        | "vault.secrets.custody.submit"
+        | "vault.custody.members.drain.begin"
+        | "vault.custody.members.drain.commit"
+        | "vault.custody.members.drain.folder"
+        | "vault.custody.members.reenrol" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

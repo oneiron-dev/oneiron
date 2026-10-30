@@ -60,8 +60,10 @@ impl Vault {
         Ok(pending)
     }
     /// The human gate (GOV-10): applies the staged compile iff the caller
-    /// re-presents its compiled hash out-of-band, and stamps the aggregate
-    /// binding text + compiled policy. Clears every compiled-cap usage row
+    /// re-presents the text hash and the compiled hash of what was reviewed
+    /// out-of-band (FIX 8682: a replaced text with the same compile is not
+    /// what was reviewed), and stamps the aggregate binding text + compiled
+    /// policy. Clears every compiled-cap usage row
     /// (charter source tag) in the same txn — compiled-cap usage is keyed
     /// positionally, so a re-stamped charter must never inherit the old
     /// charter's usage at the same indices or leave orphaned rows.
@@ -73,6 +75,7 @@ impl Vault {
     pub fn approve_connector_charter(
         &self,
         id: &EntityId,
+        expected_text_hash: [u8; 32],
         expected_compiled_hash: [u8; 32],
         stamped_by: &str,
         stamped_at: u64,
@@ -89,7 +92,9 @@ impl Vault {
         let Some(pending) = record.pending_charter.clone() else {
             return Err(Error::Record(RecordError::ConnectorCharterMissing));
         };
-        if pending.compiled_hash != expected_compiled_hash {
+        if pending.text_hash != expected_text_hash
+            || pending.compiled_hash != expected_compiled_hash
+        {
             return Err(Error::Record(RecordError::ConnectorCharterApprovalMismatch));
         }
         let stamped = ConnectorKeyRecord {

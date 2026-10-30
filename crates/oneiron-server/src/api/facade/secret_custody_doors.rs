@@ -40,7 +40,7 @@ async fn as_custody_owner<T: Send + 'static>(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || act(server.vault(), &owner))
+    let answer = super::clock_ingress::run_blocking(move || act(server.vault(), &owner))
         .await
         .unwrap_or_else(|_| Err(internal(verb)));
     (answer, Vec::new())
@@ -54,8 +54,9 @@ pub(crate) async fn vault_secrets_register(
     surface: ActSurface,
     input: SecretRegisterRequest,
 ) -> Listed<SecretRegisterReply> {
-    // A wiped HTTP body's value, put back after the redacted args decoded
-    // (FIX 11442). Any other transport's input already carries its own.
+    // The value its dispatch lifted before the hooks ran, put back after the
+    // redacted args decoded: a wiped HTTP body's (FIX 11442), or a decoded
+    // transport's (FIX 11665). An input no dispatch lifted carries its own.
     let mut input = input;
     if let Some(secret) = super::secret_body::current_secret() {
         input.value_base64 = (*secret).clone();
@@ -76,8 +77,9 @@ pub(crate) async fn vault_secrets_rotate(
     surface: ActSurface,
     input: SecretRotateRequest,
 ) -> Listed<SecretRotateReply> {
-    // A wiped HTTP body's value, put back after the redacted args decoded
-    // (FIX 11442). Any other transport's input already carries its own.
+    // The value its dispatch lifted before the hooks ran, put back after the
+    // redacted args decoded: a wiped HTTP body's (FIX 11442), or a decoded
+    // transport's (FIX 11665). An input no dispatch lifted carries its own.
     let mut input = input;
     if let Some(secret) = super::secret_body::current_secret() {
         input.value_base64 = (*secret).clone();
@@ -137,6 +139,14 @@ pub(crate) async fn vault_secrets_custody_submit(
     surface: ActSurface,
     input: SecretCustodySubmitRequest,
 ) -> Listed<SecretCustodyReply> {
+    // The sealed input its dispatch lifted before the hooks ran, put back
+    // after the redacted args decoded: a wiped HTTP body's (FIX 11668), or a
+    // decoded transport's (FIX 11665). An input no dispatch lifted carries
+    // its own.
+    let mut input = input;
+    if let Some(secret) = super::secret_body::current_secret() {
+        input.input_base64 = (*secret).clone();
+    }
     as_custody_owner(
         server,
         auth,
