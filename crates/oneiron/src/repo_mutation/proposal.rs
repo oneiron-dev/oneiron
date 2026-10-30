@@ -613,25 +613,36 @@ pub(super) fn finish(
     }
     store(vault, txn, &row)
 }
+/// Whether a proposal of `repo` retained the snapshot `hash`. The walk reads
+/// every proposal it needs and never refuses for their number (rule 5, FIX
+/// 8832): past its threshold row it asks whether everything is okay.
 pub(super) fn proposal_snapshot_recorded(
     vault: &Vault,
     repo: &RepoRef,
     hash: RepoForkHash,
 ) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    for (count, entry) in PROPOSAL.iter_from(&vault.store, &txn, &[])?.enumerate() {
-        if count >= 100_000 {
-            return Err(Error::IndexOverflow("repository proposals"));
-        }
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &txn,
+        crate::scan_check::EngineScan::RepoProposalSnapshotRows,
+        &[],
+    )?;
+    let wanted = repo_mutation_repo_key_hash(repo);
+    let mut found = false;
+    for entry in PROPOSAL.iter_from(&vault.store, &txn, &[])? {
+        count.row();
         let (_, row) = entry?;
-        if repo_mutation_repo_key_hash(&RepoRef::parse(&row.repo)?)
-            == repo_mutation_repo_key_hash(repo)
-            && row.pre_action_fork_hash == hash
+        if row.pre_action_fork_hash == hash
+            && repo_mutation_repo_key_hash(&RepoRef::parse(&row.repo)?) == wanted
         {
-            return Ok(true);
+            found = true;
+            break;
         }
     }
-    Ok(false)
+    drop(txn);
+    count.defer(&vault.store);
+    Ok(found)
 }
 
 mod entity_serde {
