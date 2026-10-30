@@ -253,10 +253,6 @@ impl RepoIndexMarks {
     ///
     /// # Errors
     /// A failed id derivation.
-    #[allow(
-        dead_code,
-        reason = "FIX 10736: its first reader is the sync residence copy generation (L03)"
-    )]
     pub(crate) fn generation(&self) -> Result<[u8; 32]> {
         let ids = self.facts.ids()?;
         let mut hasher = blake3::Hasher::new_derive_key(REPO_MARK_GENERATION_CONTEXT);
@@ -530,18 +526,10 @@ impl RepoIndexMarks {
 /// one it made, by its vault and the marks' [`RepoIndexMarks::generation`],
 /// and makes it again only when the marks move. It holds one table, so
 /// nothing past the newest marks stays.
-#[allow(
-    dead_code,
-    reason = "FIX 10736: its first reader is the sync residence copy generation (L03)"
-)]
 pub(crate) struct RepoMarkGenerationCache<T> {
     kept: Mutex<Option<(PathBuf, [u8; 32], Arc<T>)>>,
 }
 
-#[allow(
-    dead_code,
-    reason = "FIX 10736: its first reader is the sync residence copy generation (L03)"
-)]
 impl<T> RepoMarkGenerationCache<T> {
     /// An empty cache, for a `static`.
     pub(crate) const fn new() -> Self {

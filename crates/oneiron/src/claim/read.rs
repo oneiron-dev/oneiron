@@ -341,11 +341,11 @@ impl Vault {
     /// index — reserved predicates included.
     ///
     /// The read door for engine-authored evidence that has no secondary index
-    /// of its own. A local index would be WRITE-side state: a claim that
-    /// arrived by replication materializes its entity and its `claim_of` edge
-    /// but no local index row, so an index-backed reader and a claim-backed
-    /// reader answer differently on a replica. This scan is the one read path
-    /// both can share. The list holds every such claim, however many (FIX
+    /// of its own. Every put door, a sync replay's replicated row included,
+    /// stages the predicate posting list at the one put chokepoint
+    /// (`apply_put` -> `maintain_claim_projection_index`), so a posting-list
+    /// reader names the same claims; this scan reads the claims themselves.
+    /// The list holds every such claim, however many (FIX
     /// 8656); a reader that need not hold them walks the same claims with
     /// `for_each_readable_claim_with_predicate_in_txn`.
     pub(crate) fn claims_with_predicate_in_txn(

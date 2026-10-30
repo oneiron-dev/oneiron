@@ -269,7 +269,7 @@ impl Vault {
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
-        self.with_write_txn_grouped(|wtxn| {
+        let written = self.with_write_txn_grouped(|wtxn| {
             // A run's admission is judged again in this final writer, before
             // any row is put; a refusal writes nothing.
             if let Err(refused) = admit(wtxn)? {
@@ -398,6 +398,12 @@ impl Vault {
                 code_artifact_id,
                 snapshot: filtered_snapshot,
             }))
-        })
+        })?;
+        // A file custody now withholds leaves the queue's source copies at
+        // once, after the commit; a failure only warns (FIX 7708).
+        if let Err(error) = self.erase_withheld_queue_sources() {
+            tracing::warn!(%error, "withheld queue sources were not erased after an ingest");
+        }
+        Ok(written)
     }
 }

@@ -36,7 +36,9 @@ use crate::error::{Error, Result, SyncEngineContext};
 use crate::origin::secret_projection::edit::{
     RepoProjectedFileCopy, RepoProjectionDiffResult, apply_repo_projection_diff,
 };
-use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks};
+use crate::origin::secret_projection::index::{
+    RepoIndexCopyKind, RepoIndexMarks, RepoMarkGenerationCache,
+};
 use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::secret_custody::KeyPlaces;
@@ -610,11 +612,18 @@ pub(crate) fn with_copy_generation_in_txn(
     txn: &RoTxn<'_>,
     frontier: [u8; 32],
 ) -> Result<[u8; 32]> {
-    let projection = SyncSecretProjection::read_in_txn(vault, txn)?;
-    if projection.is_empty() {
+    // One copy generation per mark generation (FIX 10736): the marked
+    // blobs are projected again only when the marks move.
+    static GENERATIONS: RepoMarkGenerationCache<Option<[u8; 32]>> = RepoMarkGenerationCache::new();
+    let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
+    let generation = *GENERATIONS.get_or_make(vault, marks.generation()?, || {
+        let projection = SyncSecretProjection::read_in_txn(vault, txn)?;
+        Ok((!projection.is_empty())
+            .then(|| projection.generation(projection.sources.keys().copied())))
+    })?;
+    let Some(generation) = generation else {
         return Ok(frontier);
-    }
-    let generation = projection.generation(projection.sources.keys().copied());
+    };
     let mut hasher = blake3::Hasher::new_derive_key(GENERATION_CONTEXT);
     hasher.update(&frontier);
     hasher.update(&generation);
