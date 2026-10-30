@@ -293,8 +293,8 @@ pub trait CheckoutRepoOps {
     /// Observes the checkout without mutating it.
     ///
     /// Teardown calls this before any lease-state transition and calls it again
-    /// on every retry that has not yet been authorised for collection, so it
-    /// must be side-effect free and safe to repeat.
+    /// on every retry, a resumed collection's included while its tree is
+    /// present, so it must be side-effect free and safe to repeat.
     fn inspect_teardown(
         &self,
         lease: &CheckoutLeaseAct,
@@ -308,6 +308,13 @@ pub trait CheckoutRepoOps {
     /// `(checkout_id, epoch)`; a repeat call on an already collected tree must
     /// return `Ok(())` instead of failing.
     fn collect(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<()>;
+    /// Whether the checkout's working tree is still present, so a resumed
+    /// collection checks it again before removing it (FIX 8654). The default
+    /// answers yes: every resume is checked.
+    fn tree_present(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<bool> {
+        let _ = lease;
+        Ok(true)
+    }
 }
 // ONE-1907 (CSTDY-07) additive extension. Nothing above this line changes: the
 // `CheckoutRepoOps::materialize(&CheckoutLeaseAct)` port, every claim/grant
