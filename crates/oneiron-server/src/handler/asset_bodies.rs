@@ -1,8 +1,11 @@
 //! A socket's by-reference ASSET body transfers on the home (FIX 5489): the
 //! engine's session over the windows this socket moves bodies for. An owner
 //! lane moves them for each window it is pushed, a residence lane for each
-//! window it promoted, and no other lane for any: a body frame on one is
-//! answered with incomplete Ends, and it is asked for none. A body frame's
+//! window it promoted, and a federation lane serves, and never asks for, the
+//! bodies of the rows its selector admitted, from the copy it was sent, while
+//! its credential and that selector stand (FIX 12118). An unbound lane moves
+//! none: a body frame on one is answered with incomplete Ends, and it is
+//! asked for none. A body frame's
 //! landing runs on a blocking thread, off the socket's loop, which waits for
 //! it before it reads the socket's next frame: one landing at a time per
 //! socket, in frame order (FIX 12119).
@@ -11,10 +14,13 @@ use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::sync::{
-    ASSET_BODY_FRAMES_PER_POLL, AssetBodyPeer, TransportError, WindowKey, WindowManager,
+    ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, TransportError, WindowKey,
+    WindowManager, authorize_sync_selector,
 };
 
+use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
+use super::window_sync::selector_grant_scope;
 use crate::protocol::{self, ProtocolError};
 use crate::server::SyncServer;
 
@@ -22,8 +28,8 @@ use crate::server::SyncServer;
 /// is empty (a call, FIX 5489): a send's pace, never a body bound.
 pub(super) const ASSET_BODY_POLL: Duration = Duration::from_millis(50);
 
-/// One body frame from the device, `tag` and the bytes after it: answered on
-/// `direct_tx`, the session's next frames with it.
+/// One body frame from the socket's peer, `tag` and the bytes after it:
+/// answered on `direct_tx`, the session's next frames with it.
 ///
 /// # Errors
 ///
@@ -103,24 +109,46 @@ pub(super) fn poll(
     }
 }
 
-/// Runs `f` over the peer this socket's session reads through: the home's
-/// live documents, under `manager`, of the windows `followed` the socket
-/// moves bodies for.
+/// The windows a socket moves bodies for now, and where their documents
+/// come from.
+enum Followed {
+    /// The home's live windows, under its manager: an own lane's.
+    Live(Vec<WindowKey>),
+    /// The copies a federation socket's selector admitted, as it was sent
+    /// them (FIX 12118).
+    Admitted(Vec<(WindowKey, loro::LoroDoc)>),
+}
+
+/// Runs `f` over the peer this socket's session reads through: the
+/// documents, the home's live ones under `manager` or a federation socket's
+/// admitted copies, of the windows `followed` the socket moves bodies for.
 fn with_peer<T>(
     vault: &oneiron::Vault,
     manager: &WindowManager,
-    followed: &[WindowKey],
+    followed: &Followed,
     f: impl FnOnce(&AssetBodyPeer<'_>) -> T,
 ) -> T {
-    let window = |key: &WindowKey| {
-        followed
+    let (lane, keys) = match followed {
+        Followed::Live(keys) => (AssetBodyLane::OwnDevice, keys.clone()),
+        Followed::Admitted(copies) => (
+            AssetBodyLane::FederationGrant,
+            copies.iter().map(|(key, _)| key.clone()).collect(),
+        ),
+    };
+    let window = |key: &WindowKey| match followed {
+        Followed::Live(keys) => keys
             .contains(key)
             .then(|| manager.window(key))
             .flatten()
-            .map(|loaded| loaded.doc.clone())
+            .map(|loaded| loaded.doc.clone()),
+        Followed::Admitted(copies) => copies
+            .iter()
+            .find(|(admitted, _)| admitted == key)
+            .map(|(_, doc)| doc.clone()),
     };
-    let windows = || followed.to_vec();
+    let windows = || keys.clone();
     f(&AssetBodyPeer {
+        lane,
         vault,
         materializer: manager.materializer(),
         window: &window,
@@ -129,16 +157,39 @@ fn with_peer<T>(
 }
 
 /// The windows this socket moves bodies for now.
-fn followed_windows(server: &SyncServer, state: &ConnState) -> Vec<WindowKey> {
+fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
     match state.window_sync_mode {
-        WindowSyncMode::FullWindow => server
-            .reassert_manager
-            .loaded_keys()
-            .into_iter()
-            .filter(|key| state.receives_window(key))
-            .collect(),
-        WindowSyncMode::Residence => state.promoted_windows.keys().cloned().collect(),
-        WindowSyncMode::Selector | WindowSyncMode::Unbound => Vec::new(),
+        WindowSyncMode::FullWindow => Followed::Live(
+            server
+                .reassert_manager
+                .loaded_keys()
+                .into_iter()
+                .filter(|key| state.receives_window(key))
+                .collect(),
+        ),
+        WindowSyncMode::Residence => {
+            Followed::Live(state.promoted_windows.keys().cloned().collect())
+        }
+        // A federation socket's copies, each while its selector still
+        // authorizes, and only while the socket's credential is live.
+        WindowSyncMode::Selector if require_bound_app_auth(server, state).is_ok() => {
+            Followed::Admitted(
+                state
+                    .admitted_windows
+                    .iter()
+                    .filter(|(_, (selector, _))| {
+                        authorize_sync_selector(
+                            server.vault.as_ref(),
+                            selector_grant_scope(),
+                            selector,
+                        )
+                        .is_ok()
+                    })
+                    .map(|(key, (_, doc))| (key.clone(), doc.clone()))
+                    .collect(),
+            )
+        }
+        WindowSyncMode::Selector | WindowSyncMode::Unbound => Followed::Live(Vec::new()),
     }
 }
 
