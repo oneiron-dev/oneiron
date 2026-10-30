@@ -248,7 +248,7 @@ pub(super) fn beside(
             });
         }
     }
-    let projected = project_xlsx(source, &changes, limits, resources)
+    let projected = project_xlsx(source, &changes, limits, resources, None)
         .ok()?
         .bytes;
     shown_first(&projected, sheet, limits, resources)

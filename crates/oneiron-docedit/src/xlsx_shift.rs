@@ -139,10 +139,25 @@ pub fn retarget_sheets(
     order: &[String],
     fate: &dyn Fn(&str) -> SheetFate,
 ) -> Option<String> {
+    retarget_linked_sheets(formula, order, fate, &|_: &str| false)
+}
+
+/// [`retarget_sheets`], where a reference through a link `own` names by its
+/// bracketed text (`1` of `[1]Data!A1`) is into this workbook itself and
+/// follows `fate` as an unlinked one does: a renamed sheet keeps the link
+/// (`[1]Sales!A1`), and a deleted one reads `#REF!` (FIX 9080).
+#[must_use]
+pub fn retarget_linked_sheets(
+    formula: &str,
+    order: &[String],
+    fate: &dyn Fn(&str) -> SheetFate,
+    own: &dyn Fn(&str) -> bool,
+) -> Option<String> {
     let bytes = formula.as_bytes();
     let mut out = String::with_capacity(formula.len());
     let mut changed = false;
-    let mut external = false;
+    // The link a bracket just named, and where `out` holds it.
+    let mut external: Option<(&str, usize)> = None;
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
@@ -167,13 +182,17 @@ pub fn retarget_sheets(
                     break;
                 }
             }
+            let link = formula[start..i]
+                .strip_prefix('[')
+                .and_then(|text| text.strip_suffix(']'))
+                .unwrap_or_default();
+            external = Some((link, out.len()));
             out.push_str(&formula[start..i]);
             // `[1]Data!` names a sheet of another workbook.
-            external = true;
             continue;
         }
         let ch = formula[i..].chars().next()?;
-        let (prefix, end) = if b == b'\'' {
+        let (mut prefix, end) = if b == b'\'' {
             let end = quoted_end(bytes, i);
             if bytes.get(end) != Some(&b'!') || end < i + 2 {
                 out.push_str(&formula[i..end]);
@@ -187,7 +206,7 @@ pub fn retarget_sheets(
                 let end = number_end(bytes, i);
                 out.push_str(&formula[i..end]);
                 i = end;
-                external = false;
+                external = None;
                 continue;
             }
             let mut end = token_end(formula, i);
@@ -202,19 +221,29 @@ pub fn retarget_sheets(
             if bytes.get(end) != Some(&b'!') || (i > 0 && bytes[i - 1] == b'#') {
                 out.push_str(&formula[i..end]);
                 i = end;
-                external = false;
+                external = None;
                 continue;
             }
             (formula[i..end].to_owned(), end)
         } else {
             out.push(ch);
             i += ch.len_utf8();
-            external = false;
+            external = None;
             continue;
         };
         let written = &formula[i..=end];
         i = end + 1;
-        if std::mem::take(&mut external) || prefix.contains('[') {
+        let mut link = std::mem::take(&mut external).map(|(link, at)| (link.to_owned(), at));
+        // A quoted `'[1]My data'!` names its link inside the quotes.
+        if link.is_none()
+            && let Some((named, sheet)) = prefix
+                .strip_prefix('[')
+                .and_then(|rest| rest.split_once(']'))
+        {
+            link = Some((named.to_owned(), out.len()));
+            prefix = sheet.to_owned();
+        }
+        if link.as_ref().is_some_and(|(link, _)| !own(link)) || prefix.contains('[') {
             out.push_str(written);
             continue;
         }
@@ -240,9 +269,19 @@ pub fn retarget_sheets(
                     .collect(),
             ),
         };
+        // The workbook's own link stays on a renamed sheet, inside the
+        // quotes when its name needs them, and leaves with a deleted one.
+        if let Some((_, at)) = &link {
+            out.truncate(*at);
+        }
         match names {
             Some(names) => {
-                out.push_str(&sheet_prefix(&names.join(":")));
+                let sheet = sheet_prefix(&names.join(":"));
+                match (&link, sheet.strip_prefix('\'')) {
+                    (Some((link, _)), Some(quoted)) => out.push_str(&format!("'[{link}]{quoted}")),
+                    (Some((link, _)), None) => out.push_str(&format!("[{link}]{sheet}")),
+                    (None, _) => out.push_str(&sheet),
+                }
                 out.push('!');
             }
             None => out.push_str("#REF!"),

@@ -682,11 +682,20 @@ impl Vault {
             return Ok(None);
         }
         let limits = self.docedit_package_limits()?;
+        // The file the export lands as: the artifact's own name, in the
+        // folder Excel last saved the workbook in, so a link to it is the
+        // workbook's own (FIX 9080).
+        let name = self.get_blob_artifact(artifact)?.map(|body| body.name);
+        let file_name = name
+            .as_deref()
+            .and_then(|name| name.rsplit(['/', '\\']).next())
+            .filter(|name| !name.is_empty());
         let projected = project_xlsx(
             &self.body_source(artifact, head)?,
             &changes,
             limits,
             &crate::office_body::document_resources(),
+            file_name,
         )
         .map_err(|error| {
             super::document_error(
