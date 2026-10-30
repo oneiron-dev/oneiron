@@ -5625,6 +5625,7 @@ class JevTradeoffVerdict(TypedDict):
     pin: ProviderPin
 class SkillTradeoffAsk(TypedDict):
     pending: EntityId
+    skill: EntityId
     question: SkillTradeoffQuestion
     jev: NotRequired[JevTradeoffVerdict | None]
     rung: int
