@@ -230,7 +230,7 @@ pub fn callable_case_passes(
     };
     let tier = callable_tier(vault, skill, record)?;
     if tier != SandboxGuestTier::FirstPartyDreamer {
-        crate::code_sandbox::microvm::select_backend_for_tier(tier)?;
+        let _ = crate::code_sandbox::microvm::select_backend_for_tier(tier)?;
     }
     let run_id = EntityId::now();
     bind_isolated_lane(vault, runtime, run_id, tier)?;
