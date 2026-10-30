@@ -332,8 +332,13 @@ impl Vault {
     /// Runs every engine sweep that is due, oldest-due first, within
     /// `budget`. A host calls this on its own tick, off the request path. An
     /// error means the schedule could not be read; a sweep's own failure is a
-    /// row of the report.
+    /// row of the report. Unless the host has asked it to stop, the pass
+    /// first runs one capped communication projector pass, whose failure is
+    /// logged and never fails a sweep.
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
+        if !budget.deadline().stopped() {
+            crate::comm::run_comm_projector_housekeeping_step(self);
+        }
         self.housekeeping_pass(Selection::Due, budget)
     }
 

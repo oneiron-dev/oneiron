@@ -73,9 +73,8 @@ pub(super) fn prepare_pick(
         .ok_or_else(|| refused("booking passport sequence is exhausted"))?;
     let organizer = item.plan.organizer.clone();
     let recipient = item.plan.recipient.clone();
-    let invite_sequence = item.plan.payload.as_ref().map_or(Ok(0), |payload| {
-        payload
-            .sequence
+    let invite_sequence = committed_invite_sequence(item).map_or(Ok(0), |sequence| {
+        sequence
             .checked_add(1)
             .ok_or_else(|| refused("calendar invite sequence is exhausted"))
     })?;
@@ -124,15 +123,29 @@ pub(super) fn prepare_pick(
     Ok(picked)
 }
 
+/// The invite SEQUENCE an item's commit left at the head: its own calendar
+/// payload's, or, when the commit sent none (a RequestUpdate, FIX 9635), the
+/// invitation that stood before it. `None`: no invitation exists.
+pub(super) fn committed_invite_sequence(item: &EmergencyItem) -> Option<u32> {
+    item.plan
+        .payload
+        .as_ref()
+        .map(|payload| payload.sequence)
+        .or_else(|| {
+            item.plan
+                .invite_before
+                .as_ref()
+                .map(|head| head.last_sequence)
+        })
+}
+
 pub(crate) fn verify_pick_invite_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     item: &EmergencyItem,
 ) -> Result<(), BookingError> {
     let head = state::invite_head_in(vault, txn, &item.calendar)?;
-    if head.as_ref().map(|head| head.last_sequence)
-        != item.plan.payload.as_ref().map(|payload| payload.sequence)
-    {
+    if head.as_ref().map(|head| head.last_sequence) != committed_invite_sequence(item) {
         return Err(refused("invitation changed before the emergency pick"));
     }
     Ok(())
@@ -148,11 +161,7 @@ pub(crate) fn verify_pick_blob(
         || Some(picked.calendar.sequence) != item.calendar.sequence.checked_add(1)
         || picked.payload.uid != picked.calendar.uid
         || Some(picked.payload.sequence)
-            != item
-                .plan
-                .payload
-                .as_ref()
-                .map_or(Some(0), |payload| payload.sequence.checked_add(1))
+            != committed_invite_sequence(item).map_or(Some(0), |sequence| sequence.checked_add(1))
         || picked.organizer != item.plan.organizer
         || picked.payload.method != crate::calendar::CalendarInviteMethod::Request
         || picked.payload.recipient != item.plan.recipient
