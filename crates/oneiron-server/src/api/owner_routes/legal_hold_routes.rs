@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -21,23 +20,79 @@ use oneiron::task_verb::sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{entity_id, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/legal-holds", get(list).post(place))
-        .route("/legal-holds/widen", post(widen))
-        .route("/legal-holds/log", get(log))
-        .route(
-            "/legal-holds/lift-and-erase",
-            get(confirm_copy).post(lift_and_erase),
-        )
-        .route("/legal-holds/lift-and-erase/shown-state", get(shown_state))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/legal-holds",
+                summary: "Every customer hold, and each host order the owner may be told of, without its order reference or operator.",
+                row: Some("vault.legal_holds.list"),
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/legal-holds",
+                summary: "Places the owner's customer hold on targets, with an optional opaque matter_ref.",
+                row: Some("vault.legal_holds.place"),
+            },
+            post(place),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/legal-holds/widen",
+                summary: "Adds targets to the owner's standing hold hold_id.",
+                row: Some("vault.legal_holds.widen"),
+            },
+            post(widen),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/legal-holds/log",
+                summary: "The owner-visible hold log, oldest first: ids, times and reason codes.",
+                row: Some("vault.legal_holds.log"),
+            },
+            get(log),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/legal-holds/lift-and-erase",
+                summary: "The confirm's title and prompt, exactly as the engine words them (C7).",
+                row: None,
+            },
+            get(confirm_copy),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/legal-holds/lift-and-erase",
+                summary: "The owner's one confirm.",
+                row: Some("vault.legal_holds.lift_and_erase"),
+            },
+            post(lift_and_erase),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/legal-holds/lift-and-erase/shown-state",
+                summary: "What the one confirm over `records` (comma-separated 32-hex ids) shows now, with `claim_free_partition` when it also releases that partition (FIX 10400): its title and prompt, the records and each standing customer hold on them, read in one snapshot. A client sends it back as the confirm's `shown_state`.",
+                row: None,
+            },
+            get(shown_state),
+        ),
+    ]
 }
 
 /// The one confirm's copy, for the surface to show before it posts.

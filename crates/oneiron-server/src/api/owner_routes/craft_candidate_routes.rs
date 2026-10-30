@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -17,17 +16,34 @@ use oneiron::actor_claims::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/craft-candidates", get(list))
-        .route("/craft-candidates/answer", post(answer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/craft-candidates",
+                summary: "The candidates waiting on a verdict, newest first.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/craft-candidates/answer",
+                summary: "The owner's verdict on one candidate, bound to the content hash its card showed.",
+                row: None,
+            },
+            post(answer),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/craft-candidates/answer`'s body

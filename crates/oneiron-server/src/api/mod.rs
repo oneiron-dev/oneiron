@@ -202,7 +202,12 @@ mod type_feedback_release;
 mod vad;
 pub(crate) mod write_facet;
 
-pub(crate) use self::artifacts::*;
+#[cfg(test)]
+pub(crate) use self::artifacts::{
+    ARTIFACT_CONTENT_SECURITY_POLICY, ARTIFACT_POINTER_CACHE_CONTROL, BLOB_IMMUTABLE_CACHE_CONTROL,
+    BLOB_POINTER_CACHE_CONTROL,
+};
+pub(crate) use self::artifacts::{ArtifactHosts, serve_artifact_path, serve_artifact_root};
 pub(crate) use self::booking::*;
 pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
@@ -215,7 +220,17 @@ pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
 use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
-pub(crate) use self::mcp_gateway::*;
+#[cfg(test)]
+pub(crate) use self::mcp_gateway::{
+    MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
+};
+pub(crate) use self::mcp_gateway::{
+    McpCallContext, ReaderChildDoor, RunGuests, VerdictAsker, WorkflowPreflight,
+    deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+    execute_run_board_verb_in_session, mcp_gateway, mcp_stream_reads_task, mcp_stream_task_row,
+    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow, resolve_mcp_caller,
+    ride_run_carrier, run_session_reads,
+};
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
@@ -225,7 +240,9 @@ use self::params::{
     default_limit, has_json_content_type, hex_bytes, json_payload, parse_entity_id_param,
     parse_optional_entity_id, query_params, unix_seconds_now,
 };
-pub(crate) use self::reactive::*;
+pub(crate) use self::reactive::ReactiveChange;
+#[cfg(test)]
+pub(crate) use self::reactive::{ReactiveDependency, ReactiveLocalQuery, open_local_reactive_read};
 pub(crate) use self::routes::api_routes;
 pub(crate) use self::run_tree::*;
 use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};

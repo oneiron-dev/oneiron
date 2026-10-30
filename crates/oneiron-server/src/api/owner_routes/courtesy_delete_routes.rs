@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -17,19 +16,52 @@ use oneiron::task_verb::sdk::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::ApiErrorEnvelope;
 use crate::owner::{courtesy_delete, hooked_row, hooked_row_admitting};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/courtesy-delete/send", post(send))
-        .route("/courtesy-delete/sent", get(sent))
-        .route("/courtesy-delete/incoming", get(incoming))
-        .route("/courtesy-delete/answer", post(answer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/courtesy-delete/send",
+                summary: "Send.",
+                row: None,
+            },
+            post(send),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/courtesy-delete/sent",
+                summary: "Sent.",
+                row: None,
+            },
+            get(sent),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/courtesy-delete/incoming",
+                summary: "Incoming.",
+                row: None,
+            },
+            get(incoming),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/courtesy-delete/answer",
+                summary: "The owner's answer to one ask, with the reason typed on the card when there is one.",
+                row: None,
+            },
+            post(answer),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/courtesy-delete/send`'s body
