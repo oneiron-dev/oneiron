@@ -2498,7 +2498,7 @@ export type PackSetupAccount = { id: string; label: string; sign_up?: string | n
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupAuth` */
 export type PackSetupAuth = "oauth" | "api_key" | "bot_token" | "app_password" | "session" | "webhook" | "local"
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupSecret` */
-export type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null }
+export type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null; optional?: boolean }
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupRisk` */
 export type PackSetupRisk = "low" | "medium" | "high"
 /** `oneiron::skill_hub::pack_catalog::setup::PackSetupPermission` */
@@ -4808,7 +4808,7 @@ export type CodeProposalSubmitted = { proposal: EntityId; repo: EntityId; actor:
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictRecordRequest` */
 export type CodeConflictRecordRequest = { repo: EntityId; branch_subject: EntityId; branch: string; left_proposal: EntityId; right_proposal: EntityId }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictView` */
-export type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task: EntityId }
+export type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task?: EntityId | null; held?: string | null }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictViewRequest` */
 export type CodeConflictViewRequest = { branch_subject: EntityId }
 /** `oneiron::memory::code_doors::conflict_types::CodeConflictResolutionView` */
@@ -5106,7 +5106,7 @@ export type MirrorObservedTip = { state: "absent" } | { state: "at"; oid: string
 /** `oneiron::origin::publish::types::OriginPublishLfsBytes` */
 export type OriginPublishLfsBytes = "not_sent"
 /** `oneiron::origin::publish::types::OriginPublishReview` */
-export type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes }
+export type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes; lossy_paths: boolean }
 /** `oneiron::origin::publish::mirror_plan_types::MirrorRefOutcome` */
 export type MirrorRefOutcome = "pending" | "dispatched" | "applied" | "observed_applied" | "rejected" | "unknown" | "refused" | "remote_moved" | "paused" | "covered" | "held"
 /** `oneiron::origin::publish::mirror_plan_view::OriginMirrorPlanRefView` */
@@ -5208,7 +5208,7 @@ export type VisibleFilePolicy = { version: number; include_prefixes: string[]; e
 /** `oneiron::memory::code_view_doors::types::CodeViewMaterializeRequest` */
 export type CodeViewMaterializeRequest = { repo: EntityId; tested: EntityId; account: EntityId; policy: VisibleFilePolicy }
 /** `oneiron::memory::code_view_doors::types::CodeViewFile` */
-export type CodeViewFile = { path: string; content_hash_blake3: string; frontier: CodeDocumentFrontier; text_sha256: string }
+export type CodeViewFile = { path: string; content_hash_blake3: string; frontier?: CodeDocumentFrontier | null; text_sha256?: string | null; git_oid?: string | null }
 /** `oneiron::memory::code_view_doors::types::CodeWorkingView` */
 export type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string }
 /** `oneiron::memory::code_view_doors::types::CodeViewRequest` */
@@ -5276,7 +5276,7 @@ export type MergeQueueObserveRequest = { repo: EntityId; batches: string[] }
 /** `oneiron::contract_oracle::types::CommandOutput` */
 export type CommandOutput = { status: number; stdout: number[]; stderr: number[] }
 /** `oneiron::contract_oracle::types::ContractDiff` */
-export type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } }
+export type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } } | { SchemaBytesDrift: { contract: string; offset: number; before?: string | null; after?: string | null } }
 /** `oneiron::contract_oracle::types::ContractVerdict` */
 export type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] }
 /** `oneiron::merge_queue::driver_types::QueueDriveStatus` */

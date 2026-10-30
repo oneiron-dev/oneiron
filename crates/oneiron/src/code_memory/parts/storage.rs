@@ -24,34 +24,6 @@ fn validate_slot_name(value: &str) -> Result<()> {
     Ok(())
 }
 
-/// Mirrors the live code-symbol manifest path rule: repository-relative,
-/// normalized, bounded by `CODEBASE_FILE_PATH_MAX_BYTES`.
-fn validate_locator_path(path: &str) -> Result<()> {
-    if path.is_empty()
-        || path.len() > CODEBASE_FILE_PATH_MAX_BYTES
-        || path.trim() != path
-        || path.chars().any(char::is_control)
-    {
-        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
-            reason: "locator path must be non-empty, trimmed, bounded, and free of control characters",
-        }));
-    }
-    if path.starts_with('/') || path.contains('\\') {
-        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
-            reason: "locator path must be repository-relative",
-        }));
-    }
-    if path
-        .split('/')
-        .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
-            reason: "locator path must be normalized and cannot contain . or .. segments",
-        }));
-    }
-    Ok(())
-}
-
 fn validate_time_range(range: TimeRange, field: &'static str) -> Result<()> {
     if range.start > range.end {
         return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
@@ -188,17 +160,23 @@ fn push_payload(out: &mut Vec<u8>, payload: CodeMemoryPayloadRef) {
     out.extend_from_slice(payload.entity_id().as_bytes());
 }
 
+fn push_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    push_u16(out, u16::try_from(bytes.len()).unwrap_or(u16::MAX));
+    out.extend_from_slice(bytes);
+}
+
 fn push_locator(out: &mut Vec<u8>, locator: &CodeMemoryLocator) {
-    push_text(out, &locator.path_at_revision);
-    match &locator.revision {
-        CodeMemoryRevision::Commit(commit) => {
-            out.push(REVISION_TAG_COMMIT);
-            push_text(out, commit);
-        }
-        CodeMemoryRevision::ForkHash(fork_hash) => {
-            out.push(REVISION_TAG_FORK_HASH);
-            out.extend_from_slice(fork_hash);
-        }
+    out.extend_from_slice(&locator.span.document_id);
+    push_bytes(out, &locator.span.start);
+    push_bytes(out, &locator.span.end);
+    out.extend_from_slice(&locator.span.content_hash);
+    push_u32(
+        out,
+        u32::try_from(locator.version.len()).unwrap_or(u32::MAX),
+    );
+    for (peer, counter) in &locator.version {
+        push_u64(out, *peer);
+        out.extend_from_slice(&counter.to_le_bytes());
     }
     push_time_range(out, locator.validity);
 }
@@ -279,23 +257,40 @@ impl<'a> Reader<'a> {
         CodeMemoryPayloadRef::from_tag(tag, id)
     }
 
+    fn cursor_bytes(&mut self, max_bytes: usize) -> Result<Vec<u8>> {
+        let len = usize::from(self.u16()?);
+        if len > max_bytes {
+            return Err(record_error());
+        }
+        Ok(self.take(len)?.to_vec())
+    }
+
     fn locator(&mut self) -> Result<CodeMemoryLocator> {
-        let path_at_revision = self.text(CODEBASE_FILE_PATH_MAX_BYTES)?;
-        let revision = match self.u8()? {
-            REVISION_TAG_COMMIT => CodeMemoryRevision::Commit(self.text(COMMIT_HASH_MAX_HEX_LEN)?),
-            REVISION_TAG_FORK_HASH => {
-                let fork_hash: CodebaseForkHash = self
-                    .take(CODEBASE_FORK_HASH_LEN)?
-                    .try_into()
-                    .map_err(|_| record_error())?;
-                CodeMemoryRevision::ForkHash(fork_hash)
-            }
-            _ => return Err(record_error()),
-        };
+        let document_id = self.content_hash()?;
+        let start = self.cursor_bytes(CODE_MEMORY_CURSOR_MAX_BYTES)?;
+        let end = self.cursor_bytes(CODE_MEMORY_CURSOR_MAX_BYTES)?;
+        let content_hash = self.content_hash()?;
+        let peers = usize::try_from(self.u32()?).map_err(|_| record_error())?;
+        // Each entry is twelve bytes: a count the row cannot hold is corrupt,
+        // never an allocation.
+        if peers > self.bytes.len().saturating_sub(self.offset) / 12 {
+            return Err(record_error());
+        }
+        let mut version = Vec::with_capacity(peers);
+        for _ in 0..peers {
+            let peer = self.u64()?;
+            let counter: [u8; 4] = self.take(4)?.try_into().map_err(|_| record_error())?;
+            version.push((peer, i32::from_le_bytes(counter)));
+        }
         let validity = self.time_range()?;
         let locator = CodeMemoryLocator {
-            path_at_revision,
-            revision,
+            span: CodeSpanAnchor {
+                document_id,
+                start,
+                end,
+                content_hash,
+            },
+            version,
             validity,
         };
         locator.validate().map_err(|_| record_error())?;

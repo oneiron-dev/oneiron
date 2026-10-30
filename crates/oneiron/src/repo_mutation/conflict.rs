@@ -191,6 +191,15 @@ pub(super) fn record_repo_conflict_checked(
             "repo conflict record requires at least one conflicted path",
         )));
     }
+    // Every conflicted path is kept; past the threshold row the host is
+    // asked whether everything is okay (rule 5, FIX 8831).
+    let mut count = crate::scan_check::ScanCount::start_at(
+        crate::scan_check::EngineScan::RepoConflictPaths,
+        branch_subject.as_bytes(),
+        vault.scan_threshold(crate::scan_check::EngineScan::RepoConflictPaths)?,
+    );
+    count.rows(conflicted_paths.len());
+    count.finish(vault);
 
     let claim_id = vault.store.clock.entity_id()?;
     let value = RepoConflictOpenValue {

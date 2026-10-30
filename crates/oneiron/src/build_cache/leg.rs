@@ -1,11 +1,78 @@
 //! Build/verify runner: durable action-key reservation prevents duplicate dispatch.
 use super::*;
 use crate::checkout::CheckoutTaskClass;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Condvar, LazyLock, Mutex, PoisonError};
 
 /// In-flight reservation marker preventing duplicate dispatch of the same build/verify action.
-/// Key: bytes32 (action key).
-const RUNNING_RESERVATION: SideTable<[u8; BUILD_CACHE_ACTION_KEY_LEN], String, Raw> =
+/// Key: bytes32 (action key). Value: the id of the run holding it.
+const RUNNING_RESERVATION: SideTable<[u8; BUILD_CACHE_ACTION_KEY_LEN], EntityId, Raw> =
     SideTable::new(&side_table::BUILD_CACHE_RUNNING_RESERVATION);
+
+/// One running leg's place: its vault root and action key.
+type LegSlot = (PathBuf, [u8; BUILD_CACHE_ACTION_KEY_LEN]);
+
+/// The legs this process is running. The vault writer lease keeps every other process out, so
+/// a reservation no entry here holds was left by a crashed or failed run (FIX 9638).
+static LIVE_LEGS: LazyLock<Mutex<HashMap<LegSlot, Arc<LiveLeg>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// One running leg, which a second caller of the same action joins (FIX 9941).
+struct LiveLeg {
+    run: EntityId,
+    /// `None` while running; then the captured leg the run made, if any.
+    finished: Mutex<Option<Option<CachedBuildLeg>>>,
+    woken: Condvar,
+}
+
+impl LiveLeg {
+    /// Waits for the run to end; the captured leg it made, if any.
+    fn join(&self) -> Option<CachedBuildLeg> {
+        let mut finished = self.finished.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(captured) = finished.as_ref() {
+                return captured.clone();
+            }
+            finished = self
+                .woken
+                .wait(finished)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+/// A run this caller reserved. Dropping it, even in a panic, ends the run for its joiners.
+struct ReservedLeg {
+    slot: LegSlot,
+    live: Arc<LiveLeg>,
+    captured: Option<CachedBuildLeg>,
+}
+
+impl Drop for ReservedLeg {
+    fn drop(&mut self) {
+        let mut legs = LIVE_LEGS.lock().unwrap_or_else(PoisonError::into_inner);
+        if legs
+            .get(&self.slot)
+            .is_some_and(|held| Arc::ptr_eq(held, &self.live))
+        {
+            legs.remove(&self.slot);
+        }
+        drop(legs);
+        *self
+            .live
+            .finished
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(self.captured.take());
+        self.live.woken.notify_all();
+    }
+}
+
+enum Reservation {
+    Cached(CachedActionResult),
+    Running(Arc<LiveLeg>),
+    Reserved(ReservedLeg),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildLegReceipt {
@@ -22,8 +89,9 @@ pub struct CachedBuildLeg {
     pub reusable: bool,
 }
 impl BuildCache<'_> {
-    /// Only declared-idempotent task classes can use this runner. A pending
-    /// action is never re-sent automatically, including after a process crash.
+    /// Only declared-idempotent task classes can use this runner. One run executes an action at
+    /// a time: a second caller joins it (FIX 9941), and a crashed or failed run's reservation is
+    /// reclaimed by the next call (FIX 9638).
     pub fn run_leg(
         &self,
         class: CheckoutTaskClass,
@@ -36,35 +104,85 @@ impl BuildCache<'_> {
             ));
         }
         let key = action.action_key()?;
-        if let Some(cached) = self.get(&key)? {
-            return Ok(leg(cached, class, true));
-        }
-        {
-            let mut txn = self.vault.store.env.write_txn()?;
-            self.admit_account_in_txn(&txn)?;
-            if let Some(record) =
-                BUILD_CACHE_REAPI_ROW.get(&self.vault.store, &txn, key.as_bytes())?
-            {
-                return Ok(leg(self.admit_row_in_txn(&txn, &key, record)?, class, true));
+        loop {
+            if let Some(cached) = self.get(&key)? {
+                return Ok(leg(cached, class, true));
             }
-            if RUNNING_RESERVATION.contains(&self.vault.store, &txn, key.as_bytes())? {
-                return Err(BuildCacheError::ActionInFlight {
-                    action_key: key.to_hex(),
-                });
+            match self.reserve(&key)? {
+                Reservation::Cached(cached) => return Ok(leg(cached, class, true)),
+                // The run's captured leg, or the cache row or a fresh reservation once it ends.
+                Reservation::Running(live) => {
+                    if let Some(mut joined) = live.join() {
+                        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+                        self.admit_account_in_txn(&txn)?;
+                        joined.receipt.task_class = class;
+                        joined.receipt.cache_hit = true;
+                        return Ok(joined);
+                    }
+                }
+                Reservation::Reserved(mut reserved) => {
+                    let outcome = self.execute_reserved(class, action, key, execute);
+                    // A reservation left by a failed release is reclaimed by the next caller.
+                    let _ = self.release_reservation(&key, reserved.live.run);
+                    reserved.captured =
+                        outcome.as_ref().ok().filter(|done| !done.reusable).cloned();
+                    return outcome;
+                }
             }
-            RUNNING_RESERVATION.put(
-                &self.vault.store,
-                &mut txn,
-                key.as_bytes(),
-                &class.as_str().to_owned(),
-            )?;
-            txn.commit().map_err(Error::from)?;
         }
-        // Errors deliberately retain the reservation: the host must resolve an
-        // uncertain execution instead of treating it as a safe cache miss.
+    }
+
+    /// Reserves `key` for one new run, or names the live run holding it. A reservation no live
+    /// run holds is taken over under a fresh run id, which fences the run that left it.
+    fn reserve(&self, key: &ActionKey) -> BuildCacheResult<Reservation> {
+        let slot = (self.vault.store.env.path().to_path_buf(), *key.as_bytes());
+        let mut txn = self.vault.store.env.write_txn()?;
+        self.admit_account_in_txn(&txn)?;
+        if let Some(record) = BUILD_CACHE_REAPI_ROW.get(&self.vault.store, &txn, key.as_bytes())? {
+            return Ok(Reservation::Cached(
+                self.admit_row_in_txn(&txn, key, record)?,
+            ));
+        }
+        let held = RUNNING_RESERVATION.get_lenient(&self.vault.store, &txn, key.as_bytes())?;
+        let mut legs = LIVE_LEGS.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(live) = legs.get(&slot).filter(|live| held == Some(live.run)) {
+            return Ok(Reservation::Running(Arc::clone(live)));
+        }
+        let live = Arc::new(LiveLeg {
+            run: EntityId::now(),
+            finished: Mutex::new(None),
+            woken: Condvar::new(),
+        });
+        RUNNING_RESERVATION.put(&self.vault.store, &mut txn, key.as_bytes(), &live.run)?;
+        txn.commit().map_err(Error::from)?;
+        legs.insert(slot.clone(), Arc::clone(&live));
+        Ok(Reservation::Reserved(ReservedLeg {
+            slot,
+            live,
+            captured: None,
+        }))
+    }
+
+    /// Drops the reservation `run` holds; a successor that fenced `run` keeps its own.
+    fn release_reservation(&self, key: &ActionKey, run: EntityId) -> BuildCacheResult<()> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        if RUNNING_RESERVATION.get_lenient(&self.vault.store, &txn, key.as_bytes())? == Some(run) {
+            RUNNING_RESERVATION.delete(&self.vault.store, &mut txn, key.as_bytes())?;
+        }
+        txn.commit().map_err(Error::from)?;
+        Ok(())
+    }
+
+    /// Executes a reserved leg once. A clean result enters the cache; secret-consuming exhaust
+    /// is returned as captured artifacts, never as a cache row.
+    fn execute_reserved(
+        &self,
+        class: CheckoutTaskClass,
+        action: &BuildAction,
+        key: ActionKey,
+        execute: impl FnOnce(&Vault) -> BuildCacheResult<ActionResult>,
+    ) -> BuildCacheResult<CachedBuildLeg> {
         let candidate = execute(self.vault)?;
-        // Secret-consuming exhaust is retained as artifacts, never as a clean
-        // cache row. Its reservation remains so an uncertain retry cannot run it twice.
         {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             self.admit_account_in_txn(&txn)?;

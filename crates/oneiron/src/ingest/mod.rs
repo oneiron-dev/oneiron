@@ -42,9 +42,10 @@ pub use image::{
     parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
 };
 
+pub(crate) use self::admission::json_to_msgpack_value;
 pub use self::admission::{
-    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, admit_imported_entity,
-    admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
+    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen,
+    admit_imported_entity, admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
     admit_imported_mention_claim,
 };
 pub(crate) use self::admission::{
