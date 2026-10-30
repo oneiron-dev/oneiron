@@ -33,7 +33,7 @@ impl RawValue for PendingGateConsentRecord {
 }
 
 /// One sequence row of the tray, for a reader whose contract is to surface a
-/// corrupt row rather than refuse its read (FIX 7378).
+/// corrupt row rather than refuse its read (FIX 7378, FIX 7601).
 #[derive(Debug, Clone)]
 pub(crate) enum PendingGateConsentSlot {
     /// The tray row the sequence row names.
@@ -41,7 +41,19 @@ pub(crate) enum PendingGateConsentSlot {
     /// The sequence row names a claim the tray holds no row for, or whose
     /// row names another claim id: that row's own index corruption.
     Corrupt,
+    /// The sequence row's value is no claim id: a reserved or short id,
+    /// named by its stored bytes unchecked, or a value that is not 16 bytes
+    /// long, named by the all-zero id no claim carries (FIX 7601).
+    ClaimIdUndecodable,
+    /// The tray holds a row for the claim the sequence row names, and that
+    /// row does not decode (FIX 7601).
+    RowUndecodable,
 }
+
+/// [`SEQUENCE_INDEX`] with its values undecoded, for the slot reader, which
+/// surfaces a value that is no claim id instead of failing its page.
+const SEQUENCE_INDEX_BYTES: SideTable<u64, Vec<u8>, Raw> =
+    SideTable::new(&side_table::PENDING_GATE_CONSENT_SEQUENCE_INDEX);
 
 /// How a door removes a tray row, as far as its claim's owner-answer
 /// obligation goes (`crate::gate::owner_answer`).
@@ -285,7 +297,10 @@ impl Store {
     /// [`Self::pending_gate_consents_page_in_txn`]'s page with each sequence
     /// row's claim, where a sequence row the tray does not answer for comes
     /// back [`PendingGateConsentSlot::Corrupt`] instead of failing the page
-    /// (FIX 7378). Every other failure fails it, as there.
+    /// (FIX 7378), a sequence value that is no claim id comes back
+    /// [`PendingGateConsentSlot::ClaimIdUndecodable`] and a tray row that
+    /// does not decode [`PendingGateConsentSlot::RowUndecodable`] (FIX 7601).
+    /// A store failure, or a sequence key that is no sequence, fails it.
     pub(crate) fn pending_gate_consent_slots_page_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -299,13 +314,20 @@ impl Store {
         let lower = cursor.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
         let upper = fence.as_ref().map_or(Bound::Unbounded, Bound::Included);
         let mut slots = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        for row in SEQUENCE_INDEX.iter_range(self, txn, lower, upper)? {
-            let (sequence, claim_id) = row?;
-            let slot = match TRAY.get(self, txn, claim_id.as_bytes())? {
-                Some(record) if record.claim_id == *claim_id.as_bytes() => {
-                    PendingGateConsentSlot::Held(record)
-                }
-                _ => PendingGateConsentSlot::Corrupt,
+        for row in SEQUENCE_INDEX_BYTES.iter_range(self, txn, lower, upper)? {
+            let (sequence, value) = row?;
+            let (claim_id, slot) = match <[u8; 16]>::try_from(value.as_slice()) {
+                Ok(raw) => match EntityId::from_bytes(raw) {
+                    Ok(claim_id) => (claim_id, tray_slot_in(self, txn, &claim_id)?),
+                    Err(_) => (
+                        EntityId::from_bytes_unchecked(raw),
+                        PendingGateConsentSlot::ClaimIdUndecodable,
+                    ),
+                },
+                Err(_) => (
+                    EntityId::from_bytes_unchecked([0; 16]),
+                    PendingGateConsentSlot::ClaimIdUndecodable,
+                ),
             };
             slots.push((sequence, claim_id, slot));
             if slots.len() == limit {
@@ -375,6 +397,25 @@ impl Store {
         }
         Ok(groups)
     }
+}
+
+/// The tray's answer for `claim_id`'s sequence row: its row, or why it holds
+/// none the page can use. Only a store failure fails it.
+fn tray_slot_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<PendingGateConsentSlot> {
+    let Some(bytes) = TRAY.get_bytes(dbs, txn, claim_id.as_bytes())? else {
+        return Ok(PendingGateConsentSlot::Corrupt);
+    };
+    Ok(match TRAY.decode_value(&bytes) {
+        Ok(record) if record.claim_id == *claim_id.as_bytes() => {
+            PendingGateConsentSlot::Held(record)
+        }
+        Ok(_) => PendingGateConsentSlot::Corrupt,
+        Err(_) => PendingGateConsentSlot::RowUndecodable,
+    })
 }
 
 /// `claim_id`'s tray row, read through any store view.
