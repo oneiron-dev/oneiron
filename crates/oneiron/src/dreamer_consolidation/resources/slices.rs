@@ -1,12 +1,14 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
+use crate::claim::RelationshipRead;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) turns: Vec<EntityId>,
-    /// The child's extraction input: a header for each conversation its
-    /// turns are of, its listing after the first, and its turns, each named
-    /// by its label in `labels` (`V1`, `V2`... per conversation, FIX 7524).
+    /// The child's extraction input: the wake's host material (FIX 10665),
+    /// a header for each conversation its turns are of, its listing after
+    /// the first, and its turns, each named by its label in `labels` (`V1`,
+    /// `V2`... per conversation, FIX 7524).
     pub(in crate::dreamer_consolidation) transcript: String,
     pub(in crate::dreamer_consolidation) scope: Scope,
     /// The child call's labels (FIX 7506), built from exactly the inputs
@@ -58,10 +60,37 @@ impl BranchResources<'_> {
                 .or_default()
                 .push((*id, facts));
         }
+        // The material the wake's admitted `host.wake` hooks added leads
+        // every slice's input (FIX 10665): context for the call, never a
+        // turn, so no label names it and nothing cites it. The material does
+        // not say which hook added it, so a slice that carries any is
+        // low-trust, kept off a thing agent's clean loan.
+        let mut material = String::new();
+        for text in self
+            .prepared_wake
+            .map_or(&[][..], crate::dreamer_consolidation::PreparedWake::hook_material)
+        {
+            material.push_str("[host material] ");
+            material.push_str(text);
+            material.push('\n');
+        }
         let mut slices = Vec::new();
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
             let pages = known.pages(|id| self.priors.contains_key(id));
+            // What paging costs, measured where it happens (FIX 10354): each
+            // chunk of the group makes one call per page. Sharing one
+            // extraction across a listing's pages waits on these numbers.
+            if pages.len() > 1 {
+                tracing::info!(
+                    target: "oneiron::dreamer",
+                    code = "listing_paged",
+                    pages = pages.len(),
+                    chunks = group.chunks(turns_per_child).len(),
+                    entities = entities.len(),
+                    "a child's listing pages into more than one extraction call"
+                );
+            }
             for chunk in group.chunks(turns_per_child) {
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
                 let parents: BTreeSet<_> = ids.iter().filter_map(|id| self.turns.get(id)).collect();
@@ -95,9 +124,16 @@ impl BranchResources<'_> {
                         scope.writable.remove(version);
                     }
                 }
+                // The relationships a candidate may hold within: the bound
+                // one, or on an unbound branch each one the chunk's words
+                // are scoped to (FIX 10357).
+                let rels: Vec<EntityId> = match &scope.relationship {
+                    Some(bound) => bound.iter().copied().collect(),
+                    None => self.word_relationships(&ids)?.into_iter().collect(),
+                };
                 for page in &pages {
                     let mut labels = CallLabelMap::default();
-                    let mut transcript = String::new();
+                    let mut transcript = material.clone();
                     let mut current = None;
                     for (at, (id, facts)) in chunk.iter().enumerate() {
                         // A conversation's header leads its run of turns; the
@@ -111,9 +147,8 @@ impl BranchResources<'_> {
                                 transcript.push_str(&format!("conversation {conversation}\n"));
                             }
                             if at == 0 {
-                                transcript.push_str(
-                                    &page.render(&mut labels, scope.relationship.as_ref()),
-                                );
+                                transcript
+                                    .push_str(&page.render(&mut labels, rels.iter().copied()));
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);
@@ -123,9 +158,12 @@ impl BranchResources<'_> {
                             facts.text.as_deref().unwrap_or_default(),
                         ));
                     }
-                    // A slice is low-trust by what it reads: its own TURNs and
-                    // the prior heads its page shows (FIX 9017).
-                    let slice_low_trust = chunk.iter().any(|(_, facts)| facts.imported)
+                    // A slice is low-trust by what it reads: its own TURNs,
+                    // the prior heads its page shows (FIX 9017), and any host
+                    // material, which a hub publisher's or an agent's hook may
+                    // fill from rows it reads (FIX 10665).
+                    let slice_low_trust = !material.is_empty()
+                        || chunk.iter().any(|(_, facts)| facts.imported)
                         || self
                             .priors
                             .iter()
@@ -150,6 +188,37 @@ impl BranchResources<'_> {
             }
         }
         Ok((slices, low_trust))
+    }
+}
+
+impl BranchResources<'_> {
+    /// The relationships the words of `turns` are scoped to (FIX 10357):
+    /// each MESSAGE a TURN's text was projected from, at its stored scope.
+    /// A MESSAGE that is private, gone, or whose scope does not read adds
+    /// none; the listing only offers labels, it grants nothing.
+    fn word_relationships(&self, turns: &BTreeSet<EntityId>) -> Result<BTreeSet<EntityId>> {
+        let vault = self.read.vault();
+        let txn = vault.store.env.read_txn()?;
+        let mut rels = BTreeSet::new();
+        let messages = turns
+            .iter()
+            .filter_map(|id| self.texts.get(id))
+            .flat_map(TurnText::versions)
+            .map(|(message, _)| message);
+        for message in messages {
+            let Some(raw) = vault.get_raw_in(&txn, &message)? else {
+                continue;
+            };
+            if let Ok(RelationshipRead::Gated {
+                space,
+                private: false,
+                ..
+            }) = crate::claim::relationship_read(&vault.store, &txn, &message, &raw)
+            {
+                rels.extend(space.into_iter().flatten());
+            }
+        }
+        Ok(rels)
     }
 }
 
