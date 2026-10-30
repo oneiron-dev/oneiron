@@ -590,13 +590,24 @@ impl Vault {
             let body = self
                 .get_claim_in_txn(txn, claim)?
                 .ok_or(Error::EntityNotFound)?;
-            if body.predicate.starts_with("actor.")
-                && !matches!(&body.subject,
-                    crate::claim::ClaimSubject::Entity(actor) if Some(*actor) == resident)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "actor self-model belongs to a different resident",
-                ));
+            if body.predicate.starts_with("actor.") {
+                let allowed = match resident {
+                    Some(resident) => {
+                        // A resident's shells merged into it read as its own
+                        // (FIX 9073): the redirect authority names them.
+                        crate::skill_reliability::redirect_equivalent_subjects_in_txn(
+                            self, &*txn, &resident,
+                        )?
+                    }
+                    None => Vec::new(),
+                };
+                if !matches!(&body.subject,
+                    crate::claim::ClaimSubject::Entity(actor) if allowed.contains(actor))
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "actor self-model belongs to a different resident",
+                    ));
+                }
             }
             // A claim whose every cited TURN is erased has no live support,
             // however late it replicated (FIX 8643): it is not loaded.
