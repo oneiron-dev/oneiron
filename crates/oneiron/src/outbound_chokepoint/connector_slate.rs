@@ -29,7 +29,7 @@ use crate::outbound_consent::{SLATE_ALWAYS_ASK_REASON, frozen_scoped_candidate_i
 use crate::outbound_intent_ledger::{
     AdmittedApproval, IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentState,
     PinnedApproval, PinnedApprovalFamily, abandon_record, keep_pinned_approval_in_txn,
-    keep_press_after_admission, pinned_retry_approval, read_intent_record_in_txn,
+    pinned_retry_approval, read_intent_record_in_txn,
 };
 
 /// CALLS `SLATE-990-neverallow-terminal`: a Pending call whose tool the
@@ -143,6 +143,14 @@ fn always_ask(
         match crate::consent::approve_once_authorization_in_txn(&vault.store, wtxn, &digest) {
             Ok(Some(tap)) => {
                 crate::consent::spend_approve_once_in_txn(&vault.store, wtxn, &tap)?;
+                // The keep rides the spend's writer (FIX 9229): a failed keep
+                // aborts the spend too, so the marker stays available and the
+                // owner can press again.
+                let kept = PinnedApproval::new(
+                    PinnedApprovalFamily::ScopedMcp,
+                    AdmittedApproval::from_gate(record.id, digest),
+                );
+                keep_pinned_approval_in_txn(vault, wtxn, Some(kept))?;
                 Ok(Release::Spent)
             }
             Ok(None) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => Ok(Release::Ask),
@@ -153,13 +161,6 @@ fn always_ask(
         Release::Send => Ok(None),
         Release::Spent => {
             let subject = bytes_to_hex_lower(&record.id);
-            let kept = PinnedApproval::new(
-                PinnedApprovalFamily::ScopedMcp,
-                AdmittedApproval::from_gate(record.id, digest),
-            );
-            keep_press_after_admission(vault, &subject, |wtxn| {
-                keep_pinned_approval_in_txn(vault, wtxn, Some(kept))
-            })?;
             tracing::info!(
                 reason = "connector_slate_always_ask_press_spent",
                 intent = %subject,
