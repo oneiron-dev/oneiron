@@ -325,7 +325,7 @@ impl ConsolidationExecutor<'_> {
                     scope: &slice.scope,
                     sources: &slice.sources,
                 }],
-                namespace: pass.namespace,
+                namespace: pass.namespace.clone(),
                 rules: pass.rules,
                 citations: Arc::clone(pass.citations),
                 width: 1,

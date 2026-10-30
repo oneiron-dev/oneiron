@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::support::Memory;
 use super::super::{MemoryError, MemoryResult};
-use super::invite::CalendarInviteSurfaceInput;
+use super::invite::{CalendarInviteOrigin, CalendarInviteSurfaceInput};
 use super::types::{OutboundIntentReceipt, OutboundScheduleContext};
 use crate::calendar::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
@@ -107,13 +107,34 @@ impl Memory<'_> {
     /// whole public input, and every consent, binding, and sender-domain fact
     /// is read from the vault at the chokepoint. A caller cannot assert its way
     /// past a cold-invite refusal.
+    ///
+    /// The invite is the caller's own immediate act (`agent_immediate`), in
+    /// the session this handle's host bound when it bound one
+    /// ([`Self::in_off_record_session`]).
     pub fn calendar_invite(
         &self,
         input: &CalendarInviteSurfaceInput,
     ) -> MemoryResult<OutboundIntentReceipt> {
+        let origin = CalendarInviteOrigin::Immediate {
+            session_ref: self
+                .off_record_session
+                .clone()
+                .filter(|session| !session.is_empty()),
+        };
+        self.calendar_invite_from(input, &origin)
+    }
+
+    /// [`Self::calendar_invite`] under the origin the issuing host binds: a
+    /// Dreamer gap-queue job passes [`CalendarInviteOrigin::GapQueue`] with
+    /// the queue ref that fired it.
+    pub fn calendar_invite_from(
+        &self,
+        input: &CalendarInviteSurfaceInput,
+        origin: &CalendarInviteOrigin,
+    ) -> MemoryResult<OutboundIntentReceipt> {
         input.validate()?;
         self.schedule_outbound_inner(
-            &input.outbound_draft(),
+            &input.outbound_draft(origin),
             &OutboundScheduleContext::default(),
             &crate::outbound::OutboundScheduleContinuation::default(),
             Some(&input.frozen_payload()),

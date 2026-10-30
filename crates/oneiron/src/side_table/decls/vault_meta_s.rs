@@ -354,6 +354,15 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
+    /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
+    /// at + u64be step seq + receipt string.
+    SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
+        [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
+    /// The frozen callable cases by what they were made from, so an erase reads only the cases
+    /// naming its row (FIX 12180). Key: b'S' + source id16 + case key, or, when the sources are
+    /// unknown, b'R' + u16be receipt length + receipt string + case key. Value: empty.
+    SKILL_CALLABLE_CASE_INDEX: VaultMeta b"skill:callable_case_index:v1:" Raw;
     /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
     /// the exact content hash it scored). Key: id16 (skill entity).
     SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
@@ -407,6 +416,11 @@ side_tables! {
         => crate::skill_attribution::erase_credit_adjustments_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
+    /// The receipts of the decisions that gave one attempt-lane judgment, in hunk order, kept once
+    /// beside it (FIX 11512); an erased entity's evidence pins go, and a row with a receipt decided
+    /// for it goes whole. Key: u64be (the judgment's evidence sequence).
+    SKILL_ATTRIBUTION_DECISION_RECEIPTS: VaultMeta b"skill_attribution:decision_receipts:v1:" Named
+        => crate::skill_attribution::erase_decision_receipts_entity_in_txn;
     /// A leased run's derivation witnesses (FIX 3103): each exact DerivedFrom edge a write of the
     /// run left stored, with its producer, whether the run's lease held as it landed and when
     /// (each end nil once erased); beside them, each scope summary a run asked for, with its lease

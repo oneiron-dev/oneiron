@@ -1,7 +1,7 @@
 //! A synthetic ECMA-376 deck builder shared by the deck, design-plan and
 //! emission tests: the package plumbing, namespaces and theme every fixture
 //! needs. Each test module keeps the parts it asserts on.
-use crate::retained_opc::{Limits, XmlLimits};
+use crate::retained_opc::Limits;
 use std::io::Write;
 
 pub(crate) const NS: &str = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main" xmlns:a16="http://schemas.microsoft.com/office/drawing/2014/main""#;
@@ -12,13 +12,8 @@ pub(crate) const GROUP_ROOT: &str =
 pub(crate) fn limits() -> Limits {
     Limits {
         archive_bytes: 32 << 20,
-        entries: 10_000,
         part_bytes: 16 << 20,
         expanded_bytes: 64 << 20,
-        xml: XmlLimits {
-            max_depth: 256,
-            max_nodes: 1_000_000,
-        },
     }
 }
 

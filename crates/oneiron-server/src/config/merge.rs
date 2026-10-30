@@ -356,6 +356,7 @@ struct FileServeConfig {
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
+    channel_endpoints: Option<super::ChannelEndpointsConfig>,
     linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -426,6 +427,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
+            channel_endpoints: value.channel_endpoints,
             linear: value.linear,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -512,6 +514,8 @@ struct PartialServeConfig {
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
     line: Option<super::LineConfig>,
+    /// `[channel_endpoints]` is file-only, as `[line]` is.
+    channel_endpoints: Option<super::ChannelEndpointsConfig>,
     /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
     /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
     linear: Option<super::LinearConfig>,
@@ -609,6 +613,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("channel_endpoints", &self.channel_endpoints)
             .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -708,6 +713,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             connectors: None,
             embedding: None,
             line: None,
+            channel_endpoints: None,
             linear: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,

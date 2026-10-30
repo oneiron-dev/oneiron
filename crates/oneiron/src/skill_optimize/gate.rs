@@ -113,8 +113,7 @@ use sha2::{Digest, Sha256};
 use super::{
     GOAL_ID_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     PROVENANCE_OPTIMIZE_OF_KEY, PROVENANCE_OPTIMIZE_OF_VERSION_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
-    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SkillGoalId, invalid, proven_cycle, tier_verdict_in_txn,
-    validate_goal_birth_in_txn,
+    SkillGoalId, invalid, proven_cycle, tier_verdict_in_txn, validate_goal_birth_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -150,6 +149,7 @@ mod live;
 mod measurement;
 mod preflight;
 mod project_goal;
+mod rule_policy;
 mod tradeoff;
 mod tradeoff_capacity;
 mod verdict;
@@ -164,7 +164,7 @@ pub use admission::{
 };
 pub use basis::{
     HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle, dev_receipts,
-    held_out_receipt_set_digest, held_out_receipts, receipt_is_held_out,
+    held_out_receipt_set_digest, held_out_receipts, held_out_receipts_sourced, receipt_is_held_out,
     register_held_out_replay_scorer, set_skill_edit_cycle_cap, skill_body_binding_digest,
     skill_edit_cycle_cap, skill_edit_score_call_purpose,
 };
@@ -217,7 +217,9 @@ pub(crate) use ledger::{
 pub(crate) use preflight::{
     SkillEditTrialBasis, skill_edit_preflight_passed_in_txn, skill_edit_trial_basis_in_txn,
 };
-pub(crate) use project_goal::{project_axes, project_goal_revision_proposals_in_txn};
+pub(crate) use project_goal::{
+    project_axes, project_goal_revision_proposals_in_txn, project_rules_for_record,
+};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;
@@ -228,9 +230,8 @@ pub(super) use decision::{clear_pre_score_race_hook, set_pre_score_race_hook};
 // The seam between the children: a helper one child hands another is
 // re-imported here, so every mover resolves it exactly as it did inline.
 use admission::{
-    bounded_receipts, open_pending_tradeoff_in_txn, provenance_str,
-    record_tradeoff_resolution_in_txn, require_open_optimizer_proposal, target_is_current,
-    target_of,
+    open_pending_tradeoff_in_txn, provenance_str, record_tradeoff_resolution_in_txn,
+    require_open_optimizer_proposal, target_is_current, target_of,
 };
 use basis::{
     ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
@@ -244,7 +245,7 @@ use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
     is_tradeoff, score_goal_axes, validate_goal_vector,
 };
-use judge_binding::JudgeBinding;
+use judge_binding::{JudgeBinding, judge_rubric_digest_in_txn};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{anchor_score, measure, validate_measurements, world_labels_digest};
 

@@ -105,21 +105,7 @@ fn native_mail_ready(
     let mut connected = None;
     vault
         .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
-            let value = std::str::from_utf8(value)
-                .map_err(|_| {
-                    oneiron::Error::InvalidConfig("the stored credential is not text".to_owned())
-                })?
-                .trim();
-            let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
-                value.to_owned()
-            } else {
-                format!("Bearer {value}")
-            };
-            let header = reqwest::header::HeaderValue::from_str(&header).map_err(|_| {
-                oneiron::Error::InvalidConfig(
-                    "the stored credential is not a header value".to_owned(),
-                )
-            })?;
+            let header = native_mail_authorization(value)?;
             connected = Some(
                 StalwartClient::connect(placement.clone(), header)
                     .map(|_| ())
@@ -138,6 +124,25 @@ fn native_mail_ready(
         provider_account: Some(placement.domain().to_owned()),
         scopes: Vec::new(),
         evidence: blake3::hash(proof.as_bytes()).to_hex().to_string(),
+    })
+}
+
+/// The stored mail server credential as the `Authorization` header the
+/// Stalwart client presents: the whole header (`Basic ...` or `Bearer ...`),
+/// or a bare bearer token.
+pub(super) fn native_mail_authorization(
+    value: &[u8],
+) -> oneiron::Result<reqwest::header::HeaderValue> {
+    let value = std::str::from_utf8(value)
+        .map_err(|_| oneiron::Error::InvalidConfig("the stored credential is not text".to_owned()))?
+        .trim();
+    let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
+        value.to_owned()
+    } else {
+        format!("Bearer {value}")
+    };
+    reqwest::header::HeaderValue::from_str(&header).map_err(|_| {
+        oneiron::Error::InvalidConfig("the stored credential is not a header value".to_owned())
     })
 }
 

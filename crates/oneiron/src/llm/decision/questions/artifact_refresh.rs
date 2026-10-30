@@ -46,7 +46,7 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
 
 /// Key: id16(question) + id16(artifact).
-const ASKED: SideTable<(EntityId, EntityId), ArtifactAsked, Named> =
+pub(super) const ASKED: SideTable<(EntityId, EntityId), ArtifactAsked, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_ARTIFACT_ASKED);
 
 /// One ask's run clock, past which no unit call runs.
@@ -55,10 +55,10 @@ const ASK_DEADLINE: Duration = Duration::from_secs(300);
 /// The last ask of one artifact for one question: the schedule's projection of the ask
 /// log (FIX 2337).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ArtifactAsked {
+pub(super) struct ArtifactAsked {
     question_version: u32,
     /// Each read artifact's head version when it was asked, the artifact first.
-    versions: Vec<(EntityId, u64)>,
+    pub(super) versions: Vec<(EntityId, u64)>,
     asked_at: u64,
     /// The proposal its answers wait under; none when no unit was answered.
     proposal_ref: Option<String>,
@@ -504,18 +504,31 @@ impl Asking<'_> {
                     let txn = vault.store.env.read_txn()?;
                     vault.docx_archive_limits_in_txn(&txn, Some(self.record.principal))?
                 };
+                // The DOCX reads run in the host's memory (FIX 10651); a resource
+                // refusal is the engine's error, never a quiet re-ask of all (FIX 10587).
+                let resources = crate::office_body::document_resources();
                 let texts = |bytes: &[u8]| {
-                    let read = oneiron_docedit::docx_body::read_docx_blocks(bytes, limits).ok()?;
-                    Some(
+                    let read = match resources
+                        .docx(|| oneiron_docedit::docx_body::read_docx_blocks(bytes, limits))
+                    {
+                        Ok(read) => read,
+                        Err(error) => {
+                            if let Some(refusal) = error.resource() {
+                                return Err(crate::office_body::document_refused(refusal));
+                            }
+                            return Ok(None);
+                        }
+                    };
+                    Ok(Some(
                         read.into_iter()
                             .map(|block| {
                                 let text = *blake3::hash(block.text.as_bytes()).as_bytes();
                                 (block.id, text)
                             })
                             .collect::<std::collections::BTreeMap<_, _>>(),
-                    )
+                    ))
                 };
-                let (Some(then), Some(now)) = (texts(&then), texts(&now)) else {
+                let (Some(then), Some(now)) = (texts(&then)?, texts(&now)?) else {
                     return Ok(None);
                 };
                 Some(Changed::Blocks(
