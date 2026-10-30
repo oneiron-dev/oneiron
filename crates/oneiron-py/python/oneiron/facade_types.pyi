@@ -17355,10 +17355,12 @@ class ArtifactUnitReceiptAbstained(TypedDict):
     status: Literal["abstained"]
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptRefused(TypedDict):
     status: Literal["refused"]
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptOmitted(TypedDict):
     status: Literal["omitted"]
 ArtifactUnitReceipt = ArtifactUnitReceiptAbstained | ArtifactUnitReceiptRefused | ArtifactUnitReceiptOmitted

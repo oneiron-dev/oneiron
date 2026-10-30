@@ -6818,7 +6818,7 @@ export type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; pag
 /** `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskStanding` */
 export type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" }
 /** `oneiron::llm::decision::questions::artifact_refresh::unit_receipts::ArtifactUnitReceipt` */
-export type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null } | { status: "refused"; unit: unknown; reason: string } | { status: "omitted" }
+export type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null } | { status: "refused"; unit: unknown; reason: string; judged_live?: LivePin | null } | { status: "omitted" }
 /** `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord` */
 export type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[] }
 /** `oneiron::receipt::questions::QuestionAnswer` */

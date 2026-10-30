@@ -54503,6 +54503,12 @@ pub enum ArtifactUnitReceipt {
         unit: crate::WireJson,
         #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
         decision: Option<TypedDecision>,
+        #[serde(
+            rename = "judged_live",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        judged_live: Option<LivePin>,
     },
     #[serde(rename = "refused")]
     Refused {
@@ -54510,6 +54516,12 @@ pub enum ArtifactUnitReceipt {
         unit: crate::WireJson,
         #[serde(rename = "reason")]
         reason: String,
+        #[serde(
+            rename = "judged_live",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        judged_live: Option<LivePin>,
     },
     #[serde(rename = "omitted")]
     Omitted,
