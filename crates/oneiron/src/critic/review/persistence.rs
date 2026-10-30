@@ -557,7 +557,7 @@ pub(crate) fn trusted_review_in_txn(
     }))
 }
 
-/// Re-keys the session tag of every review verdict and automatic outcome naming erased
+/// Re-keys the session tag of every review verdict, automatic outcome and outcome naming erased
 /// `entity` to one fresh opaque id (FIX 11363), its trust stamp with it. Gives back the
 /// verdicts it touched, for their cached rows' move.
 pub(crate) fn erase_review_session_in_txn(
@@ -568,7 +568,7 @@ pub(crate) fn erase_review_session_in_txn(
     let named = entity.to_hex();
     let mut opaque = None;
     let mut verdicts = Vec::new();
-    for predicate in ["review.verdict", "review.automatic_outcome"] {
+    for predicate in ["review.verdict", "review.automatic_outcome", "review.outcome"] {
         let mut ids = Vec::new();
         vault.for_each_claim_with_predicate_in_txn(wtxn, predicate, |id, body| {
             if body.session_tag.as_deref() == Some(named.as_str()) {
