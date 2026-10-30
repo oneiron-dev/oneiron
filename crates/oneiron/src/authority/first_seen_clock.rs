@@ -126,20 +126,21 @@ impl AuthorityLocalClock {
         })
     }
 
-    /// The anchor as it stands, for [`Self::restore_anchor`].
-    pub(super) fn anchor_state(&self) -> Option<(Instant, u64)> {
-        self.anchor
-            .as_ref()
-            .map(|anchor| (anchor.anchor_instant, anchor.anchor_secs))
-    }
-
-    /// Puts back an anchor [`Self::anchor_state`] read, undoing a seed a
-    /// write that did not commit took.
-    pub(super) fn restore_anchor(&mut self, state: Option<(Instant, u64)>) {
-        self.anchor = state.map(|(anchor_instant, anchor_secs)| AuthorityClockAnchor {
-            anchor_instant,
-            anchor_secs,
-        });
+    /// [`Self::observation_secs_at`]'s reading with the anchor left as it
+    /// stands (FIX 11192): the anchored reading raised to `previous_floor`,
+    /// or, with no anchor, the second a first observation would seed. It
+    /// seeds none and rebases none.
+    fn unseeded_observation_secs(
+        &self,
+        previous_floor: u64,
+        candidate_wall_secs: u64,
+        now: Instant,
+    ) -> u64 {
+        match self.anchored_secs(now) {
+            Some(anchored) => anchored.max(previous_floor),
+            None if previous_floor == 0 => candidate_wall_secs,
+            None => previous_floor,
+        }
     }
 
     /// The monotone observation this vault reports for `candidate_wall_secs`,
@@ -192,16 +193,51 @@ impl AuthorityLocalClock {
 }
 
 /// The monotone observation `store`'s vault reports for `candidate_wall_secs`.
+/// Inside a staged clock repair's proof ([`staged_repair_reading`]) it is
+/// read with the handle's anchor left as it stands.
 pub(crate) fn authority_observation_secs(
     store: &StoreCore,
     previous_floor: u64,
     candidate_wall_secs: u64,
 ) -> u64 {
-    store
+    let mut clock = store
         .authority_local_clock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .observation_secs_at(previous_floor, candidate_wall_secs, Instant::now())
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = Instant::now();
+    if in_staged_repair() {
+        return clock.unseeded_observation_secs(previous_floor, candidate_wall_secs, now);
+    }
+    clock.observation_secs_at(previous_floor, candidate_wall_secs, now)
+}
+
+thread_local! {
+    /// How many staged clock repairs this thread judges a proof inside.
+    static STAGED_REPAIR: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The owner's clock repair judging his proof against the floor it staged in
+/// its own writer (FIX 11192): every reading on this thread reads that floor
+/// and leaves this handle's anchor as it stands, so no reader on the handle
+/// reads at the staged floor before the repair commits it, and an aborted
+/// repair leaves nothing behind.
+#[must_use = "the proof reads without seeding only while this is held"]
+pub(super) struct StagedRepairReading(());
+
+/// Enters [`StagedRepairReading`] on this thread until the guard drops.
+pub(super) fn staged_repair_reading() -> StagedRepairReading {
+    STAGED_REPAIR.with(|depth| depth.set(depth.get() + 1));
+    StagedRepairReading(())
+}
+
+impl Drop for StagedRepairReading {
+    fn drop(&mut self) {
+        STAGED_REPAIR.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+fn in_staged_repair() -> bool {
+    STAGED_REPAIR.with(|depth| depth.get() > 0)
 }
 
 /// This handle's anchored reading now, when it holds one.

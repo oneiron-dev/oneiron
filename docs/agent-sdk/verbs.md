@@ -55,6 +55,7 @@ both bindings and their export-census tests in one change.
 - `vault.shape.groups.resolve`
 - `self.message`
 - `self.grants.ask`
+- `self.grants.asked`
 - `vault.companions.access_requests.answer`
 - `self.grants.answer`
 - `vault.personas.preview`
@@ -150,6 +151,8 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.policy.admit`
 - `vault.retrieval.policy.update`
 - `vault.export`
+- `vault.export.transfer.read`
+- `vault.export.transfer.release`
 - `self.credential.attenuate`
 - `self.actor`
 - `vault.scope.position`
@@ -185,6 +188,7 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.archive`
 - `vault.turn_programs.arm`
 - `vault.turn_programs.disarm`
+- `vault.turn_programs.rebind`
 - `self.saved_query.create`
 - `self.saved_query.read`
 - `self.saved_query.update`
@@ -310,6 +314,8 @@ both bindings and their export-census tests in one change.
 - `vault.mesh.set_alpn_grant`
 - `vault.mesh.revoke_machine`
 - `vault.mesh.dial`
+- `vault.outbox.diverged.list`
+- `vault.outbox.diverged.answer`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
@@ -668,6 +674,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.ingress.get`
 - `vault.code.origin.register`
 - `vault.code.origin.mirror.get`
+- `vault.code.origin.mirror.plan`
 - `vault.code.origin.mirror.set`
 - `vault.code.origin.mirror.strategy`
 - `vault.code.origin.mirror.clear`

@@ -130,11 +130,95 @@ pub(crate) struct WithdrawnGenerationScope {
     pub(crate) replacement: WithdrawnReplacement,
 }
 
+impl WithdrawnGenerationScope {
+    /// The cutoff this obligation stands for.
+    pub(crate) fn cutoff(&self) -> WithdrawnCutoff {
+        WithdrawnCutoff {
+            generation: self.generation,
+            replacement: self.replacement,
+        }
+    }
+}
+
 /// What stands in history for a withdrawn generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum WithdrawnReplacement {
     /// An epoch summary's content-free keyframe, as its row now keeps it.
     EpochKeyframe,
+    /// The record's exact 25-byte header and no body, as a withdrawn reply
+    /// copy keeps it (FIX 931).
+    Shell,
+}
+
+impl WithdrawnReplacement {
+    /// The kind's tag byte in an encoded [`WithdrawnCutoff`]: a format
+    /// discriminant, not a limit.
+    const fn tag(self) -> u8 {
+        match self {
+            Self::EpochKeyframe => 1,
+            Self::Shell => 2,
+        }
+    }
+
+    const fn of_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::EpochKeyframe),
+            2 => Some(Self::Shell),
+            _ => None,
+        }
+    }
+}
+
+/// The bytes of an encoded [`WithdrawnCutoff`].
+pub(crate) const WITHDRAWN_CUTOFF_LEN: usize = 9;
+
+/// An artifact's newest withdrawn generation and what stands in history for
+/// it (FIX 931). One strict nine-byte form serves the fence (`wg:`), this
+/// vault's cutoff map and a window's carried cutoff: the generation, eight
+/// bytes big-endian, then the replacement's tag byte. No other length or tag
+/// reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WithdrawnCutoff {
+    /// The withdrawn body's `learned_at`: carriers of it or older are cut off.
+    pub(crate) generation: u64,
+    pub(crate) replacement: WithdrawnReplacement,
+}
+
+impl WithdrawnCutoff {
+    pub(crate) fn encode(self) -> [u8; WITHDRAWN_CUTOFF_LEN] {
+        let mut bytes = [0; WITHDRAWN_CUTOFF_LEN];
+        bytes[..8].copy_from_slice(&self.generation.to_be_bytes());
+        bytes[8] = self.replacement.tag();
+        bytes
+    }
+
+    /// Strictly decodes an encoded cutoff; `None` for any other bytes.
+    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+        let bytes = <[u8; WITHDRAWN_CUTOFF_LEN]>::try_from(bytes).ok()?;
+        Some(Self {
+            generation: u64::from_be_bytes(bytes[..8].try_into().ok()?),
+            replacement: WithdrawnReplacement::of_tag(bytes[8])?,
+        })
+    }
+
+    /// Takes `other` when it names a newer generation; whether it did. At an
+    /// equal generation the held cutoff stays, so none is lowered or flips.
+    pub(crate) fn raise(&mut self, other: Self) -> bool {
+        if other.generation > self.generation {
+            *self = other;
+            return true;
+        }
+        false
+    }
+}
+
+/// Raises the cutoff `cutoffs` holds for `id` to `cutoff`.
+fn raise_cutoff(
+    cutoffs: &mut BTreeMap<EntityId, WithdrawnCutoff>,
+    id: EntityId,
+    cutoff: WithdrawnCutoff,
+) {
+    cutoffs.entry(id).or_insert(cutoff).raise(cutoff);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,73 +352,91 @@ pub(crate) fn encode_withdrawn_generation_job_value(
         .map_err(|_| Error::InvariantViolation("withdrawn generation sweep job encode"))
 }
 
-/// The newest withdrawn generation of each artifact whose sweep finished
-/// (`wg:{hex32}`, u64 BE). It outlives the `hw:` row, so a late re-put of a
-/// withdrawn body is refused after the obligation is gone.
-const WITHDRAWN_GENERATION_FENCE: SideTable<HexId, u64, Raw> =
+/// The newest withdrawn generation of each artifact whose sweep finished and
+/// what stands in for it (`wg:{hex32}`, an encoded [`WithdrawnCutoff`]). It
+/// outlives the `hw:` row, so a late re-put of a withdrawn body is refused
+/// after the obligation is gone.
+const WITHDRAWN_GENERATION_FENCE: SideTable<HexId, [u8; WITHDRAWN_CUTOFF_LEN], Raw> =
     SideTable::new(&side_table::DELETION_WITHDRAWN_GENERATION_FENCE);
 
-/// Raises `artifact`'s withdrawn-generation fence to `generation`, in the
+/// A fence's cutoff. A fence that does not decode fails its reader.
+fn fence_cutoff(bytes: &[u8]) -> Result<WithdrawnCutoff> {
+    WithdrawnCutoff::decode(bytes).ok_or(Error::CorruptedIndex("withdrawn generation fence"))
+}
+
+/// The cutoff one pending `hw:` row stands for: its key's generation and its
+/// job's replacement. A key that does not decode fences every generation, and
+/// a job that does not decode reads as a keyframe's, so a reader fails closed
+/// either way; the sweep inventory reports the row.
+fn pending_cutoff(key: &[u8], value: &[u8]) -> WithdrawnCutoff {
+    let generation = decode_withdrawn_generation_key(key).map_or(u64::MAX, |(_, at)| at);
+    let replacement = rmp_serde::from_slice::<WithdrawnGenerationSweepJob>(value)
+        .map_or(WithdrawnReplacement::EpochKeyframe, |job| {
+            job.scope.replacement
+        });
+    WithdrawnCutoff {
+        generation,
+        replacement,
+    }
+}
+
+/// Raises `artifact`'s withdrawn-generation fence to `cutoff`, in the
 /// transaction that deletes its `hw:` row. A fence already as high stays.
 pub(crate) fn raise_withdrawn_generation_fence_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     artifact: &EntityId,
-    generation: u64,
+    cutoff: WithdrawnCutoff,
 ) -> Result<()> {
     let key = HexId(*artifact);
-    if WITHDRAWN_GENERATION_FENCE
-        .get(store, wtxn, &key)?
-        .is_some_and(|held| held >= generation)
+    if let Some(held) = WITHDRAWN_GENERATION_FENCE.get(store, wtxn, &key)?
+        && fence_cutoff(&held)?.generation >= cutoff.generation
     {
         return Ok(());
     }
-    WITHDRAWN_GENERATION_FENCE.put(store, wtxn, &key, &generation)
+    WITHDRAWN_GENERATION_FENCE.put(store, wtxn, &key, &cutoff.encode())
 }
 
-/// The newest withdrawn generation of `artifact`, from its pending `hw:`
-/// rows and its fence; `None` when it has neither. A row under the
-/// artifact's prefix whose key does not decode fences every generation, so
-/// a reader fails closed.
+/// The newest withdrawn generation of `artifact` and its replacement, from
+/// its pending `hw:` rows and its fence; `None` when it has neither.
 #[cfg(feature = "sync")]
 pub(crate) fn withdrawn_generation_cutoff_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     artifact: &EntityId,
-) -> Result<Option<u64>> {
-    let mut cutoff = WITHDRAWN_GENERATION_FENCE.get(store, txn, &HexId(*artifact))?;
+) -> Result<Option<WithdrawnCutoff>> {
+    let mut cutoff = match WITHDRAWN_GENERATION_FENCE.get(store, txn, &HexId(*artifact))? {
+        Some(bytes) => Some(fence_cutoff(&bytes)?),
+        None => None,
+    };
     let prefix = [WITHDRAWN_GENERATION_SWEEP_PREFIX, artifact.as_bytes()].concat();
     for row in store.sync_queue.prefix_iter(txn, &prefix)? {
-        let (key, _) = row?;
-        let generation = decode_withdrawn_generation_key(&key).map_or(u64::MAX, |(_, at)| at);
-        cutoff = Some(cutoff.map_or(generation, |held| held.max(generation)));
+        let (key, value) = row?;
+        let pending = pending_cutoff(&key, &value);
+        cutoff.get_or_insert(pending).raise(pending);
     }
     Ok(cutoff)
 }
 
-/// Every artifact's newest withdrawn generation, from the pending `hw:` rows
-/// and the fences. A `hw:` key that does not decode names no artifact; the
-/// sweep inventory reports it.
+/// Every artifact's newest withdrawn generation and its replacement, from
+/// the pending `hw:` rows and the fences. A `hw:` key that does not decode
+/// names no artifact; the sweep inventory reports it.
 pub(crate) fn withdrawn_generation_cutoffs_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-) -> Result<BTreeMap<EntityId, u64>> {
+) -> Result<BTreeMap<EntityId, WithdrawnCutoff>> {
     let mut cutoffs = BTreeMap::new();
-    let mut raise = |id: EntityId, generation: u64| {
-        let held = cutoffs.entry(id).or_insert(generation);
-        *held = (*held).max(generation);
-    };
     for row in WITHDRAWN_GENERATION_FENCE.iter_from(store, txn, &[])? {
-        let (HexId(id), generation) = row?;
-        raise(id, generation);
+        let (HexId(id), bytes) = row?;
+        raise_cutoff(&mut cutoffs, id, fence_cutoff(&bytes)?);
     }
     for row in store
         .sync_queue
         .prefix_iter(txn, WITHDRAWN_GENERATION_SWEEP_PREFIX)?
     {
-        let (key, _) = row?;
-        if let Some((id, generation)) = decode_withdrawn_generation_key(&key) {
-            raise(id, generation);
+        let (key, value) = row?;
+        if let Some((id, _)) = decode_withdrawn_generation_key(&key) {
+            raise_cutoff(&mut cutoffs, id, pending_cutoff(&key, &value));
         }
     }
     Ok(cutoffs)

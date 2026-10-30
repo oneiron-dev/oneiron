@@ -161,6 +161,8 @@ impl PatternLaunchRunner for AgentPatternLaunchRunner {
         asked: &SpawnNeed,
         prompt: &str,
         plan: &TeamPlan,
+        // The agent's own scope line meters the run; the payer is not read.
+        _payer: &WriteActor,
     ) -> Result<PatternLaunchSpec> {
         let members = launch_members(skill, plan)?;
         self.held()?;
@@ -257,7 +259,9 @@ impl AgentPatternLaunchRunner {
 /// under the run's own id, which a continuation of this run reads. When an
 /// erase took the intent before that record (FIX 9184), the run goes on
 /// without the pack: a fresh run's task gives back the exact span it just
-/// took, and the answer is `None`.
+/// took, a continued run's task holds a same-length "[erased]" tombstone in
+/// the pack's place, so later exposures keep their offsets (FIX 11093), and
+/// the answer is `None`.
 ///
 /// # Errors
 ///
@@ -276,8 +280,15 @@ pub(super) fn leader_exposure(
     let Some(launch) = dispatcher.planned_launch_for_leader(leased.id)? else {
         return Ok(None);
     };
-    // An erase took the intent's pack (Engine 10-22): the run reads none.
+    // An erase took the intent's pack (Engine 10-22): the run reads none. A
+    // continued run's task, its source's fork, still holds the pack's text,
+    // and takes the tombstone over the span its source kept (FIX 11787).
     let Some(pack) = &launch.pack else {
+        if continues
+            && let Some(span) = dispatcher.planned_erased_pack_span_for_leader(leased.id)?
+        {
+            AgentDispatcher::tombstone_erased_pack_span(&mut config.task, &span);
+        }
         return Ok(None);
     };
     let body = skill_text(pack)?;
@@ -302,7 +313,9 @@ pub(super) fn leader_exposure(
     if dispatcher.record_planned_leader_run(leased, &exposure, config.model.as_str(), at)? {
         return Ok(Some(exposure));
     }
-    if !continues {
+    if continues {
+        AgentDispatcher::tombstone_erased_leader_pack(&mut config.task, &exposure);
+    } else {
         take_back(&mut config.task, &exposure);
     }
     Ok(None)

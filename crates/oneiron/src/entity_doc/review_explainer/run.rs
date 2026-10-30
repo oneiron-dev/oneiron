@@ -195,6 +195,7 @@ async fn generate(
                 ResponseFormat::Text
             },
             locality: route.locality,
+            host_keyless: false,
             seat_effort: Some(effort),
         },
         messages: vec![

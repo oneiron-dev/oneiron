@@ -58,6 +58,7 @@ pub use self::unified::{
     UnifiedInboxGroupCursor, UnifiedInboxGroupPage,
 };
 
+pub(crate) use self::notification::notification_id;
 pub(crate) use self::projection::inbox_claim_hash;
 
 #[cfg(test)]

@@ -332,13 +332,16 @@ async fn rerun_saved_call(
 /// engine's own, which leaves the call for the next pass.
 #[cfg(feature = "code-sandbox-wasmtime")]
 fn mcp_saved_error(error: McpGatewayError) -> oneiron::MemoryError {
-    let code = if error.code == -32603 {
+    let code = if error.legal_hold.is_some() {
+        oneiron::memory::MEMORY_CODE_INVALID_STATE
+    } else if error.code == -32603 {
         oneiron::memory::MEMORY_CODE_INTERNAL
     } else {
         error.kind
     };
     let mut saved = oneiron::MemoryError::new(code, error.message, &[]);
     saved.hook = error.hook;
+    saved.legal_hold = error.legal_hold;
     saved.reason_codes = error.reason_codes;
     saved
 }

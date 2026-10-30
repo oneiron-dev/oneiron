@@ -83,6 +83,7 @@ vaultShapeGroups(input: unknown): unknown
 vaultShapeGroupsResolve(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
+selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
@@ -178,6 +179,8 @@ vaultRetrievalPolicyEvaluate(input: unknown): unknown
 vaultRetrievalPolicyAdmit(input: unknown): unknown
 vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
+vaultExportTransferRead(input: unknown): unknown
+vaultExportTransferRelease(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 selfActor(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
@@ -213,6 +216,7 @@ vaultCampaignProgramUpdate(input: unknown): unknown
 vaultCampaignProgramArchive(input: unknown): unknown
 vaultTurnProgramsArm(input: unknown): unknown
 vaultTurnProgramsDisarm(input: unknown): unknown
+vaultTurnProgramsRebind(input: unknown): unknown
 selfSavedQueryCreate(input: unknown): unknown
 selfSavedQueryRead(input: unknown): unknown
 selfSavedQueryUpdate(input: unknown): unknown
@@ -338,6 +342,8 @@ vaultMeshBindMachine(input: unknown): unknown
 vaultMeshSetAlpnGrant(input: unknown): unknown
 vaultMeshRevokeMachine(input: unknown): unknown
 vaultMeshDial(input: unknown): unknown
+vaultOutboxDivergedList(input: unknown): unknown
+vaultOutboxDivergedAnswer(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
@@ -696,6 +702,7 @@ vaultCodeImportsGet(input: unknown): unknown
 vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
+vaultCodeOriginMirrorPlan(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
 vaultCodeOriginMirrorStrategy(input: unknown): unknown
 vaultCodeOriginMirrorClear(input: unknown): unknown
