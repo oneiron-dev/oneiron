@@ -212,7 +212,9 @@ pub(super) fn keep_relayed_export_outputs(
                 }
             }
             for output in parts::joined_copies(doc, &rows) {
-                if relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)? {
+                if !fold.export_supplement_imported(&output.request)
+                    && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
+                {
                     due.push(output);
                 }
             }
