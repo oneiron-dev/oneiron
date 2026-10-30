@@ -247,10 +247,44 @@ pub fn project_review_dissent(vault: &Vault, result: &ReviewResult, at: u64) -> 
 }
 
 /// The measured-state sweep also folds newly arrived facts for retained dissent.
+/// It first keeps the dissent an overruling outcome left unkept (FIX 12105).
 pub fn project_all_review_dissent(vault: &Vault, at: u64) -> Result<usize> {
+    keep_overruled_dissent(vault, at)?;
     let mut settled = 0;
     for review in reviews_with_dissent(vault)? {
         settled += project_review_dissent(vault, &review, at)?;
     }
     Ok(settled)
+}
+
+/// Keeps the dissent of each predicted critique that a `review.outcome`
+/// valued false overruled and whose dissent has no standing question yet
+/// (FIX 12105). An outcome recorded inside another write, such as a team's
+/// settlement in the owner's inbox decision, keeps no dissent there, since
+/// keeping it opens writes of its own; one whose dissent stopped after its
+/// commit resumes here. A critique whose outcome does not read is skipped,
+/// and one whose dissent does not keep warns; the sweep goes on.
+fn keep_overruled_dissent(vault: &Vault, at: u64) -> Result<()> {
+    for (review, artifacts) in reviews_with_unkept_dissent(vault)? {
+        for artifact_id in &artifacts {
+            match dismissed(vault, &review.verdict_claim, artifact_id) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    tracing::debug!(
+                        kind = ?error.kind(),
+                        "a critique's outcome did not read; its dissent waits"
+                    );
+                    continue;
+                }
+            }
+            if let Err(error) = preserve_review_dissent(vault, &review, artifact_id, at) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "an overruled critique's dissent was not kept; the sweep goes on"
+                );
+            }
+        }
+    }
+    Ok(())
 }
