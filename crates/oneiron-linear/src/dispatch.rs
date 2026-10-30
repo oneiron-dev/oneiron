@@ -110,7 +110,8 @@ const ANSWERED: &str = "; Linear answered HTTP ";
 /// FIX 6824: the approve-once digest (64 lower-hex) and the role of the
 /// actor whose press it names, read off a [`LinearSyncError::Held`] a
 /// [`VaultLinearOutboundDoor`] returns when the Gate held the call for the
-/// owner's press; `None` for every other error.
+/// owner's press, or (FIX 6837) off the first held push a mirror pass's
+/// [`LinearSyncError::PushFailed`] carries; `None` for every other error.
 #[must_use]
 pub fn held_approve_once(error: &LinearSyncError) -> Option<(&str, LinearEffectRole)> {
     match error {
@@ -119,6 +120,9 @@ pub fn held_approve_once(error: &LinearSyncError) -> Option<(&str, LinearEffectR
             approval_digest,
             ..
         } => Some((approval_digest, *role)),
+        LinearSyncError::PushFailed(failures) => failures
+            .iter()
+            .find_map(|failure| held_approve_once(&failure.error)),
         _ => None,
     }
 }
