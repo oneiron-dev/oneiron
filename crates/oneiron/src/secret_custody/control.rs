@@ -431,8 +431,10 @@ impl Vault {
         };
         let permits = change_permits(&fold, &change, holder)?;
         // Every permitted install is kept, however many (FIX 7906): measured,
-        // never refused; its transition carries them in pieces.
-        crate::authority::measure_authority_work(&self.store.limit_watch, permits.len());
+        // never refused; its transition carries them in pieces. The request
+        // rides whole, so it also asks well before one sync frame (FIX 8087;
+        // L04 09:40 (b)).
+        crate::authority::measure_custody_permits(&self.store.limit_watch, &permits);
         let seen = fold.custody_work_revision(change.id);
         if change.seen.is_some_and(|stated| stated != seen) {
             return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
