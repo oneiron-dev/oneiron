@@ -159,7 +159,8 @@ impl Vault {
     ///
     /// # Errors
     /// Each refusal names its branch as a typed `AuthorityRefused` reason
-    /// ([`LeafKeyFailureCause::of_refusal`]), never a key: the wire off; a
+    /// ([`LeafKeyFailureCause::of_refusal`]), whose text is that branch
+    /// code alone, never a key, token or secret: the wire off; a
     /// malformed ask; a passed expiry; another holder named; a signature
     /// that is not the asker's live one; a key that is not its live
     /// encryption key; the release rule refusing; no such key here.
@@ -303,10 +304,12 @@ impl Vault {
     /// What L03's failure frame says of this install's ask `request_id`
     /// (FIX 7402): an expired or replayed ask is dropped, and the next
     /// [`Self::pending_leaf_key_requests`] mints a fresh one; an offline
-    /// socket keeps it pending, sent again on the next tick; a holder's
+    /// socket keeps it pending, sent again on a later tick; a holder's
     /// refusal drops it and holds a new ask for its carrier back
-    /// [`LEAF_KEY_REFUSED_BACKOFF_MS`]. An id no ask here has is nothing to
-    /// do.
+    /// [`LEAF_KEY_REFUSED_BACKOFF_MS`], unless its reason is the holder's
+    /// own expired or replayed branch, which is met as that cause. An id no
+    /// ask here has, one already answered and accepted included (an answer
+    /// and a failure may cross), is nothing to do.
     ///
     /// # Errors
     /// None today; the signature leaves room for a durable cause.
@@ -319,6 +322,13 @@ impl Vault {
         match cause {
             LeafKeyFailureCause::HolderOffline | LeafKeyFailureCause::ExecutorOffline => {}
             LeafKeyFailureCause::Expired | LeafKeyFailureCause::Replayed => {
+                session.asks.remove(&request_id);
+            }
+            // The holder's refusal text is its branch code (L03 sends
+            // `err.to_string()`): an expired or replayed ask is no refusal.
+            LeafKeyFailureCause::HolderRefused(reason)
+                if matches!(reason.as_str(), REFUSED_EXPIRED | REFUSED_REPLAYED) =>
+            {
                 session.asks.remove(&request_id);
             }
             LeafKeyFailureCause::HolderRefused(_) => {
