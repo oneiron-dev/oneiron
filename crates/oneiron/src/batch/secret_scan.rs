@@ -162,7 +162,7 @@ pub(super) fn scan_batch_ops(
                 // A sealed file (a container no reader here reads whole) is
                 // stored as it is, unmarked: a serving door gives it to the
                 // owner alone (owner ruling C2).
-                if *entity_type == ENTITY_TYPE_ASSET && is_sealed(data) {
+                if *entity_type == ENTITY_TYPE_ASSET && is_sealed(data, None) {
                     continue;
                 }
                 // A file's members are read too: a key in a compressed
@@ -495,8 +495,8 @@ pub(crate) fn scan_write_tree(data: &[u8]) -> Result<()> {
 /// and the bytes no reader shows (FIX 2470, 2480): the first hit's reason,
 /// or why the walk read no further. A serving door reads a masked copy, and
 /// a container no mark covers, by the rules of the door that accepted it.
-pub(crate) fn write_tree_hit(bytes: &[u8]) -> Option<&'static str> {
-    write_payload_hit(bytes).or_else(|| container::write_members_hit(bytes))
+pub(crate) fn write_tree_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
+    write_payload_hit(bytes).or_else(|| container::write_members_hit(bytes, digest))
 }
 
 /// [`scan_write_payload`] for a reader that marks a hit rather than refusing a
