@@ -242,6 +242,16 @@ impl LiftedSources {
     pub(crate) fn keys(&self) -> &[EntityId] {
         &self.0
     }
+
+    /// These keys and `keys`, the custody records the marks of what a read
+    /// shows name, each once, in custody-id order: the keys of the parts a
+    /// deck preview's asked slides draw (FIX 10453).
+    pub(crate) fn with_keys(mut self, keys: impl IntoIterator<Item = EntityId>) -> Self {
+        self.0.extend(keys);
+        self.0.sort_unstable();
+        self.0.dedup();
+        self
+    }
 }
 
 /// The custody records the marks of `texts` name, a key in a marked member
