@@ -8,6 +8,7 @@ mod artifact_refresh;
 mod ask_history;
 mod backfill;
 mod criteria;
+mod erase;
 mod graph_ask;
 mod health_ask;
 mod lifetime;
@@ -43,6 +44,7 @@ pub(crate) use ask_history::{
     StandingReask, record_failed_standing_reask, record_standing_reask_in_txn,
 };
 pub use backfill::schedule_backfill;
+pub(crate) use erase::erase_questions_for_actor_in_txn;
 pub use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,
