@@ -371,6 +371,9 @@ side_tables! {
     /// erase re-keys the project it names (FIX 6038). Key: string.
     EDIT_DISTANCE_AMENDMENT_JUDGMENT: VaultMeta b"edit_distance/amendment_judgment/v1\0" Raw
         => crate::edit_distance::attribution::erase_amendment_project_in_txn;
+    /// Uncaptured-amendment counters per door (FIX 11542): how many store-row
+    /// and inbox amendments measured nothing. Key: string (door).
+    EDIT_DISTANCE_AMENDMENT_UNCAPTURED_COUNT: VaultMeta b"edit_distance/amendment_uncaptured_count/v1\0" Raw;
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
