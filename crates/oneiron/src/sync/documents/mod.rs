@@ -406,7 +406,9 @@ impl EntityDocument {
     /// repo item's copy lineage, sent under its copy id (FIX 7608 slice 4):
     /// the same admission in the same writer, then the lineage takes the
     /// peer's operations and the visible diff lands their text here, all
-    /// before any acknowledgement. A ruled hold lands and keeps nothing.
+    /// before any acknowledgement. A ruled hold lands and applies nothing:
+    /// its held record is kept and it answers the vector to acknowledge the
+    /// edit with (FIX 10598); `None` for an edit that landed.
     pub fn import_copy_from_peer(
         &self,
         bytes: &[u8],
@@ -414,7 +416,7 @@ impl EntityDocument {
         selector: &super::selector::SyncSelector,
         peer: crate::authority::PeerMachine,
         session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
-    ) -> Result<()> {
+    ) -> Result<Option<Vec<u8>>> {
         self.refuse_raw_note()?;
         let _writer = self.lock()?;
         super::selector::secret_projection::import_document_copy(

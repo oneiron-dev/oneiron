@@ -19,12 +19,13 @@
 use std::collections::BTreeSet;
 
 use loro::json::{JsonOpContent, JsonSchema, ListOp, MapOp, MovableListOp, TextOp};
-use loro::{ContainerID, ContainerType, ID, LoroValue, PeerID};
+use loro::{ContainerID, ContainerType, ID, LoroDoc, LoroValue, PeerID};
 
+use super::rows::{HeldEdit, Landing};
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::origin::secret_projection::edit::RepoProjectionDiffResult;
+use crate::store::Store;
 
 /// The root map an entity row is a register of.
 const ENTITIES_MAP: &str = "entities";
@@ -50,9 +51,12 @@ pub(crate) struct TranslatedHistory {
     /// The canonical sources the translated operations now target.
     pub(crate) sources: BTreeSet<EntityId>,
     /// Edits of a copy the visible diff holds on a ruled cause. Their
-    /// operations are left untranslated: the caller keeps the whole update
-    /// pending and never imports or acknowledges it.
-    pub(crate) held: Vec<(EntityId, RepoProjectionDiffResult)>,
+    /// operations are left untranslated: the caller imports and applies
+    /// nothing of the update, and keeps only its held record (FIX 10598).
+    pub(crate) held: Vec<HeldEdit>,
+    /// The new bytes the translated operations land, for their writer to
+    /// mark (FIX 10732).
+    pub(crate) landings: Vec<Landing>,
 }
 
 impl SyncSecretProjection {
@@ -120,11 +124,17 @@ impl SyncSecretProjection {
     /// copy key names its source again, and every copy row carries the
     /// stored bytes or the visible diff applied to them. Placeholder or
     /// masked bytes never become a source row. Operation ids are kept: the
-    /// peer's pending identity is the canonical one.
+    /// peer's pending identity is the canonical one. `context` is this
+    /// window, read for a re-authored row kept under its own id (FIX 10874).
     ///
     /// # Errors
     /// The visible diff's own failure.
-    pub(crate) fn translate_history(&self, json: &mut JsonSchema) -> Result<TranslatedHistory> {
+    pub(crate) fn translate_history(
+        &self,
+        store: &Store,
+        context: Option<&LoroDoc>,
+        json: &mut JsonSchema,
+    ) -> Result<TranslatedHistory> {
         let mut out = TranslatedHistory::default();
         if self.is_empty() {
             return Ok(out);
@@ -147,18 +157,24 @@ impl SyncSecretProjection {
                             self.unalias_key(key, &mut out.sources);
                             continue;
                         };
-                        // A re-authored copy carries no edit (FIX 10729).
-                        let inbound = match self.reauthored_row(peer, &id, &bytes) {
+                        // A re-authored copy carries no edit (FIX 10729, FIX 10874).
+                        let reauthored = self.reauthored_row(peer, &id, &bytes).or_else(|| {
+                            self.reauthored_own_row(store, context, peer, &id, &bytes)
+                        });
+                        let inbound = match reauthored {
                             Some(row) => row,
                             None => self.source_row(&id, &bytes)?,
                         };
                         match inbound {
-                            InboundRow::Source { id, row } => {
+                            InboundRow::Source { id, row, landed } => {
                                 out.sources.insert(id);
+                                if let Some(blob) = landed {
+                                    out.landings.push(Landing::of(id, blob, &row));
+                                }
                                 *key = id.to_hex();
                                 *value = LoroValue::from(row);
                             }
-                            InboundRow::Held { id, cause } => out.held.push((id, cause)),
+                            InboundRow::Held(edit) => out.held.push(edit),
                             InboundRow::Ordinary => self.unalias_key(key, &mut out.sources),
                         }
                     }

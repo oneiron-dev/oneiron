@@ -97,15 +97,22 @@ impl SyncServer {
     /// broadcast to other devices). `auth`, the Write credential a promoted
     /// window's update passed, is rechecked in the committing transaction
     /// (FIX 5999); a full-window socket's update has none, as before.
+    /// `landings`, the new bytes its translated copy edits land, carry their
+    /// mark in the same transaction (FIX 10732).
     pub(crate) fn persist_imported_update(
         &self,
         key: &WindowKey,
         update_bytes: &[u8],
+        landings: &oneiron::sync::selector::RepoSyncLandings,
         auth: Option<&crate::auth::CoreAuth>,
     ) -> Result<u64, oneiron::Error> {
-        server_state::persist_admitted_window_update(&self.vault, key, update_bytes, |txn| {
-            auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn))
-        })
+        server_state::persist_admitted_window_update(
+            &self.vault,
+            key,
+            update_bytes,
+            landings,
+            |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
+        )
     }
 
     /// Evicts a window doc from the live manager registry.

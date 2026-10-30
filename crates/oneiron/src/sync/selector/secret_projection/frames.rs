@@ -19,7 +19,7 @@
 //! ([`SyncSecretProjection::translate_history`]: copy keys to source keys,
 //! copy rows to the stored bytes or the shipped visible diff), then encoded
 //! again over the same spans on a second copy that does not hold them. A
-//! ruled hold keeps the whole update the peer's pending work.
+//! ruled hold imports nothing of the update; only its held record is kept.
 //!
 //! A blob nothing marked touches goes as it came. One the checkpoint cannot
 //! take goes as it came only when its operations and state carry nothing
@@ -36,11 +36,11 @@ use loro::{
     LoroValue, VersionVector,
 };
 
+use super::rows::{HeldEdit, Landing};
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext, SyncError};
-use crate::origin::secret_projection::edit::RepoProjectionDiffResult;
 use crate::store::Store;
 
 /// The root map whose values are rows.
@@ -59,11 +59,11 @@ const UNREAD_EDIT: &str = "a write of a marked repo row whose copy is unread is 
 /// What a peer's window blob becomes here.
 pub(crate) enum WindowAdmission<'a> {
     /// Import these bytes as today: the blob as it came, or translated onto
-    /// its sources.
-    Admit(Cow<'a, [u8]>),
+    /// its sources, with the new bytes they land (FIX 10732).
+    Admit(Cow<'a, [u8]>, Vec<Landing>),
     /// Edits of a copy the visible diff holds on a ruled cause: nothing of the
-    /// blob persists, imports, relays or is acknowledged.
-    Held(Vec<(EntityId, RepoProjectionDiffResult)>),
+    /// blob persists, imports or relays, and no edit of it is ever applied.
+    Held(Vec<HeldEdit>),
 }
 
 /// Every key a plain one, every value one holder's: the skeleton is joined at
@@ -133,7 +133,7 @@ impl SyncSecretProjection {
                 // is rebuilt (FIX 10794): one that carries nothing marked goes
                 // as it is. One this device cannot read (it does not hold the
                 // update's dependencies) has unknown contents: withheld, owed.
-                let Some(scratch) = with_update(context, encoded) else {
+                let Some((scratch, cut)) = with_update(context, encoded) else {
                     return Err(Error::InvariantViolation(UNMASKABLE));
                 };
                 if !readable_from(&scratch, &input.partial_start_vv) {
@@ -147,6 +147,8 @@ impl SyncSecretProjection {
                 if carried.changed.is_empty() && carried.preserving {
                     // Its registers are not rebuilt, so a re-authored copy
                     // rides along without meeting a rekeyed one (FIX 10729).
+                    // The window copy holding the update is the one already
+                    // made, never cut again (FIX 10599).
                     return match context.filter(|_| home) {
                         Some(window) => self.reauthored(
                             store,
@@ -154,6 +156,7 @@ impl SyncSecretProjection {
                             window.peer_id(),
                             encoded,
                             spans_of(&input),
+                            cut.is_some().then_some(scratch),
                         ),
                         None => Ok(None),
                     };
@@ -209,7 +212,7 @@ impl SyncSecretProjection {
         encoded: &'a [u8],
         context: Option<&LoroDoc>,
     ) -> Result<WindowAdmission<'a>> {
-        let as_sent = || Ok(WindowAdmission::Admit(Cow::Borrowed(encoded)));
+        let as_sent = || Ok(WindowAdmission::Admit(Cow::Borrowed(encoded), Vec::new()));
         if self.is_empty() {
             return as_sent();
         }
@@ -225,22 +228,23 @@ impl SyncSecretProjection {
                     return as_sent();
                 };
                 let mut held = Vec::new();
-                if !self.admit_parts(store, context, &mut parts, &mut held)? {
+                let mut landings = Vec::new();
+                if !self.admit_parts(store, context, &mut parts, &mut held, &mut landings)? {
                     return as_sent();
                 }
                 if !held.is_empty() {
                     return Ok(WindowAdmission::Held(held));
                 }
-                Ok(WindowAdmission::Admit(Cow::Owned(joined(&parts)?)))
+                Ok(WindowAdmission::Admit(Cow::Owned(joined(&parts)?), landings))
             }
             EncodedBlobMode::Updates => {
-                let Some(scratch) = with_update(context, encoded) else {
+                let Some((scratch, cut)) = with_update(context, encoded) else {
                     return as_sent();
                 };
                 let mut json =
                     scratch.export_json_updates(&input.partial_start_vv, &input.partial_end_vv);
                 self.resolve_copy_carriers(store, &mut json);
-                let translated = self.translate_history(&mut json)?;
+                let translated = self.translate_history(store, context, &mut json)?;
                 if !translated.held.is_empty() {
                     return Ok(WindowAdmission::Held(translated.held));
                 }
@@ -248,8 +252,13 @@ impl SyncSecretProjection {
                 if translated.sources.is_empty() {
                     return as_sent();
                 }
-                // A proven copy edit is never admitted untranslated.
-                let Some(target) = isolated(context) else {
+                // A proven copy edit is never admitted untranslated. The
+                // window's cut is read again, never made again (FIX 10599).
+                let target = match &cut {
+                    Some(cut) => cut.copy(),
+                    None => isolated(context),
+                };
+                let Some(target) = target else {
                     return Err(Error::InvariantViolation(UNMASKABLE));
                 };
                 let status = target
@@ -261,7 +270,10 @@ impl SyncSecretProjection {
                 let bytes = target
                     .export(ExportMode::updates_in_range(spans_of(&input)))
                     .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
-                Ok(WindowAdmission::Admit(Cow::Owned(bytes)))
+                Ok(WindowAdmission::Admit(
+                    Cow::Owned(bytes),
+                    translated.landings,
+                ))
             }
             EncodedBlobMode::OutdatedSnapshot | EncodedBlobMode::OutdatedRle => as_sent(),
         }
@@ -300,7 +312,8 @@ impl SyncSecretProjection {
     }
 
     /// Each copy row value of `parts` as its source row, and each copy key as
-    /// its source's, in place; whether any changed. Ruled holds go to `held`.
+    /// its source's, in place; whether any changed. Ruled holds go to `held`,
+    /// the new bytes an applied diff lands to `landings` (FIX 10732).
     ///
     /// # Errors
     /// The visible diff's own failure, or a row [`Self::unread_row`] cannot
@@ -310,7 +323,8 @@ impl SyncSecretProjection {
         store: &Store,
         context: Option<&LoroDoc>,
         parts: &mut Parts,
-        held: &mut Vec<(EntityId, RepoProjectionDiffResult)>,
+        held: &mut Vec<HeldEdit>,
+        landings: &mut Vec<Landing>,
     ) -> Result<bool> {
         let rows = parts.skeleton.roots.iter().position(|root| root == ROWS);
         let sites = sites(&parts.skeleton);
@@ -325,11 +339,14 @@ impl SyncSecretProjection {
             let raw: &[u8] = raw;
             let carrier = crate::world_keys::image_pad_row(store, raw);
             match self.source_row(&id, carrier.as_deref().unwrap_or(raw))? {
-                InboundRow::Source { row, .. } => {
+                InboundRow::Source { id, row, landed } => {
+                    if let Some(blob) = landed {
+                        landings.push(Landing::of(id, blob, &row));
+                    }
                     atom.payload = Payload::Value(LoroValue::Binary(row.into()));
                     changed = true;
                 }
-                InboundRow::Held { id, cause } => held.push((id, cause)),
+                InboundRow::Held(edit) => held.push(edit),
                 InboundRow::Ordinary => self.unread_row(store, context, &id)?,
             }
         }
@@ -568,19 +585,40 @@ fn decode(context: &'static str) -> impl FnOnce(loro::LoroError) -> Error {
     move |source| Error::Sync(SyncError::CrdtDecodeError { context, source })
 }
 
-/// An isolated copy of `context`, through the checkpoint so a shallow root
-/// stays one, or as a plain snapshot when the checkpoint does not take it
-/// (FIX 10794); a fresh document without one. `None` when neither copy
-/// reads.
+/// One cut of a window: the snapshot an isolated copy of it is read from,
+/// made once and read into each copy one release or admission takes (FIX
+/// 10599).
+struct WindowCut(Vec<u8>);
+
+impl WindowCut {
+    /// `context` cut through the checkpoint so a shallow root stays one, or
+    /// as a plain snapshot when the checkpoint does not take it (FIX 10794),
+    /// with its first isolated copy. `None` when neither copy reads.
+    fn of(context: &LoroDoc) -> Option<(Self, LoroDoc)> {
+        let read = |bytes: Vec<u8>| {
+            LoroDoc::from_snapshot(&bytes)
+                .ok()
+                .map(|doc| (Self(bytes), doc))
+        };
+        parts_of(context)
+            .and_then(|parts| joined(&parts).ok())
+            .and_then(read)
+            .or_else(|| context.export(ExportMode::Snapshot).ok().and_then(read))
+    }
+
+    /// Another isolated copy of the cut window.
+    fn copy(&self) -> Option<LoroDoc> {
+        LoroDoc::from_snapshot(&self.0).ok()
+    }
+}
+
+/// An isolated copy of `context` ([`WindowCut::of`]); a fresh document
+/// without one. `None` when neither copy reads.
 pub(super) fn isolated(context: Option<&LoroDoc>) -> Option<LoroDoc> {
     let Some(context) = context else {
         return Some(LoroDoc::new());
     };
-    let read = |bytes: Vec<u8>| LoroDoc::from_snapshot(&bytes).ok();
-    parts_of(context)
-        .and_then(|parts| joined(&parts).ok())
-        .and_then(read)
-        .or_else(|| context.export(ExportMode::Snapshot).ok().and_then(read))
+    WindowCut::of(context).map(|(_, doc)| doc)
 }
 
 /// Whether every operation `doc` holds from `start` on is still history,
@@ -592,10 +630,11 @@ fn readable_from(doc: &LoroDoc, start: &VersionVector) -> bool {
         .all(|(peer, counter)| start.get(peer).copied().unwrap_or(0) >= *counter)
 }
 
-/// An isolated copy of `context` holding the update `encoded` as well;
-/// `None` when the update does not import whole on it (a dependency it does
-/// not hold).
-fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<LoroDoc> {
+/// An isolated copy of `context` holding the update `encoded` as well, with
+/// the window's cut when the copy was made from the window rather than a
+/// fresh document; `None` when the update does not import whole on it (a
+/// dependency it does not hold).
+fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<(LoroDoc, Option<WindowCut>)> {
     let input = meta(encoded);
     // A self-contained update (a detached selector document's) imports on a
     // fresh document first, so it never merges into the window's own state.
@@ -610,8 +649,12 @@ fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<LoroDoc> {
         tries.push(context);
     }
     for context in tries {
-        let Some(scratch) = isolated(context) else {
-            continue;
+        let (scratch, cut) = match context {
+            Some(window) => match WindowCut::of(window) {
+                Some((cut, scratch)) => (scratch, Some(cut)),
+                None => continue,
+            },
+            None => (LoroDoc::new(), None),
         };
         let Ok(status) = scratch.import(encoded) else {
             continue;
@@ -624,7 +667,7 @@ fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<LoroDoc> {
                 .all(|(peer, end)| held.get(peer).is_some_and(|held| held >= end))
         });
         if status.pending.is_none() && complete {
-            return Some(scratch);
+            return Some((scratch, cut));
         }
     }
     None
