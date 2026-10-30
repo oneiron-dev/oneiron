@@ -125,6 +125,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // FIX 7188: an owner Stop's owed abandon works on the outbound ledger,
     // which stands as the live vault holds it; so does what it still owes.
     (&t::DREAMER_TURN_PROGRAM_STOP_OWED, LIVE),
+    // FIX 5838: the turn index stands as the admissions it names do.
+    (&t::DREAMER_TURN_PROGRAM_TURN_ADMISSION, LIVE),
     (&t::DREAMER_TURN_PROGRAM_WAKE, CONTENT),
     (&t::DREAMER_WAKE_RECIPE_INPUT, CONTENT),
     (&t::DREAMER_WAKE_STATE, CONTENT),

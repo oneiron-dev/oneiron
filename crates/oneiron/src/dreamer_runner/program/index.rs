@@ -1,15 +1,18 @@
-//! Keyed indexes over the program tables (FIX 5735, FIX 5774): an actor's
-//! erase, its receipt's count and a restore's rerun of that erase for each
-//! erased id read the actor's attempt stamps, admissions and owed wakes by
-//! key, never every row of each table. Each index row is written and
-//! deleted in the writer that writes or deletes the row it names, so the
-//! index holds exactly the rows its table holds.
+//! Keyed indexes over the program tables (FIX 5735, FIX 5774, FIX 5838):
+//! an actor's erase, its receipt's count and a restore's rerun of that
+//! erase for each erased id read the actor's attempt stamps, admissions and
+//! owed wakes by key, and a turn's admissions read by their turn, never
+//! every row of each table. Each index row is written and deleted in the
+//! writer that writes or deletes the row it names, so the index holds
+//! exactly the rows its table holds.
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+
+use super::types::TurnProgramWake;
 
 /// Each program attempt stamped as an actor, keyed by the actor, then the
 /// attempt.
@@ -19,6 +22,10 @@ const ACTOR_ATTEMPT: SideTable<(EntityId, AttemptId), (), Named> =
 /// the admission.
 const ACTOR_ADMISSION: SideTable<(EntityId, [u8; 32]), (), Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ACTOR_ADMISSION);
+/// Each admission of a wake a turn owed, keyed by the turn, then the
+/// admission: a turn's admissions in admission order.
+pub(super) const TURN_ADMISSION: SideTable<(EntityId, [u8; 32]), (), Named> =
+    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_TURN_ADMISSION);
 /// Each wake owed for an actor's turn, keyed by the actor, then the wake's
 /// own key: the turn, then the registration it woke.
 const ACTOR_WAKE: SideTable<(EntityId, EntityId, EntityId), (), Named> =
@@ -47,15 +54,17 @@ pub(super) fn actor_attempts_in_txn(
         .collect())
 }
 
-/// Indexes `admission` under its waking actor, in the writer that first
-/// writes it. A later rewrite keeps its actor, so it needs none.
+/// Indexes `admission`, the admission of `wake`, under its waking actor and
+/// its turn, in the writer that first writes it. A later rewrite keeps both,
+/// so it needs none.
 pub(super) fn index_admission_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    actor: EntityId,
+    wake: &TurnProgramWake,
     admission: &[u8; 32],
 ) -> Result<()> {
-    ACTOR_ADMISSION.put(vault, txn, &(actor, *admission), &())
+    ACTOR_ADMISSION.put(vault, txn, &(wake.authority.actor(), *admission), &())?;
+    TURN_ADMISSION.put(vault, txn, &(wake.turn.turn, *admission), &())
 }
 
 /// The admissions of wakes `actor`'s turns owed, in key order.

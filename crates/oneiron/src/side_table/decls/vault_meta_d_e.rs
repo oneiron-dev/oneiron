@@ -344,6 +344,10 @@ side_tables! {
     /// Abandoned: the abandon it still owes, retried by the program kind's admission chain and
     /// cleared once it lands. Key: id16(attempt).
     DREAMER_TURN_PROGRAM_STOP_OWED: VaultMeta b"dreamer:turn_program:stop_owed:v1:" Named;
+    /// FIX 5838: each turn program admission by the turn whose wake it admitted, written with the
+    /// admission. Key: id16(turn) + hash32(admission).
+    DREAMER_TURN_PROGRAM_TURN_ADMISSION: VaultMeta b"dreamer:turn_program:turn_admission:v1:"
+        Named Engine;
     /// DOOR-141: a wake a landed turn owes an armed program, recorded in that turn's own commit and
     /// consumed by its admission. Key: id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_WAKE: VaultMeta b"dreamer:turn_program:wake:v1:" Named;
