@@ -23,6 +23,7 @@ pub mod payoff;
 pub mod receipt;
 pub mod run;
 pub mod run_binding;
+pub mod solo;
 mod spawn_intent;
 pub mod stack;
 
@@ -64,6 +65,7 @@ pub use run_binding::{
     TeamRunBinding, record_team_start, record_team_start_in_txn, team_run_binding,
     team_run_binding_in_txn, team_spawn_context_for_attempt, team_spawn_context_for_attempt_in_txn,
 };
+pub use solo::record_solo_receipt;
 pub use spawn_intent::{
     ErasedPackSpan, FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView,
     PlannedLeaderLaunch, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure, SpawnPhase,
