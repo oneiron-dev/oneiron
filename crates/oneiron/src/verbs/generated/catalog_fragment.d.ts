@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1257 code-mode rows (1217 host rows, 40 run rows), 4403 declarations.
-// Replies: 1069 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1258 code-mode rows (1218 host rows, 40 run rows), 4411 declarations.
+// Replies: 1070 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2535,15 +2535,24 @@ declare namespace Sdk {
   type RepoDestinationAudience = { visibility: RepoDestinationVisibility; role: RepoDestinationRole };
   type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[]; sync_strategy?: OriginMirrorSyncStrategy; strategy_revision?: number; target_generation?: EntityId | null; automation?: OriginMirrorAutomation | null; audience: RepoDestinationAudience };
   type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null };
+  type OriginMirrorPlanRequest = { repo: string; plan_id?: EntityId | null; page?: number };
+  type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation?: EntityId | null; audience: RepoDestinationAudience };
+  type MirrorObservedTip = { state: "absent" } | { state: "at"; oid: string } | { state: "unknown"; cause: string };
+  type OriginPublishLfsBytes = "not_sent";
+  type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes };
+  type MirrorRefOutcome = "pending" | "dispatched" | "applied" | "observed_applied" | "rejected" | "unknown" | "refused" | "remote_moved" | "paused" | "covered" | "held";
+  type OriginMirrorPlanRefView = { ref_name: string; new?: string | null; observed: MirrorObservedTip; review?: OriginPublishReview | null; first_page: number; batch?: number | null; outcome: MirrorRefOutcome };
+  type MirrorBatchClaim = { state: "pending" } | { state: "claimed"; at: number } | { state: "sent"; at: number } | { state: "paused" };
+  type OriginMirrorPlanBatchView = { claim: MirrorBatchClaim; refs: number[]; detail?: string | null };
+  type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string } | { kind: "object"; object_type: string; object: string; target?: string | null; name?: string | null; size?: number | null };
+  type OriginMirrorPlanRecord = { plan_id: EntityId; destination: OriginPublishDestination; strategy: OriginMirrorSyncStrategy; strategy_revision: number; requested_by?: EntityId | null; digest: string; vector: string; created_at: number; settled: boolean; refs: OriginMirrorPlanRefView[]; batches: OriginMirrorPlanBatchView[]; pending_checks: OriginMirrorPendingCheck[]; page: number; pages: number; items: OriginPublishReviewItem[] };
+  type OriginMirrorPlanView = { repo: string; open?: EntityId | null; kept: EntityId[]; plan?: OriginMirrorPlanRecord | null };
   type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number; sync_strategy?: OriginMirrorSyncStrategy | null; visibility?: RepoDestinationVisibility | null };
   type OriginMirrorStrategyRequest = { repo: string; sync_strategy: OriginMirrorSyncStrategy };
   type OriginMirrorCleared = { repo: string; cleared: boolean };
   type OriginPublishForce = "fast_forward" | "rewrite";
   type OriginPublishRequestInput = { repo: string; ref_name: string; commit: string; force?: OriginPublishForce; idempotency_key?: string | null; expires_at?: number | null; code_repo?: EntityId | null };
-  type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation?: EntityId | null; audience: RepoDestinationAudience };
   type OriginPublishRemote = { state: "absent" } | { state: "at"; commit: string };
-  type OriginPublishLfsBytes = "not_sent";
-  type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes };
   type OriginPublishState = "pending" | "approved" | "dispatching" | "published" | "observed_published" | "refused" | "cancelled" | "expired";
   type OriginPublishActorClass = "human" | "agent" | "system";
   type OriginPublishAuthority = { kind: "owner" } | { kind: "grant"; grant: EntityId };
@@ -2552,7 +2561,6 @@ declare namespace Sdk {
   type OriginPublishRefusal = { reason: OriginPublishRefusalReason; observed?: OriginPublishRemote | null; changed_fields: string[]; detail?: string | null };
   type OriginPublishRequestView = { request_id: EntityId; repo: string; repo_id: EntityId; destination: OriginPublishDestination; ref_name: string; commit: string; expected_remote: OriginPublishRemote; force: OriginPublishForce; code_repo?: EntityId | null; idempotency_key?: string | null; expires_at?: number | null; review: OriginPublishReview; state: OriginPublishState; requested: OriginPublishAct; approved?: OriginPublishAct | null; dispatched?: OriginPublishAct | null; refusal?: OriginPublishRefusal | null; created_at: number; finished_at?: number | null };
   type OriginPublishReviewRequest = { repo: string; request_id: EntityId; page: number; code_repo?: EntityId | null };
-  type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string } | { kind: "object"; object_type: string; object: string; target?: string | null; name?: string | null; size?: number | null };
   type OriginPublishReviewView = { request_id: EntityId; digest: string; page: number; pages: number; items: OriginPublishReviewItem[] };
   type OriginPublishIdRequest = { repo: string; request_id: EntityId; code_repo?: EntityId | null };
   type OriginPublishApproveRequest = { repo: string; request_id: EntityId; review_digest: string; code_repo?: EntityId | null };
@@ -5554,6 +5562,8 @@ declare const vault: Sdk.VaultHost & {
         clear(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorCleared | StoredResult>;
         /** Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner. */
         get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorView | StoredResult>;
+        /** Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review. */
+        plan(input: Sdk.OriginMirrorPlanRequest): Promise<Sdk.OriginMirrorPlanView | StoredResult>;
         /** Push one origin's published refs to its schedule or full_auto mirror now as a reviewed, leased plan (full_auto: green heads only), recording the real outcome; ask_me refuses publish_request_required. Refs are not LFS readiness. */
         push(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorRun | StoredResult>;
         /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked. */

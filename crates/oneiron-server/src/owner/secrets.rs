@@ -131,6 +131,60 @@ impl RotateSecret {
     }
 }
 
+/// One kept value re-entered (FIX 7404): a found key's handle and the value
+/// the owner ruled no secret, as standard base64. Read like [`RotateSecret`],
+/// and for the same reason.
+pub(crate) struct ReenterKeptValue {
+    pub(crate) handle: String,
+    pub(crate) value: Zeroizing<Vec<u8>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReenterFields<'a> {
+    handle: String,
+    /// Raw, as in [`RotateFields`].
+    #[serde(borrow)]
+    value_base64: &'a RawValue,
+}
+
+/// The wire shape of [`ReenterFields`], for the OpenAPI schema only:
+/// `POST /v1/owner/secrets/found/re-enter`'s body. Never read at runtime;
+/// the wiping reader parses the body.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the re-enter body's wire shape")]
+struct ReenterKeptValueBody {
+    /// The found key's handle, such as `sc12`.
+    handle: String,
+    /// The kept value as standard base64.
+    value_base64: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/found/re-enter`'s body:
+/// [`ReenterKeptValueBody`].
+pub(crate) fn reenter_kept_value_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReenterKeptValueBody>()
+}
+
+impl ReenterKeptValue {
+    pub(crate) async fn read(body: Body) -> OwnerResult<Self> {
+        let body = OwnedBody::read(body).await?;
+        let fields: ReenterFields<'_> =
+            serde_json::from_slice(&body.0).map_err(|_| invalid_body())?;
+        let value = decode_value(fields.value_base64)?;
+        if value.is_empty() {
+            return Err(OwnerError::Invalid(
+                "a re-entered kept value needs a value".into(),
+            ));
+        }
+        Ok(Self {
+            handle: fields.handle,
+            value,
+        })
+    }
+}
+
 /// A name the custody index can key: 1 to 255 bytes.
 fn secret_name(name: String) -> OwnerResult<String> {
     if name.is_empty() || name.len() > SECRET_NAME_MAX_BYTES {

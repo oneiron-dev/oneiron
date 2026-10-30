@@ -183,10 +183,15 @@ impl Vault {
             created_at: self.now_recorded_at(),
         };
         plan.digest = plan_digest(&plan);
+        // Physical first: what the plan sends is kept until it settles, so
+        // no gc takes an object its resends need (`mirror_plan_pins`).
+        self.pin_mirror_plan_objects(scope, &plan);
         let mut txn = self.store.env.write_txn()?;
-        if !self.mirror_fence_in_txn(&txn, &plan)?
-            || !self.open_mirror_plan_in_txn(&mut txn, &plan, &pages, &batches)?
-        {
+        let opened = self.mirror_fence_in_txn(&txn, &plan)?
+            && self.open_mirror_plan_in_txn(&mut txn, &plan, &pages, &batches)?;
+        if !opened {
+            drop(txn);
+            self.release_mirror_plan_pins(scope.wire, scope.handle, &plan);
             return Ok(None);
         }
         txn.commit()?;
