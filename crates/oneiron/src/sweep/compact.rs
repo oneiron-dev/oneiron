@@ -156,8 +156,25 @@ pub(super) fn compact_all_windows(
     let owners = documents::SlotOwners::read(vault)?;
     for label in &labels {
         if let Some(hex) = label.strip_prefix("e:") {
-            let id = owners.entity(hex)?;
-            let erase = erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
+            // A slot no live entity owns (orphan, moved away, shared) is
+            // compacted only to carry out the erase or withdrawal of its own
+            // id, as before; otherwise it keeps its rows, which neither its
+            // birth's owner nor the NOTE loader can read (FIX 11188).
+            let (id, erase) = match owners.entity(vault, hex)? {
+                Some(id) => {
+                    let erase =
+                        erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
+                    (id, erase)
+                }
+                None => {
+                    let id = EntityId::from_hex(hex)?;
+                    if !erased.contains(&id) && !drops_withdrawn_document(vault, &id, withdrawn)? {
+                        tracing::warn!("sweep: document slot with no live owner left as it is");
+                        continue;
+                    }
+                    (id, true)
+                }
+            };
             // A held document keeps its bytes and its history, erased or not
             // (OF-470, FIX 10160): it waits, as a live one does. Its writer
             // checks the hold again, and a hold placed since defers it too.
