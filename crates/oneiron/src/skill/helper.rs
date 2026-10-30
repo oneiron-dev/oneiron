@@ -38,6 +38,8 @@ use super::pack_load::skill_loadable;
 use super::record::SkillRecord;
 use super::role::{SkillCallContract, SkillRole};
 
+pub use super::helper_eval::callable_helper_measurement_requests;
+
 /// The standing promotion verdict per helper. Key: the skill entity id.
 const GATE_VERDICT: SideTable<EntityId, CallableGateVerdict, Named> =
     SideTable::new(&side_table::SKILL_CALLABLE_GATE);
