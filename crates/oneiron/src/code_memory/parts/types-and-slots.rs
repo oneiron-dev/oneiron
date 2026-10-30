@@ -43,7 +43,7 @@ pub const CODE_MEMORY_SLOT_NAME_MAX_BYTES: usize = 128;
 /// typed capacity error that leaves the stored slot byte-identical. Past
 /// 256 values a slot write keeps every value and raises the
 /// `code_memory_slot_values` scan check (FIX 8562).
-pub const CODE_MEMORY_MAX_VALUES_PER_SLOT: usize = u16::MAX as usize;
+pub const CODE_MEMORY_MAX_VALUES_PER_SLOT: usize = 65_535;
 
 /// The distinct `(symbol, slot, payload)` always-on contract keys PER SYMBOL
 /// past which a registration or transfer raises the
