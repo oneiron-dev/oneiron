@@ -32047,7 +32047,7 @@
       "const": 6,
       "crate-vis": 12,
       "enum": 3,
-      "fn": 9,
+      "fn": 10,
       "re-export": 10,
       "struct": 4,
       "trait": 2
@@ -57014,9 +57014,9 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
-      "const": 5,
+      "const": 6,
       "crate-vis": 5,
-      "fn": 22,
+      "fn": 23,
       "struct": 1
      }
     },
@@ -114207,7 +114207,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 27,
       "fn": 12,
       "re-export": 1,
       "struct": 1
