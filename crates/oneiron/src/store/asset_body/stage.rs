@@ -63,6 +63,15 @@ impl StagedAssetBody {
         self.facts
     }
 
+    /// The body's bytes when it stays in its row: `None` for a published
+    /// body file, whose bytes are read only from the file (FIX 12091).
+    pub(crate) fn inline_bytes(&self) -> Option<&[u8]> {
+        match &self.body {
+            Staged::Inline(bytes) => Some(bytes),
+            Staged::File { .. } => None,
+        }
+    }
+
     /// The whole body, read back from its file when it has one.
     ///
     /// # Errors
@@ -175,6 +184,95 @@ fn stream_shape(head: &[u8]) -> StreamShape {
         StreamShape::MessagePack
     } else {
         StreamShape::Opaque
+    }
+}
+
+/// What the file plane makes of a staged body MessagePack leads (FIX 12150).
+enum Judged {
+    /// A body file of this kind.
+    File(AssetFileKind),
+    /// It stays in its row: its bytes, when the judgement read them whole.
+    Row(Option<Vec<u8>>),
+}
+
+/// `file`, a staged body `len` long that MessagePack leads, judged as
+/// [`super::asset_file_kind`] judges it whole. When a map with a string key
+/// leads it, it is read whole, as its readers read a record, and files only
+/// with no hit of the write door's rules: a body they hit stays in its row,
+/// where the batch door judges it. Any other is judged as it streams (its
+/// first value, then the owning adapters' stream test), so a long body of
+/// that shape, a weights shard whose header length starts with such a byte
+/// among them, never sits whole in memory (FIX 12091).
+///
+/// # Errors
+///
+/// The file's read errors.
+fn judge_messagepack(file: &BodyFile, len: u64) -> Result<Judged> {
+    let mut lead = io::BufReader::with_capacity(
+        LINE_INDEX_BLOCK_BYTES as usize,
+        FileFromStart::new(file, len),
+    );
+    let keyed = matches!(
+        rmpv::decode::read_value(&mut lead),
+        Ok(rmpv::Value::Map(entries)) if entries.iter().any(|(key, _)| key.is_str())
+    );
+    if keyed {
+        let bytes = file.read_range(
+            0,
+            usize::try_from(len)
+                .map_err(|_| Error::InvariantViolation("asset body past this machine's memory"))?,
+        )?;
+        return Ok(
+            match super::asset_file_kind(&bytes)
+                .filter(|_| crate::batch::secret_scan::write_tree_hit(&bytes).is_none())
+            {
+                Some(kind) => Judged::File(kind),
+                None => Judged::Row(Some(bytes)),
+            },
+        );
+    }
+    // No keyed map leads it: what the whole-body test still reads is whether
+    // an owning adapter (a pack source, a receipt source) reads it.
+    let attaches = crate::serialize::attaches_as_file_read(
+        ENTITY_TYPE_ASSET,
+        &mut FileFromStart::new(file, len),
+    )?;
+    Ok(if attaches {
+        Judged::File(AssetFileKind::Opaque)
+    } else {
+        Judged::Row(None)
+    })
+}
+
+/// A body file read from its start by range, whatever its descriptor's
+/// offset: a plain spill's stands at its end once written.
+pub(super) struct FileFromStart<'f> {
+    file: &'f BodyFile,
+    at: u64,
+    len: u64,
+}
+
+impl<'f> FileFromStart<'f> {
+    /// `file`'s first `len` bytes, read from its start.
+    pub(super) const fn new(file: &'f BodyFile, len: u64) -> Self {
+        Self { file, at: 0, len }
+    }
+}
+
+impl Read for FileFromStart<'_> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let left = usize::try_from(self.len.saturating_sub(self.at)).unwrap_or(usize::MAX);
+        let take = left.min(out.len());
+        if take == 0 {
+            return Ok(0);
+        }
+        let bytes = self
+            .file
+            .read_range(self.at, take)
+            .map_err(io::Error::other)?;
+        out[..take].copy_from_slice(&bytes);
+        self.at += take as u64;
+        Ok(take)
     }
 }
 
@@ -311,10 +409,9 @@ impl crate::Vault {
     /// it streams on a sealed vault, and is published under its name (synced,
     /// renamed, the directory synced) when its stream shows it opaque, or,
     /// when MessagePack leads it, when the whole-body classification files
-    /// it ([`super::asset_file_kind`], a record among them) and the write
-    /// door's rules find nothing in it, read whole once to judge it (FIX
-    /// 12150). Any other body is held whole for its row, as a slice put
-    /// holds it. `mime`
+    /// it ([`judge_messagepack`]: a record its stored-row readers read
+    /// nothing from, read whole once, among them; FIX 12150). Any other
+    /// body is held whole for its row, as a slice put holds it. `mime`
     /// is the body's media type, kept in its manifest. Each value of `known`
     /// a published file carries is found as it streams, for its put to mark
     /// (FIX 5395). Nothing is refused for its size (Rule 5).
@@ -403,16 +500,16 @@ impl crate::Vault {
         let kind = match shape {
             StreamShape::Opaque if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Opaque,
             StreamShape::MessagePack if ASSET_FILE_PLANE && mint.is_some() => {
-                let bytes = whole(&held).inspect_err(|_| dir.discard(spilled.temp()))?;
-                // It files as the whole-body classification files it, and
-                // only with no hit of the write door's rules: a body they
-                // hit stays in its row, where the batch door judges it.
-                match super::asset_file_kind(&bytes)
-                    .filter(|_| crate::batch::secret_scan::write_tree_hit(&bytes).is_none())
+                match judge_messagepack(&held, facts.len)
+                    .inspect_err(|_| dir.discard(spilled.temp()))?
                 {
-                    Some(kind) => kind,
-                    None => {
+                    Judged::File(kind) => kind,
+                    Judged::Row(bytes) => {
                         dir.discard(spilled.temp());
+                        let bytes = match bytes {
+                            Some(bytes) => bytes,
+                            None => whole(&held)?,
+                        };
                         return Ok(staged(Staged::Inline(bytes)));
                     }
                 }
