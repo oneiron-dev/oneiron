@@ -14,8 +14,9 @@ pub(super) const SOURCE_HUB_ALIAS: SideTable<(EntityId, [u8; 32]), (String, Stri
 
 pub trait PackSourceAdapter: SkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<PackSource>;
-    /// The source with the organ builds its tree carries (OF-575). An
-    /// adapter that fetches text only carries none.
+    /// The source with the organ builds (OF-575) and lens components
+    /// (OF-250) its tree carries. An adapter that fetches text only carries
+    /// none.
     fn fetch_pack_tree(&self, reference: &HubRef) -> Result<PackTree> {
         self.fetch_pack_source(reference).map(PackTree::from)
     }
@@ -65,6 +66,7 @@ impl Vault {
             }
             let id = self.stage_pack_source_in_txn(txn, source, occurred, learned_at)?;
             self.hold_organ_builds_in_txn(txn, &id, &tree, occurred, learned_at)?;
+            self.hold_lens_components_in_txn(txn, &id, &tree, occurred, learned_at)?;
             // The hub path's scan evidence lands with the bytes, before any fit
             // ask reads it; skill-less packs get the same hash-bound ledger.
             self.scan_and_ingest_pack_source_in_txn(txn, source, occurred, learned_at)?;

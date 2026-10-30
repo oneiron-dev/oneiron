@@ -162,6 +162,28 @@ fn effective_grant_in_txn(
     Ok(grant_in_txn(vault, txn, binding_id)?.unwrap_or_else(|| HookGrant::author_ceiling(binding)))
 }
 
+/// Carries the owner's grant to `to`, the binding a body-only rebind gives
+/// a hook, from the first of `from`, its same-author bindings in the
+/// caller's order, that holds one (FIX 10123). The row moves as the owner
+/// set it, so the hook reads no wider than before. A grant the owner already
+/// set on `to` stays, and nothing is written when none of `from` holds one.
+pub(crate) fn carry_hook_grant_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    from: &[EntityId],
+    to: EntityId,
+) -> VaultResult<()> {
+    if GRANTS.get(&vault.store, txn, &to)?.is_some() {
+        return Ok(());
+    }
+    for binding in from {
+        if let Some(row) = GRANTS.get(&vault.store, txn, binding)? {
+            return GRANTS.put(&vault.store, txn, &to, &row);
+        }
+    }
+    Ok(())
+}
+
 /// The grant a run reads under: the owner's, else the author's ceiling.
 pub(super) fn effective_grant(
     vault: &Vault,
