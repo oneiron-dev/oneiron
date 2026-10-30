@@ -495,7 +495,7 @@ pub(super) fn verify_existing_hnsw_config(store: &Store, config: &VaultConfig) -
     drop(rtxn);
     match stored {
         HnswCompatibilityState::Current(stored) if stored == requested => Ok(()),
-        HnswCompatibilityState::Current(stored) | HnswCompatibilityState::Legacy(stored) => {
+        HnswCompatibilityState::Current(stored) => {
             Err(Error::Store(StoreError::HnswConfigChanged {
                 stored: format_hnsw_compatibility(&stored),
                 requested: format_hnsw_compatibility(&requested),

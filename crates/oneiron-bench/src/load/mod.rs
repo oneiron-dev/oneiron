@@ -24,6 +24,7 @@
 mod client;
 mod corpus;
 mod corpus_recall;
+mod dream;
 mod embedder;
 mod phases;
 mod report;
@@ -76,6 +77,7 @@ const USAGE: &str = "usage: oneiron-bench load run --server <oneiron-server> --w
   [--cell-seconds 60] [--drain-settle-seconds 35] [--server-env KEY=VALUE]...\n\
   [--signal-cell CELL:SIGNAL]...\n\
   [--skip mixed,fairness,agent-memory,restart]\n\
+or:    oneiron-bench load dream --server <oneiron-server> --work <dir> --corpus <turns.jsonl> --out <file.json> --model-base-url <url> --model <slug> --model-key-file <path> [flags]\n\
 or:    oneiron-bench load startup --server <oneiron-server> --work <dir> --out <file.json>\n\
   [--label TEXT] [--repeat 3] [--server-env KEY=VALUE]...\n\
 or:    oneiron-bench load corpus-recall --server <oneiron-server> --corpus <turns.jsonl> --work <dir>\n\
@@ -196,6 +198,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 writeln!(std::io::stdout().lock(), "{table}").map_err(|e| e.to_string())
             })
         }
+        [cmd, rest @ ..] if cmd == "dream" => dream::run(rest),
         _ => Err(USAGE.to_owned()),
     };
     match result {

@@ -149,6 +149,7 @@ pub(super) fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
         | RetrievalSignal::Salience
         | RetrievalSignal::Confidence
         | RetrievalSignal::Gravity
+        | RetrievalSignal::Relevance
         | RetrievalSignal::Rerank => {
             unreachable!("blend/rerank score components are not context-pack retrieval channels")
         }
