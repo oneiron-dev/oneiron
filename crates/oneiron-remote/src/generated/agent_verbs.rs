@@ -2641,6 +2641,9 @@ impl OneironClient {
                 "self.skills.callables" => remote_agent_verb_output::<
                     Vec<oneiron::skill::helper::CallableCardView>,
                 >(client, verb, &input),
+                "vault.skills.callable.amend" => remote_agent_verb_output::<
+                    oneiron::skill::helper::CallableAmendReceipt,
+                >(client, verb, &input),
                 "vault.skills.pack_receipt" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SkillPackReceipt,
                 >(client, verb, &input),
@@ -14232,6 +14235,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.skills.callables", value)
+    }
+    pub fn vault_skills_callable_amend(
+        &self,
+        input: &oneiron::skill::helper::CallableAmendRequest,
+    ) -> Result<oneiron::skill::helper::CallableAmendReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.callable.amend", value)
     }
     pub fn vault_skills_pack_receipt(
         &self,

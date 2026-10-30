@@ -1091,6 +1091,10 @@ export class Oneiron {
         /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
         set: (input: Facade.SkillGovernanceSetRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceSet(input) as Facade.SkillGovernanceView),
       },
+      callable: {
+        /** The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing. */
+        amend: (input: Facade.CallableAmendRequest): Facade.CallableAmendReceipt => this.#call(() => this.#client.vaultSkillsCallableAmend(input) as Facade.CallableAmendReceipt),
+      },
       /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
       pack_receipt: (input: Facade.SkillPackReceiptRequest): Facade.SkillPackReceipt => this.#call(() => this.#client.vaultSkillsPackReceipt(input) as Facade.SkillPackReceipt),
       outcomes: {
