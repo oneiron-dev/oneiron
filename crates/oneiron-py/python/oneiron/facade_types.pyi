@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4403 declarations.
-Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 119; unread shapes: 0.
+Census: 1211 facade rows, 4405 declarations.
+Inputs: 1143 of 1211 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1048 of 1211 fully typed, 163 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 118; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -10453,6 +10453,33 @@ class PolicySignature(TypedDict):
     alg: str
     key_id: NotRequired[str | None]
     sig: str
+SlideReviewPrecedence = Literal["nested_narrowing", "holder_override_capped_at_vault"]
+class SlideReviewPolicyRowPrecedence(TypedDict):
+    scope: Literal["precedence"]
+    value: SlideReviewPrecedence
+class SlideReviewPolicyRowVault(TypedDict):
+    scope: Literal["vault"]
+    batch_size: int
+    max_units: int
+    max_text_bytes: int
+    max_image_bytes: int
+class SlideReviewPolicyRowRoute(TypedDict):
+    scope: Literal["route"]
+    first: DecisionRung
+    ceiling: DecisionRung
+class SlideReviewPolicyRowHolder(TypedDict):
+    scope: Literal["holder"]
+    holder: str
+    batch_size: int
+    max_units: int
+    max_text_bytes: int
+    max_image_bytes: int
+class SlideReviewPolicyRowHolderRoute(TypedDict):
+    scope: Literal["holder_route"]
+    holder: str
+    first: DecisionRung
+    ceiling: DecisionRung
+SlideReviewPolicyRow = SlideReviewPolicyRowPrecedence | SlideReviewPolicyRowVault | SlideReviewPolicyRowRoute | SlideReviewPolicyRowHolder | SlideReviewPolicyRowHolderRoute
 class PolicyManifest(TypedDict):
     schema_version: str
     pack_id: str
@@ -10465,6 +10492,7 @@ class PolicyManifest(TypedDict):
     signature: NotRequired[PolicySignature | None]
     signatures: NotRequired[list[PolicySignature]]
     auto_checker: NotRequired[str | None]
+    slide_review_policy: NotRequired[list[SlideReviewPolicyRow] | None]
 class PolicyManifestView(TypedDict):
     manifest_ref: str
     body_hash: str
@@ -14296,7 +14324,7 @@ class ArtifactAskUnitsParagraphs(TypedDict):
     kind: Literal["paragraphs"]
     blocks: list[str]
     author: str
-    labels: Any
+    labels: SlideReviewLabels
 class ArtifactAskUnitsFolderItems(TypedDict):
     kind: Literal["folder_items"]
     sheet: str
