@@ -146,6 +146,31 @@ impl Vault {
         now: u64,
     ) -> Result<[u8; 32]> {
         validate(request)?;
+        // A retry names its predecessor's Partial row with transient reasons
+        // only (FIX 10442): a moved cohort is a new question, not a retry.
+        if request.retry > 0 {
+            let mut predecessor = request.clone();
+            predecessor.retry -= 1;
+            let digest = request_digest(&predecessor)?;
+            let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? else {
+                return Err(invalid("a retry names its predecessor's Partial row"));
+            };
+            let MeasurementState::Partial { reasons } = &row.state else {
+                return Err(invalid("a retry follows a Partial row"));
+            };
+            let transient = reasons.iter().all(|reason| {
+                matches!(
+                    reason,
+                    MeasurementUnavailable::GenerationFailed
+                        | MeasurementUnavailable::BudgetExhausted
+                        | MeasurementUnavailable::ClockExhausted
+                        | MeasurementUnavailable::UncertainLeg
+                )
+            });
+            if !transient {
+                return Err(invalid("a retry follows only transient failures"));
+            }
+        }
         let digest = request_digest(request)?;
         if let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? {
             // An open measurement's job is queued again; the queue's dedupe
@@ -174,7 +199,8 @@ impl Vault {
     /// one's job is queued again. Nothing is counted or paid here.
     /// # Errors
     /// Unbounded or identical arms, another method, a cohort that is not the
-    /// seat's as the request froze it, or storage errors.
+    /// seat's as the request froze it, a retry without its predecessor's
+    /// transient Partial, or storage errors.
     pub fn request_eval_measurement(
         &self,
         request: &EvalMeasurementRequest,

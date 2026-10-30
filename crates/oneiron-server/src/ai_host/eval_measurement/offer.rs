@@ -65,6 +65,7 @@ pub(in crate::ai_host) fn attach_measured_card(
         floor_slices: FloorSlicePolicy::default(),
         canary: eval_seat_canary(&draft.seat).map(str::to_owned),
         method: MeasurementMethodPin::current(),
+        retry: 0,
     };
     let digest = match vault.request_eval_measurement(&request, now) {
         Ok(digest) => digest,
