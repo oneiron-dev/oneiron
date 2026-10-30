@@ -1,9 +1,10 @@
 //! The marketplace import in two halves (FIX 9752). The fit stage fetches
-//! the folder, scans it, runs the caller's fit and queries advisories, all
-//! outside the writer. The commit lands it inside one writer, at a caller's
-//! preallocated id when it names one, so a section install can land its
-//! skill, claim and receipt in the same transaction. Every marketplace
-//! import runs these same two halves; there is no second import path.
+//! the folder, scans it, queries advisories and runs the caller's fit with
+//! them, all outside the writer. The commit lands it inside one writer, at
+//! a caller's preallocated id when it names one, so a section install can
+//! land its skill, claim and receipt in the same transaction. Every
+//! marketplace import runs these same two halves; there is no second import
+//! path.
 use super::{
     CODE_AUTO_INSTALL, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
     MarketplaceSwitch, marketplace_hash_blocked_in_txn, permission_labels,
@@ -104,8 +105,11 @@ impl Vault {
     }
 
     /// The fit stage: fetches from the configured source, parses and scans
-    /// the folder, runs `fit`, and with `advisories` queries the bytes' OSV
-    /// receipts. It writes nothing.
+    /// the folder, with `advisories` queries the bytes' OSV receipts, then
+    /// runs `fit` and binds the advisory hits into it: each is named in the
+    /// analysis, and while the owner's advisory ask is on
+    /// ([`Vault::set_marketplace_advisory_ask`]) a hit turns a ready fit into
+    /// one owner ask. It writes nothing.
     #[expect(
         clippy::too_many_arguments,
         reason = "the marketplace import plus an optional dependency advisory transport"
@@ -138,15 +142,22 @@ impl Vault {
         let package = adapter.fetch_package(source)?;
         let parsed = crate::skill_hub::package_from_files(package.files)?;
         let static_scan = crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?;
-        let fit = fit.evaluate(source, &parsed, &static_scan)?;
-        let advisory_scans = match advisories {
+        let (advisory_ids, advisory_scans) = match advisories {
             Some(query) => {
                 let inventory = crate::skill_hub::osv::dependency_inventory(&parsed)?;
-                self.dependency_advisories(parsed.content_hash()?, &inventory, query, learned_at)?
-                    .2
+                let (_, ids, scans) = self.dependency_advisories(
+                    parsed.content_hash()?,
+                    &inventory,
+                    query,
+                    learned_at,
+                )?;
+                (ids, scans)
             }
-            None => Vec::new(),
+            None => (Vec::new(), Vec::new()),
         };
+        let fit = fit
+            .evaluate(source, &parsed, &static_scan)?
+            .with_advisories(&advisory_ids, self.marketplace_advisory_ask()?);
         Ok(FittedSkill {
             source: source.clone(),
             publisher: publisher.clone(),

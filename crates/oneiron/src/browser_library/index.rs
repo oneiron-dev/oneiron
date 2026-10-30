@@ -14,6 +14,8 @@
 //! Reads walk their rows a page at a time ([`SOLVED_PAGE`]) until the
 //! cursor ends: a traversal batch, never a cap on what is read.
 
+pub(crate) mod all_groups;
+
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
