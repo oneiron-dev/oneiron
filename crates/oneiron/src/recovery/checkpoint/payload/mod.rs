@@ -48,7 +48,7 @@ pub(super) use self::sync::SyncCarriers;
 use super::{INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
 use crate::error::{Error, Result};
 use crate::side_table::SideDb;
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 use crate::store::checkpoint_payload::CHECKPOINT_PAYLOADS_ENABLED;
 use crate::store::checkpoint_payload::rows::{
     Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator, RowPart,
@@ -291,20 +291,31 @@ fn row_db(database: &str) -> Option<RowDb> {
     }
 }
 
-/// What the image takes, as the snapshot decides it: canonical rows only,
-/// and no row of an excluded entity (a diagnostic): its own, its short ids,
-/// its edges and its index sources.
+/// What the image takes, the one rule the snapshot and the projection read
+/// it by (FIX 6377): canonical rows only, and no row of an excluded entity
+/// (a diagnostic): its own, its short ids, its edges and its index sources.
 pub(super) struct ImageFilter {
     excluded: BTreeSet<Vec<u8>>,
 }
 
 impl ImageFilter {
-    /// `excluded`: the ids of the entities the image leaves out.
-    pub(super) fn new(excluded: BTreeSet<Vec<u8>>) -> Self {
-        Self { excluded }
+    /// The filter of the image `txn` reads: every diagnostic entity left
+    /// out, as runtime-only.
+    pub(super) fn of_snapshot(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
+        let mut excluded = BTreeSet::new();
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(store, txn)? {
+            let (key, value) = row?;
+            if crate::batch::EntityMetadataHeader::parse(&value)
+                .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
+            {
+                excluded.insert(key.as_bytes().to_vec());
+            }
+        }
+        Ok(Self { excluded })
     }
 
-    fn takes(&self, database: &str, key: &[u8], value: &[u8]) -> bool {
+    /// Whether the image takes the row `key` of `database`, as it rests.
+    pub(super) fn takes(&self, database: &str, key: &[u8], value: &[u8]) -> bool {
         if storage_tier(database, key) != StorageTier::Canonical {
             return false;
         }
