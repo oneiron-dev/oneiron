@@ -28241,7 +28241,7 @@
      "purpose": "The digest's urgent breakthrough (OF-194 L3; ARCH-0026: \"urgent breakthrough only when waiting would harm…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 8,
       "struct": 7
      }
@@ -35422,7 +35422,7 @@
      "purpose": "Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the…",
      "surface": {
       "const": 7,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 2,
       "re-export": 5,
@@ -35436,7 +35436,7 @@
      "path": "src/feedback/triage/erased.rs",
      "purpose": "The `erased` end of a feedback triage revision (FIX 7551)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -101248,7 +101248,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/feedback_triage/parts.rs",
@@ -114192,7 +114192,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 12,
       "re-export": 1,
       "struct": 1
@@ -114483,7 +114483,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1,
       "re-export": 15,
       "struct": 2
