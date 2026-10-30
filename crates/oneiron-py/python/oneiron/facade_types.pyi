@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1214 facade rows, 4403 declarations.
-Inputs: 1142 of 1214 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1048 of 1214 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1216 facade rows, 4415 declarations.
+Inputs: 1144 of 1216 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1050 of 1216 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -7409,6 +7409,70 @@ class ConnectRejoined(TypedDict):
     world_ref: EntityId
     status: ConnectRejoinStatus
     request: NotRequired[str | None]
+class ForeignWorldPrivacyExportRequest(TypedDict):
+    request: str
+ForeignWorldPrivacyLeg = Literal["ask", "answer"]
+class ReadLocationOneMachine(TypedDict):
+    OneMachine: EntityId
+ReadLocation = Literal["MyMachines", "Everywhere"] | ReadLocationOneMachine
+SealedCopies = Literal["off", "my_machines", "cloud_and_my_machines"]
+class ModelOrderOrdered(TypedDict):
+    Ordered: list[str]
+ModelOrder = Literal["Inherit"] | ModelOrderOrdered
+class WorldPrivacy(TypedDict):
+    read: ReadLocation
+    sealed: SealedCopies
+    models: ModelOrder
+class WorldPrivacyRequestStatusPending(TypedDict):
+    state: Literal["pending"]
+class WorldPrivacyRequestStatusApplied(TypedDict):
+    state: Literal["applied"]
+    receipt_id: str
+    holder: str
+class WorldPrivacyRequestStatusDeclined(TypedDict):
+    state: Literal["declined"]
+    holder: str
+WorldPrivacyRequestStatus = WorldPrivacyRequestStatusPending | WorldPrivacyRequestStatusApplied | WorldPrivacyRequestStatusDeclined
+class ForeignWorldPrivacyCarry(TypedDict):
+    leg: ForeignWorldPrivacyLeg
+    pact: str
+    epoch: int
+    source_vault: str
+    recipient_vault: str
+    world: str
+    ask: str
+    agent: NotRequired[str | None]
+    settings: WorldPrivacy
+    answer: NotRequired[WorldPrivacyRequestStatus | None]
+class ForeignWorldPrivacyDelivery(TypedDict):
+    body: ForeignWorldPrivacyCarry
+    signature: str
+WorldPrivacyRequestKind = Literal["proposal", "widen_ask"]
+class ForeignWorldPrivacyLink(TypedDict):
+    pact: str
+    vault: str
+    world: str
+    request: NotRequired[str | None]
+    agent: NotRequired[str | None]
+    answer: NotRequired[WorldPrivacyRequestStatus | None]
+class WorldPrivacyRequest(TypedDict):
+    request_id: str
+    kind: WorldPrivacyRequestKind
+    agent: NotRequired[str | None]
+    opener_lineage: NotRequired[list[str]]
+    author: str
+    world: str
+    settings: WorldPrivacy
+    seen: str
+    holders: list[str]
+    needs: NotRequired[list[str]]
+    yes: NotRequired[list[str]]
+    ask: NotRequired[int | None]
+    status: WorldPrivacyRequestStatus
+    at: int
+    grant_omitted: NotRequired[str | None]
+    owned_by: NotRequired[ForeignWorldPrivacyLink | None]
+    asked_from: NotRequired[ForeignWorldPrivacyLink | None]
 class TrustedContactReach(TypedDict):
     sender: EntityId
     channel: str

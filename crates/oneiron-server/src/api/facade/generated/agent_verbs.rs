@@ -402,6 +402,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.federation.connect.disconnect", post(facade_route))
         .route("/vault.federation.connect.export", post(facade_route))
         .route("/vault.federation.connect.rejoin", post(facade_route))
+        .route(
+            "/vault.federation.connect.world_privacy.export",
+            post(facade_route),
+        )
+        .route(
+            "/vault.federation.connect.world_privacy.receive",
+            post(facade_route),
+        )
         .route("/vault.trusted_contacts.name", post(facade_route))
         .route("/vault.trusted_contacts.list", post(facade_route))
         .route("/vault.trusted_contacts.consent", post(facade_route))

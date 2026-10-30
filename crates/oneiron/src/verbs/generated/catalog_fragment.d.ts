@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4458 declarations.
-// Replies: 1078 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1267 code-mode rows (1227 host rows, 40 run rows), 4470 declarations.
+// Replies: 1080 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1457,6 +1457,18 @@ declare namespace Sdk {
   type ConnectExportRequest = { pact: string; window_key: string; world_ref: EntityId; facets?: EntityId[]; bands?: SelectorRange[] };
   type ConnectRejoinStatus = "imported" | "deferred";
   type ConnectRejoined = { pact: string; epoch: number; world_ref: EntityId; status: ConnectRejoinStatus; request?: string | null };
+  type ForeignWorldPrivacyExportRequest = { request: string };
+  type ForeignWorldPrivacyLeg = "ask" | "answer";
+  type ReadLocation = { OneMachine: EntityId } | "MyMachines" | "Everywhere";
+  type SealedCopies = "off" | "my_machines" | "cloud_and_my_machines";
+  type ModelOrder = "Inherit" | { Ordered: string[] };
+  type WorldPrivacy = { read: ReadLocation; sealed: SealedCopies; models: ModelOrder };
+  type WorldPrivacyRequestStatus = { state: "pending" } | { state: "applied"; receipt_id: string; holder: string } | { state: "declined"; holder: string };
+  type ForeignWorldPrivacyCarry = { leg: ForeignWorldPrivacyLeg; pact: string; epoch: number; source_vault: string; recipient_vault: string; world: string; ask: string; agent?: string | null; settings: WorldPrivacy; answer?: WorldPrivacyRequestStatus | null };
+  type ForeignWorldPrivacyDelivery = { body: ForeignWorldPrivacyCarry; signature: string };
+  type WorldPrivacyRequestKind = "proposal" | "widen_ask";
+  type ForeignWorldPrivacyLink = { pact: string; vault: string; world: string; request?: string | null; agent?: string | null; answer?: WorldPrivacyRequestStatus | null };
+  type WorldPrivacyRequest = { request_id: string; kind: WorldPrivacyRequestKind; agent?: string | null; opener_lineage?: string[]; author: string; world: string; settings: WorldPrivacy; seen: string; holders: string[]; needs?: string[]; yes?: string[]; ask?: number | null; status: WorldPrivacyRequestStatus; at: number; grant_omitted?: string | null; owned_by?: ForeignWorldPrivacyLink | null; asked_from?: ForeignWorldPrivacyLink | null };
   type TrustedContactReach = { sender: EntityId; channel: string; verb: string; target: string };
   type TrustedContactDial = "ask_first" | "just_call";
   type TrustedContactNameRequest = { contact_ref: string; reach: TrustedContactReach; dial: TrustedContactDial };
@@ -6146,6 +6158,12 @@ declare const vault: Sdk.VaultHost & {
         accept(input: Sdk.AcceptRescopeConnect): Promise<Sdk.ConnectRescoped | StoredResult>;
         /** The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal. */
         offer(input: Sdk.RescopeConnect): Promise<Sdk.RescopeOffer | StoredResult>;
+      };
+      world_privacy: {
+        /** The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask. */
+        export(input: Sdk.ForeignWorldPrivacyExportRequest): Promise<Sdk.ForeignWorldPrivacyDelivery | StoredResult>;
+        /** The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers. */
+        receive(input: Sdk.ForeignWorldPrivacyDelivery): Promise<Sdk.WorldPrivacyRequest | StoredResult>;
       };
     };
     coreference: {

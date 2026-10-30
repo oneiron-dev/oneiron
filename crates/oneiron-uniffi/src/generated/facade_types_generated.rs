@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1214 facade rows, 4402 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1166.
+// UniFFI census: 1216 facade rows, 4414 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1168.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -22826,6 +22826,200 @@ pub struct ConnectRejoined {
     pub status: ConnectRejoinStatus,
     #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::carry::ForeignWorldPrivacyExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignWorldPrivacyExportRequest {
+    #[serde(rename = "request")]
+    pub request: String,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::carry::ForeignWorldPrivacyLeg`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ForeignWorldPrivacyLeg {
+    #[serde(rename = "ask")]
+    Ask,
+    #[serde(rename = "answer")]
+    Answer,
+}
+
+/// `oneiron_authority::authority::world_privacy::ReadLocation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ReadLocation {
+    #[serde(rename = "OneMachine")]
+    OneMachine(String),
+    #[serde(rename = "MyMachines")]
+    MyMachines,
+    #[serde(rename = "Everywhere")]
+    Everywhere,
+}
+
+/// `oneiron_authority::authority::world_privacy::SealedCopies`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SealedCopies {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "my_machines")]
+    MyMachines,
+    #[serde(rename = "cloud_and_my_machines")]
+    CloudAndMyMachines,
+}
+
+/// `oneiron_authority::authority::world_privacy::ModelOrder`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelOrder {
+    #[serde(rename = "Inherit")]
+    Inherit,
+    #[serde(rename = "Ordered")]
+    Ordered(Vec<String>),
+}
+
+/// `oneiron_authority::authority::world_privacy::WorldPrivacy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorldPrivacy {
+    #[serde(rename = "read")]
+    pub read: ReadLocation,
+    #[serde(rename = "sealed")]
+    pub sealed: SealedCopies,
+    #[serde(rename = "models")]
+    pub models: ModelOrder,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::record::WorldPrivacyRequestStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum WorldPrivacyRequestStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "applied")]
+    Applied {
+        #[serde(rename = "receipt_id")]
+        receipt_id: String,
+        #[serde(rename = "holder")]
+        holder: String,
+    },
+    #[serde(rename = "declined")]
+    Declined {
+        #[serde(rename = "holder")]
+        holder: String,
+    },
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::carry::ForeignWorldPrivacyCarry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignWorldPrivacyCarry {
+    #[serde(rename = "leg")]
+    pub leg: ForeignWorldPrivacyLeg,
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "source_vault")]
+    pub source_vault: String,
+    #[serde(rename = "recipient_vault")]
+    pub recipient_vault: String,
+    #[serde(rename = "world")]
+    pub world: String,
+    #[serde(rename = "ask")]
+    pub ask: String,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(rename = "settings")]
+    pub settings: WorldPrivacy,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<WorldPrivacyRequestStatus>,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::carry::ForeignWorldPrivacyDelivery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignWorldPrivacyDelivery {
+    #[serde(rename = "body")]
+    pub body: ForeignWorldPrivacyCarry,
+    #[serde(rename = "signature")]
+    pub signature: String,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::record::WorldPrivacyRequestKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WorldPrivacyRequestKind {
+    #[serde(rename = "proposal")]
+    Proposal,
+    #[serde(rename = "widen_ask")]
+    WidenAsk,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::record::ForeignWorldPrivacyLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignWorldPrivacyLink {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "vault")]
+    pub vault: String,
+    #[serde(rename = "world")]
+    pub world: String,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<WorldPrivacyRequestStatus>,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::record::WorldPrivacyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorldPrivacyRequest {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "kind")]
+    pub kind: WorldPrivacyRequestKind,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(
+        rename = "opener_lineage",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opener_lineage: Option<Vec<String>>,
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "world")]
+    pub world: String,
+    #[serde(rename = "settings")]
+    pub settings: WorldPrivacy,
+    #[serde(rename = "seen")]
+    pub seen: String,
+    #[serde(rename = "holders")]
+    pub holders: Vec<String>,
+    #[serde(rename = "needs", default, skip_serializing_if = "Option::is_none")]
+    pub needs: Option<Vec<String>>,
+    #[serde(rename = "yes", default, skip_serializing_if = "Option::is_none")]
+    pub yes: Option<Vec<String>>,
+    #[serde(rename = "ask", default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<u64>,
+    #[serde(rename = "status")]
+    pub status: WorldPrivacyRequestStatus,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(
+        rename = "grant_omitted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub grant_omitted: Option<String>,
+    #[serde(rename = "owned_by", default, skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<ForeignWorldPrivacyLink>,
+    #[serde(
+        rename = "asked_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub asked_from: Option<ForeignWorldPrivacyLink>,
 }
 
 /// `oneiron::counterparty_contact::trusted_contact::TrustedContactReach`.
