@@ -267,10 +267,6 @@ impl Store {
     /// # Errors
     /// An archived vault; an erased credential (KS-6 part 2); a kind that
     /// is no carrier's; custody faults.
-    #[allow(
-        dead_code,
-        reason = "KS-6 carrier wire ships off until live leaf delivery lands (FIX-LIST)"
-    )]
     pub(crate) fn mint_carrier_leaf_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -296,10 +292,6 @@ impl Store {
     ///
     /// # Errors
     /// The key is not there to read; a kind that is no carrier's.
-    #[allow(
-        dead_code,
-        reason = "KS-6 carrier wire ships off until live leaf delivery lands (FIX-LIST)"
-    )]
     pub(crate) fn read_carrier_leaf(
         &self,
         kind: CustodyKind,
@@ -313,6 +305,47 @@ impl Store {
             .ok_or_else(|| kind.corrupt())?;
         let id = carrier_subject(custody.binding(), kind, credential, instance)?.at(0);
         copy_leaf(kind, custody.read(&id)?.expose())
+    }
+
+    /// Stages retirement of carrier instance `instance` of credential
+    /// `credential` (`kind`) in `wtxn` once what it carried is answered
+    /// (FIX 7402): a Retention intent, which the finisher carries out and
+    /// which is never an erase's evidence, so it fences nothing. Custody
+    /// that holds no such key here, none at all, or an archived vault's,
+    /// stages none. Returns whether it staged one.
+    ///
+    /// # Errors
+    /// A kind that is no carrier's; custody and storage faults.
+    pub(crate) fn stage_carrier_retirement_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        kind: CustodyKind,
+        credential: &EntityId,
+        instance: &[u8; 16],
+    ) -> Result<bool> {
+        if self.core.gate_custody_archived() {
+            return Ok(false);
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(false);
+        };
+        let subject = carrier_subject(custody.binding(), kind, credential, instance)?;
+        let Some(through) = custody.newest_generation(&subject)? else {
+            return Ok(false);
+        };
+        if custody.first_unretired(&subject)? > through {
+            return Ok(false);
+        }
+        stage_retirement_in_txn(
+            self,
+            wtxn,
+            &RetirementIntent {
+                subject,
+                through,
+                cause: RetireCause::Retention,
+            },
+        )?;
+        Ok(true)
     }
 
     /// Every custody subject credential `credential` holds here: its value's

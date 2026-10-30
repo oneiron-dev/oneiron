@@ -37,7 +37,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/runs/hold/resume",
-                summary: "{run}: resumes the held run as the owner.",
+                summary: "Resume one held run (`run`, 32 hex) as the owner and answer its hold. Each attempt it still parks is queued again and resumes from its checkpoint; one someone else paused or settled since is left as it is.",
                 row: None,
             },
             post(resume),

@@ -335,6 +335,7 @@ fn record_credential_row(
             actor_ref,
             actor_class,
             credential_ref: call_receipt::credential_ref(auth),
+            carrier_machine: None,
             outcome,
             request_digest,
             result_digest,

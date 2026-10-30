@@ -198,6 +198,18 @@ fn step_kept_frozen(root: &AttemptId, error: &Error) {
 pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
     *blake3::hash(key.as_bytes()).as_bytes()
 }
+/// Every workflow wrapper's working-set row, in creation order. A wrapper's
+/// record is kept under its root's id from admission on, after the root
+/// ends too, so the record's keys name every wrapper and the pump reads
+/// those rows alone, never the whole ledger (FIX 11318).
+pub(super) fn wrapper_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AttemptRecord>> {
+    let roots = RECORD.scan_keys(&vault.store, txn, &[])?;
+    AttemptQueue::new(vault).working_rows_in_txn(txn, roots)
+}
+
 pub(super) fn is_wrapper(row: &AttemptRecord) -> bool {
     if row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return false;
@@ -529,8 +541,8 @@ impl super::AgentDispatcher<'_> {
     /// Saved workflows a host pump may still advance: open (Paused) wrapper
     /// roots in creation order. Completed and stopped roots are not listed.
     pub fn open_workflow_roots(&self) -> Result<Vec<AttemptId>> {
-        Ok(AttemptQueue::new(self.vault)
-            .list()?
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(wrapper_rows_in_txn(self.vault, &txn)?
             .into_iter()
             .filter(|row| row.state == AttemptState::Paused && is_wrapper(row))
             .map(|row| row.id)

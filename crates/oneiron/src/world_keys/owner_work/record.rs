@@ -243,7 +243,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         act: OwnerAct,
-        work: OwnerWorkBody,
+        mut work: OwnerWorkBody,
         privacy_basis: Option<WorldPrivacyWorkBasis>,
     ) -> Result<OwnerWorkReceipt> {
         let target = act.target;
@@ -263,6 +263,12 @@ impl Vault {
         let joiner = FrontierSigner::Install(machine, &signing);
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
+        // FIX 11866: custody permits past one row ride in pieces this key
+        // signs ahead of the request, else today's path.
+        let piece_signer = (Some(machine), &signing);
+        let fold = self
+            .stage_custody_permit_pieces_in_txn(txn, &fold, piece_signer, &mut work)?
             .unwrap_or(fold);
         // The main-log heads alone (FIX 4987): the settings edit key work
         // follows is a main-log row among them or their ancestors, and the

@@ -30,7 +30,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/analyzer/vietnamese.rs` | src | s | 1 fn | — | Vietnamese analyzer (ARCH-0031 dispatch row "Vietnamese → Whitespace + NFC + lowercase", FIX 7780) |
 | `src/distance.rs` | src | s | 2 fn · 1 re-export | — | Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a… |
 | `src/distance/prepared.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | PreparedCosine | — |
-| `src/fusion.rs` | src | m | 2 struct · 6 fn · 3 const · 2 crate-vis | LinearLogBlendScores, RetrievalBlendInput | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
+| `src/fusion.rs` | src | m | 2 struct · 7 fn · 2 const · 2 crate-vis | LinearLogBlendScores, RetrievalBlendInput | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
 | `src/fusion/tests.rs` | test | s | — | — | — |
 | `src/lib.rs` | src | s | 4 mod | — | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion |
 | `src/pipeline.rs` | src | s | 1 struct | ScoredEntity | Value types the retrieval pipeline's kernels share |

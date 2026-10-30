@@ -6,11 +6,11 @@ use crate::scan_check::{EngineScan, ScanCount};
 impl ProjectReader<'_, '_> {
     /// Who authorized these authority fields, following the anchor lineage
     /// however long it is (rule 5, FIX 9436). Each state's proof is
-    /// verified from the newest down, in the order the lineage nests, then
-    /// each prior state admits the change over it, from the oldest up: the
-    /// verdict the nested walk gave. The lineage's depth is counted against
-    /// [`EngineScan::ProjectAnchorDepth`] for the project; a crossing raises
-    /// a check and the row is judged in full.
+    /// verified from the newest down, the anchor's links last to first, then
+    /// each prior state admits the change over it, from the oldest up. The
+    /// lineage's depth is counted against [`EngineScan::ProjectAnchorDepth`]
+    /// for the project; a crossing raises a check and the row is judged in
+    /// full.
     pub(super) fn authorize(
         &self,
         id: EntityId,
@@ -46,10 +46,16 @@ impl ProjectReader<'_, '_> {
         proof: Option<&ProjectWriteProof>,
         depth: &mut usize,
     ) -> Result<ProjectVerdict> {
+        // The links under the state being judged, root first.
+        let mut below = match proof.map(ProjectWriteProof::anchor_links).transpose() {
+            Ok(links) => links.unwrap_or_default(),
+            Err(_) => return Ok(ProjectVerdict::Quarantined("invalid project write proof")),
+        };
+        let head = proof.map(ProjectWriteProof::revision_proof);
         // Each signed state that builds on an earlier one, newest first: its
         // fields, its verified holder and the state it builds on.
         let mut changes: Vec<(&ProjectAuthority, Holder, &ProjectAuthority)> = Vec::new();
-        let (mut authority, mut proof) = (authority, proof);
+        let (mut authority, mut proof) = (authority, head.as_ref());
         let base = loop {
             let Some(signed) = proof else {
                 // Only a v3 proof signs a roster; an unsigned state vouches for none.
@@ -60,13 +66,13 @@ impl ProjectReader<'_, '_> {
                 }
                 break self.unsigned(id, authority)?;
             };
-            let holder = match self.verify(id, authority, signed)? {
+            let holder = match self.verify(id, authority, signed, below)? {
                 Ok(holder) => holder,
                 Err(verdict) => return Ok(verdict),
             };
             // The host signs for the owner, who sits on every board through the root.
             let host = holder.actor == "host";
-            let Some(anchor) = signed.anchor.as_deref() else {
+            let Some((anchor, rest)) = below.split_last() else {
                 if authority.parents.is_empty() {
                     break if host && Some(id) == self.root {
                         ProjectVerdict::Visible
@@ -97,7 +103,7 @@ impl ProjectReader<'_, '_> {
             }
             changes.push((authority, holder, &anchor.authority));
             *depth += 1;
-            (authority, proof) = (&anchor.authority, anchor.proof.as_ref());
+            (authority, proof, below) = (&anchor.authority, anchor.proof.as_ref(), rest);
         };
         if base != ProjectVerdict::Visible {
             return Ok(base);

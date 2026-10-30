@@ -1,5 +1,6 @@
-//! A bound source's re-admission of retained pushes at resume (FIX 9493): every row a retained
-//! result was derived from must still read for the source's caller now.
+//! A bound source's re-admission of retained pushes at resume (FIX 9493) and before each
+//! delivery (FIX 10500): every row a retained result was derived from must still read for the
+//! source's caller now.
 //! `BoundSource::readmitted` and `BoundSource::anchor_readmitted` are its call surface.
 //! The source root defines `BoundSource`; `history` keeps each retained entry's rows.
 
@@ -27,6 +28,20 @@ impl BoundSource {
         Ok(rows_read(server.vault(), &self.auth, &rows))
     }
 
+    /// The rows of `rows` that read for this source's caller as a
+    /// derivation lands (FIX 10500): the rows its push lends its result,
+    /// judged again by [`Self::readmitted`] at each delivery and at resume.
+    pub(super) fn reading_rows(
+        &self,
+        rows: Vec<oneiron::EntityId>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        let server = self.server()?;
+        Ok(rows
+            .into_iter()
+            .filter(|row| row_reads(server.vault(), &self.auth, row))
+            .collect())
+    }
+
     /// [`Self::readmitted`] for the retained entry at `cursor`, the anchor a
     /// resume compares the fresh view with: its rows must still read too.
     /// An anchor the journal no longer holds is judged by nothing here.
@@ -51,20 +66,22 @@ impl BoundSource {
     }
 }
 
-/// Whether every one of `rows` reads for `auth` now (FIX 9493): no local
-/// erase removed it, and the credential's current read admits it at its
-/// destination. A row that is no entity row passes; a read that fails does
-/// not.
+/// Whether every one of `rows` reads for `auth` now (FIX 9493).
 fn rows_read(vault: &oneiron::Vault, auth: &CoreAuth, rows: &[oneiron::EntityId]) -> bool {
-    rows.iter().all(|row| {
-        match oneiron::sync::bridge::local_deletion_is_materialized(vault, row) {
-            Ok(false) => {}
-            Ok(true) | Err(_) => return false,
-        }
-        match vault.get_entity_type(row) {
-            Ok(None) => true,
-            Ok(Some(_)) => matches!(auth.can_read_entity(vault, row), Ok(true)),
-            Err(_) => false,
-        }
-    })
+    rows.iter().all(|row| row_reads(vault, auth, row))
+}
+
+/// Whether `row` reads for `auth` now: no local erase removed it, and the
+/// credential's current read admits it at its destination. A row that is no
+/// entity row passes; a read that fails does not.
+fn row_reads(vault: &oneiron::Vault, auth: &CoreAuth, row: &oneiron::EntityId) -> bool {
+    match oneiron::sync::bridge::local_deletion_is_materialized(vault, row) {
+        Ok(false) => {}
+        Ok(true) | Err(_) => return false,
+    }
+    match vault.get_entity_type(row) {
+        Ok(None) => true,
+        Ok(Some(_)) => matches!(auth.can_read_entity(vault, row), Ok(true)),
+        Err(_) => false,
+    }
 }

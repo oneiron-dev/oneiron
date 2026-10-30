@@ -320,6 +320,14 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
     /// Scheduled host entry: reconcile every available inbound page BEFORE
     /// publishing any dirty TASK snapshot. A rejected outbound item retains
     /// its revision without starving later items or the pull cursor.
+    ///
+    /// # Errors
+    ///
+    /// The pull's error; else, when a push failed, that failure, or every
+    /// push failure as [`LinearSyncError::PushFailed`] when more than one did
+    /// (FIX 6837), a held push's [`LinearSyncError::Held`] naming its press;
+    /// else [`LinearSyncError::Waiting`] when a push waits for its Rate
+    /// window.
     pub fn synchronize(
         &mut self,
         now: u64,
@@ -327,13 +335,13 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
         let pulled = self.pull_pass(now, max_pull_pages_per_pass)?;
         let mut pushed = Vec::new();
-        let mut first_failure = None;
+        let mut failures = PassFailures::default();
         for (task, revision) in self.tasks().dirty_tasks()? {
-            if let Some(receipt) = self.push_dirty(task, revision, now, &mut first_failure) {
+            if let Some(receipt) = self.push_dirty(task, revision, now, &mut failures) {
                 pushed.push(receipt);
             }
         }
-        if let Some(error) = first_failure {
+        if let Some(error) = failures.into_error() {
             return Err(error);
         }
         Ok((pushed, pulled))
@@ -364,9 +372,9 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
         let Some(revision) = revision else {
             return Ok((None, pulled));
         };
-        let mut failure = None;
-        let receipt = self.push_dirty(task, revision, now, &mut failure);
-        if let Some(error) = failure {
+        let mut failures = PassFailures::default();
+        let receipt = self.push_dirty(task, revision, now, &mut failures);
+        if let Some(error) = failures.into_error() {
             return Err(error);
         }
         Ok((receipt, pulled))
@@ -434,22 +442,21 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
 
     /// One dirty TASK's push at `revision`, as a pass sends it: a held push
     /// is skipped, a sent push keeps its row, and the revision is
-    /// acknowledged unless the push met a conflict. A failure goes to
-    /// `first_failure` as a pass keeps it: a push that waits for its Rate
-    /// window (FIX 8788) keeps its dirty revision and yields to a later real
-    /// failure.
+    /// acknowledged unless the push met a conflict. Each failure goes to
+    /// `failures` under `task` (FIX 6837), a push the Gate holds for a press
+    /// as the door's [`LinearSyncError::Held`] with its digest.
     fn push_dirty(
         &mut self,
         task: EntityId,
         revision: u64,
         now: u64,
-        first_failure: &mut Option<LinearSyncError>,
+        failures: &mut PassFailures,
     ) -> Option<LinearMirrorReceipt> {
         match self.tasks().holds_push(task) {
             Ok(false) => {}
             Ok(true) => return None,
             Err(error) => {
-                first_failure.get_or_insert(error.into());
+                failures.note(task, error.into());
                 return None;
             }
         }
@@ -463,24 +470,49 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                     LinearMirrorStatus::Linked | LinearMirrorStatus::Applied
                 ) && let Err(error) = record_outbound(self.tasks().vault, &receipt, writer)
                 {
-                    first_failure.get_or_insert_with(|| error.into());
+                    failures.note(task, error.into());
                 }
                 if receipt.status != LinearMirrorStatus::Conflict
                     && let Err(error) = self.tasks().acknowledge_push(task, revision)
                 {
-                    first_failure.get_or_insert_with(|| error.into());
+                    failures.note(task, error.into());
                 }
                 Some(receipt)
             }
             Err(error) => {
-                if first_failure
-                    .as_ref()
-                    .is_none_or(|first| matches!(first, LinearSyncError::Waiting(_)))
-                {
-                    *first_failure = Some(error);
-                }
+                failures.note(task, error);
                 None
             }
+        }
+    }
+}
+
+/// A mirror pass's push failures, one per TASK in push order (FIX 6837). A
+/// push that waits for its Rate window (FIX 8788) keeps its dirty revision
+/// and yields to every real failure.
+#[derive(Default)]
+struct PassFailures {
+    waiting: Option<LinearSyncError>,
+    failed: Vec<LinearPushFailure>,
+}
+
+impl PassFailures {
+    fn note(&mut self, task: EntityId, error: LinearSyncError) {
+        if matches!(error, LinearSyncError::Waiting(_)) {
+            self.waiting.get_or_insert(error);
+        } else {
+            self.failed.push(LinearPushFailure { task, error });
+        }
+    }
+
+    /// The pass's error: its one failure itself, every failure as
+    /// [`LinearSyncError::PushFailed`] when more than one push failed, else
+    /// its first wait; `None` when every push went or was held back.
+    fn into_error(mut self) -> Option<LinearSyncError> {
+        match self.failed.len() {
+            0 => self.waiting,
+            1 => self.failed.pop().map(|failure| failure.error),
+            _ => Some(LinearSyncError::PushFailed(self.failed)),
         }
     }
 }
