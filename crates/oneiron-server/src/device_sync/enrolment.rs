@@ -21,8 +21,7 @@ use crate::commands::credential_file;
 use crate::config::KeystoreConfig;
 use crate::config::device_sync::{parse_machine, validate_home_url};
 
-mod home_bind;
-pub(crate) use home_bind::bind_enrolled_machine;
+pub(crate) mod home_bind;
 
 /// What a device keeps from its enrolment, beside its credential.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -163,9 +162,22 @@ struct Paired {
     /// (FIX 8636): this machine's identity and class stand as they were.
     #[serde(default)]
     re_paired: bool,
-    /// The home's own mesh address, when its listener runs (FIX 3374).
+    /// The home's own mesh address, once it bound this machine's endpoint
+    /// and its listener runs (FIX 3374).
     #[serde(default)]
     mesh: Option<oneiron::authority::MeshMachineAddress>,
+    /// The mesh binding the home made, or why it made none (L02 04:5x).
+    #[serde(default)]
+    mesh_bind: Option<serde_json::Value>,
+}
+
+/// What an enrolment stored, and what the home answered beside it.
+pub(crate) struct Enrolled {
+    pub(crate) record: DeviceEnrolment,
+    /// The home paired again a machine it already held (FIX 8636).
+    pub(crate) re_paired: bool,
+    /// The home's receipt of the mesh binding, as it worded it.
+    pub(crate) mesh_bind: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -191,7 +203,7 @@ pub(crate) fn enrol(
     vault: &oneiron::Vault,
     files: &EnrolmentFiles,
     link: &str,
-) -> anyhow::Result<(DeviceEnrolment, bool)> {
+) -> anyhow::Result<Enrolled> {
     use base64::Engine as _;
     use ed25519_dalek::Signer;
 
@@ -311,7 +323,11 @@ pub(crate) fn enrol(
     };
     record.validate()?;
     files.write(&format!("v2.cred.{slip}.{}", hex(key.as_bytes())), &record)?;
-    Ok((record, paired.re_paired))
+    Ok(Enrolled {
+        record,
+        re_paired: paired.re_paired,
+        mesh_bind: paired.mesh_bind,
+    })
 }
 
 /// This machine's mesh endpoint key and the two proofs that bind it to its

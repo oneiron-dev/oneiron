@@ -25,6 +25,10 @@ struct Enrolled {
     /// Whether the home named its mesh address (FIX 3374): serve dials it
     /// there first, and at `home_url` when that fails.
     home_mesh: bool,
+    /// The home's receipt of this machine's mesh binding: the binding it
+    /// made, or why it made none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mesh_bind: Option<serde_json::Value>,
     record: String,
     credential_file: String,
     /// The code this machine shows the owner, 26 characters: he types it
@@ -59,14 +63,16 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
     // Read before the enrolment, as it reads it: nothing that can fail runs
     // after the link is spent.
     let (request_code, enrolment) = shown_request(&vault)?;
-    let (record, re_paired) = crate::device_sync::enrol(&vault, &files, &link)?;
+    let enrolled = crate::device_sync::enrol(&vault, &files, &link)?;
+    let record = enrolled.record;
     super::owner::emit(&Enrolled {
         home_machine: record.home_machine,
         home_node_id: record.home_node_id,
         home_url: record.home_url,
         checkpoint_pinned: record.authority_checkpoint_pin.is_some(),
-        re_paired,
+        re_paired: enrolled.re_paired,
         home_mesh: record.home_mesh.is_some(),
+        mesh_bind: enrolled.mesh_bind,
         record: files.record.display().to_string(),
         credential_file: files.credential.display().to_string(),
         request_code,

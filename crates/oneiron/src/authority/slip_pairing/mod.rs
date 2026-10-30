@@ -88,6 +88,9 @@ pub struct PairingRedeemed {
     /// only (FIX 8636): `machine` is its standing as it was, and nothing
     /// joined the roster.
     pub re_paired: bool,
+    /// What the redemption's mesh binding did, when the joining machine sent
+    /// its mesh identity (FIX 3374).
+    pub mesh: Option<MeshEnrolment>,
 }
 /// Owner-approved identity constraints. Redemption can choose a connection key,
 /// but cannot replace these claims or add organization authority.
