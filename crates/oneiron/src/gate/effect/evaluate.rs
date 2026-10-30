@@ -314,7 +314,7 @@ pub(crate) fn evaluate_external_effect_policy(
         effect.counterparty_send_override = counterparty_send_override;
         effect.counterparty_contact_revoked = counterparty_contact_revoked;
     }
-    let mut decision = policy.evaluate_gate(&input);
+    let mut decision = policy.evaluate_gate_with_delegation_chain(store, &*wtxn, &input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
     let created_at = mutation_recorded_at;

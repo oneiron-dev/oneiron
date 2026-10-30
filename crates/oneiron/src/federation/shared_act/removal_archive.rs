@@ -9,6 +9,12 @@
 //! input does not read (the positions, the archive's manifest, members or
 //! rows) answers the stored copy as it did before projection existed
 //! (`ISOLATION_NEW_CHECK_ERROR_MODE`); bounds that were judged still bound.
+//! A one-shot transfer is served once (FIX-LIST 10773): the row keeps each
+//! slip an archive door spent so, on every archive of its removed Owner. A
+//! pact-bound transfer is served only while its pact holds, and the row logs
+//! each serve under that pact (FIX 11860).
+//! An erase reaches these copies in its own commit (FIX-LIST 2241): an
+//! archive that froze an erased record is rewritten without it.
 
 use std::collections::BTreeSet;
 
@@ -54,11 +60,33 @@ pub(crate) struct FrozenPosition {
 pub(crate) struct StoredRemovalExport {
     pub(crate) copy: RemovalExportCopy,
     positions: Vec<u8>,
+    /// The one-shot transferred slips an archive door already served, by
+    /// slip id (FIX-LIST 10773): each is kept on every archive of the
+    /// removed Owner, so it takes none of them again.
+    spent_slips: BTreeSet<[u8; 32]>,
+    /// Each serve of this archive to a pact-bound transferred slip, oldest
+    /// first (FIX 11860).
+    pact_serves: Vec<PactServe>,
+}
+
+/// One serve of an archive to a pact-bound transferred slip (FIX 11860): the
+/// grant whose pact held at the serve, the slip, and when it was served.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PactServe {
+    grant: EntityId,
+    slip_id: [u8; 32],
+    served_at: u64,
 }
 
 impl StoredRemovalExport {
     pub(super) fn new(copy: RemovalExportCopy, positions: Vec<u8>) -> Self {
-        Self { copy, positions }
+        Self {
+            copy,
+            positions,
+            spent_slips: BTreeSet::new(),
+            pact_serves: Vec::new(),
+        }
     }
 
     /// The copy `admits` leaves its holder, judged record by record on the
@@ -98,6 +126,75 @@ impl StoredRemovalExport {
         copy.export.archive = bytes;
         Some(copy)
     }
+
+    /// What the erase of `erased` leaves of this row (FIX-LIST 2241). An
+    /// input that does not read cannot prove the erased bytes absent, so the
+    /// row goes ([`ERASE_UNREADABLE_ARCHIVE_MODE`]).
+    fn after_erase(&self, erased: &BTreeSet<EntityId>) -> ErasedFromArchive {
+        let receipt = self.copy.receipt_id.as_str();
+        let Ok(positions) = rmp_serde::from_slice::<Vec<FrozenPosition>>(&self.positions) else {
+            return unreadable_on_erase(receipt, "frozen positions");
+        };
+        if positions.iter().all(|record| !erased.contains(&record.id)) {
+            return ErasedFromArchive::Untouched;
+        }
+        let archived: BTreeSet<EntityId> = positions.iter().map(|record| record.id).collect();
+        let left: Vec<FrozenPosition> = positions
+            .into_iter()
+            .filter(|record| !erased.contains(&record.id))
+            .collect();
+        if left.is_empty() {
+            return ErasedFromArchive::Dropped;
+        }
+        let kept: BTreeSet<EntityId> = left.iter().map(|record| record.id).collect();
+        let Ok(bytes) = crate::batch::export::project_stored_archive(
+            &self.copy.export.archive,
+            &archived,
+            &kept,
+        ) else {
+            return unreadable_on_erase(receipt, "stored archive");
+        };
+        let Ok(positions) = rmp_serde::to_vec_named(&left) else {
+            return unreadable_on_erase(receipt, "frozen positions");
+        };
+        let mut row = self.clone();
+        row.copy.export.digest = blake3::hash(&bytes).to_hex().to_string();
+        row.copy.export.archive = bytes;
+        row.positions = positions;
+        ErasedFromArchive::Rewritten(row)
+    }
+}
+
+/// What an erase leaves of one stored removal archive (FIX-LIST 2241).
+enum ErasedFromArchive {
+    /// It froze none of the erased records.
+    Untouched,
+    /// The row without the erased records.
+    Rewritten(StoredRemovalExport),
+    /// Nothing is left, or the row did not read: it goes.
+    Dropped,
+}
+
+/// How an erase treats a removal archive whose own input does not read
+/// (CALLS "FIX 2241 unreadable archive on erase"): the copy is a courtesy
+/// copy until `expires_at`, and the erase is the user's own act, so the copy
+/// goes rather than keep bytes the erase may have named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EraseUnreadableArchiveMode {
+    DropCopy,
+}
+
+const ERASE_UNREADABLE_ARCHIVE_MODE: EraseUnreadableArchiveMode =
+    EraseUnreadableArchiveMode::DropCopy;
+
+fn unreadable_on_erase(receipt: &str, input: &'static str) -> ErasedFromArchive {
+    let EraseUnreadableArchiveMode::DropCopy = ERASE_UNREADABLE_ARCHIVE_MODE;
+    tracing::warn!(
+        receipt = %receipt,
+        input,
+        "an erase met a removal archive that did not read; the archive copy goes (FIX-LIST 2241)"
+    );
+    ErasedFromArchive::Dropped
 }
 
 /// [`ISOLATION_NEW_CHECK_ERROR_MODE`] for a projection whose `input` did not
@@ -155,6 +252,92 @@ impl Vault {
             }
         }
         Ok(copies)
+    }
+
+    /// Whether an archive door already served the one-shot transferred slip
+    /// `slip_id`: any of `member`'s archives keeps its spend (FIX-LIST
+    /// 10773).
+    pub(crate) fn removal_archive_slip_spent_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        member: EntityId,
+        slip_id: &[u8; 32],
+    ) -> Result<bool> {
+        let prefix = removal_export_key(&member.to_hex(), "");
+        Ok(REMOVAL_EXPORT
+            .scan_from(&self.store, txn, prefix.as_bytes())?
+            .iter()
+            .any(|(_, stored)| stored.spent_slips.contains(slip_id)))
+    }
+
+    /// Spends the one-shot transferred slip `slip_id` on every archive of
+    /// `member`, in the writer whose answer served it (FIX-LIST 10773).
+    pub(crate) fn spend_removal_archive_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        member: EntityId,
+        slip_id: [u8; 32],
+    ) -> Result<()> {
+        let prefix = removal_export_key(&member.to_hex(), "");
+        for (row_key, mut stored) in
+            REMOVAL_EXPORT.scan_from(&self.store, txn, prefix.as_bytes())?
+        {
+            if stored.spent_slips.insert(slip_id) {
+                REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// An erase's reach into the archives kept for removed Owners
+    /// (FIX-LIST 2241), in the erase's own commit: each archive that froze
+    /// an erased record is rewritten without it, and one left with no record
+    /// goes, so no copy keeps an erased record's bytes until it expires.
+    pub(crate) fn scrub_removal_exports_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        erased: &[EntityId],
+    ) -> Result<()> {
+        if erased.is_empty() {
+            return Ok(());
+        }
+        let erased: BTreeSet<EntityId> = erased.iter().copied().collect();
+        for (row_key, stored) in REMOVAL_EXPORT.scan(&self.store, txn)? {
+            match stored.after_erase(&erased) {
+                ErasedFromArchive::Untouched => {}
+                ErasedFromArchive::Rewritten(row) => {
+                    REMOVAL_EXPORT.put(&self.store, txn, &row_key, &row)?;
+                }
+                ErasedFromArchive::Dropped => {
+                    REMOVAL_EXPORT.delete(&self.store, txn, &row_key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Logs on each archive in `served` that the pact-bound transferred slip
+    /// `slip_id` took it at `now` while `grant`'s pact held (FIX 11860).
+    pub(crate) fn log_removal_archive_pact_serve_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        served: &[RemovalExportCopy],
+        grant: EntityId,
+        slip_id: [u8; 32],
+        now: u64,
+    ) -> Result<()> {
+        for copy in served {
+            let row_key = removal_export_key(&copy.member, &copy.receipt_id);
+            if let Some(mut stored) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? {
+                stored.pact_serves.push(PactServe {
+                    grant,
+                    slip_id,
+                    served_at: now,
+                });
+                REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
+            }
+        }
+        Ok(())
     }
 
     /// [`Self::removal_export_in_txn`] for a transferred holder, as

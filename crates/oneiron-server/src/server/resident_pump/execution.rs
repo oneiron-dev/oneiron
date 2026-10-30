@@ -11,7 +11,7 @@ use super::{
     ProjectConversationSkills, ReadSetProducer, ReaderSeats, RunCompaction, RunHostDoor,
     SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask, SpawnHostSeat, SpendScopeId, SyncServer,
     TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE, Vault, WINDOW_FULL_TRIES,
-    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_actor, browser_workflow, child_pin, craft,
+    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor, browser_workflow, child_pin, craft,
     ensure_listed, enter_engine_native_run, finalize_step_captures, fork_executor_run,
     note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
     run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
@@ -30,7 +30,9 @@ pub(super) fn run_bound(
 ) -> Result<BoundRun, EngineRunError> {
     let vault = server.vault();
     let status = &claimed.status;
-    let actor = agent_dispatch_actor(&status.input).map_err(text)?;
+    // The run's writes are bound to its attempt, so the Gate meets its live
+    // delegation chain at each (FIX 10537, L09 s50 10:4x).
+    let actor = agent_dispatch_run_actor(&status.input, status.attempt.id).map_err(text)?;
     // The run is the attempt's own: a retry is a fresh attempt, and so a
     // fresh run.
     let run_id = EntityId::from_bytes(*status.attempt.id.as_bytes()).map_err(text)?;
@@ -107,6 +109,7 @@ pub(super) fn run_bound(
             definition.models.clone(),
         )?
     } else {
+        // No read scope is threaded here: the birth inherits (FIX 11768).
         task_engine_run_seat(
             vault,
             provider,
@@ -115,6 +118,7 @@ pub(super) fn run_bound(
             type_ref,
             status.input.plan.as_ref(),
             definition.models.clone(),
+            Vec::new(),
         )?
     };
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
@@ -419,21 +423,30 @@ fn continued_seat(
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
-    task_run_seat(vault, provider, config.run_id, type_ref, |facet| SeatTask {
-        kind: SeatKind::Attempt,
-        warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
-        task: config.task.clone(),
-        purpose: oneiron::CallPurpose::Other {
-            name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+    // No read scope is threaded here: the birth inherits (FIX 11768).
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        Vec::new(),
+        |facet| SeatTask {
+            kind: SeatKind::Attempt,
+            warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
+            task: config.task.clone(),
+            purpose: oneiron::CallPurpose::Other {
+                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+            },
+            facet: facet.to_owned(),
+            required: Vec::new(),
+            min_context_tokens: 1,
+            locality: config.model_locality,
+            override_model: Some(config.model.clone()),
+            override_effort: config.seat_effort,
+            listed,
+            worlds: Vec::new(),
         },
-        facet: facet.to_owned(),
-        required: Vec::new(),
-        min_context_tokens: 1,
-        locality: config.model_locality,
-        override_model: Some(config.model.clone()),
-        override_effort: config.seat_effort,
-        listed,
-    })
+    )
 }
 
 /// FIX 6030: with no seat the run is still held to its list; a configured

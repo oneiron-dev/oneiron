@@ -1,7 +1,8 @@
-//! The owner's runner seat quota doors (FIX 7451): `vault.runners.seats.quotas`
-//! reads the named seats' quotas as their captures last recorded them, and
-//! `vault.runners.seats.top_up` records the owner's word that a seat's spent
-//! credit is topped up.
+//! The owner's runner seat doors: `vault.runners.seats.quotas` reads the named
+//! seats' quotas as their captures last recorded them, `vault.runners.seats.top_up`
+//! records the owner's word that a seat's spent credit is topped up (FIX 7451),
+//! and `vault.runners.seats.resume` resumes a bound runner work a spend parked
+//! (FIX 11067).
 //!
 //! A spent credit names no reset, so its seat waits for the owner
 //! ([`super::SeatSpent::back_at`]): until now only a completed run on that
@@ -11,17 +12,27 @@
 //! nothing; a later credit spend on the seat is read as before. Each door
 //! rechecks the owner's proof in its own transaction.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
+use crate::LlmBackend;
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::memory::{MemoryError, MemoryResult};
 
+use super::connector::ByoEndpointSpec;
+use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher};
 use super::error::{ByoaError, ByoaResult};
-use super::seat::RunnerSeat;
+use super::exhaust::{ByoaEgressLease, ByoaEgressPort};
+use super::provider::ProviderAdapterRegistry;
+use super::seat::{RunnerSeat, RunnerSeatPolicy, SkippedRunnerSeat};
 use super::seat_quota::{OwnerTopUp, RunnerSeatQuota, seat_quota_in_txn, top_up_seat_quota_in_txn};
+use super::work_binding::{RunnerSeatChoice, RunnerWorkBindingId};
+use super::work_resume::{ResumeRunnerWork, RunnerWorkResume};
 
 /// The seats whose quotas the owner reads.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -75,6 +86,150 @@ pub struct RunnerSeatTopUpReceipt {
     pub effect: RunnerSeatTopUpEffect,
     /// The seat's quota now; its `seat` is 0.
     pub quota: RunnerSeatQuota,
+}
+
+/// Which seat a resume takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerWorkResumeChoice {
+    /// The seat at this index, spent or not.
+    Seat(usize),
+    /// The first seat from this index in the policy's order that this
+    /// runtime may run and whose quota is not spent.
+    NextSeat { from: usize },
+}
+
+/// The owner's resume of a bound runner work a spend parked (FIX 11067).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerWorkResumeRequest {
+    /// The bound work, as lower-case hex.
+    pub binding: String,
+    /// The spent attempt the owner saw at the work's head, as lower-case
+    /// hex: the resume acts only while the work still stands there.
+    pub expected_attempt: String,
+    /// The seat to resume on. Absent searches the policy's order from the
+    /// spent seat, that seat included.
+    #[serde(default)]
+    pub choice: Option<RunnerWorkResumeChoice>,
+    /// The owner's ordered seats the resume searches.
+    pub policy: RunnerSeatPolicy,
+}
+
+/// A fallback seat a resume passed over, and why, in words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SkippedRunnerSeatView {
+    /// The seat's index in the policy's order.
+    pub seat: usize,
+    /// The runner the seat names.
+    pub runner: String,
+    /// Why the resume passed it over.
+    pub reason: String,
+}
+
+/// Where resuming a bound work left it. Each arm is where the work stands,
+/// never a refusal; every arm but `resumed` wrote nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerWorkResumeView {
+    /// A successor on `seat` carries the work now: its attempt, as
+    /// lower-case hex, a child of the spent attempt on a fresh checkout.
+    /// `existing` when that seat's successor of the spent attempt was
+    /// already dispatched.
+    Resumed {
+        seat: usize,
+        attempt: String,
+        existing: bool,
+        skipped: Vec<SkippedRunnerSeatView>,
+    },
+    /// The work stands at `attempt` on `seat`: it moved past the attempt
+    /// named, or that attempt has not ended.
+    Current { seat: usize, attempt: String },
+    /// The attempt named ended without a spend: there is nothing to resume.
+    Unchanged { seat: usize, attempt: String },
+    /// No seat this runtime may run took the work.
+    NoSeat { skipped: Vec<SkippedRunnerSeatView> },
+    /// Every seat tried is spent or passed over, a spent one among them.
+    /// `back_at` is the first time one is back; none waits for the owner.
+    Exhausted {
+        back_at: Option<u64>,
+        skipped: Vec<SkippedRunnerSeatView>,
+    },
+    /// Nothing holds the work: never bound here, or erased or pruned.
+    Gone,
+}
+
+impl RunnerWorkResumeView {
+    /// The wire view of a resume's outcome: attempts as lower-case hex,
+    /// passed-over seats with their reasons in words.
+    fn of(outcome: &RunnerWorkResume) -> Self {
+        let attempt = |attempt: &AttemptId| bytes_to_hex_lower(attempt.as_bytes());
+        match outcome {
+            RunnerWorkResume::Resumed {
+                seat,
+                attempt: resumed,
+                existing,
+                skipped,
+            } => Self::Resumed {
+                seat: *seat,
+                attempt: attempt(resumed),
+                existing: *existing,
+                skipped: skipped_views(skipped),
+            },
+            RunnerWorkResume::Current { seat, attempt: at } => Self::Current {
+                seat: *seat,
+                attempt: attempt(at),
+            },
+            RunnerWorkResume::Unchanged { seat, attempt: at } => Self::Unchanged {
+                seat: *seat,
+                attempt: attempt(at),
+            },
+            RunnerWorkResume::NoSeat { skipped } => Self::NoSeat {
+                skipped: skipped_views(skipped),
+            },
+            RunnerWorkResume::Exhausted { back_at, skipped } => Self::Exhausted {
+                back_at: *back_at,
+                skipped: skipped_views(skipped),
+            },
+            RunnerWorkResume::Gone => Self::Gone,
+        }
+    }
+}
+
+/// The wire views of the seats a resume passed over, in the policy's order.
+fn skipped_views(skipped: &[SkippedRunnerSeat]) -> Vec<SkippedRunnerSeatView> {
+    skipped
+        .iter()
+        .map(|skip| SkippedRunnerSeatView {
+            seat: skip.seat,
+            runner: skip.runner.clone(),
+            reason: skip.reason.to_string(),
+        })
+        .collect()
+}
+
+/// A resume reaches no endpoint: it only mints the successor attempt row,
+/// and dispatch records the intent without reaching out.
+struct ResumeEndpoints;
+
+impl ByoEndpointBackendFactory for ResumeEndpoints {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+        Err(ByoaError::Backend(
+            "the resume door serves no endpoint connector".to_owned(),
+        ))
+    }
+}
+
+/// A resume takes no egress lease: it mints a row, and no traffic moves.
+struct ResumeEgress;
+
+impl ByoaEgressPort for ResumeEgress {
+    fn open(&mut self, profile_ref: &str, _intent_ref: &str) -> ByoaResult<ByoaEgressLease> {
+        Err(ByoaError::EgressDenied {
+            profile_ref: profile_ref.to_owned(),
+            reason: "the resume door leases no egress".to_owned(),
+        })
+    }
 }
 
 impl Vault {
@@ -131,6 +286,47 @@ impl Vault {
             let quota = seat_quota_in_txn(self, wtxn, 0, &input.seat, now).map_err(refusal)?;
             Ok(RunnerSeatTopUpReceipt { effect, quota })
         })
+    }
+
+    /// The owner's resume of a bound runner work a spend parked (FIX 11067),
+    /// over the plain CLI runners ([`ProviderAdapterRegistry::standard`]):
+    /// while the work still stands at `input.expected_attempt`, ended with
+    /// its spend, it goes to a successor of that attempt on the first seat
+    /// of `input.policy` this runtime may run, the spent seat included. A
+    /// work that moved on, is running, or ended without a spend is answered
+    /// as it stands, with no write. The owner's proof is rechecked in the
+    /// writer before the work is read.
+    ///
+    /// # Errors
+    /// A binding or attempt id that is not an id; a proof that no longer
+    /// holds; an invalid policy; every refusal a dispatch and a checkout
+    /// claim have; a store failure.
+    pub fn resume_runner_work_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &RunnerWorkResumeRequest,
+    ) -> MemoryResult<RunnerWorkResumeView> {
+        let binding =
+            RunnerWorkBindingId::from_bytes(*EntityId::from_hex(&input.binding)?.as_bytes())
+                .map_err(refusal)?;
+        let expected_attempt =
+            AttemptId::from_bytes(EntityId::from_hex(&input.expected_attempt)?.as_bytes())?;
+        let choice = input.choice.map(|choice| match choice {
+            RunnerWorkResumeChoice::Seat(index) => RunnerSeatChoice::Seat(index),
+            RunnerWorkResumeChoice::NextSeat { from } => RunnerSeatChoice::NextSeat { from },
+        });
+        let request = ResumeRunnerWork {
+            binding,
+            expected_attempt,
+            choice,
+            now: crate::unix_seconds_now(),
+        };
+        let dispatcher = ByoaDispatcher::new(self, ResumeEndpoints, ResumeEgress);
+        let registry = ProviderAdapterRegistry::standard();
+        let outcome = dispatcher
+            .resume_runner_work_as_owner(owner, &registry, &input.policy, request)
+            .map_err(refusal)?;
+        Ok(RunnerWorkResumeView::of(&outcome))
     }
 }
 

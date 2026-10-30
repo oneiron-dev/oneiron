@@ -75,6 +75,7 @@ mod floor;
 mod found_keys;
 pub(crate) mod holder_export;
 mod known_values;
+mod leaf_delivery;
 mod masked_files;
 mod owner_door;
 mod pending_restore;
@@ -143,6 +144,12 @@ pub(crate) use self::found_keys::{
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};
+// FIX 7402: live carrier key delivery, the L02 halves of L03's sync frame.
+pub(crate) use self::leaf_delivery::CustodyLeafSession;
+pub use self::leaf_delivery::{
+    LEAF_KEY_REFUSED_BACKOFF_MS, LEAF_KEY_REQUEST_TTL_MS, LeafKeyAnswer, LeafKeyFailureCause,
+    LeafKeyRequest,
+};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberStep, PlaceHandles, filled,

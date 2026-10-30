@@ -29,6 +29,7 @@ pub(crate) fn owner_policy_manifest_as_stored(data: Vec<u8>) -> crate::error::Re
     default_manifest::with_default_owner_policy_notifications(data)
 }
 mod definition_ceiling;
+mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;

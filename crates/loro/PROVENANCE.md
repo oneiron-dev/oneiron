@@ -36,7 +36,7 @@ change store are private. This vendor adds that split and join.
 | Upstream source root | `$CARGO_HOME/registry/src/index.crates.io-1949cf8c6b5b557f/loro-1.16.2` | `$CARGO_HOME/registry/src/index.crates.io-1949cf8c6b5b557f/loro-internal-1.16.2` |
 | crates.io checksum (unpatched lock entry, equals the `.crate` SHA-256) | `8e86dea63b66576db244cbc3a40bdb17517263c93f318e2fbe08aca3be1192cb` | `8d5806b65ee68c3ae7891959dd968898860dab74fbf6498b312de9b548dce5ec` |
 | Upstream VCS commit (`.cargo_vcs_info.json`) | `af130d97d8b110add13283fc5bfc81d97a9a609f`, `crates/loro` | `af130d97d8b110add13283fc5bfc81d97a9a609f`, `crates/loro-internal` |
-| Upstream SHA-256 of each changed file | `src/lib.rs` `e2373b73e459c6dfcfb8a30ce2880a9dc86f5bf7dcb0bba2e001c26826264a8d` | `src/encoding.rs` `aab26dc4cbe9f5d91512a8659ea609ab2863d0a5f161a6cc582fab352b4816f7`; `src/oplog/change_store.rs` `ddedd8560f5c4125c21b7cafa572532a5cf15cfd04ee167bdf8d7799adf19626` |
+| Upstream SHA-256 of each changed file | `src/lib.rs` `e2373b73e459c6dfcfb8a30ce2880a9dc86f5bf7dcb0bba2e001c26826264a8d` | `src/encoding.rs` `aab26dc4cbe9f5d91512a8659ea609ab2863d0a5f161a6cc582fab352b4816f7`; `src/oplog/change_store.rs` `ddedd8560f5c4125c21b7cafa572532a5cf15cfd04ee167bdf8d7799adf19626`; `src/loro.rs` `c71247657c228ff33750d87e46f59bf5ccc7aa5bbdc0d7ed4ea254fe7b88e500`; `src/lib.rs` `021bab8fdc294cfa7851cdb1309e33e7bedf558b2ef9ed6a2239fe599ea628e3` |
 | License | MIT (`LICENSE` shipped) | MIT (declared; the package ships no license file) |
 
 ## Inventory
@@ -55,8 +55,14 @@ unmodified trees.
 - `loro-internal-1.16.2/src/oplog/change_store.rs` — `ChangeStore::encode_from`
   becomes `pub(crate)` so the join can write the original start and latest
   versions of a trimmed history. No body change.
+- `loro-internal-1.16.2/src/loro.rs` — a process-wide `SNAPSHOT_AT_EXPORTS`
+  counter that `LoroDoc::export` raises by one for each `ExportMode::SnapshotAt`
+  (see "The SnapshotAt export counter" below).
+- `loro-internal-1.16.2/src/lib.rs` — `snapshot_at_exports()` reads that
+  counter.
 - `loro-1.16.2/src/lib.rs` — a `loro::checkpoint` module re-exporting the new
-  types, and the two `LoroDoc` methods below delegating to the internal ones.
+  types, the two `LoroDoc` methods below delegating to the internal ones, and
+  the `loro::snapshot_at_exports` re-export.
 
 **Added by this vendor:**
 
@@ -140,6 +146,15 @@ with `report.equivalent` set. `LoroDoc::from_snapshot` opens the bytes.
 No snapshot, update or JSON format changes, and nothing outside
 `checkpoint_parts` calls the new code.
 
+## The SnapshotAt export counter
+
+`loro::snapshot_at_exports() -> u64` returns how many `ExportMode::SnapshotAt`
+exports this process has made. `LoroDoc::fork_at` exports through that mode,
+so each fork_at counts as one. The Dreamer logs the counter's delta per
+consolidation partition and per wake pass, to prove from the server log that a
+cycle or a recall makes no export storm (L07 DREAM-OBSERVE). It is one relaxed
+atomic add before the export; it changes no export, import or other behaviour.
+
 ## Workspace and ratchet posture
 
 As for heed and paste: the vendors sit under `vendor/` and are excluded from
@@ -150,7 +165,7 @@ workspace `[lints]` do not apply to them.
 ## Re-vendoring
 
 Unpack the new `.crate` archives over both vendor directories, then re-apply
-the three changed files and the added module above, and update this file. The
+the five changed files and the added module above, and update this file. The
 join relies on the fast-snapshot layout, `ChangeStore::encode_from`, map-state
 encoding, and the shallow-root store; any upstream move must re-run the KS7-3
 fleet probe before landing.

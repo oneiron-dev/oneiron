@@ -97,6 +97,11 @@ pub(super) struct MemberRecord {
     /// had it removed, and once the member changes on the end that holds it.
     #[serde(default)]
     pub(super) diverged: Option<Diverged>,
+    /// On the guest: a diverged copy the owner answered, as answered, that
+    /// the host is still to be told of (FIX 11736, FIX 11737); `None` once
+    /// a turn sent it.
+    #[serde(default)]
+    pub(super) notice: Option<Diverged>,
 }
 
 /// A copy of a member the carrier never agreed on, kept when the member's
@@ -111,8 +116,9 @@ pub(super) struct Diverged {
     /// The agreed version's digest the origin retired, when the retirement
     /// named one.
     pub(super) retired: Option<String>,
-    /// The owner's answer once given: kept, or removed and still being
-    /// carried.
+    /// The owner's answer once given: on `diverged`, a removal of the
+    /// host's copy still being carried; on `notice`, the answer the host is
+    /// told of.
     #[serde(default)]
     pub(super) answer: Option<DivergedAnswer>,
 }

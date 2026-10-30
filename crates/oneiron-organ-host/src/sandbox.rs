@@ -19,10 +19,10 @@
 //! holds those bytes. A third-party organ's limits are hard at its grant.
 //!
 //! What a start isolated the organ with is a typed fact on its status
-//! ([`OrganIsolation`]): whether the kernel made its namespaces, and what
-//! fences its descendants. Neither refuses a start (FIX 7886): where a host
-//! forbids user namespaces, or has no cgroup to fence descendants in, the
-//! organ runs, and the fact says so. A descendant fence is a cgroup of the
+//! ([`OrganIsolation`]), and on each call's receipt (FIX 10582): whether
+//! the kernel made its namespaces, and what fences its descendants. Neither
+//! refuses a start (FIX 7886): where a host forbids user namespaces, or has
+//! no cgroup to fence descendants in, the organ runs, and the fact says so. A descendant fence is a cgroup of the
 //! organ's own (`fence`): every process it starts, one that leaves its
 //! process group with `setsid` included, ends with it (FIX 7887).
 
@@ -30,50 +30,12 @@ use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
+use crate::isolation::{DescendantFence, NamespaceFact, OrganIsolation};
 use crate::spec::{OrganSpec, OrganTier};
 
 mod fence;
 
 pub(crate) use fence::Cell;
-
-/// What the kernel isolates an organ process with, as its start found it
-/// (FIX 7886, 7887). Nothing here refused the start.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct OrganIsolation {
-    /// Its user and network namespaces.
-    pub namespaces: NamespaceFact,
-    /// What ends its descendants when the host ends it.
-    pub descendants: DescendantFence,
-}
-
-/// Whether an organ got its own user and network namespaces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum NamespaceFact {
-    /// Its own: it shares neither the host's users nor its network.
-    Isolated,
-    /// The kernel refused `unshare(CLONE_NEWUSER | CLONE_NEWNET)` with
-    /// `errno` (a host that forbids unprivileged user namespaces): the organ
-    /// runs in the host's namespaces, on the host's network.
-    Refused { errno: i32 },
-    /// The start could not read the child's word on them.
-    Unobserved,
-    /// This platform has no namespaces to make.
-    NotOnPlatform,
-}
-
-/// What ends an organ's descendants when the host ends the organ.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum DescendantFence {
-    /// A cgroup of its own: ending it ends every process in it, one that
-    /// left the organ's process group included.
-    Cgroup,
-    /// Its process group only: a descendant that calls `setsid` outlives
-    /// the kill. `why` says what this host lacks for a cgroup.
-    ProcessGroup { why: String },
-}
 
 /// Limits as the kernel takes them, worked out before the fork.
 #[derive(Debug)]

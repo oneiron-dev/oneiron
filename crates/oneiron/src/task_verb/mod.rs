@@ -81,6 +81,7 @@ pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
+mod presence_jobs;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
