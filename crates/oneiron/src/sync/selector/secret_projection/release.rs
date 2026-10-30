@@ -43,6 +43,11 @@ pub enum RepoSyncAdmission<'a> {
 pub struct RepoSyncLandings(Vec<Landing>);
 
 impl RepoSyncLandings {
+    /// No copy edit lands new bytes.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Marks each landing in `wtxn`, the writer that persists the update
     /// carrying it, so its bytes are never committed without their mark.
     ///
