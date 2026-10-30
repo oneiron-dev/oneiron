@@ -30231,6 +30231,8 @@ pub enum EraseWithdrawal {
     Withdrawn,
     #[serde(rename = "not_waiting")]
     NotWaiting,
+    #[serde(rename = "confirmed_by_another_owner")]
+    ConfirmedByAnotherOwner,
     #[serde(rename = "under_way")]
     UnderWay,
 }
