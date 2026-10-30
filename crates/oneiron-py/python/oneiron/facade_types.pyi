@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4399 declarations.
+Census: 1211 facade rows, 4403 declarations.
 Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -11559,6 +11559,7 @@ class ArtifactVersionView(TypedDict):
     claim: RecordRef
 class ArtifactView(TypedDict):
     artifact_id: EntityId
+    artifact: RecordRef
     kind: ArtifactKind
     name: str
     media_type: str
@@ -14089,6 +14090,7 @@ class PendingProposalView(TypedDict):
     content_hash: str
     byte_len: int
     retained_by: EntityId
+    retained_by_record: NotRequired[RecordRef | None]
     retained_at: int
     made_by: NotRequired[MadeBy | None]
     summary: Any
@@ -14114,7 +14116,7 @@ class PptxCommentTarget(TypedDict):
     slide: int
     slide_creation_id: NotRequired[int | None]
     shape_creation_id: NotRequired[str | None]
-    shape_fingerprint: NotRequired[list[int] | None]
+    shape_fingerprint: NotRequired[str | None]
 class SlideReviewUnitInput(TypedDict):
     target: PptxCommentTarget
     review_image: NotRequired[str | None]
@@ -14145,6 +14147,15 @@ class SlideReviewLabels(TypedDict):
     low: str
     middle: str
     high: str
+class DecisionDial(TypedDict):
+    first: DecisionRung
+    ceiling: DecisionRung
+    band: DecisionBand
+class SlideReviewLimitsInput(TypedDict):
+    batch_size: NotRequired[int | None]
+    max_units: NotRequired[int | None]
+    max_text_bytes: NotRequired[int | None]
+    max_image_bytes: NotRequired[int | None]
 class SlideReviewSubmit(TypedDict):
     artifact_ref: str
     run_ref: str
@@ -14157,16 +14168,18 @@ class SlideReviewSubmit(TypedDict):
     unit_budget_ms: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
     made_by: NotRequired[MadeBy | None]
+    resident_dial: NotRequired[DecisionDial | None]
+    limits: NotRequired[SlideReviewLimitsInput]
 class ShapeReviewAnchor(TypedDict):
     node_part: str
     node_index: int
     shape_id: NotRequired[int | None]
-    fingerprint: list[int]
+    fingerprint: str
 class SlideReviewAnchor(TypedDict):
     slide_part: str
     sld_id: int
-    slide_fingerprint: list[int]
-    render_fingerprint: list[int]
+    slide_fingerprint: str
+    render_fingerprint: str
     shape: NotRequired[ShapeReviewAnchor | None]
 class SlideLocation(TypedDict):
     slide_width: int
@@ -14225,10 +14238,10 @@ class SlideJudgment(TypedDict):
     location: NotRequired[SlideLocation | None]
     band_mode: BandMode
     renderer: str
-    frontier: list[int]
+    frontier: str
     media: NotRequired[list[DecisionMedia]]
-    render_hash: list[int]
-    evidence_hash: list[int]
+    render_hash: str
+    evidence_hash: str
     judged_version: NotRequired[int | None]
     judged_live: NotRequired[LivePin | None]
     comment: str
@@ -14296,11 +14309,11 @@ class ArtifactAskSubmit(TypedDict):
     run_ref: str
     question: DecisionQuestion
     units: ArtifactAskUnits
-    reversibility: NotRequired[Any | None]
+    reversibility: NotRequired[Reversibility | None]
     evidence_refs: NotRequired[list[str]]
     unit_budget_ms: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
-    made_by: NotRequired[Any | None]
+    made_by: NotRequired[MadeBy | None]
 class UnitAbstention(TypedDict):
     unit: Any
     decision: NotRequired[TypedDecision | None]
@@ -14745,14 +14758,14 @@ DeckIdentityAmbiguity = DeckIdentityAmbiguityDuplicateSlideCreationId | DeckIden
 class PptxShapeIdentity(TypedDict):
     shape_id: int
     creation_id: NotRequired[str | None]
-    fingerprint: list[int]
+    fingerprint: str
     position: NotRequired[tuple[int, int] | None]
 class PptxSlideIdentity(TypedDict):
     slide: int
     part: str
     sld_id: int
     creation_id: NotRequired[int | None]
-    fingerprint: list[int]
+    fingerprint: str
     shapes: list[PptxShapeIdentity]
 class PptxInspection(TypedDict):
     slides: list[PptxSlideIdentity]
@@ -15082,6 +15095,27 @@ class NativeOutputRequest(TypedDict):
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
+class ParagraphJudgment(TypedDict):
+    block: str
+    text_hash: str
+    decision: TypedDecision
+    answer_contract: AnswerContract
+    comment: str
+    author: str
+    labels: SlideReviewLabels
+    frontier: str
+    judged_version: NotRequired[int | None]
+    judged_live: NotRequired[LivePin | None]
+class PptxReviewIdentity(TypedDict):
+    thread_id: EntityId
+    asked_by: EntityId
+    answered_by: EntityId
+    export_author_guid: str
+    export_author_name: str
+class SettledReview(TypedDict):
+    slide_judgments: list[SlideJudgment]
+    paragraph_judgments: list[ParagraphJudgment]
+    review_identities: list[PptxReviewIdentity]
 class KeptProposal(TypedDict):
     version: ArtifactVersionView
     stranded: bool
@@ -15089,6 +15123,7 @@ class KeptProposal(TypedDict):
     drifted: int
     receipt: ReceiptRecord
     reconciliation: NotRequired[VersionReconciliation | None]
+    review: NotRequired[SettledReview]
 class DiscardedProposal(TypedDict):
     receipt: ReceiptRecord
 class KeepUndo(TypedDict):
@@ -17274,10 +17309,6 @@ class GraphAdmitRequest(TypedDict):
     question: DecisionQuestion
     unit: EntityId
     decision: TypedDecision
-class DecisionDial(TypedDict):
-    first: DecisionRung
-    ceiling: DecisionRung
-    band: DecisionBand
 QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool

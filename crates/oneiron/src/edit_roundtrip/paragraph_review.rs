@@ -22,12 +22,14 @@ use std::collections::HashSet;
 pub(crate) const MAX_PARAGRAPH_JUDGMENTS: usize = 4096;
 
 /// One answered paragraph, bound to its native comment and the exact source
-/// version. Settlement keeps it with the consume-once receipt.
+/// version. Settlement keeps it with the consume-once receipt. Its hashes
+/// are hex on a JSON wire (FIX 9342).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParagraphJudgment {
     /// The paragraph's stable block id: the comment's target.
     pub block: String,
     /// Hash of the paragraph text the call read, which the comment quotes.
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub text_hash: [u8; 32],
     /// The shared ladder's decision and receipt.
     pub decision: TypedDecision,
@@ -37,6 +39,7 @@ pub struct ParagraphJudgment {
     pub author: String,
     /// Runtime display words pinned so settle can recheck comment semantics.
     pub labels: SlideReviewLabels,
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub frontier: [u8; 32],
     pub judged_version: Option<u64>,
     /// The document's live body when it was asked: an edit to it never

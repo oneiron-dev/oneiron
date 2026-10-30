@@ -98,6 +98,14 @@ pub fn review_image_key(image: &[u8]) -> String {
     blake3::hash(image).to_hex().to_string()
 }
 
+/// The most the review's own copies of a render's `images` hold at once,
+/// admitted to its renderer first (FIX 8244): the largest, since a review
+/// copies one unit's image at a time and drops it before the next.
+pub(crate) fn review_copy_bytes(images: &[Vec<u8>]) -> u64 {
+    let bytes = images.iter().map(Vec::len).max().unwrap_or(0);
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
 /// The host's review renderer (ARCH-0077 "Review images"), which a proposer
 /// wake asks for the changed slides of a held review: the engine renders
 /// nothing itself.
@@ -186,11 +194,14 @@ impl SlideReviewLabels {
 /// The managed anchor kept beside the comment, not only inside the exported
 /// file (ARCH-0077, "Managed anchor"): the typed view's slide identity and
 /// fingerprints, and for a shape unit its retained node and fingerprint.
+/// Each fingerprint is hex on a JSON wire (FIX 9342).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlideReviewAnchor {
     pub slide_part: String,
     pub sld_id: u32,
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub slide_fingerprint: [u8; 32],
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub render_fingerprint: [u8; 32],
     pub shape: Option<ShapeReviewAnchor>,
 }
@@ -201,11 +212,13 @@ pub struct ShapeReviewAnchor {
     pub node_part: String,
     pub node_index: u64,
     pub shape_id: Option<u32>,
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub fingerprint: [u8; 32],
 }
 
 /// Bound to its exported comment and exact source version. Settlement keeps
 /// this record with the consume-once receipt, not just a client-side preview.
+/// Its frontier and hashes are hex on a JSON wire (FIX 9342).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlideJudgment {
     pub thread_id: EntityId,
@@ -228,16 +241,18 @@ pub struct SlideJudgment {
     pub location: Option<SlideLocation>,
     pub band_mode: BandMode,
     pub renderer: String,
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub frontier: [u8; 32],
     /// The unit's `state.media`: its image's ref and whether its pixels rode
     /// with the call.
     #[serde(default)]
     pub media: Vec<DecisionMedia>,
-    /// The hash of the image its media entry names (its ref's `hash`). A row
-    /// from before media entries pinned its image on the receipt by it.
+    /// The hash of the image its media entry names (its ref's `hash`).
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub render_hash: [u8; 32],
     /// Hash of the exact state the providers read: the unit, its text and its
     /// media entries.
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
     /// The deck's live body when it was reviewed: an edit to it never
