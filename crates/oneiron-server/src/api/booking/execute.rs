@@ -107,7 +107,9 @@ async fn execute(
     )?;
     // A credential caller's answer lists the rows it was derived from (FIX
     // 6080): a hit cached without its solve's rows is solved again for it,
-    // as a miss is. Every other caller takes the hit as before.
+    // still admitted as the hit it was (no new quota or wait). Every other
+    // caller takes the hit as before.
+    let cache_hit = cache.is_some();
     let cache = cache.filter(|(_, sources)| {
         sources.is_some() || transport.transport != BookingTransport::Credential
     });
@@ -119,7 +121,7 @@ async fn execute(
         let facts = admission_facts(server, page_ref, &request, &transport, now)?;
         let disposition = match &request {
             BookingOperationRequest::Availability(_) => {
-                enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
+                enforce_slot_list(State(Arc::clone(server)), facts, cache_hit).await?
             }
             BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
                 enforce_hold(State(Arc::clone(server)), facts).await?
