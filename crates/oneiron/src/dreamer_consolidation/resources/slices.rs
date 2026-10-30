@@ -4,9 +4,10 @@ use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) turns: Vec<EntityId>,
-    /// The child's extraction input: a header for each conversation its
-    /// turns are of, its listing after the first, and its turns, each named
-    /// by its label in `labels` (`V1`, `V2`... per conversation, FIX 7524).
+    /// The child's extraction input: the wake's host material (FIX 10665),
+    /// a header for each conversation its turns are of, its listing after
+    /// the first, and its turns, each named by its label in `labels` (`V1`,
+    /// `V2`... per conversation, FIX 7524).
     pub(in crate::dreamer_consolidation) transcript: String,
     pub(in crate::dreamer_consolidation) scope: Scope,
     /// The child call's labels (FIX 7506), built from exactly the inputs
@@ -58,6 +59,20 @@ impl BranchResources<'_> {
                 .or_default()
                 .push((*id, facts));
         }
+        // The material the wake's admitted `host.wake` hooks added leads
+        // every slice's input (FIX 10665): context for the call, never a
+        // turn, so no label names it and nothing cites it. The material does
+        // not say which hook added it, so a slice that carries any is
+        // low-trust, kept off a thing agent's clean loan.
+        let mut material = String::new();
+        for text in self
+            .prepared_wake
+            .map_or(&[][..], crate::dreamer_consolidation::PreparedWake::hook_material)
+        {
+            material.push_str("[host material] ");
+            material.push_str(text);
+            material.push('\n');
+        }
         let mut slices = Vec::new();
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
@@ -97,7 +112,7 @@ impl BranchResources<'_> {
                 }
                 for page in &pages {
                     let mut labels = CallLabelMap::default();
-                    let mut transcript = String::new();
+                    let mut transcript = material.clone();
                     let mut current = None;
                     for (at, (id, facts)) in chunk.iter().enumerate() {
                         // A conversation's header leads its run of turns; the
@@ -121,9 +136,12 @@ impl BranchResources<'_> {
                             facts.text.as_deref().unwrap_or_default(),
                         ));
                     }
-                    // A slice is low-trust by what it reads: its own TURNs and
-                    // the prior heads its page shows (FIX 9017).
-                    let slice_low_trust = chunk.iter().any(|(_, facts)| facts.imported)
+                    // A slice is low-trust by what it reads: its own TURNs,
+                    // the prior heads its page shows (FIX 9017), and any host
+                    // material, which a hub publisher's or an agent's hook may
+                    // fill from rows it reads (FIX 10665).
+                    let slice_low_trust = !material.is_empty()
+                        || chunk.iter().any(|(_, facts)| facts.imported)
                         || self
                             .priors
                             .iter()
