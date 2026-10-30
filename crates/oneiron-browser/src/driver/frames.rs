@@ -7,10 +7,12 @@
 //! grafted under the element that holds the frame, its node ids kept apart
 //! by the frame's, so its rows read where the page shows them and are
 //! classified as every row is, by the same read. A nested OOPIF's element
-//! is found in the frame it is in, on that frame's session. A frame whose
-//! tree the read already holds, or that does not read, is left as it was.
-//! An OOPIF's rows act as the engine allows them: a row with no DOM node on
-//! the page's session stays read-only.
+//! is found in the frame it is in, on that frame's session. An OOPIF
+//! session's own same-process children read on that session and graft
+//! under it the same way (FIX 11577). A frame whose tree the read already
+//! holds, or that does not read, is left as it was. An OOPIF's rows act as
+//! the engine allows them: a row with no DOM node on the page's session
+//! stays read-only.
 //!
 //! A screenshot masks an OOPIF's secret rows on the frame's own session,
 //! and its secret-marked fields there too, as the front document's are
@@ -45,9 +47,24 @@ impl CdpDriver {
                 .map(|(outer, session, _)| (outer.clone(), session.clone()));
             frames.push((frame.clone(), within));
         }
+        // Each OOPIF session's own same-process children, grafted under it
+        // (FIX 11577): its frame tree names them, and its session reads
+        // them. A nested OOPIF already listed above is never grafted twice.
+        for (oopif, session, _) in &oopifs {
+            for child in self.child_frames_in(session) {
+                let listed = oopifs.iter().any(|(frame, _, _)| frame == &child)
+                    || frames.iter().any(|(frame, _)| frame == &child);
+                if !listed {
+                    frames.push((child, Some((oopif.clone(), session.clone()))));
+                }
+            }
+        }
         for (frame, within) in frames {
-            let apart = self.frame_session(Some(&frame)) != self.session;
-            if let Some(tree) = self.frame_tree(&frame) {
+            // An OOPIF's node ids are its process's, and so is anything
+            // under one (FIX 11577); a same-process frame's are the page's.
+            let apart = self.frame_session(Some(&frame)) != self.session || within.is_some();
+            let session = within.as_ref().map(|(_, session)| session.as_str());
+            if let Some(tree) = self.frame_tree(&frame, session) {
                 let (outer, session) = within.unzip();
                 let owner = self.frame_owner(&frame, session.as_deref());
                 graft(nodes, &frame, tree, owner, apart, outer.as_deref());
@@ -58,7 +75,18 @@ impl CdpDriver {
     /// Every frame under the front tab's main frame, as its frame tree
     /// names them, read with an explicit stack.
     fn child_frames(&self) -> Vec<String> {
-        let Ok(tree) = self.page("Page.getFrameTree", json!({})) else {
+        self.child_frames_in(&self.session)
+    }
+
+    /// Every frame under `session`'s main frame, as its frame tree names
+    /// them (FIX 11577): an OOPIF session names its own same-process
+    /// children. Read with an explicit stack; none where it does not read.
+    fn child_frames_in(&self, session: &str) -> Vec<String> {
+        let deadline = Instant::now() + CALL;
+        let Ok(tree) = self
+            .pipe
+            .call(Some(session), "Page.getFrameTree", json!({}), deadline)
+        else {
             return Vec::new();
         };
         let mut frames = Vec::new();
@@ -101,13 +129,16 @@ impl CdpDriver {
     }
 
     /// `frame`'s accessibility nodes: on its own session where it is an
-    /// OOPIF, else by its frame on the front tab's.
-    fn frame_tree(&self, frame: &str) -> Option<Vec<Value>> {
-        let session = self.frame_session(Some(frame));
-        let params = if session == self.session {
-            json!({"frameId": frame})
+    /// OOPIF, else by its frame on `within`, an OOPIF's own same-process
+    /// child (FIX 11577), or on the front tab's.
+    fn frame_tree(&self, frame: &str, within: Option<&str>) -> Option<Vec<Value>> {
+        let own = self.frame_session(Some(frame));
+        let (session, params) = if own != self.session {
+            (own, json!({}))
+        } else if let Some(within) = within {
+            (within.to_owned(), json!({"frameId": frame}))
         } else {
-            json!({})
+            (self.session.clone(), json!({"frameId": frame}))
         };
         let deadline = Instant::now() + CALL;
         let mut tree = self
