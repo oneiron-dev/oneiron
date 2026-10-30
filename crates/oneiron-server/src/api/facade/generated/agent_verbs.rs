@@ -261,6 +261,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.skills.optimize.tradeoff_asks.pick",
             post(facade_route),
         )
+        .route(
+            "/vault.skills.optimize.tradeoff_asks.resolve",
+            post(facade_route),
+        )
         .route("/vault.skills.governance.get", post(facade_route))
         .route("/vault.skills.governance.set", post(facade_route))
         .route("/vault.packs.hooks.bind", post(facade_route))

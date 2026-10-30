@@ -4038,7 +4038,7 @@
       "description": "Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence.",
       "input": "EmptyRequest",
       "output": "Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>",
-      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_asks_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks\")?)?",
+      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_asks_for(memory.vault(), &memory.actor())?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -4053,7 +4053,22 @@
       "description": "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant.",
       "input": "SkillOptimizeTradeoffPickRequest",
       "output": "crate::task_verb::sdk::SkillOptimizeResultView",
-      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_pick_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks.pick\")?, &input)?",
+      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_pick_by(memory.vault(), &crate::WriteActor::new(memory.actor(), memory.actor_class()), &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.tradeoff_asks.resolve",
+      "description": "The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference.",
+      "input": "SkillOptimizeTradeoffResolveRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_resolve_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks.resolve\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",

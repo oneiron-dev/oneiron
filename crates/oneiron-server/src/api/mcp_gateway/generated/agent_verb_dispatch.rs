@@ -398,6 +398,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.skills.optimize.preferences.set" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.optimize.tradeoff_asks" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.optimize.tradeoff_asks.pick" => a.spec.clone().ok_or_else(invalid),
+        "vault.skills.optimize.tradeoff_asks.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.governance.get" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.governance.set" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.hooks.bind" => a.spec.clone().ok_or_else(invalid),
@@ -2301,6 +2302,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.governance.get" => {
@@ -9340,6 +9344,28 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_optimize_tradeoff_asks_pick(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.skills.optimize.tradeoff_asks.resolve",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SkillOptimizeTradeoffResolveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_skills_optimize_tradeoff_asks_resolve(
                     server, auth, input,
                 )
                 .await;
