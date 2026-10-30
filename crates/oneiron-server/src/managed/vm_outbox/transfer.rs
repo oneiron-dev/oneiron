@@ -85,6 +85,7 @@ impl Carrier {
                         taken = true;
                     }
                     Some(VmOutboxFrame::Done) => break,
+                    Some(frame @ VmOutboxFrame::AsideRemoved { .. }) => self.aside_removed(frame),
                     None => anyhow::bail!("the host closed the outbox carrier"),
                     Some(_) => anyhow::bail!("the host sent an outbox frame out of turn"),
                 }
@@ -152,14 +153,12 @@ impl Carrier {
                 Some(VmOutboxFrame::BackupRegistered { label }) => {
                     self.bind_backup_label(vault, label);
                 }
-                Some(VmOutboxFrame::DivergenceCleared {
-                    kind,
-                    member,
-                    held,
-                    held_by,
-                }) => self.take_divergence_cleared(kind, &member, &held, held_by),
+                Some(frame @ VmOutboxFrame::DivergenceCleared { .. }) => {
+                    self.take_divergence_cleared(frame);
+                }
                 Some(VmOutboxFrame::Transfer(first)) => self.receive_set(link, first)?,
                 Some(VmOutboxFrame::Pull) => {
+                    self.send_aside_answers(link)?;
                     if self.gate.proceed() {
                         self.send_sets(link)?;
                     }
