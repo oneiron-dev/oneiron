@@ -43,7 +43,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
-        "channel_endpoints" => struct_fields::<super::ChannelEndpointsConfig>(),
+        "channel_endpoints" => struct_fields::<crate::config::ChannelEndpointsConfig>(),
         "linear" => struct_fields::<super::LinearConfig>(),
         _ => return None,
     };
