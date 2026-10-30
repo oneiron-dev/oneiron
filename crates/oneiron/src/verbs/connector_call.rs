@@ -408,7 +408,7 @@ pub fn connector_call_host_only(
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         "connector.call sends through a server's installed connector transports; an embedded vault has none",
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }
 
