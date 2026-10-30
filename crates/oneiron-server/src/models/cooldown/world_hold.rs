@@ -2,6 +2,7 @@
 //! to sends it, and why not (FIX 4938, 4939).
 
 use oneiron::LlmRequest;
+use oneiron::authority::WorldModelRoutes;
 use oneiron::settings::{ReadDestination, ReleaseHold};
 
 impl super::OfferCooldowns {
@@ -29,5 +30,20 @@ impl super::OfferCooldowns {
             Ok(hold) => hold.map(ReleaseHold::reason),
             Err(_) => Some(ReleaseHold::Placement.reason()),
         }
+    }
+
+    /// The routes a call on `request`'s world may take (FIX 11768): the
+    /// vault's own order for the call's one world, [`WorldModelRoutes::
+    /// Inherit`] when the call names none or no vault holds worlds here. A
+    /// routes read that fails closes the call: no rung is admitted. Read
+    /// once per call and passed down the walk; never re-read per rung.
+    pub(in crate::models) fn world_routes(&self, request: &LlmRequest) -> WorldModelRoutes {
+        let world = request.envelope.scope.world;
+        let Some(vault) = &self.vault else {
+            return WorldModelRoutes::Inherit;
+        };
+        vault
+            .world_model_routes(world)
+            .unwrap_or(WorldModelRoutes::Ordered(Vec::new()))
     }
 }

@@ -95,15 +95,14 @@ fn thin_note_view(
     {
         return Err(invalid("opened NOTE requires its admitted state").into());
     }
-    let (head, rest) = frame
-        .payload
-        .split_at_checked(crate::entity_id::ENTITY_ID_LEN)
-        .ok_or_else(|| invalid("opened NOTE head"))?;
-    let (_, snapshot) = rest
-        .split_at_checked(8)
-        .ok_or_else(|| invalid("opened NOTE head"))?;
-    let head =
-        crate::EntityId::from_bytes(head.try_into().map_err(|_| invalid("opened NOTE head"))?)?;
+    // The state envelope names the head, its sequence and its seal before
+    // the document (FIX 2401).
+    let envelope = crate::sync::documents::note_state::NoteStateEnvelope::decode(
+        thin.entity_id,
+        frame.payload,
+    )
+    .map_err(|_| invalid("opened NOTE head"))?;
+    let (head, snapshot) = (envelope.head, envelope.document);
     let canonical = super::document::NoteDocument::load(thin.entity_id, snapshot)?;
     Ok(Some(read_view(
         &NoteDocument {

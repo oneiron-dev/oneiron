@@ -44,7 +44,7 @@
 //! questions and every later reply are cleared the same way (FIX 3843).
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, Read};
 use std::sync::{Arc, Weak, mpsc};
 use std::time::{Duration, Instant};
 
@@ -52,7 +52,7 @@ use oneiron::connector_key::{ConnectorCallRoute, SlateDisposition};
 use oneiron::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorQuestion,
     FrozenToolCallView, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
-    UntrustedToolResult,
+    UntrustedToolResult, zeroize_json,
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
@@ -715,8 +715,9 @@ impl<'a> Exchange<'a> {
                         .filter(|declared| declared.intake == Intake::Stream);
                     let question = declared.and_then(|_| stream_question(&request));
                     let (Some(declared), Some(question)) = (declared, question) else {
-                        if let Some(live) = live.as_ref() {
-                            live.refuse(&request);
+                        match live.as_ref() {
+                            Some(live) => live.refuse(request),
+                            None => zeroize_json(request),
                         }
                         continue;
                     };
@@ -733,6 +734,8 @@ impl<'a> Exchange<'a> {
                         last_event_id,
                     };
                     let body = request.to_string().into_bytes();
+                    // Its question, id and body are read out (FIX 11861).
+                    zeroize_json(request);
                     let kept = value.map(SentValue::keep);
                     return hand_over(declared, round, continuation, live, body, kept);
                 }

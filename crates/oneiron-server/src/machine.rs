@@ -488,6 +488,27 @@ impl MachineMemory {
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<MemoryLease, MemoryRefusal> {
+        self.wait_in_line(bytes, Some(deadline), stopped)
+    }
+
+    /// [`Self::lease_until`] with no deadline: on the same line, a wait only
+    /// `stopped` ends (FIX 10580).
+    #[cfg(unix)]
+    pub(crate) fn lease_untimed(
+        &self,
+        bytes: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<MemoryLease, MemoryRefusal> {
+        self.wait_in_line(bytes, None, stopped)
+    }
+
+    /// The line every lease waits in, until `deadline` when it has one.
+    fn wait_in_line(
+        &self,
+        bytes: u64,
+        deadline: Option<Instant>,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<MemoryLease, MemoryRefusal> {
         let shared = &self.shared;
         let most = shared.total.saturating_sub(shared.reserve);
         if bytes > most {
@@ -513,8 +534,8 @@ impl MachineMemory {
                 return Ok(lease);
             }
             let now = Instant::now();
-            let left = deadline.saturating_duration_since(now);
-            if left.is_zero() || stopped() {
+            let left = deadline.map(|deadline| deadline.saturating_duration_since(now));
+            if left.is_some_and(|left| left.is_zero()) || stopped() {
                 line.waiting.retain(|waiting| *waiting != ticket);
                 shared.changed.notify_all();
                 return Err(MemoryRefusal::WaitedOut {
@@ -524,7 +545,10 @@ impl MachineMemory {
             }
             line = shared
                 .changed
-                .wait_timeout(line, left.min(MEMORY_REPOLL))
+                .wait_timeout(
+                    line,
+                    left.map_or(MEMORY_REPOLL, |left| left.min(MEMORY_REPOLL)),
+                )
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
@@ -638,7 +662,8 @@ impl Drop for MemoryLease {
 /// The machine's memory as the organ host's floor (FIX 7654): an organ's
 /// own buffers lease from the same line as every other lease here, within
 /// their call's deadline, and leave it when their call is revoked. Each
-/// lease is held by the call's room until the call ends.
+/// lease is held by the call's room until the call ends. A frame's lease
+/// waits on the same line with no deadline, until it is stopped.
 #[cfg(unix)]
 pub(crate) struct OrganFloor(pub(crate) MachineMemory);
 
@@ -650,13 +675,29 @@ impl oneiron_organ_host::MachineFloor for OrganFloor {
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<Box<dyn Send>, oneiron_organ_host::FloorRefusal> {
-        match self.0.lease_until(bytes, deadline, stopped) {
-            Ok(lease) => Ok(Box::new(lease)),
-            Err(MemoryRefusal::Floor { needed, available }) => {
-                Err(oneiron_organ_host::FloorRefusal::Floor { needed, available })
-            }
-            Err(MemoryRefusal::WaitedOut { .. }) => Err(oneiron_organ_host::FloorRefusal::Deadline),
+        organ_lease(self.0.lease_until(bytes, deadline, stopped))
+    }
+
+    fn lease_untimed(
+        &self,
+        bytes: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<Box<dyn Send>, oneiron_organ_host::FloorRefusal> {
+        organ_lease(self.0.lease_untimed(bytes, stopped))
+    }
+}
+
+/// A machine lease as the organ host's floor answers it.
+#[cfg(unix)]
+fn organ_lease(
+    leased: Result<MemoryLease, MemoryRefusal>,
+) -> Result<Box<dyn Send>, oneiron_organ_host::FloorRefusal> {
+    match leased {
+        Ok(lease) => Ok(Box::new(lease)),
+        Err(MemoryRefusal::Floor { needed, available }) => {
+            Err(oneiron_organ_host::FloorRefusal::Floor { needed, available })
         }
+        Err(MemoryRefusal::WaitedOut { .. }) => Err(oneiron_organ_host::FloorRefusal::Deadline),
     }
 }
 

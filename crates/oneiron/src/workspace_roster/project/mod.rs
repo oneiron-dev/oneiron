@@ -301,31 +301,56 @@ pub struct ProjectWriteProof {
     /// The fold judges slip expiry at this signed time, not at the reader's
     /// clock, so a change that syncs after its slip expired still verifies.
     pub signed_at: u64,
-    /// The authority this revision builds on: none for a spawn, else the
-    /// prior authority fields with the proof that set them.
-    pub anchor: Option<Box<ProjectAnchor>>,
+    /// The authority this revision builds on, root first: empty for a spawn,
+    /// else every earlier state with the proof that set it, the last one
+    /// directly under this revision. A flat list, so the stored encoding
+    /// stays shallow however long the lineage is (FIX 11119).
+    pub anchor: Vec<ProjectAnchorLink>,
     #[serde(default, skip_serializing_if = "ProjectProofVersion::is_v2")]
     pub version: ProjectProofVersion,
 }
 
-/// One earlier authority state, carried so any replica can verify a revision
-/// from the latest row alone, without the history sync never delivers.
+/// One earlier authority state and the proof that set it, carried so any
+/// replica can verify a revision from the latest row alone, without the
+/// history sync never delivers. Only a chain's root may be unsigned.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProjectAnchor {
+pub struct ProjectAnchorLink {
     pub authority: ProjectAuthority,
-    pub proof: Option<ProjectWriteProof>,
+    pub proof: Option<ProjectRevisionProof>,
+}
+
+impl ProjectWriteProof {
+    /// The anchor's links, root first, once they form one chain: an unsigned
+    /// link past the root is malformed. Every verifier and walk reads the
+    /// anchor through this.
+    pub fn anchor_links(&self) -> Result<&[ProjectAnchorLink]> {
+        if self.anchor.iter().skip(1).any(|link| link.proof.is_none()) {
+            return Err(RecordError::InvalidProjectBody("invalid project write proof").into());
+        }
+        Ok(&self.anchor)
+    }
+    /// The signed fields without the anchor: the proof this state's link
+    /// carries under a later revision.
+    pub fn revision_proof(&self) -> ProjectRevisionProof {
+        ProjectRevisionProof {
+            slip_wire: self.slip_wire.clone(),
+            holder_signature: self.holder_signature.clone(),
+            signed_at: self.signed_at,
+            version: self.version,
+        }
+    }
 }
 
 impl ProjectAuthority {
     /// Domain-separated challenge a `version` proof signs for these fields at
-    /// `signed_at` over `anchor`. Only a v3 challenge holds a roster.
+    /// `signed_at` over `anchor`, root first. Only a v3 challenge holds a roster.
     pub fn write_challenge(
         &self,
         id: EntityId,
         version: ProjectProofVersion,
         signed_at: u64,
-        anchor: Option<&ProjectAnchor>,
+        anchor: &[ProjectAnchorLink],
     ) -> Result<Vec<u8>> {
         let domain: &[u8] = match (version, &self.roster) {
             (ProjectProofVersion::V2, None) => b"oneiron/project-write/v2/",
@@ -406,12 +431,19 @@ impl ProjectRecord {
         }
         self.roster.clone()
     }
-    /// The anchor a new signed revision of this stored record builds on.
-    pub fn anchor(&self) -> ProjectAnchor {
-        ProjectAnchor {
+    /// The anchor a new signed revision of this stored record builds on, root
+    /// first: its own proof's links, then this record's state.
+    pub fn anchor(&self) -> Result<Vec<ProjectAnchorLink>> {
+        let proof = self.write_proof.as_ref();
+        let mut chain = match proof {
+            Some(proof) => proof.anchor_links()?.to_vec(),
+            None => Vec::new(),
+        };
+        chain.push(ProjectAnchorLink {
             authority: self.authority(),
-            proof: self.write_proof.clone(),
-        }
+            proof: proof.map(ProjectWriteProof::revision_proof),
+        });
+        Ok(chain)
     }
     pub fn new(
         id: EntityId,

@@ -21,6 +21,7 @@ mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
+mod index;
 mod kind_payload_erase;
 mod observe;
 mod payload_erase;

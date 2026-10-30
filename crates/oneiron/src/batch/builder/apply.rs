@@ -95,6 +95,8 @@ impl BatchBuilder<'_> {
         // wrote beside the remaining ops.
         let mut rows = super::vad_postcommit::ops_written_rows(&self.ops);
         rows.extend(routed);
+        #[cfg(feature = "sync")]
+        let removed_edges = super::vad_postcommit::ops_removed_edges(&self.ops);
         let gate_mode = gate_mode
             .with_birth_mask(self.birth_mask)
             .with_text_births(std::mem::take(&mut self.text_births))
@@ -140,6 +142,10 @@ impl BatchBuilder<'_> {
         }
         super::vad_postcommit::queue_task_updates(vault, wtxn, tasks);
         super::vad_postcommit::queue_committed_rows(vault, wtxn, rows);
+        // FIX 9599: each edge the batch removed leaves its window a durable
+        // marker; the write door marks the rows.
+        #[cfg(feature = "sync")]
+        vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
         Ok(())
     }
 }

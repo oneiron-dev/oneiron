@@ -364,7 +364,7 @@ pub fn propose_policy_manifest(
     let vault = memory.vault();
     let data = encode_manifest(&input.manifest, None)?;
     memory.with_verified_actor_write_txn(|txn| {
-        let actor = crate::WriteActor::new(memory.actor(), memory.actor_class());
+        let actor = memory.write_actor();
         let policy = resolve_policy_manifest(&vault.store, txn)?;
         let decision = policy.evaluate_gate(&GateEvaluatorInput {
             actor: GateActor {

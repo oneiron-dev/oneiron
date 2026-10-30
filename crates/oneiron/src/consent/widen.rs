@@ -341,7 +341,7 @@ impl Vault {
             self.file_widen_row_in_txn(
                 txn,
                 canonical_delta,
-                &actor.entity_ref(),
+                actor,
                 owner_ref,
                 expires_at,
                 vec![credential.claims().slip_id],
@@ -350,11 +350,13 @@ impl Vault {
     }
 
     /// Files one contact-disclosure offer, frozen by the clearance door, on
-    /// the same table and pending Gate decision as every widen proposal.
+    /// the same table and pending Gate decision as every widen proposal,
+    /// under `proposer`'s own actor class (an agent's, or the engine's own
+    /// filer, FIX 2288).
     pub(super) fn file_contact_disclosure_offer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        proposer: &crate::EntityId,
+        proposer: WriteActor,
         proposal: &ContactDisclosureProposal,
         owner_ref: &str,
         expires_at: u64,
@@ -378,7 +380,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         canonical_delta: Vec<u8>,
-        proposer: &crate::EntityId,
+        proposer: WriteActor,
         owner_ref: &str,
         expires_at: u64,
         opener_lineage: Vec<[u8; 32]>,
@@ -390,7 +392,8 @@ impl Vault {
             )));
         }
         let owner_ref = normalized_ref("widen owner", owner_ref.to_owned())?;
-        let proposer = proposer.to_hex();
+        let proposer_class = proposer.actor_class().gate_actor_class();
+        let proposer = proposer.entity_ref().to_hex();
         let reference = proposal_ref(&canonical_delta, &proposer, &owner_ref, now, expires_at);
         validate_reference_shape(&reference)?;
         {
@@ -414,7 +417,7 @@ impl Vault {
                 reason_codes: vec!["gate.consent.widen_proposed".into()],
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
-                actor_class: "agent".into(),
+                actor_class: proposer_class.into(),
                 actor_ref: Some(proposal.proposer.clone()),
                 content_kind: "consent_widen".into(),
                 policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),

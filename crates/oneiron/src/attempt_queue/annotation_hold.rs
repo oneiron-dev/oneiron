@@ -8,7 +8,7 @@
 //! pauses carry the typed [`AnnotationHold`] reason, so a reattach resumes
 //! exactly those rows and never one a person paused.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -202,18 +202,24 @@ impl Vault {
     }
 
     /// Resumes every attempt whose annotation hold is gone, for a runner pump
-    /// that does not wait on the reattach door. Reads outside the writer and
-    /// takes it only when a hold has lifted.
+    /// that does not wait on the reattach door. Reads only the rows the hold
+    /// index marks (FIX 11318) outside the writer, and takes it only when a
+    /// hold has lifted or a mark outlived its hold; a mark whose row the
+    /// writer finds held again stays.
     pub fn release_annotation_holds(&self) -> Result<AnnotationHoldSweep> {
         let queue = AttemptQueue::new(self);
         let mut held: BTreeMap<EntityId, usize> = BTreeMap::new();
         let mut lifted = Vec::new();
+        let mut stale = BTreeSet::new();
         {
             let rtxn = self.store.env.read_txn()?;
-            for row in queue.list_in_txn(&rtxn)? {
+            let marked = super::index::annotation_hold_ids_in_txn(&self.store, &rtxn)?;
+            stale.extend(marked.iter().copied());
+            for row in queue.working_rows_in_txn(&rtxn, marked)? {
                 if row.annotation_hold().is_none() {
                     continue;
                 }
+                stale.remove(&row.id);
                 let Some(task) = row
                     .task_ref
                     .as_deref()
@@ -230,13 +236,21 @@ impl Vault {
             }
         }
         let held: usize = held.values().sum();
-        if lifted.is_empty() {
+        if lifted.is_empty() && stale.is_empty() {
             return Ok(AnnotationHoldSweep { resumed: 0, held });
         }
         let mut wtxn = self.store.env.write_txn()?;
         let mut resumed = 0;
         for task in &lifted {
             resumed += self.resume_annotation_held_attempts_in_txn(&mut wtxn, task)?;
+        }
+        for row in queue.working_rows_in_txn(&wtxn, stale.iter().copied())? {
+            if row.annotation_hold().is_some() {
+                stale.remove(&row.id);
+            }
+        }
+        for id in stale {
+            super::index::delete_annotation_hold_in_txn(&self.store, &mut wtxn, id)?;
         }
         wtxn.commit()?;
         if resumed > 0 {

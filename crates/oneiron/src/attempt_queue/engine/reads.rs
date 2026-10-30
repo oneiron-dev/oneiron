@@ -1,6 +1,6 @@
 //! Point/list/dedupe reads plus retry-chain and dreamer-root walks.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, ready_at, ready_key, validate_dedupe_record,
@@ -193,26 +193,7 @@ impl AttemptQueue<'_> {
         wtxn: &heed::RwTxn<'_>,
         task_ref: &str,
     ) -> Result<Vec<AttemptRecord>> {
-        let mut records = Vec::new();
-        let mut erased = 0usize;
-        for row in self.store.attempt_records.iter(wtxn)? {
-            let (key, raw_record) = row?;
-            let id = AttemptId::from_bytes(&key)?;
-            let record = match decode_record(&raw_record, id) {
-                Ok(record) => record,
-                Err(error) if retired_marker(&error) => {
-                    erased += 1;
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
-            if record.task_ref.as_deref() == Some(task_ref) {
-                records.push(record);
-            }
-        }
-        warn_erased_rows("list_task_in_write_txn", erased);
-        records.sort_by(attempt_record_order);
-        Ok(records)
+        self.task_rows_in_txn(wtxn, task_ref, "list_task_in_write_txn")
     }
 
     /// [`Self::list_task_in_write_txn`] for a reader that holds no writer:
@@ -222,11 +203,42 @@ impl AttemptQueue<'_> {
         txn: &heed::RoTxn<'_>,
         task_ref: &str,
     ) -> Result<Vec<AttemptRecord>> {
+        self.task_rows_in_txn(txn, task_ref, "list_task_in_txn")
+    }
+
+    /// The two task reads' one body: the task index's rows whose `task_ref`
+    /// is `task_ref`, archived ones too, warning under `scan`.
+    fn task_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: &str,
+        scan: &'static str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let ids = crate::attempt_queue::index::task_ids_in_txn(self.store, txn, task_ref)?;
+        self.indexed_rows_in_txn(
+            txn,
+            ids,
+            |record| record.task_ref.as_deref() == Some(task_ref),
+            scan,
+        )
+    }
+
+    /// The rows among `ids` that `keep` takes, archived ones too, each read
+    /// by its key: an id with no row is passed over, a retired marker counts
+    /// on `scan`'s warning and is passed over; creation order.
+    fn indexed_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: Vec<AttemptId>,
+        keep: impl Fn(&AttemptRecord) -> bool,
+        scan: &'static str,
+    ) -> Result<Vec<AttemptRecord>> {
         let mut records = Vec::new();
         let mut erased = 0usize;
-        for row in self.store.attempt_records.iter(txn)? {
-            let (key, raw_record) = row?;
-            let id = AttemptId::from_bytes(&key)?;
+        for id in ids {
+            let Some(raw_record) = self.store.attempt_records.get(txn, id.as_bytes())? else {
+                continue;
+            };
             let record = match decode_record(&raw_record, id) {
                 Ok(record) => record,
                 Err(error) if retired_marker(&error) => {
@@ -235,11 +247,11 @@ impl AttemptQueue<'_> {
                 }
                 Err(error) => return Err(error),
             };
-            if record.task_ref.as_deref() == Some(task_ref) {
+            if keep(&record) {
                 records.push(record);
             }
         }
-        warn_erased_rows("list_task_in_txn", erased);
+        warn_erased_rows(scan, erased);
         records.sort_by(attempt_record_order);
         Ok(records)
     }
@@ -270,6 +282,106 @@ impl AttemptQueue<'_> {
         Ok(records)
     }
 
+    /// [`Self::list_in_txn`]'s rows among `ids` alone, each read by its key,
+    /// so a reader that knows which rows it wants decodes no others (FIX
+    /// 11318): an id with no row and an archived row are passed over, as the
+    /// working set passes them; creation order.
+    pub(crate) fn working_rows_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        ids: impl IntoIterator<Item = AttemptId>,
+    ) -> Result<Vec<AttemptRecord>> {
+        let mut records = Vec::new();
+        let mut erased = 0usize;
+        for id in ids {
+            let Some(raw_record) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
+                continue;
+            };
+            if !crate::vault_cleanup::attempt_is_archived(self.store, rtxn, id, &raw_record)? {
+                match decode_record(&raw_record, id) {
+                    Ok(record) => records.push(record),
+                    Err(error) if retired_marker(&error) => erased += 1,
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        warn_erased_rows("working_rows_in_txn", erased);
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
+    /// One TASK's working rows and their run-tree descendants, breadth first (FIX 11970).
+    pub(crate) fn task_subtree_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let ids = crate::attempt_queue::index::task_ids_in_txn(self.store, txn, task_ref)?;
+        let mut records: Vec<AttemptRecord> = self
+            .working_rows_in_txn(txn, ids)?
+            .into_iter()
+            .filter(|record| record.task_ref.as_deref() == Some(task_ref))
+            .collect();
+        let mut seen: HashSet<AttemptId> = records.iter().map(|record| record.id).collect();
+        let mut pending: VecDeque<AttemptId> = records.iter().map(|record| record.id).collect();
+        let mut descendants = Vec::new();
+        while let Some(parent) = pending.pop_front() {
+            for child in
+                crate::attempt_queue::index::parent_child_ids_in_txn(self.store, txn, parent)?
+            {
+                if seen.insert(child) {
+                    descendants.push(child);
+                    pending.push_back(child);
+                }
+            }
+        }
+        // Each row is decoded once: the TASK's own above, its descendants here.
+        records.extend(self.working_rows_in_txn(txn, descendants)?);
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
+    /// The rows the workflow pump's wake reads (FIX 11318): every Queued or
+    /// Scheduled try and every row of `kind` in any state, so a Leased wave
+    /// plan with no instant comes back; working set, creation order.
+    pub fn pump_wake_rows(&self, kind: &str) -> Result<Vec<AttemptRecord>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut ids = self.ready_ids_in_txn(&rtxn)?;
+        ids.extend(crate::attempt_queue::index::kind_ids_in_txn(
+            self.store, &rtxn, kind,
+        )?);
+        self.working_rows_in_txn(&rtxn, ids)
+    }
+
+    /// Every row of `kind` through the kind index (FIX 11318), archived ones too, creation order.
+    pub(crate) fn kind_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let ids = crate::attempt_queue::index::kind_ids_in_txn(self.store, txn, kind)?;
+        self.indexed_rows_in_txn(txn, ids, |record| record.kind == kind, "kind_rows_in_txn")
+    }
+
+    /// Every Queued or Scheduled try through the ready index; working set, creation order.
+    pub(crate) fn ready_rows_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<AttemptRecord>> {
+        let ids = self.ready_ids_in_txn(txn)?;
+        self.working_rows_in_txn(txn, ids)
+    }
+
+    /// The ids the ready index holds, each once; a value that is no id is passed over.
+    fn ready_ids_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<BTreeSet<AttemptId>> {
+        let mut ids = BTreeSet::new();
+        for row in self.store.attempt_ready.iter(txn)? {
+            let (_, value) = row?;
+            let Ok(id) = AttemptId::from_bytes(&value) else {
+                continue;
+            };
+            ids.insert(id);
+        }
+        Ok(ids)
+    }
+
     /// Complete kind view for a projection that must not silently truncate.
     ///
     /// The view reads its kind's whole side of the owner-retained boundary
@@ -284,13 +396,23 @@ impl AttemptQueue<'_> {
         kind: &str,
         max_scanned: usize,
     ) -> Result<Vec<AttemptRecord>> {
+        let txn = self.store.env.read_txn()?;
+        self.list_kind_bounded_in_txn(&txn, kind, max_scanned)
+    }
+
+    /// [`Self::list_kind_bounded`] in the caller's snapshot (FIX 11864).
+    pub(crate) fn list_kind_bounded_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+        max_scanned: usize,
+    ) -> Result<Vec<AttemptRecord>> {
         use std::ops::Bound;
         let mut count = ScanCount::start_at(
             EngineScan::AttemptKindRows,
             kind.as_bytes(),
             u64::try_from(max_scanned).unwrap_or(u64::MAX),
         );
-        let txn = self.store.env.read_txn()?;
         let boundary = &crate::attempt_queue::OWNER_RETAINED_RANGE_START[..];
         let retained = crate::attempt_queue::owner_retained_kind(kind);
         let range: (Bound<&[u8]>, Bound<&[u8]>) = if retained {
@@ -299,7 +421,7 @@ impl AttemptQueue<'_> {
             (Bound::Unbounded, Bound::Excluded(boundary))
         };
         let mut records = Vec::new();
-        for row in self.store.attempt_records.range(&txn, &range)? {
+        for row in self.store.attempt_records.range(txn, &range)? {
             count.row();
             let (key, raw) = row?;
             let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
@@ -307,7 +429,6 @@ impl AttemptQueue<'_> {
                 records.push(record);
             }
         }
-        drop(txn);
         count.defer(self.store);
         records.sort_by(attempt_record_order);
         Ok(records)

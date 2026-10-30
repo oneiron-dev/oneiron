@@ -71,5 +71,7 @@ pub use source::{
 pub(crate) use store::{
     hook_receipts, hook_run_read_rows, scrub_hook_source_in_txn, sync_binding_cursor_in_txn,
 };
-pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};
+pub use verb::{
+    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookPreSnapshot, VerbHookStop, hook_class,
+};
 pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};

@@ -29,7 +29,6 @@ use crate::memory::{
     verify_actor_binding,
 };
 use crate::task_authority::{BindingGeneration, TaskStanding};
-use crate::write_envelope::WriteActor;
 
 use super::brief::StoredBrief;
 use super::consult_result::TaskVerbBody;
@@ -145,7 +144,7 @@ impl Memory<'_> {
             }
             other => MemoryError::from(other),
         };
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let fold = self
             .vault()
             .authority_view_readonly_in_txn(txn)

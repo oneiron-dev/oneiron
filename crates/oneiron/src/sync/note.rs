@@ -2,16 +2,21 @@
 //!
 //! Proposal carriers contain text values, never nested CRDT history or active
 //! document authority. Canonical live NOTE sync uses the authenticated socket.
+//! A review bundle is no month's: `workflows` carries it beside each NOTE
+//! it holds a member of.
 
 pub(super) mod checkpoint;
 mod codec;
 mod materialize;
 mod mirror;
 mod scrub;
-pub(crate) use scrub::deleted;
+mod workflows;
+pub(crate) use scrub::{deleted, deleted_elsewhere};
 
 pub(crate) use materialize::apply;
-pub(crate) use mirror::{copy_judged, copy_selected, dropped_in, refresh, refresh_for};
+pub(crate) use mirror::{copy_judged, copy_selected, refresh, refresh_for};
+use workflows::BundleCarrier;
+pub(crate) use workflows::NoteSelection;
 
 use crate::note::documents::{doc_key, invalid};
 use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
@@ -21,7 +26,10 @@ use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use std::collections::{BTreeMap, BTreeSet};
 
 const FORMAT_KEY: &str = "@note-sync";
-const FORMAT: &[u8] = b"proposal-values-v2";
+const FORMAT: &[u8] = b"proposal-values-v3";
+/// The explainer a bundle that lost a member keeps, as the erase leaves it:
+/// it can quote what left.
+const REDACTED: &str = "redacted";
 const MAPS: [&str; 5] = [
     "documents",
     "document_heads",
@@ -37,7 +45,7 @@ pub(crate) struct State {
     heads: BTreeMap<EntityId, EntityId>,
     forks: BTreeMap<EntityId, NoteFork>,
     receipts: BTreeMap<EntityId, NoteLandingReceipt>,
-    bundles: BTreeMap<EntityId, NoteReviewBundle>,
+    bundles: BTreeMap<EntityId, BundleCarrier>,
 }
 
 pub(crate) fn is_native(doc: &LoroDoc) -> bool {
@@ -49,11 +57,8 @@ pub(crate) fn validate(doc: &LoroDoc) -> Result<State> {
     let mut state = codec::read(doc)?;
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let dropped: BTreeSet<_> = state
-        .cores
-        .keys()
-        .chain(state.heads.keys())
-        .copied()
-        .chain(state.docs.keys().map(|(note, _)| *note))
+        .notes()
+        .into_iter()
         .filter(|note| tombstones.contains(note))
         .collect();
     state.drop_deleted(&dropped);
@@ -140,15 +145,19 @@ impl State {
         self.forks.retain(|_, row| !dropped.contains(&row.note));
         self.receipts.retain(|_, row| !dropped.contains(&row.note));
         self.bundles.retain(|_, row| {
-            if bundle_notes(row).is_disjoint(dropped) {
+            if bundle_notes(&row.bundle).is_disjoint(dropped) {
                 return true;
             }
-            row.waiting.retain(|fork| !dropped.contains(&fork.note));
-            row.landed
+            row.bundle
+                .waiting
+                .retain(|fork| !dropped.contains(&fork.note));
+            row.bundle
+                .landed
                 .retain(|receipt| !dropped.contains(&receipt.note));
-            row.explainer = "redacted".to_owned();
-            !row.waiting.is_empty() || !row.landed.is_empty()
+            row.redact();
+            !row.bundle.waiting.is_empty() || !row.bundle.landed.is_empty()
         });
+        self.prune_attachments();
     }
     /// Each actor this vault erased out of the workflow rows this state
     /// carries, as the erase takes it out of this vault's own (FIX 3878): a
@@ -169,27 +178,18 @@ impl State {
         for receipt in self.receipts.values_mut() {
             receipt.actor = receipt.actor.erased_here(vault, txn)?;
         }
-        for (id, bundle) in std::mem::take(&mut self.bundles) {
-            if let Some(bundle) = bundle.carried_here(vault, txn)? {
-                self.bundles.insert(id, bundle);
+        for (id, mut row) in std::mem::take(&mut self.bundles) {
+            let members = row.bundle.waiting.len();
+            if let Some(bundle) = row.bundle.carried_here(vault, txn)? {
+                let left = bundle.waiting.len() != members;
+                row.bundle = bundle;
+                if left {
+                    row.redact();
+                }
+                self.bundles.insert(id, row);
             }
         }
-        Ok(())
-    }
-    fn retain(&mut self, keep: &BTreeSet<EntityId>) -> Result<()> {
-        for bundle in self.bundles.values() {
-            let notes = bundle_notes(bundle);
-            if !notes.is_disjoint(keep) && !notes.is_subset(keep) {
-                return Err(invalid("NOTE proposal crosses export scope"));
-            }
-        }
-        self.cores.retain(|note, _| keep.contains(note));
-        self.docs.retain(|(note, _), _| keep.contains(note));
-        self.heads.retain(|note, _| keep.contains(note));
-        self.forks.retain(|_, row| keep.contains(&row.note));
-        self.receipts.retain(|_, row| keep.contains(&row.note));
-        self.bundles
-            .retain(|_, row| bundle_notes(row).is_subset(keep));
+        self.prune_attachments();
         Ok(())
     }
 }

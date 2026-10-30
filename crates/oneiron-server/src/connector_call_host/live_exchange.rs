@@ -27,7 +27,7 @@
 use oneiron::connector_key::CONNECTOR_ISSUER_HOLD_REASON;
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
-    OutboundBindingAuthority, OutboundBindingValidation,
+    OutboundBindingAuthority, OutboundBindingValidation, zeroize_json, zeroizing_json_body,
 };
 use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
@@ -118,7 +118,9 @@ pub(super) fn hand_over(
 }
 
 /// A POST of `body` to `endpoint`; `timeout` bounds the whole request, and
-/// `None` leaves each read to the client's own bound.
+/// `None` leaves each read to the client's own bound. The body's text goes
+/// in zeroizing storage the request takes without a copy, wiped once the
+/// request lets it go (FIX 8309, L10 09:30).
 pub(super) fn post_json(
     client: &reqwest::blocking::Client,
     endpoint: &str,
@@ -131,7 +133,7 @@ pub(super) fn post_json(
         .post(endpoint)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, ACCEPT_BOTH)
-        .body(body.to_string());
+        .body(axum::body::Bytes::from_owner(zeroizing_json_body(body)));
     if let Some(timeout) = timeout {
         request = request.timeout(timeout);
     }
@@ -248,16 +250,18 @@ impl LiveSession {
     }
 
     /// Answers the server request `id` with `member` (`result` or `error`):
-    /// a new POST to the endpoint, its status checked.
-    pub(super) fn respond(&self, id: &Value, member: &str, value: Value) -> Posted {
+    /// a new POST to the endpoint, its status checked. The message, which
+    /// carries the connector's own id back, is wiped once its body is built
+    /// (FIX 8309, L10 09:30).
+    pub(super) fn respond(&self, id: Value, member: &str, value: Value) -> Posted {
         let mut message = Map::new();
         message.insert("jsonrpc".to_owned(), Value::from("2.0"));
-        message.insert("id".to_owned(), id.clone());
+        message.insert("id".to_owned(), id);
         message.insert(member.to_owned(), value);
-        match self
-            .post(&Value::Object(message), Some(HANDSHAKE_TIMEOUT))
-            .send()
-        {
+        let message = Value::Object(message);
+        let request = self.post(&message, Some(HANDSHAKE_TIMEOUT));
+        zeroize_json(message);
+        match request.send() {
             Ok(response) if response.status().is_success() => Posted::Accepted,
             Ok(response) if response.status().is_server_error() => Posted::Uncertain,
             Ok(_) => Posted::Refused,
@@ -266,9 +270,12 @@ impl LiveSession {
         }
     }
 
-    /// Refuses one server request this client does not serve.
-    pub(super) fn refuse(&self, request: &Value) {
-        let Some(id) = request.get("id") else {
+    /// Refuses one server request this client does not serve. The request is
+    /// wiped as it drops (FIX 11861).
+    pub(super) fn refuse(&self, request: Value) {
+        let id = request.get("id").cloned();
+        zeroize_json(request);
+        let Some(id) = id else {
             return;
         };
         let refusal =
@@ -279,10 +286,13 @@ impl LiveSession {
     /// Refuses one server request this client does not serve once the
     /// call's issuer binding is read again (FIX 9303): while a hold stands
     /// the kept header does not go out and the request goes unanswered; the
-    /// worker's next answer, cancel or end settles the hold.
-    pub(super) fn refuse_unheld(&self, request: &Value, receipts: &AnswerReceipts) {
+    /// worker's next answer, cancel or end settles the hold. The request is
+    /// wiped as it drops either way (FIX 11861).
+    pub(super) fn refuse_unheld(&self, request: Value, receipts: &AnswerReceipts) {
         if self.issuer_hold(receipts).is_none() {
             self.refuse(request);
+        } else {
+            zeroize_json(request);
         }
     }
 
@@ -604,8 +614,9 @@ impl Worker {
         }
     }
 
-    /// Sends one frozen answer and reads what the connector says next. The
-    /// answer is receipted at its POST (FIX 3840).
+    /// Sends one frozen answer, under the connector's own keys (FIX 8051),
+    /// and reads what the connector says next. The answer is receipted at
+    /// its POST (FIX 3840).
     fn answer(&mut self, responses: &BTreeMap<String, Value>) -> Next {
         let (generation, answered) = (self.generation, dispositions(responses));
         // The kept header goes out again only while the call's row meets no
@@ -639,7 +650,7 @@ impl Worker {
                 };
                 let posted = self
                     .session
-                    .respond(&request_id.value(), "result", result.clone());
+                    .respond(request_id.value(), "result", result.clone());
                 self.receipts
                     .record(generation, &answered, responses, posted.egress());
                 match posted {
@@ -713,11 +724,13 @@ impl Worker {
                     "method": "tools/call",
                     "params": Value::Object(params),
                 });
-                let posted = self
+                let request = self
                     .session
                     .post(&call, Some(CALL_TIMEOUT))
-                    .headers(tool_headers.clone())
-                    .send();
+                    .headers(tool_headers.clone());
+                // The call carried the restored keys and request state.
+                zeroize_json(call);
+                let posted = request.send();
                 let egress = match &posted {
                     Ok(response) if response.status().is_success() => ElicitationEgress::Accepted,
                     Ok(response) if response.status().is_server_error() => {
@@ -748,11 +761,17 @@ impl Worker {
                     Ok(message) => message,
                     Err(event) => return Next::Over(event),
                 };
-                if let Some((questions, state)) = retry_questions(&message) {
-                    *request_state = state;
-                    return Next::Asked(questions);
-                }
-                Next::Over(terminal(&message))
+                let next = match retry_questions(&message) {
+                    Some((questions, state)) => {
+                        *request_state = state;
+                        Next::Asked(questions)
+                    }
+                    None => Next::Over(terminal(&message)),
+                };
+                // The round's questions are read out; the reply is wiped
+                // (FIX 11861).
+                zeroize_json(message);
+                next
             }
         }
     }
@@ -772,7 +791,7 @@ impl Worker {
                 let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
                 sent.insert(wire::STREAM_KEY.to_owned(), cancel.clone());
                 self.session
-                    .respond(&request_id.value(), "result", cancel)
+                    .respond(request_id.value(), "result", cancel)
                     .egress()
             }
             Continuation::Stream { .. } | Continuation::Retry { .. } => ElicitationEgress::NotSent,

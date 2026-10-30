@@ -195,9 +195,11 @@ pub use oneiron_authority::authority::{
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
-// The custody work body's own types (WILL L04 row 04).
+// The custody work body's own types (WILL L04 row 04), and its permits in
+// pieces (FIX 11866).
 pub use oneiron_authority::authority::{
-    CustodyChange, CustodyRecipientPermit, CustodyRequestAuthority,
+    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyRecipientPermit,
+    CustodyRequestAuthority,
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
@@ -224,10 +226,13 @@ pub use federation_activation::federation_grant_activation;
 // hand-maintained name list to drift out of date. The globs are also the
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
-pub(crate) use admission::{AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_authority_work};
+pub(crate) use admission::{
+    AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, custody_permit_piece_len, measure_authority_work,
+};
 pub use admission::{
     AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
+    set_authority_work_wait_ms,
 };
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
@@ -410,8 +415,8 @@ pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };
 pub(crate) use principal_standing::{
-    NoStanding, PACT_STANDING_LAPSED, StandingHome, live_agent_principal_in, principal_standing_in,
-    principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+    NoStanding, PACT_STANDING_LAPSED, PrincipalStanding, StandingHome, live_agent_principal_in,
+    principal_standing_in, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
@@ -445,7 +450,7 @@ use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{
     KeyFrontier, next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
-    owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows,
+    owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows, unsigned_side_entry,
 };
 pub use world_models::WorldModelRoutes;
 #[cfg(feature = "sync")]

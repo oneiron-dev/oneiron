@@ -18,7 +18,7 @@ pub fn put_local_pack_as_agent(
             &["Call vault.packs.put with the owner's own credential."],
         ));
     }
-    let agent = crate::WriteActor::new(memory.actor(), memory.actor_class());
+    let agent = memory.write_actor();
     Ok(memory
         .vault()
         .put_local_pack_as_agent(&agent, input.into_files()?)?

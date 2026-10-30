@@ -16,6 +16,7 @@ use crate::protocol::{self, ProtocolError, SyncMessage};
 use crate::server::SyncServer;
 
 // The connection loop itself, apart so each file stays under the size bar.
+mod dispatch_error;
 mod run;
 
 /// Builds the WebSocket routes for the sync server.
@@ -248,6 +249,11 @@ enum ConnEvent {
     Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
     Direct(Option<Vec<u8>>),
     AppDelivery,
+    /// The socket's by-reference body transfers are due a poll (FIX 5489).
+    AssetBodies,
+    /// The home's own leaf-key requests are due an offer to this socket
+    /// (FIX 11785).
+    LeafKeys,
     /// A verb RPC run off the loop ended; its answer is already queued.
     Answered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
 }
@@ -285,6 +291,8 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         SyncMessage::RootUpdate(_) => false,
         SyncMessage::Ephemeral(_)
         | SyncMessage::LfsChunks(_)
+        | SyncMessage::AssetBody { .. }
+        | SyncMessage::LeafKey { .. }
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }
