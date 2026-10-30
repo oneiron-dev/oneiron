@@ -7,14 +7,14 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use self::tree::{
+    apply_prepared_bundle_files, bundle_post_snapshot, bundle_tree_edits,
+    prepare_bundle_files_commit,
+};
 use super::git::validate_relative_repo_path;
 use super::mount::RepoMountRef;
 use super::proposal::{RepoProposal, RepoProposalOperation, RepoProposedFile, invalid};
 use super::queue::{PreparedCommitFile, PreparedRepoMutationExecution};
-use super::received_file::tree::{
-    apply_prepared_received_files, prepare_received_files_commit, received_post_snapshot,
-    received_tree_edits,
-};
 use super::snapshot::{SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind};
 use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{RepoBundleFile, RepoForkHash, RepoMutationOperation, RepoMutationRequest};
@@ -25,6 +25,8 @@ use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::merge_queue::{MergeFile, MergeFileExpected, MergeProposal};
 use crate::write_envelope::WriteActor;
+
+pub(crate) mod tree;
 
 /// CALL BUNDLE-CHILD-OP: the hash domain of the deterministic document
 /// operation a native bundle's file lowers to, from (proposal, index).
@@ -268,8 +270,8 @@ impl Vault {
                 "a file bundle lands under its proposal",
             ))?)?
             .ok_or(Error::EntityNotFound)?;
-        let edits = received_tree_edits(&row.files)?;
-        let commit = prepare_received_files_commit(repo_root, &edits, &message)?;
+        let edits = bundle_tree_edits(&row.files)?;
+        let commit = prepare_bundle_files_commit(repo_root, &edits, &message)?;
         Ok(PreparedRepoMutationExecution::FileBundle { commit, edits })
     }
 }
@@ -295,7 +297,7 @@ pub(in crate::repo_mutation) fn bundle_post_action_fork_hash(
             "repo HEAD changed while preparing write-ahead intent",
         ));
     }
-    received_post_snapshot(custody, pre_action_snapshot, edits, &commit.new_head)
+    bundle_post_snapshot(custody, pre_action_snapshot, edits, &commit.new_head)
 }
 
 /// Moves the live checkout to a native bundle's prepared commit, once its
@@ -312,7 +314,7 @@ pub(in crate::repo_mutation) fn apply_native_bundle(
         return Err(Error::InvariantViolation("not a native file bundle"));
     };
     let _ = commit_message_with_provenance_trailer(message, request.provenance_claim_id)?;
-    apply_prepared_received_files(repo_root, prepared)
+    apply_prepared_bundle_files(repo_root, prepared)
 }
 
 /// Lowers every file of the file bundle `row` into its document, in ONE

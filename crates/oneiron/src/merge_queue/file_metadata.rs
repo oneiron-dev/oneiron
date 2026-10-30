@@ -9,7 +9,7 @@ use super::MergeFile;
 use crate::code_document::CodeFileMetadataEdit;
 use crate::contract_oracle::{invalid, safe_entry_path};
 use crate::error::{Error, Result};
-use crate::repo_mutation::{ReceivedTreeEdit, stage_received_tree_edits};
+use crate::repo_mutation::{BundleTreeEdit, stage_bundle_tree_edits};
 
 /// A symlink's Git mode.
 const MODE_SYMLINK: u32 = 0o120_000;
@@ -59,7 +59,7 @@ pub(super) fn materialize_received_merge_files(root: &Path, files: &[MergeFile])
                 "proposal bytes overlap or base is stale",
             ));
         }
-        edits.push(ReceivedTreeEdit {
+        edits.push(BundleTreeEdit {
             path: file.path.clone(),
             content: file.content.clone(),
             mode: edit.replacement.mode.unwrap_or(0),
@@ -68,7 +68,7 @@ pub(super) fn materialize_received_merge_files(root: &Path, files: &[MergeFile])
     edits.sort_by(|left, right| {
         (left.content.is_some(), &left.path).cmp(&(right.content.is_some(), &right.path))
     });
-    stage_received_tree_edits(root, &edits, true)
+    stage_bundle_tree_edits(root, &edits, true)
 }
 
 /// The bytes and Git mode a path holds, without following a link: a
