@@ -400,6 +400,9 @@ pub(crate) fn critique_review_refs_in_txn(
 }
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
 /// A synced or raw claim is not a calibration event and cannot train this projector.
+/// The stamp is the body as the write gate landed it. The gate's own approval of a
+/// held write changes only its approval, so a body that is the stamped one with its
+/// approval moved from proposed or auto to approved or auto stays trusted (FIX 12189).
 pub(super) fn trusted_claim(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -409,7 +412,26 @@ pub(super) fn trusted_claim(
     let Some(held) = CLAIM_TRUST.get(&vault.store, txn, id)? else {
         return Ok(false);
     };
-    Ok(held == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    let stamps = |body: &ClaimBody| -> Result<bool> {
+        Ok(held == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    };
+    if stamps(body)? {
+        return Ok(true);
+    }
+    if !matches!(
+        body.approval,
+        ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+    ) {
+        return Ok(false);
+    }
+    for landed in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Auto] {
+        let mut stamped = body.clone();
+        stamped.approval = landed;
+        if stamped.approval != body.approval && stamps(&stamped)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn persisted_artifact(
