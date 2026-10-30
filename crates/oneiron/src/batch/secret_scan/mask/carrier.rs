@@ -13,7 +13,6 @@
 //! handle removes the secret.
 
 use std::ops::Range;
-use std::sync::Arc;
 
 use heed::{RoTxn, RwTxn};
 
@@ -67,7 +66,7 @@ pub(crate) fn mark_carrier_text_in_txn(
     };
     let mut plan = Masker {
         mints: true,
-        known: KnownValues::load_in_writer(store, txn)?.map(Arc::new),
+        known: KnownValues::shared_in_writer(store, txn)?,
         at: Some((origin, place.to_owned())),
         ..Masker::default()
     };

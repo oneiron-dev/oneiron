@@ -35,6 +35,9 @@
 //!   none after the writer), or, for a stream, through [`KnownHistoryIds`]:
 //!   the ids the stream began with, each pass under the custody read guard.
 
+// A writer's history read with its ids (FIX 12210).
+mod writer_ids;
+
 use std::sync::{Arc, Weak};
 
 use heed::{RoTxn, RwTxn};

@@ -25,7 +25,10 @@
 //! A pass holds the matcher for as long as it reads, and wipes it after: in
 //! the writer it runs in ([`KnownValues::load_in_writer`]), or, for a
 //! stream, once per frame through the ids the stream began with
-//! ([`KnownSource`]), under the custody read guard.
+//! ([`KnownSource`]), under the custody read guard. A write the group
+//! commit runs keeps the matcher its first pass loaded for its later
+//! passes, checked against the writer before each, and wipes it when the
+//! write ends (FIX 12210, `writer_index`).
 //!
 //! A value spelled another way (base64, percent or JSON escapes) is found
 //! where its spelling sits, under the same handle (FIX 2725, `forms`); a
@@ -33,6 +36,7 @@
 //! 2722, [`KnownValues::growing`]).
 
 mod forms;
+mod writer_index;
 
 use std::cmp::Reverse;
 use std::ops::Range;
@@ -49,6 +53,7 @@ use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, S
 use crate::vault::Vault;
 
 pub(super) use self::forms::decodings;
+pub(crate) use self::writer_index::known_index_scope;
 
 /// The shortest value matched exactly: every non-empty value (FIX 5270). An
 /// empty body is a revoked record's absent value. One constant, so a ruling
@@ -132,14 +137,20 @@ pub(super) fn remember_in_txn(
     }
     let len =
         u32::try_from(value.len()).map_err(|_| Error::ArithmeticOverflow("known value length"))?;
-    store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
+    let changed = store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
         let keys = Keys::derive(master);
         KnownEntry {
             len,
             tag: keys.tag(&value[..value.len().min(TAG_WINDOW)]),
             fingerprint: keys.fingerprint(value),
         }
-    })
+    })?;
+    // A value the history did not hold drops the index this write keeps
+    // (FIX 12210).
+    if changed {
+        writer_index::forget_kept();
+    }
+    Ok(changed)
 }
 
 /// One value the index knows, as a match reads it. Its fingerprint is
@@ -170,7 +181,8 @@ impl Drop for Bucket {
 }
 
 /// The index, loaded for one pass over incoming bytes. Never kept past the
-/// pass that loaded it: the writer it was read in, or one stream frame.
+/// writer it was read in (a write's later passes share it, FIX 12210), or
+/// one stream frame.
 pub(crate) struct KnownValues {
     keys: Keys,
     /// Candidates by the tag of their first window, in tag order.

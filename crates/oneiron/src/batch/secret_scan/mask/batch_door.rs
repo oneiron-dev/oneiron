@@ -2,8 +2,6 @@
 //! copy of the batch's ops, the custody records it mints, and the minted
 //! pass that writes each handle into the ops themselves.
 
-use std::sync::Arc;
-
 use heed::RwTxn;
 
 use super::super::{SecretScanMode, scan_batch_ops, secret_scan_mode_in_txn};
@@ -52,7 +50,7 @@ pub(in crate::batch) fn mask_batch_ops(
     // back, shape or none (OF-560 C). A replayed batch reads only what it
     // wrote before.
     let known = if masks {
-        KnownValues::load_in_writer(store, wtxn)?.map(Arc::new)
+        KnownValues::shared_in_writer(store, wtxn)?
     } else {
         None
     };
