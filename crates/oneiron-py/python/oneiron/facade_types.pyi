@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1209 facade rows, 4379 declarations.
+Census: 1209 facade rows, 4381 declarations.
 Inputs: 1137 of 1209 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1209 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -10896,6 +10896,11 @@ ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle
 class ClaimSettlementRevert(TypedDict):
     verb: str
     claim_ref: str
+SettleWarningCode = Literal["vad_pending"]
+class SettleWarning(TypedDict):
+    code: SettleWarningCode
+    claim_ref: str
+    detail: str
 class ClaimSettlement(TypedDict):
     receipt_ref: str
     proposal_ref: str
@@ -10909,6 +10914,7 @@ class ClaimSettlement(TypedDict):
     revert: NotRequired[ClaimSettlementRevert | None]
     claim: ClaimView
     settled_at: int
+    warnings: NotRequired[list[SettleWarning]]
 class CraftCandidatesRequest(TypedDict):
     resident: NotRequired[str | None]
 class CraftCandidateView(TypedDict):
