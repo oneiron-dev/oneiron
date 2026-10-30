@@ -22,9 +22,9 @@
 //!   converges (ONE-1135: only the CONFIRMED clear removes them + their
 //!   `d:` markers).
 //! - After `MAX_CONVERGENCE_ROUNDS` (5) unconfirmed rounds: force
-//!   re-bootstrap — drop in-memory Docs + clear the queue (`q:`/`e:` rows
-//!   only; `h:`/`m:`/`x:` families and delete-bearing rows + `d:` markers
-//!   are preserved) and re-run the Phase 1-3
+//!   re-bootstrap — drop in-memory Docs + clear the queue (`q:` rows
+//!   only; `h:`/`m:`/`x:`/`e:` families and delete-bearing rows + `d:`
+//!   markers are preserved) and re-run the Phase 1-3
 //!   initial sync on the live connection (without the per-connection hello).
 //! - Queue overflow (`SyncQueue::is_full`) triggers the same re-bootstrap:
 //!   docs dropped + queue cleared between reconnect attempts, so the next
@@ -38,6 +38,7 @@ mod home_search;
 mod node_batch;
 mod note_reads;
 mod residence_mode;
+mod server_close;
 mod session;
 mod steady;
 mod topology;
@@ -671,6 +672,10 @@ enum LoopExit {
     Shutdown,
     /// WebSocket disconnected (with error description).
     Disconnected(String),
+    /// The server closed the socket with a close frame, read by its code
+    /// (FIX 5927): a server fault takes the retry path, a refusal is
+    /// reported as one.
+    Closed(server_close::ServerClose),
     /// The residence mode changed (FIX 8869): what was buffered is queued,
     /// and the next connect sends the new mode's hello.
     Renegotiate,

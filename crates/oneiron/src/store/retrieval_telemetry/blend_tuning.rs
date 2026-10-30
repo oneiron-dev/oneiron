@@ -53,22 +53,23 @@ impl RawValue for RetrievalBlendWeightTableEntry {
 struct BlendEvidence {
     previous: RetrievalBlendWeightTableEntry,
     pins: RetrievalPolicyPins,
-    gradient: [f64; 4],
+    gradient: [f64; 5],
     reward_count: usize,
     component_count: usize,
     data_window: RetrievalBlendWeightDataWindow,
-    holdout_gradient: [f64; 4],
+    holdout_gradient: [f64; 5],
     holdout_rewards: usize,
     ungated_skipped: u32,
     manifest_digest: String,
 }
 
-fn held_out_score(weights: RetrievalBlendWeights, holdout_gradient: [f64; 4]) -> f64 {
+fn held_out_score(weights: RetrievalBlendWeights, holdout_gradient: [f64; 5]) -> f64 {
     [
         weights.recency,
         weights.salience,
         weights.confidence,
         weights.gravity,
+        weights.relevance,
     ]
     .into_iter()
     .zip(holdout_gradient)
@@ -411,11 +412,11 @@ impl Store {
         let rtxn = self.env.read_txn()?;
         let previous = self.retrieval_blend_weight_table_in_txn(&rtxn)?;
         let pins = self.retrieval_policy_pins_in_txn(&rtxn)?;
-        let mut gradient = [0.0_f64; 4];
+        let mut gradient = [0.0_f64; 5];
         let mut reward_count = 0_usize;
         let mut component_count = 0_usize;
         let mut data_window = RetrievalBlendWeightDataWindow::default();
-        let mut holdout_gradient = [0.0_f64; 4];
+        let mut holdout_gradient = [0.0_f64; 5];
         let mut holdout_rewards = 0_usize;
         let mut ungated_skipped = 0_u32;
         let mut manifest = String::new();
@@ -427,12 +428,13 @@ impl Store {
             config.min_reward_count
         ));
         manifest.push_str(&format!(
-            "\nprevious:{}:{}:{}:{}:{}",
+            "\nprevious:{}:{}:{}:{}:{}:{}",
             previous.tuned_at,
             previous.weights.recency.to_bits(),
             previous.weights.salience.to_bits(),
             previous.weights.confidence.to_bits(),
-            previous.weights.gravity.to_bits()
+            previous.weights.gravity.to_bits(),
+            previous.weights.relevance.to_bits()
         ));
         for pin in &pins.pins {
             manifest.push_str(&format!("\npin:{:?}:{}", pin.signal, pin.value.to_bits()));
@@ -486,7 +488,7 @@ impl Store {
                     computed.to_bits()
                 ));
                 let reward = f64::from(computed);
-                let mut outcome_gradient = [0.0_f64; 4];
+                let mut outcome_gradient = [0.0_f64; 5];
                 let mut outcome_component_count = 0_usize;
                 let mut outcome_candidate_count = 0_u32;
                 for candidate in &record.score_breakdown {
@@ -618,6 +620,7 @@ fn retrieval_blend_component_index(signal: RetrievalSignal) -> Option<usize> {
         RetrievalBlendSignal::Salience => Some(1),
         RetrievalBlendSignal::Confidence => Some(2),
         RetrievalBlendSignal::Gravity => Some(3),
+        RetrievalBlendSignal::Relevance => Some(4),
     }
 }
 
@@ -657,7 +660,7 @@ fn observe_retrieval_blend_outcome(
 
 pub(in crate::store) fn apply_retrieval_blend_weight_update(
     previous: RetrievalBlendWeights,
-    gradient: [f64; 4],
+    gradient: [f64; 5],
     learning_rate: f32,
     reward_count: usize,
 ) -> Result<RetrievalBlendWeights> {
@@ -668,6 +671,7 @@ pub(in crate::store) fn apply_retrieval_blend_weight_update(
         f64::from(previous.salience) + learning_rate * gradient[1] / reward_scale,
         f64::from(previous.confidence) + learning_rate * gradient[2] / reward_scale,
         f64::from(previous.gravity) + learning_rate * gradient[3] / reward_scale,
+        f64::from(previous.relevance) + learning_rate * gradient[4] / reward_scale,
     ];
     for value in &mut next {
         if !value.is_finite() {
@@ -686,6 +690,7 @@ pub(in crate::store) fn apply_retrieval_blend_weight_update(
         (next[1] / sum) as f32,
         (next[2] / sum) as f32,
         (next[3] / sum) as f32,
+        (next[4] / sum) as f32,
     )
     .normalized()
 }

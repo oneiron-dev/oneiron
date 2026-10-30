@@ -14,12 +14,14 @@ use serde::{Deserialize, Serialize};
 
 use super::decision::TypedDecision;
 use super::registry::ModelWireFormat;
+use super::run_admission::offer_id;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
 use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
+use crate::authority::WorldModelRoutes;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
-    Vault,
+    EntityId, Vault,
     error::{Error, Result},
 };
 
@@ -29,6 +31,37 @@ const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
+}
+
+/// Whether the worlds' order pre-admits a seat model at a locality (FIX
+/// 11768): [`WorldModelRoutes::Inherit`] admits all; an ordered list admits
+/// an on-device seat only on its exact `model@on_device` id, and a server
+/// seat when some id starts with its `model@` prefix (built from the seat's
+/// own model string, never parsed out of an id) with a remainder that is
+/// not `on_device`. The full `model@place` id gates later at the ladder.
+/// An over-cap id truncated inside its model part cannot prefix-match;
+/// exclusion is the fail-closed direction.
+fn routes_prefilter_admits(
+    routes: &WorldModelRoutes,
+    model: &ModelId,
+    locality: ModelLocality,
+) -> bool {
+    match routes {
+        WorldModelRoutes::Inherit => true,
+        WorldModelRoutes::Ordered(ids) => {
+            if locality == ModelLocality::OnDevice {
+                let id = offer_id(model, "on_device");
+                ids.iter().any(|named| named == &id)
+            } else {
+                let prefix = format!("{}@", model.as_str());
+                ids.iter().any(|named| {
+                    named
+                        .strip_prefix(prefix.as_str())
+                        .is_some_and(|rest| rest != "on_device")
+                })
+            }
+        }
+    }
 }
 
 /// A description is keyed by the fully revisioned model ID. Absence is not a
@@ -266,6 +299,16 @@ pub struct SeatTask {
     /// Empty: the agent lists none, and any eligible model may seat it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listed: Vec<AgentModel>,
+    /// The run's worlds (FIX 11768): the worlds' own order narrows the
+    /// birth's pick to the routes it names. Empty: the birth inherits the
+    /// vault's order, as before. Deliberately not task identity: the `All`
+    /// snapshot legitimately changes as worlds are edited, and a changed
+    /// world set must not brick durable re-entry by changing the pin hash.
+    /// Empty-worlds serialization is unchanged, so pre-existing pin hashes
+    /// stay stable. Re-derived per entry; the birth-time filter judges the
+    /// current routes.
+    #[serde(skip)]
+    pub worlds: Vec<EntityId>,
 }
 
 /// The pick sees only models admitted by the engine's route, capability,
@@ -485,6 +528,40 @@ impl SeatPool {
                 description: lines,
             });
         }
+        // The run's worlds pre-filter the pick (FIX 11768): a candidate
+        // the worlds' order cannot name seats no one, pins included. Seat
+        // candidates hold model and locality, no origin, so this is a
+        // pre-filter only: on-device admits on its exact
+        // `offer_id(model, "on_device")`; a server candidate admits when
+        // some id carries its `model@` prefix with a remainder that is not
+        // `on_device` (the prefix is built from the candidate's own model
+        // string, never parsed out of an id). The ladder gates the full
+        // `model@place` id later, in leg 2. An over-cap id the 128-byte rule
+        // truncated inside its model part cannot prefix-match; its
+        // exclusion here is the fail-closed direction. Empty worlds inherit
+        // with no storage read, as the Engine's Bottom mapping is explicitly
+        // no-worlds/no-gate, so an empty-worlds birth reads what it read
+        // before. A routes read that fails closes the birth: no candidate
+        // is admitted and the empty-candidates refusal below fires; the
+        // storage error never propagates.
+        let routes = if task.worlds.is_empty() {
+            WorldModelRoutes::Inherit
+        } else {
+            vault
+                .store
+                .env
+                .read_txn()
+                .ok()
+                .and_then(|txn| {
+                    vault
+                        .world_model_routes_in_txn(&txn, task.worlds.clone())
+                        .ok()
+                })
+                .unwrap_or(WorldModelRoutes::Ordered(Vec::new()))
+        };
+        candidates.retain(|candidate| {
+            routes_prefilter_admits(&routes, &candidate.model, candidate.locality)
+        });
         // With a list, no fallback: the wake holds rather than run unlisted.
         if candidates.is_empty() {
             return Err(if task.listed.is_empty() {
@@ -502,6 +579,7 @@ impl SeatPool {
                 && seat.locality == route
                 && eligible.contains(&seat.model)
                 && list_admits(&task.listed, &seat.model)
+                && routes_prefilter_admits(&routes, &seat.model, seat.locality)
                 && candidates
                     .iter()
                     .find(|candidate| candidate.model == seat.model)
@@ -518,11 +596,15 @@ impl SeatPool {
             reused.receipt.reused = true;
             return Ok(reused);
         }
-        if self
-            .seats
-            .iter()
-            .any(|seat| seat.warm && seat.kind == task.kind && seat.warm_scope == task.warm_scope)
-        {
+        // Only a pre-admitted warm seat holds the fold (FIX 11768): a warm
+        // seat the worlds' order no longer pre-admits retires, and the fresh
+        // pick below runs instead of refusing reuse with a fold error.
+        if self.seats.iter().any(|seat| {
+            seat.warm
+                && seat.kind == task.kind
+                && seat.warm_scope == task.warm_scope
+                && routes_prefilter_admits(&routes, &seat.model, seat.locality)
+        }) {
             return Err(invalid("model or effort change requires an epoch fold"));
         }
         let started = Instant::now();

@@ -8,17 +8,16 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::share_travel::TravelChoice;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -26,10 +25,45 @@ use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/federation/peer-confidence", get(list).post(set))
-        .route("/federation/grant-travel", get(get_travel).post(set_travel))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/federation/peer-confidence",
+                summary: "Every owner-set scale.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/peer-confidence",
+                summary: "Sets or clears one peer's scale.",
+                row: None,
+            },
+            post(set),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/federation/grant-travel",
+                summary: "One federation grant's bound travel choice (`?grant=<id>`), with when it was set; travel and set are null when none is bound, so its windows send no text. An id naming no federation grant is not found.",
+                row: None,
+            },
+            get(get_travel),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/grant-travel",
+                summary: "Binds or clears one live grant's travel choice.",
+                row: None,
+            },
+            post(set_travel),
+        ),
+    ]
 }
 
 #[derive(Debug, Serialize)]

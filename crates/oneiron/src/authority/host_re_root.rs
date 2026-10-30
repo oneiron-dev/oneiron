@@ -111,7 +111,7 @@ impl Vault {
         self.re_root_authority_in_txn(
             &mut txn,
             next.root_device(self.privacy_posture()),
-            current.public_key(),
+            (current.public_key(), Some(FrontierSigner::Host(current))),
             |transcript| Ok(current.sign_slip(transcript)),
         )?;
         // The new root's first entry: its sequence is what enrollment extends.

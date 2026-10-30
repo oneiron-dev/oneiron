@@ -10,10 +10,9 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oneiron::claim::{
     WeaveDigestFeedback, WeaveDigestRequest, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingUndo, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
@@ -23,24 +22,114 @@ use oneiron::lens::LensFrameCard;
 use oneiron::{EdgeActorClass, EntityId};
 use serde::Serialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/weave/schedules", get(schedules).put(set_schedule))
-        .route("/weave/schedules/clear", post(clear_schedule))
-        .route("/weave/setting-changes", get(setting_changes))
-        .route("/weave/setting-changes/answer", post(answer_setting_change))
-        .route("/weave/setting-changes/undo", post(undo_setting_change))
-        .route("/weave/digest-feedback", post(digest_feedback))
-        .route("/weave/report", post(report))
-        .route("/weave/lens", post(lens))
-        .route("/weave/digest", get(digest))
-        .route("/weave/link/wrong", post(wrong_link))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/weave/schedules",
+                summary: "Every reader's digest schedule.",
+                row: None,
+            },
+            get(schedules),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/weave/schedules",
+                summary: "One reader's cadence, first due second and sections.",
+                row: None,
+            },
+            put(set_schedule),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/schedules/clear",
+                summary: "Stop one reader's digests.",
+                row: None,
+            },
+            post(clear_schedule),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/weave/setting-changes",
+                summary: "The Coach's changes to the owner's own digest settings, newest first.",
+                row: Some("vault.weave.setting_changes.list"),
+            },
+            get(setting_changes),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/setting-changes/answer",
+                summary: "Accept, as the owner's own act, or decline one proposed change.",
+                row: Some("vault.weave.setting_changes.answer"),
+            },
+            post(answer_setting_change),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/setting-changes/undo",
+                summary: "The one-tap undo of an applied or accepted change.",
+                row: Some("vault.weave.setting_changes.undo"),
+            },
+            post(undo_setting_change),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/digest-feedback",
+                summary: "What the owner tells the Coach about his own digest.",
+                row: Some("vault.weave.digest_feedback.put"),
+            },
+            post(digest_feedback),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/report",
+                summary: "The owner lens, live.",
+                row: None,
+            },
+            post(report),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/lens",
+                summary: "The owner lens, live, rendered through the weave-report skill on this server's Dreamer narrative route, as a card whose frame this server holds for the credential's events on it.",
+                row: None,
+            },
+            post(lens),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/weave/digest",
+                summary: "The owner's digest.",
+                row: None,
+            },
+            get(digest),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/link/wrong",
+                summary: "The owner labels a link it sees in the owner lens as wrong.",
+                row: None,
+            },
+            post(wrong_link),
+        ),
+    ]
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]

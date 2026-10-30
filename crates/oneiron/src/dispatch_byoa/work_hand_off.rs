@@ -234,7 +234,7 @@ where
             return Ok(park(receipt, spent, now));
         };
         let search = SeatSearch {
-            from: seat + 1,
+            from: seat.map_or(0, |index| index + 1),
             only: false,
             now,
         };
