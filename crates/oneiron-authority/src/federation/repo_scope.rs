@@ -15,6 +15,11 @@
 //! The grammar (CALLS "FIX 6867 repo bounds grammar"):
 //! - a ref is a full Git ref name under `refs/` (`refs/heads/main`), matched
 //!   exactly; `HEAD`, `main` or any short name is never resolved implicitly;
+//! - a ref entry may instead be a prefix rule (CALLS "FIX 6895 ref prefix
+//!   rule"): `refs` or a full ref name, then [`REF_PREFIX_RULE_SUFFIX`]
+//!   (`refs/heads/run/*`). It admits every full ref name under that prefix,
+//!   at any depth, so the owner need not list each run branch up front. Git
+//!   never names a ref with `*`, so no exact entry reads as a rule;
 //! - a path is a normalized repo-relative path: no leading or trailing `/`,
 //!   no empty, `.` or `..` component, no `\` and no control character. A
 //!   path that is not normalized is outside every scope, never normalized
@@ -46,6 +51,11 @@ pub const REPO_READ_VERB: &str = "read";
 /// bounds grammar"). An edit is a write to the agent's own working set; its
 /// publication still goes through the proposal and queue gates.
 pub const REPO_EDIT_VERB: &str = "write";
+/// The one ref prefix rule (CALLS "FIX 6895 ref prefix rule"): a bounds ref
+/// entry that ends in this suffix, after `refs` or a full ref name, admits
+/// every full ref name under that prefix, at any depth. Every other entry is
+/// matched exactly.
+pub const REF_PREFIX_RULE_SUFFIX: &str = "/*";
 
 /// The repo bounds an owner's agent Grant carries: one repo, its PROJECT,
 /// the refs, and the separate read and edit globs.
@@ -61,7 +71,9 @@ pub struct RepoAccessBounds {
     /// must name it.
     #[schemars(with = "String")]
     pub project: EntityId,
-    /// Full Git ref names (`refs/heads/main`), matched exactly; at least one.
+    /// Full Git ref names (`refs/heads/main`), matched exactly, or prefix
+    /// rules (`refs/heads/run/*`) that admit every full ref name under the
+    /// prefix; at least one.
     pub refs: BTreeSet<String>,
     /// Repo-relative globs the agent may read. Empty: it reads no file.
     #[serde(default)]
@@ -74,15 +86,15 @@ pub struct RepoAccessBounds {
 
 /// The bounds name no ref.
 const NO_REFS: &str = "repo bounds name at least one full Git ref name";
-/// A ref is not a full Git ref name.
-const NOT_A_FULL_REF: &str = "repo bounds refs are full Git ref names under refs/ (refs/heads/main), never HEAD or a short name";
+/// A ref is not a full Git ref name, nor a prefix rule.
+const NOT_A_FULL_REF: &str = "repo bounds refs are full Git ref names under refs/ (refs/heads/main) or prefix rules ending in /* (refs/heads/run/*), never HEAD or a short name";
 /// A glob is outside the grammar.
 const NOT_A_GLOB: &str = "repo bounds globs are normalized repo-relative paths whose components may hold * and ?, or be exactly **";
 
 impl RepoAccessBounds {
-    /// Checks the grammar: at least one ref, every ref a full Git ref name,
-    /// every glob in the grammar. The store checks (a live anchor in a live
-    /// PROJECT) are the engine writer's.
+    /// Checks the grammar: at least one ref, every ref a full Git ref name
+    /// or a prefix rule, every glob in the grammar. The store checks (a live
+    /// anchor in a live PROJECT) are the engine writer's.
     ///
     /// # Errors
     /// The reason text of the first rule the bounds break.
@@ -90,7 +102,7 @@ impl RepoAccessBounds {
         if self.refs.is_empty() {
             return Err(NO_REFS);
         }
-        if !self.refs.iter().all(|name| is_full_ref_name(name)) {
+        if !self.refs.iter().all(|entry| is_ref_entry(entry)) {
             return Err(NOT_A_FULL_REF);
         }
         if !self
@@ -112,6 +124,18 @@ impl RepoAccessBounds {
             RepoAccessIntent::Read => &self.readable,
             RepoAccessIntent::Edit => &self.editable,
         }
+    }
+
+    /// Whether `git_ref` is a full Git ref name that one ref entry admits:
+    /// the same name, or a prefix rule it falls under.
+    #[must_use]
+    pub fn admits_ref(&self, git_ref: &str) -> bool {
+        is_full_ref_name(git_ref)
+            && (self.refs.contains(git_ref)
+                || self
+                    .refs
+                    .iter()
+                    .any(|entry| prefix_rule_admits(entry, git_ref)))
     }
 
     /// Whether `path` is a normalized repo-relative path that one glob of
@@ -169,7 +193,8 @@ pub enum RepoAccessRefusal {
     NoMembership,
     /// The act names another repo than the admitted handle.
     WrongRepo,
-    /// The ref is not a full ref name the Grant's bounds list.
+    /// The ref is not a full ref name the Grant's bounds list, nor one under
+    /// a prefix rule they list.
     WrongRef,
     /// A path is not normalized, or no glob of the intent's set matches it,
     /// or the set is empty.
@@ -199,7 +224,9 @@ impl RepoAccessRefusal {
         match self {
             Self::NoMembership => "no live Grant of this actor admits it to this repo",
             Self::WrongRepo => "the act names another repo than the one this actor was admitted to",
-            Self::WrongRef => "the ref is not a full Git ref name this actor's Grant lists",
+            Self::WrongRef => {
+                "the ref is not a full Git ref name this actor's Grant lists or covers"
+            }
             Self::PathOutsideScope => "a path is outside this actor's read or edit globs",
             Self::StaleLease => "this actor's lease is no longer the current one",
         }
@@ -240,7 +267,7 @@ impl Scope {
         if target.repo != bounds.repo {
             return Err(RepoAccessRefusal::WrongRepo);
         }
-        if !is_full_ref_name(&target.git_ref) || !bounds.refs.contains(&target.git_ref) {
+        if !bounds.admits_ref(&target.git_ref) {
             return Err(RepoAccessRefusal::WrongRef);
         }
         if bounds.globs(intent).is_empty()
@@ -274,6 +301,25 @@ fn is_full_ref_name(name: &str) -> bool {
         && name.split('/').all(|component| {
             !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock")
         })
+}
+
+/// Whether `entry` is a bounds ref entry: a full Git ref name, or a prefix
+/// rule whose prefix is `refs` or a full Git ref name.
+fn is_ref_entry(entry: &str) -> bool {
+    match entry.strip_suffix(REF_PREFIX_RULE_SUFFIX) {
+        Some(prefix) => prefix == "refs" || is_full_ref_name(prefix),
+        None => is_full_ref_name(entry),
+    }
+}
+
+/// Whether `entry` is a prefix rule that `git_ref` falls under: the prefix,
+/// a `/`, then at least one more character.
+fn prefix_rule_admits(entry: &str, git_ref: &str) -> bool {
+    entry
+        .strip_suffix(REF_PREFIX_RULE_SUFFIX)
+        .and_then(|prefix| git_ref.strip_prefix(prefix))
+        .and_then(|rest| rest.strip_prefix('/'))
+        .is_some_and(|rest| !rest.is_empty())
 }
 
 /// Whether `path` is a normalized repo-relative path.
