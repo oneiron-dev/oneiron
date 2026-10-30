@@ -5,7 +5,8 @@
 //! words partly here. A tagged turn's saved set lists the rows it was read
 //! from, but an untagged one keeps no list, so the demotion records what each
 //! kept turn lost, in its own transaction before any row or edge goes, and
-//! adds it to what an earlier demotion recorded. Queued work on the turn
+//! adds it to what an earlier demotion recorded. A PartOf target whose TURN
+//! row is already gone is recorded too (FIX 6263). Queued work on the turn
 //! waits while one of those MESSAGEs lacks its row or its `PartOf` edge to
 //! the turn ([`crate::tagging::tagged_messages_absent_in_txn`]).
 //!
@@ -38,7 +39,8 @@ const MISSING: SideTable<EntityId, BTreeSet<EntityId>, Named> =
 /// The demotion's write, in its transaction after the final plan and before
 /// any row or edge goes: each kept TURN with the MESSAGEs the call removes
 /// from it, added to what its entry lists already, never in place of it. A
-/// tagged turn and an untagged one are recorded alike.
+/// tagged turn and an untagged one are recorded alike, as is a PartOf target
+/// whose TURN row is already gone (FIX 6263).
 #[cfg(feature = "sync")]
 pub(crate) fn record_in_txn(
     store: &Store,

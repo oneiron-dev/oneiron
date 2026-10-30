@@ -14,6 +14,7 @@ use crate::ports::{
 };
 use crate::{EntityId, Vault};
 
+mod budget;
 mod capture;
 mod peer_origins;
 mod rebuild;
@@ -21,6 +22,10 @@ mod row_births;
 mod snapshot_ops;
 mod vocabulary;
 mod withdrawn_cutoffs;
+pub(super) use budget::ByteBudget;
+pub use budget::RecoveryBudgetOverrun;
+#[cfg(test)]
+pub(super) use budget::held_bytes;
 pub use capture::capture_canonical_window;
 pub(crate) use capture::{capture_canonical_window_within, prepare_artifact_pads};
 pub use peer_origins::CanonicalPeerOrigin;
@@ -302,60 +307,6 @@ pub(super) fn invalid(reason: &'static str) -> Error {
     ArtifactError::InvalidRecoveryArtifact(reason).into()
 }
 
-/// The bytes one capture or encoding has copied, refused with
-/// [`ArtifactError::OverlayLimit`] before a copy would pass `limit`.
-#[derive(Debug)]
-pub(super) struct ByteBudget {
-    held: usize,
-    limit: usize,
-    /// Of `held`, the bytes only measured ([`Self::measure`]), which no
-    /// refusal answers for.
-    measured: usize,
-}
-
-impl ByteBudget {
-    pub(super) const fn new(limit: usize) -> Self {
-        Self {
-            held: 0,
-            limit,
-            measured: 0,
-        }
-    }
-
-    /// Admits `bytes` more, before they are copied. Bytes only measured
-    /// never move the point where this refuses.
-    pub(super) fn take(&mut self, bytes: usize) -> Result<()> {
-        let held = self.held.saturating_add(bytes);
-        let counted = held.saturating_sub(self.measured);
-        if counted > self.limit {
-            return Err(ArtifactError::OverlayLimit {
-                required: counted,
-                limit: self.limit,
-            }
-            .into());
-        }
-        self.held = held;
-        #[cfg(test)]
-        held_bytes::note(counted);
-        Ok(())
-    }
-
-    /// Counts `bytes` no copy refuses on (Rule 5, FIX 6540): the measure
-    /// stays honest and the copy goes on. While the measure is past the
-    /// limit, the overrun is returned, typed, for its caller to report.
-    pub(super) fn measure(&mut self, bytes: usize) -> Option<ArtifactError> {
-        self.held = self.held.saturating_add(bytes);
-        self.measured = self.measured.saturating_add(bytes);
-        if self.held <= self.limit {
-            return None;
-        }
-        Some(ArtifactError::OverlayLimit {
-            required: self.held,
-            limit: self.limit,
-        })
-    }
-}
-
 /// The artifact's one buffer: a write past its budget is refused, and the
 /// buffer never reserves past the budget either.
 struct BoundedWriter {
@@ -404,22 +355,4 @@ fn check_size(size: usize) -> Result<()> {
         .into());
     }
     Ok(())
-}
-
-/// Test hook: the most bytes any one capture or encoding held.
-#[cfg(test)]
-pub(super) mod held_bytes {
-    use std::cell::Cell;
-
-    thread_local!(static PEAK: Cell<usize> = const { Cell::new(0) });
-
-    pub(super) fn note(held: usize) {
-        PEAK.with(|peak| peak.set(peak.get().max(held)));
-    }
-
-    /// The peak since the last call; the next count starts from zero.
-    #[cfg(feature = "sync")]
-    pub(in crate::recovery) fn take_peak() -> usize {
-        PEAK.with(|peak| peak.replace(0))
-    }
 }

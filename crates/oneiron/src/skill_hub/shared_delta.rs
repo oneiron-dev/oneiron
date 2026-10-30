@@ -2,7 +2,11 @@
 use super::{HubPackage, package_codec::invalid};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
-    Vault, entity_id::EntityId, error::Result, skill::SkillLifecycle, temporal::TimeRange,
+    Vault,
+    entity_id::EntityId,
+    error::Result,
+    skill::{SkillLifecycle, SkillRole},
+    temporal::TimeRange,
 };
 
 /// Shared-skill merge delta computed for one candidate. `pub(super)` because
@@ -244,17 +248,36 @@ impl Vault {
         {
             return Err(invalid("edited package must name an open local fork"));
         }
+        // A fork keeps the head's role and call contract when its SKILL.md
+        // declares none ("Absence stays absence"): the parsed record defaults
+        // an absent role to Knowledge, which would silently flip a Workflow
+        // fork. A declared role still wins; a call contract survives only on
+        // a Callable role, so an explicit role change drops it as today.
+        let (declared_role, declared_call) = super::folder::declared_role_call(&parsed.files)?;
         record.desc = parsed.record.desc;
         record.version = parsed.record.version;
-        record.role = parsed.record.role;
-        record.call = parsed.record.call;
+        if declared_role.is_some() {
+            record.role = parsed.record.role;
+        }
+        if declared_call.is_some() {
+            record.call = parsed.record.call.clone();
+        } else if record.role != SkillRole::Callable {
+            record.call = None;
+        }
         record.content_hash = parsed.record.content_hash;
         let saved = HubPackage::new(record.clone(), parsed.files, parsed.capabilities);
-        super::folder::package_from_source(
-            &record,
-            saved.files.clone(),
-            super::SkillPackageFormat::Folder,
-        )?;
+        // Every other stored field was just derived from these exact files, so
+        // only the kept call contract needs binding back to its tree: it must
+        // still name a UTF-8 file the edit kept.
+        if let Some(call) = &record.call
+            && !saved.files.iter().any(|file| {
+                file.path == call.reference && std::str::from_utf8(&file.content).is_ok()
+            })
+        {
+            return Err(invalid(
+                "call reference must name a UTF-8 file in the exact skill tree",
+            ));
+        }
         self.put_skill_record_in_txn(txn, fork, &record, occurred, learned_at)?;
         self.persist_hub_package_in_txn(txn, fork, &saved)?;
         self.scan_and_ingest_on_import_in_txn(

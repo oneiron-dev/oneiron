@@ -188,6 +188,8 @@ side_tables! {
     /// unchanged NOTE is not read again, its verdict and importance, and a sealed pad's missed
     /// keep lines with the re-asks spent on them (FIX 2240). Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
+    /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
+    DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
@@ -300,6 +302,8 @@ side_tables! {
     /// Private binding of a Budget/Consent trap anchor claim to its owning step. Key: id16(anchor
     /// claim).
     DREAMER_TRAP_BINDING: VaultMeta b"dreamer:trap_binding:v1:" Raw;
+    /// Device-local presence index of trap anchors whose head is Sent. Key: id16(anchor claim).
+    DREAMER_TRAP_SENT: VaultMeta b"dreamer:trap_sent:v1:" Named Engine;
     /// Latest consolidation carrier of a TURN re-dirtied without moving its row: second, a
     /// store-minted order id, the row learned_at it was taken against and the scopes that consumed
     /// it. Key: id16(turn).

@@ -270,6 +270,7 @@ impl ProcessLauncher {
             llama_alias,
             pins,
             native_socket,
+            scheduling: None,
         });
         Ok(path)
     }

@@ -66,7 +66,10 @@ use oneiron::code_run::{
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
-use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
+use oneiron::dreamer_runner::{
+    CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt, outage_park_reason,
+    outage_retry_after,
+};
 use oneiron::engine_executor::continuation::{fork_executor_run, run_continuation};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
@@ -104,10 +107,6 @@ use crate::mcp::{
 /// The pump's lease owner, and the owner of the park a run stopped by a
 /// provider outage holds (FIX 3194), which a provider's recovery resumes.
 pub(crate) const LEASE_OWNER: &str = "oneiron-server-agent-runs";
-/// The reason a run stopped by a provider outage parks under. A host-door
-/// outage appends its provider retry hint; an unhinted own-step outage keeps
-/// the reason bare and still resumes only on recovery or restart.
-const OUTAGE_PARK_REASON: &str = "agent_run_provider_unavailable";
 /// The park a run waiting on a durable signal holds its lease under, owned
 /// by the trap its wait's reply wakes; a restart is not that signal, so
 /// recovery keeps the lease.
@@ -602,56 +601,56 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .join("\n\n")
 }
 
-/// Encodes a host door's relative retry hint on its park. No hint means no
-/// timed resume: the run keeps the recovery/restart behavior it had before.
-fn outage_park_reason(retry_after: Option<u64>) -> String {
-    retry_after.map_or_else(
-        || OUTAGE_PARK_REASON.to_owned(),
-        |seconds| format!("{OUTAGE_PARK_REASON}:retry_after={seconds}"),
-    )
-}
-
-/// The provider's retry hint on a host-door outage park, if it carried one.
-fn outage_retry_after(reason: &str) -> Option<u64> {
-    reason
-        .strip_prefix(OUTAGE_PARK_REASON)?
-        .strip_prefix(":retry_after=")?
-        .parse()
-        .ok()
+fn clear_stale_outage_marker(runner: &DreamerRunnerStore<'_>, due_at: u64, attempt: AttemptId) {
+    if let Err(error) = runner.delete_due_outage_marker(due_at, attempt) {
+        tracing::warn!(%error, ?attempt, "a stale outage due marker was not deleted");
+    }
 }
 
 /// Resumes each due host-door outage park. Recovery, restart, and this sweep
 /// all use the same owner-checked idempotent resume door, so only one wins.
+/// With no vault migration, a park written before this index resumes through
+/// recovery or restart, or gains an index row when it re-parks.
 fn resume_due_outage_parks(vault: &Vault, now: u64) -> oneiron::Result<usize> {
-    let rows = AttemptQueue::new(vault).list()?;
     let runner = DreamerRunnerStore::new(vault);
     let mut resumed = 0;
-    for row in rows
-        .iter()
-        .filter(|row| matches!(row.state, AttemptState::Leased))
-    {
-        let park = match runner.parked_attempt(row.id) {
-            Ok(Some(park)) => park,
-            Ok(None) => continue,
+    for (due_at, attempt) in runner.due_outage_attempts(now)? {
+        let (status, park) = match runner.status_with_park(attempt) {
+            Ok(Some((status, park))) => (status, park),
+            Ok(None) => {
+                clear_stale_outage_marker(&runner, due_at, attempt);
+                continue;
+            }
             Err(error) => {
-                tracing::warn!(%error, attempt = ?row.id, "an outage park could not be read");
+                tracing::warn!(%error, ?attempt, "an outage park could not be read");
                 continue;
             }
         };
-        if park.park_owner != LEASE_OWNER || park.cause != DreamerParkCause::ProviderUnavailable {
+        if !matches!(status.attempt.state, AttemptState::Leased) {
             continue;
         }
-        let Some(retry_after) = outage_retry_after(&park.reason) else {
+        let Some(park) = park else {
+            clear_stale_outage_marker(&runner, due_at, attempt);
             continue;
         };
-        if park.parked_at.saturating_add(retry_after) > now {
+        if park.park_owner != LEASE_OWNER {
             continue;
         }
-        match runner.resume_parked(row.id, LEASE_OWNER, now) {
+        if park.cause != DreamerParkCause::ProviderUnavailable {
+            clear_stale_outage_marker(&runner, due_at, attempt);
+            continue;
+        }
+        let current_due = outage_retry_after(&park.reason)
+            .map(|retry_after| park.parked_at.saturating_add(retry_after));
+        if current_due != Some(due_at) {
+            clear_stale_outage_marker(&runner, due_at, attempt);
+            continue;
+        }
+        match runner.resume_parked(attempt, LEASE_OWNER, now) {
             Ok(Some(_)) => resumed += 1,
-            Ok(None) => {}
+            Ok(None) => clear_stale_outage_marker(&runner, due_at, attempt),
             Err(error) => {
-                tracing::warn!(%error, attempt = ?row.id, "a due outage park was not resumed");
+                tracing::warn!(%error, ?attempt, "a due outage park was not resumed");
             }
         }
     }

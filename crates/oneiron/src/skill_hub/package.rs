@@ -10,7 +10,6 @@ use crate::skill::{SkillContentHash, SkillRecord, canonical_skill_tree_hash};
 use super::support::validate_text;
 use crate::error::ArtifactError;
 
-const MAX_CAPABILITY_ENTRIES: usize = 256;
 pub(super) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
 pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
@@ -73,11 +72,6 @@ impl SkillCapabilitySurface {
 
     pub(super) fn validate(&self) -> Result<()> {
         for entries in [&self.bins, &self.env, &self.mcp, &self.allowed_tools] {
-            if entries.len() > MAX_CAPABILITY_ENTRIES {
-                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                    "capability surface has too many entries",
-                )));
-            }
             for entry in entries {
                 validate_text(
                     entry,

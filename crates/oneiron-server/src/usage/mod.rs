@@ -7,6 +7,7 @@ mod meters;
 mod model;
 mod pricing;
 mod repair;
+mod retrieval_buffer;
 mod rollup;
 pub use codec::UsageError;
 pub use ledger::{CycleSettlements, SeatUsage, UnpricedCache, UsageLedger};
@@ -22,5 +23,8 @@ pub use model::{
 };
 pub use pricing::catalog_cost_rates;
 pub(crate) use repair::{UsageScope, removal_conflict_reason};
+pub use retrieval_buffer::{
+    RETRIEVAL_BUFFER_ROWS, RETRIEVAL_FLUSH_SECS, RetrievalMeterBatch, RetrievalMeterBuffer,
+};
 #[cfg(test)]
 mod tests;

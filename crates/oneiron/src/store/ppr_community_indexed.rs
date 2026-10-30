@@ -9,6 +9,7 @@ use heed::RoTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::ports::EntityStoreRead;
 use crate::ppr::read_graph_version;
 use crate::ppr_community::{
@@ -17,9 +18,7 @@ use crate::ppr_community::{
 };
 
 use super::Store;
-use super::ppr_community::{
-    CACHE, COMMUNITY_META_SUFFIX, MAX_COMMUNITY_CACHE_BYTES, MAX_COMMUNITY_NODES,
-};
+use super::ppr_community::{CACHE, COMMUNITY_META_SUFFIX};
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("ppr community cache")
@@ -38,13 +37,9 @@ impl IndexedRows<'_, '_> {
         let value = CACHE.get(self.store, self.txn, &suffix.to_owned())?;
         let bytes = CACHE.decl().prefix.len() + suffix.len() + value.as_ref().map_or(0, Vec::len);
         self.bytes = self.bytes.checked_add(bytes).ok_or_else(corrupt)?;
-        if self.bytes > MAX_COMMUNITY_CACHE_BYTES
-            || value
-                .as_ref()
-                .is_some_and(|v| v.len() > MAX_COMMUNITY_NODES * 16)
-        {
-            return Err(corrupt());
-        }
+        // No size refusal here: rows are validated strictly where they are
+        // decoded, against the snapshot's own graph size, and the byte
+        // total is only observed through the CommunityCacheBytes row.
         Ok(value)
     }
 
@@ -70,7 +65,7 @@ impl Store {
         txn: &RoTxn<'_>,
     ) -> Result<Option<(CommunityCacheMeta, usize)>> {
         let raw = CACHE.get(self, txn, &COMMUNITY_META_SUFFIX.to_owned())?;
-        raw.map(|v| CommunityCacheMeta::decode_row(&v, MAX_COMMUNITY_NODES).map_err(|_| corrupt()))
+        raw.map(|v| CommunityCacheMeta::decode_row_unbounded(&v).map_err(|_| corrupt()))
             .transpose()
     }
 
@@ -80,9 +75,7 @@ impl Store {
         selected: &BTreeSet<EntityId>,
     ) -> Result<CommunityQueryView> {
         let (meta, graph_size) = self.ppr_community_meta_in_txn(txn)?.ok_or_else(corrupt)?;
-        if meta.graph_version != read_graph_version(self, txn)?
-            || selected.len() > MAX_COMMUNITY_NODES
-        {
+        if meta.graph_version != read_graph_version(self, txn)? {
             return Err(corrupt());
         }
         let mut rows = IndexedRows {
@@ -168,6 +161,10 @@ impl Store {
             .flat_map(|m| [m.fine, m.coarse])
             .map(|id| (id, all_members[&id].len()))
             .collect();
+        self.limit_watch.measure(
+            EngineLimit::CommunityCacheBytes,
+            u64::try_from(rows.bytes).unwrap_or(u64::MAX),
+        );
         Ok(CommunityQueryView {
             nodes,
             sizes,
