@@ -14,6 +14,10 @@ side_tables! {
     /// One turn's saved tag set under its derivation envelope: unconfirmed mentions, the turn's
     /// mood and merge evidence. Derived, local, never synced. Key: turn id16.
     TAGGING_TAG_SET: VaultMeta b"tagging:tags:v1:" Named;
+    /// The review decision an owner accepted of a TASK no write had settled yet (FIX 11757),
+    /// which the TASK's settlement names as its anchor: the first one, kept after the settlement
+    /// as history and gone with the TASK's erase. Key: id16 (TASK).
+    TASK_ACCEPTED_REVIEW: VaultMeta b"tasks.accepted_review.v1/" Named Engine;
     /// Owner/question-class ask band and consumed receipt markers. Key: id16 + u16be + class [+ ':' id16].
     TASK_ASK_BAND: VaultMeta b"tasks.ask.band.v1:" Raw;
     /// Local ed25519 seed (32 bytes) that signs one ask group's option-link words. Key: id16 (group).

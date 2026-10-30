@@ -221,6 +221,7 @@ fn admit_owner(
         Some(locality) => oneiron::llm::HostInferenceBinding::Advertised {
             model: request.model.clone(),
             locality,
+            keyless: false,
         },
         None => oneiron::llm::HostInferenceBinding::Registered,
     };
