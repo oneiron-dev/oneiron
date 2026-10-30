@@ -25331,10 +25331,7 @@ pub struct BudgetLease {
 #[serde(tag = "kind")]
 pub enum DecideRules {
     #[serde(rename = "dominance")]
-    Dominance {
-        #[serde(rename = "min_primary_gain")]
-        min_primary_gain: f64,
-    },
+    Dominance,
     #[serde(rename = "of366")]
     Of366 {
         #[serde(rename = "verdict_epsilon")]

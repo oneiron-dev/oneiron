@@ -3244,7 +3244,7 @@ export type CampaignSplits = { search: CampaignDatasetRef; held_out: CampaignDat
 /** `oneiron::autoreason_campaign::general::BudgetLease` */
 export type BudgetLease = { budget_id: string; max_units: number; exploration_units: number }
 /** `oneiron::autoreason_campaign::general::DecideRules` */
-export type DecideRules = { kind: "dominance"; min_primary_gain: number } | { kind: "of366"; verdict_epsilon: number }
+export type DecideRules = { kind: "dominance" } | { kind: "of366"; verdict_epsilon: number }
 /** `oneiron::autoreason_campaign::general::MergeCrossover` */
 export type MergeCrossover = { requested?: boolean; min_validation_overlap: number }
 /** `oneiron::autoreason_campaign::general::CampaignKnobs` */
