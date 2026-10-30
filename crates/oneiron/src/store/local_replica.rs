@@ -355,9 +355,6 @@ impl<'a> Census<'a> {
             KeepReason::BoundActor
         } else if self.tombstones.contains(id) {
             KeepReason::Tombstoned
-        } else if crate::sync::asset_body::file_row_in_txn(self.store, txn, id, raw)? {
-            // No carrier holds a file-plane ASSET's bytes yet (FIX 5393).
-            KeepReason::NotCarried
         } else if !map_contains_binary(&self.entities, &id.to_hex()) {
             KeepReason::NotCarried
         } else if self.pending(txn, id)? {
