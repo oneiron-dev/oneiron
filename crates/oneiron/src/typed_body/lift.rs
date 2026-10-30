@@ -329,6 +329,42 @@ impl Vault {
         )
     }
 
+    /// The custody records of `entity`'s typed body texts that the strings
+    /// `drawn` hold: a key whose value no drawn string holds withholds
+    /// nothing (FIX 12234). A span that does not read, and a key in a marked
+    /// member, count as [`Self::typed_body_lifted_sources_in_txn`] counts
+    /// them. Each key once, in custody-id order.
+    pub(crate) fn typed_body_lifted_sources_drawn_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        drawn: &[String],
+    ) -> Result<LiftedSources> {
+        let mut keys = Vec::new();
+        for text in body_texts_in_txn(&self.store, txn, entity)? {
+            let hash = blake3::hash(text.as_bytes());
+            let Some(mark) = masked_file_in_txn(&self.store, txn, hash.as_bytes())? else {
+                continue;
+            };
+            for key in &mark.keys {
+                let value = usize::try_from(key.start)
+                    .ok()
+                    .zip(usize::try_from(key.end).ok())
+                    .and_then(|(start, end)| text.get(start..end));
+                match value {
+                    Some(value) if !drawn.iter().any(|held| held.contains(value)) => {}
+                    _ => keys.push(key.custody),
+                }
+            }
+            for member in &mark.members {
+                keys.extend(member.keys.iter().map(|key| key.custody));
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(LiftedSources(keys))
+    }
+
     /// The keys the lifted texts a read of `entity`'s typed body may show
     /// hold, and their custody records, from one list of texts read in
     /// `txn`, the snapshot the read projects its view in: the live body's

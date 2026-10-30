@@ -10,11 +10,17 @@
 //! no entry holds, a slide the deck was not imported with, a slide part the
 //! package does not hold, or a package or relationship part that does not
 //! read counts every part, as a preview did before.
+//!
+//! The same asked slides map to the nodes they draw for the body's texts
+//! and its live-born pictures (FIX 12234): a text or picture no asked slide
+//! draws withholds nothing, and where the mapping cannot tell the caller
+//! counts every text and picture as before.
 
 use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use heed::RoTxn;
+use oneiron_docedit::edit::transaction::AssetRef;
 use oneiron_docedit::live::{LiveDeck, NodeId, NodePayload};
 use oneiron_docedit::retained_opc::{Package, rels_name};
 use zip::ZipArchive;
@@ -114,9 +120,82 @@ fn every_key(mark: &MaskedFile) -> impl Iterator<Item = EntityId> + '_ {
         .map(|key| key.custody)
 }
 
+/// The asked `slides` of `deck` and every node on them, 1-based in its
+/// order; `None` when the mapping cannot tell (an asked slide the deck does
+/// not hold, or one born live with no binding to map it by), so the caller
+/// counts every text and picture as before (FIX 12234).
+pub(super) fn drawn_nodes(deck: &LiveDeck, slides: &[u64]) -> Option<BTreeSet<NodeId>> {
+    let order = &deck.nodes.get(&NodeId(0))?.children;
+    let mut drawn = BTreeSet::new();
+    for &slide in slides {
+        let at = usize::try_from(slide.checked_sub(1)?).ok()?;
+        let id = *order.get(at)?;
+        deck.nodes.get(&id)?.binding.as_ref()?;
+        drawn.insert(id);
+        drawn.extend(deck.descendants(id));
+    }
+    Some(drawn)
+}
+
+/// Every string the nodes `drawn` of `deck` hold, as their JSON shows them:
+/// each node's fields and its text body (FIX 12234).
+pub(super) fn drawn_strings(deck: &LiveDeck, drawn: &BTreeSet<NodeId>) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in drawn {
+        if let Some(node) = deck.nodes.get(id)
+            && let Ok(value) = serde_json::to_value(node)
+        {
+            strings_of(&value, &mut out);
+        }
+        if let Some(body) = deck.texts.get(id)
+            && let Ok(value) = serde_json::to_value(body)
+        {
+            strings_of(&value, &mut out);
+        }
+    }
+    out
+}
+
+/// Every live-born picture the nodes `drawn` of `deck` name, each once
+/// (FIX 12234).
+pub(super) fn drawn_pictures(deck: &LiveDeck, drawn: &BTreeSet<NodeId>) -> Vec<AssetRef> {
+    let mut out = Vec::new();
+    for id in drawn {
+        if let Some(node) = deck.nodes.get(id)
+            && let Some(image) = node.payload.as_ref().and_then(NodePayload::picture)
+            && !out.contains(image)
+        {
+            out.push(image.clone());
+        }
+    }
+    out
+}
+
+/// Every string `value` holds, in document order.
+fn strings_of(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => out.push(text.clone()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strings_of(item, out);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for item in fields.values() {
+                strings_of(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The parts the asked `slides` of `deck` draw, 1-based in its order, as
 /// `package` names them; `None` when every part counts.
-fn drawn_parts(deck: &LiveDeck, slides: &[u64], package: &Package) -> Option<BTreeSet<String>> {
+pub(super) fn drawn_parts(
+    deck: &LiveDeck,
+    slides: &[u64],
+    package: &Package,
+) -> Option<BTreeSet<String>> {
     let held: BTreeSet<&str> = package.names().collect();
     let order = &deck.nodes.get(&NodeId(0))?.children;
     let mut queue = Vec::new();
