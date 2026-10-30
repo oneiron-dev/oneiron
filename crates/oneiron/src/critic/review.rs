@@ -14,9 +14,11 @@ pub use dissent::{
 mod persistence;
 mod questions;
 pub use outcomes::{record_review_outcome, recurring_findings};
+pub(crate) use outcomes::rewrite_outcome_artifact_ids_in_txn;
 use persistence::*;
 pub(crate) use persistence::{
-    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn, trusted_review_in_txn,
+    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
+    erase_review_session_in_txn, rewrite_verdict_artifact_ids_in_txn, trusted_review_in_txn,
 };
 pub use questions::{
     REVIEW_DIAL, ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording,
