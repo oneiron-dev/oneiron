@@ -13,6 +13,7 @@ mod connector_call_transport;
 mod conversation_parse;
 mod inbox_sync;
 mod normalize_keys;
+mod page_text;
 mod sandbox_host;
 mod seat_policy;
 mod served_inbox_sync;
@@ -153,6 +154,13 @@ const RECEIPT_FIELD_DUPLICATE_SEND_GUARD: &str = "duplicate_send_guard";
 const RECEIPT_FIELD_RETRY_WINDOW: &str = "retry_window";
 const RECEIPT_FIELD_PRE_SEND_MATCH_COUNT: &str = "pre_send_match_count";
 const RECEIPT_FIELD_POST_SEND_MATCH_COUNT: &str = "post_send_match_count";
+/// What proved a delivery: `page_text` when the thread's page text showed the
+/// sent words anew (FIX 12329).
+const RECEIPT_FIELD_VERIFY_EVIDENCE: &str = "verify_evidence";
+/// The sent words' occurrences in turns not the counterparty's, on the page
+/// read before the send and on the page that proved delivery.
+const RECEIPT_FIELD_PAGE_TEXT_MATCHES_BEFORE: &str = "page_text_matches_before";
+const RECEIPT_FIELD_PAGE_TEXT_MATCHES_AFTER: &str = "page_text_matches_after";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

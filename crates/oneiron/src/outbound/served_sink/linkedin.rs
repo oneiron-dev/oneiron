@@ -4,8 +4,11 @@
 //! for the replying agent, made through the host's connector calls, so the
 //! connector's gate, consent and intent ledger see it as every connector
 //! send. The verified send around those calls (OF-327 D2) reads the thread
-//! before and after `send_message`, and only a message the send named, which
-//! the thread shows as the seat's, is delivered.
+//! before and after `send_message`: a message the send named, which the
+//! thread shows as the seat's, is delivered, and on the connector's page
+//! text, which names no ids, so are the sent words standing in a turn not
+//! the counterparty's more often than before the send (FIX 12329). A
+//! delivered reply joins the conversation as every channel's does.
 //!
 //! Only a reply sends here: the answered message names the seat it came to
 //! and the thread it is answered in.

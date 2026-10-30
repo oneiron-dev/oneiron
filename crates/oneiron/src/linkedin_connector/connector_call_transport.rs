@@ -39,7 +39,7 @@ use super::{
 };
 
 /// The key prefix a LinkedIn member is named by.
-const LINKEDIN_MEMBER_KEY_PREFIX: &str = "linkedin:member:";
+pub(super) const LINKEDIN_MEMBER_KEY_PREFIX: &str = "linkedin:member:";
 /// The key prefix a LinkedIn thread is named by, as its counterparty.
 const LINKEDIN_THREAD_KEY_PREFIX: &str = "linkedin:thread:";
 /// Where a member's name sits in a LinkedIn profile link.
@@ -319,7 +319,7 @@ fn conversation_members(output: &Value) -> Vec<String> {
 }
 
 /// The member name a profile link (`/in/<name>/`) carries.
-fn profile_member(url: &str) -> Option<String> {
+pub(super) fn profile_member(url: &str) -> Option<String> {
     let (_, rest) = url.split_once(LINKEDIN_PROFILE_PATH)?;
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let member = rest[..end].trim();
