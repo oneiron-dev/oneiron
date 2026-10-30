@@ -82,7 +82,9 @@ pub(crate) use self::charter::{
     charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
     charter_never_list_matches_scoped_channel,
 };
-pub(crate) use self::credential_binding::connector_issuer_hold_in_txn;
+pub(crate) use self::credential_binding::{
+    connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
+};
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, budget_block_pooled,
