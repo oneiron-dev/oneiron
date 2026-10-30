@@ -224,8 +224,9 @@ fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
 /// request's `Arc` out to a join of the same request, copying no permit
 /// (FIX 12139); a join of another request on the set whose pieces name its
 /// carrier shares that request's permits, copying and hashing none (FIX
-/// 12014, 12281). The first join still verifies, and joins its pieces into
-/// one list sized to them, which the set then keeps without a copy.
+/// 12014, 12281). The first join still verifies: one piece hands over its
+/// shared run, copying no permit (FIX 12310), more join into one list sized
+/// to them, which the set then keeps without a copy.
 pub(super) fn joined_request<'r>(
     work: &OwnerWorkState,
     signer: &[u8; 32],
@@ -262,6 +263,15 @@ pub(super) fn joined_request<'r>(
         }
         joined_len = joined_len.checked_add(piece.permits.len())?;
         runs.push(piece);
+    }
+    // One piece carries the whole set: hand over its shared run, copying no
+    // permit (FIX 12310).
+    if let [only] = runs.as_slice() {
+        let joined = with_permits(request, only.permits.clone());
+        if verified.is_none() {
+            joined.validate().ok()?;
+        }
+        return Some(KeptRequest::Joined(Arc::new(joined)));
     }
     let mut permits = Vec::with_capacity(joined_len);
     for piece in runs {
@@ -393,7 +403,7 @@ impl Vault {
                 commitment,
                 index,
                 first,
-                permits: run.to_vec(),
+                permits: CustodyRecipientPermits::from(run),
             };
             let op = AuthorityOp::CustodyPermitPiece(piece);
             let entry = sign_side_entry(fold, signing, seq, parents, op, now)?;

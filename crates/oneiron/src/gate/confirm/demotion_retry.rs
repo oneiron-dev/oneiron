@@ -6,7 +6,7 @@
 //! ends: nothing is dropped. In memory only: a reopened vault tries each row
 //! at once, and its healer item is stored at most once, at its own id.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rmpv::Value;
@@ -47,13 +47,21 @@ pub(crate) struct ConfirmDemotionRetry {
 /// `None` once it demoted or had nothing to demote, else its retry state.
 pub(super) type ConfirmDemotionOutcome = ([u8; 32], Option<ConfirmDemotionRetry>);
 
-/// Each failing timeout demotion's retry state, by its confirm id.
+/// Each failing timeout demotion's retry state, by its confirm id, and the
+/// confirms the running expiry walk has read still in the tray (FIX 12288).
 #[derive(Debug, Default)]
-pub(crate) struct ConfirmDemotionRetries(Mutex<BTreeMap<[u8; 32], ConfirmDemotionRetry>>);
+pub(crate) struct ConfirmDemotionRetries {
+    retries: Mutex<BTreeMap<[u8; 32], ConfirmDemotionRetry>>,
+    seen: Mutex<BTreeSet<[u8; 32]>>,
+}
 
 impl ConfirmDemotionRetries {
     fn rows(&self) -> MutexGuard<'_, BTreeMap<[u8; 32], ConfirmDemotionRetry>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.retries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn walked(&self) -> MutexGuard<'_, BTreeSet<[u8; 32]>> {
+        self.seen.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether the walk tries the row `confirm` at `now`: one with no failure
@@ -76,8 +84,16 @@ impl ConfirmDemotionRetries {
     }
 
     /// Keeps what a committed page learned: a row it settled leaves the map,
-    /// a row that failed takes its new state.
-    pub(super) fn record(&self, outcomes: Vec<ConfirmDemotionOutcome>) {
+    /// a row that failed takes its new state. Every confirm the page read is
+    /// noted as still in the tray; once the walk ends, every entry whose row
+    /// left the tray another way (owner settle, replicated overwrite) is
+    /// dropped (FIX 12288). Rows still in the tray keep their state.
+    pub(super) fn record(
+        &self,
+        outcomes: Vec<ConfirmDemotionOutcome>,
+        seen: Vec<[u8; 32]>,
+        complete: bool,
+    ) {
         let mut rows = self.rows();
         for (confirm, retry) in outcomes {
             match retry {
@@ -88,6 +104,12 @@ impl ConfirmDemotionRetries {
                     rows.remove(&confirm);
                 }
             }
+        }
+        let mut walked = self.walked();
+        walked.extend(seen);
+        if complete {
+            rows.retain(|confirm, _| walked.contains(confirm));
+            walked.clear();
         }
     }
 }

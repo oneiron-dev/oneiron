@@ -448,9 +448,10 @@ impl Vault {
     /// demotion as a `Demoted` settlement settled by the engine (FIX 1093).
     /// A row whose demotion failed waits out its backoff before the walk
     /// tries it again (FIX 12079); the backoff it learned is kept once the
-    /// page commits.
+    /// page commits. Once the walk ends, entries whose rows left the tray
+    /// another way are dropped (FIX 12288).
     fn expire_critical_write_confirms_impl(&self, at: Option<u64>) -> Result<ConfirmExpiryPage> {
-        let (page, outcomes) = self.with_write_txn_grouped(|wtxn| {
+        let (page, outcomes, seen) = self.with_write_txn_grouped(|wtxn| {
             let now = at.unwrap_or_else(|| self.store.clock.now_recorded_at());
             let (cursor, prior_fence) = self
                 .store
@@ -474,13 +475,18 @@ impl Vault {
             )?;
             let mut demoted = 0;
             let mut outcomes = Vec::new();
+            let mut seen = Vec::new();
             for (_, row) in pending {
-                if critical_confirm_has_no_deadline(&row) {
-                    continue;
-                }
                 let Ok(binding) = critical_write_confirm_binding(&row) else {
                     continue;
                 };
+                // Every confirm still in the tray, even one this page skips,
+                // so a finished walk drops only entries whose rows left it
+                // (FIX 12288).
+                seen.push(binding.confirm_id);
+                if critical_confirm_has_no_deadline(&row) {
+                    continue;
+                }
                 if binding.expires_at > now
                     || !self.confirm_demotion_retries.due(&binding.confirm_id, now)
                 {
@@ -520,9 +526,10 @@ impl Vault {
                 began_at: cursor.is_none().then_some(now),
                 ended: complete,
             };
-            Ok((page, outcomes))
+            Ok((page, outcomes, seen))
         })?;
-        self.confirm_demotion_retries.record(outcomes);
+        self.confirm_demotion_retries
+            .record(outcomes, seen, page.ended);
         Ok(page)
     }
 
