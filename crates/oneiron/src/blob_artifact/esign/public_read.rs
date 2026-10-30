@@ -17,8 +17,29 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<Vec<u8>> {
-        self.execute_signing_action(token, &SigningAction::Load, ip, user_agent)?;
-        self.esign_pdf_after_admission(token, item)
+        self.esign_pdf_for_capability_within(token, item, ip, user_agent, &|_, _| Ok(true))
+    }
+    /// [`Self::esign_pdf_for_capability`] under a narrowed caller's
+    /// credential ceiling (FIX 6403): the ceremony Load and the read judge
+    /// the document the capability binds as soon as the binding names it.
+    /// The capability authorizes the item it names, original or sealed.
+    pub(super) fn esign_pdf_for_capability_within(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        ip: Option<String>,
+        user_agent: Option<String>,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<Vec<u8>> {
+        self.execute_signing_action_within(
+            token,
+            &SigningAction::Load,
+            super::SigningCaller::Bearer,
+            ip,
+            user_agent,
+            ceiling,
+        )?;
+        self.esign_pdf_after_admission(token, item, ceiling)
     }
     /// One capability admission for a page and its pinned PDF, for preview callers.
     pub fn esign_preview_for_capability(
@@ -33,13 +54,19 @@ impl Vault {
         else {
             return Err(invalid("preview is unavailable"));
         };
-        let bytes = self.esign_pdf_after_admission(token, item)?;
+        let bytes = self.esign_pdf_after_admission(token, item, &|_, _| Ok(true))?;
         Ok((page, bytes))
     }
-    fn esign_pdf_after_admission(&self, token: &EsignCapability, item: usize) -> Result<Vec<u8>> {
+    fn esign_pdf_after_admission(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<Vec<u8>> {
         let now = self.now_recorded_at();
         let txn = self.store.env.read_txn()?;
         let cap = binding(self, &txn, token)?;
+        super::lane_scope::ceiling_admits_in(ceiling, &txn, &cap.document)?;
         let id = EntityId::from_hex(&cap.document)?;
         let state = state_in(self, &txn, id)?;
         let recipient = state

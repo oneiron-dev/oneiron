@@ -57,17 +57,34 @@ impl Vault {
         token: &EsignCapability,
         bytes: &[u8],
     ) -> Result<String> {
+        self.upload_esign_signature_image_within(token, bytes, &|_, _| Ok(true))
+    }
+
+    /// [`Self::upload_esign_signature_image`] under a narrowed caller's
+    /// credential ceiling (FIX 6403): each of its writers judges the
+    /// document the capability binds as soon as the binding names it, the
+    /// first before the image is decoded, so a document out of its reach
+    /// answers as an invalid capability and is not observed. The new image
+    /// is the capability's own, under its document.
+    pub(super) fn upload_esign_signature_image_within(
+        &self,
+        token: &EsignCapability,
+        bytes: &[u8],
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<String> {
         let now = self.now_recorded_at();
         // Authenticate before attacker-controlled image decode. Count the
         // attempt separately so an observation failure never denies signing.
         let (document, recipient) = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
+            super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
             if cap.revoked_at.is_some() || now >= cap.hard_expires_at {
                 return Err(invalid("invalid capability"));
             }
             Ok((cap.document, cap.recipient))
         })?;
         let _ = self.with_write_txn_grouped(|txn| {
+            super::lane_scope::ceiling_admits_in(ceiling, txn, &document)?;
             super::rate::observe(self, txn, &document, &recipient, now)
         });
         if bytes.is_empty() {
@@ -96,6 +113,7 @@ impl Vault {
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
+            super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
             let id = EntityId::from_hex(&cap.document)?;
             let state = state_in(self, txn, id)?;
             let recipient = state
@@ -229,14 +247,30 @@ impl Vault {
         token: &EsignCapability,
         image_ref: &str,
     ) -> Result<Vec<u8>> {
+        self.esign_signature_image_for_capability_within(token, image_ref, &|_, _| Ok(true))
+    }
+
+    /// [`Self::esign_signature_image_for_capability`] under a narrowed
+    /// caller's credential ceiling (FIX 6403): the observation writer and
+    /// the read judge the document the capability binds as soon as the
+    /// binding names it. The capability's own binding to the image, not the
+    /// image's id alone, authorizes its bytes.
+    pub(super) fn esign_signature_image_for_capability_within(
+        &self,
+        token: &EsignCapability,
+        image_ref: &str,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<Vec<u8>> {
         reference(image_ref)?;
         let now = self.now_recorded_at();
         let _ = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
+            super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
             super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
         });
         let txn = self.store.env.read_txn()?;
         let cap = binding(self, &txn, token)?;
+        super::lane_scope::ceiling_admits_in(ceiling, &txn, &cap.document)?;
         let id = EntityId::from_hex(&cap.document)?;
         let state = state_in(self, &txn, id)?;
         let recipient = state

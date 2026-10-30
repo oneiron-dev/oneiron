@@ -155,10 +155,42 @@ struct EsignSink<'a> {
     reminder: Option<(String, u32)>,
     /// The vault owner's proof, when the act is his own.
     owner: Option<&'a AuthenticatedOwner>,
+    /// A narrowed caller's ceiling (FIX 6403), judged in the writer that
+    /// records the gate decision and again in the act's own write; `None`
+    /// for every other act.
+    scope: Option<EsignActScope<'a>>,
+    /// A narrowed act's own store, writer or lane-read failure in its
+    /// write: the dispatch's error, never a changed state (FIX 6403).
+    error: Option<crate::Error>,
+}
+/// A narrowed caller's ceiling on one outbound e-sign act (FIX 6403,
+/// `lane_scope`).
+pub(super) struct EsignActScope<'a> {
+    /// The bound actor, whose content writer on the document lands the act.
+    pub(super) writer: crate::WriteActor,
+    /// Whether the caller's lane still reaches the document and every
+    /// original its trail names, read in the snapshot given.
+    pub(super) reaches: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
+}
+/// Why an act's write landed nothing.
+enum NotApplied {
+    /// The act's own refusal: its state or binding changed.
+    Refused,
+    /// A narrowed caller's lane no longer reaches the document or an
+    /// original (FIX 6403).
+    ScopeChanged,
+    /// The store's, the writer's or the lane read's own failure in a
+    /// narrowed caller's write (FIX 6403).
+    Failed(crate::Error),
+}
+impl From<crate::Error> for NotApplied {
+    fn from(error: crate::Error) -> Self {
+        Self::Failed(error)
+    }
 }
 impl OutboundExecutionSink for EsignSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        let result = self.vault.with_write_txn_grouped(|txn| {
+        let act = |txn: &mut heed::RwTxn<'_>| -> Result<EntityId> {
             let id = EntityId::from_hex(&self.command.document)?;
             let marker = *blake3::hash(request.intent_ref.as_bytes()).as_bytes();
             let binding = request
@@ -345,7 +377,29 @@ impl OutboundExecutionSink for EsignSink<'_> {
             DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &recorded)?;
 
             Ok(id)
-        });
+        };
+        // FIX 6403: a narrowed caller's act lands through its content writer
+        // on the document (its Grant at the document's position in a shared
+        // vault, never a whole-vault one), its lane judged again there first.
+        let result = match &self.scope {
+            None => self
+                .vault
+                .with_write_txn_grouped(act)
+                .map_err(|_| NotApplied::Refused),
+            Some(scope) => EntityId::from_hex(&self.command.document)
+                .map_err(NotApplied::from)
+                .and_then(|document| {
+                    self.vault
+                        .try_with_actor_content_write_txn(scope.writer, |content| {
+                            content.update_artifact(document, |txn| {
+                                if !(scope.reaches)(txn)? {
+                                    return Err(NotApplied::ScopeChanged);
+                                }
+                                act(txn).map_err(|_| NotApplied::Refused)
+                            })
+                        })
+                }),
+        };
         match result {
             Ok(id) => {
                 OutboundExecutionOutcome::delivered_to_channel(format!("esign:{}", id.to_hex()))
@@ -358,7 +412,29 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         },
                     )
             }
-            Err(_) => OutboundExecutionOutcome::failed("esign_state_or_binding_changed"),
+            Err(NotApplied::Refused) => {
+                OutboundExecutionOutcome::failed("esign_state_or_binding_changed")
+            }
+            Err(NotApplied::ScopeChanged) => {
+                OutboundExecutionOutcome::failed("esign_scope_changed")
+            }
+            // Nothing landed: a definite non-delivery to OF-327, and the
+            // error itself to the dispatch, which surfaces it.
+            Err(NotApplied::Failed(error)) => {
+                self.error = Some(error);
+                OutboundExecutionOutcome::failed("esign_not_applied")
+            }
+        }
+    }
+
+    /// A narrowed caller's lane, judged in the writer that records the
+    /// act's gate decision before it records one (FIX 6403): no decision is
+    /// recorded for a document out of its reach, refused as the door
+    /// refuses it. Every other act is not judged here.
+    fn admit_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        match &self.scope {
+            Some(scope) if !(scope.reaches)(txn)? => Err(super::lane_scope::unreached()),
+            _ => Ok(()),
         }
     }
 }
@@ -372,7 +448,7 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_esign_inner(request, command, (ip, user_agent), None, None)
+        self.dispatch_esign_inner(request, command, (ip, user_agent), None, None, None)
     }
     /// [`Self::dispatch_esign`] for the vault owner's own act: admission
     /// rechecks his proof under its writer, and the act is recorded with it,
@@ -383,7 +459,24 @@ impl Vault {
         command: &EsignOutboundCommand,
         owner: &AuthenticatedOwner,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_esign_inner(request, command, (None, None), None, Some(owner))
+        self.dispatch_esign_inner(request, command, (None, None), None, Some(owner), None)
+    }
+    /// [`Self::dispatch_esign`], or [`Self::dispatch_esign_as_owner`] with
+    /// `owner`, for a narrowed caller (FIX 6403): `scope` judges its lane in
+    /// the writer that records the gate decision, where a document out of
+    /// its reach records no decision and is refused as the door refuses it,
+    /// and again in the act's own write, which lands through the caller's
+    /// content writer on the document and is the failed outcome
+    /// `esign_scope_changed` once the lane no longer reaches it. A store,
+    /// writer or lane-read failure there is the dispatch's error.
+    pub(super) fn dispatch_esign_in_scope(
+        &self,
+        request: OutboundDispatchRequest,
+        command: &EsignOutboundCommand,
+        owner: Option<&AuthenticatedOwner>,
+        scope: EsignActScope<'_>,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_esign_inner(request, command, (None, None), None, owner, Some(scope))
     }
     pub(super) fn dispatch_esign_reminder(
         &self,
@@ -397,6 +490,7 @@ impl Vault {
             command,
             (None, None),
             Some((recipient.to_owned(), rung)),
+            None,
             None,
         )
     }
@@ -464,6 +558,7 @@ impl Vault {
         (ip, user_agent): (Option<String>, Option<String>),
         reminder: Option<(String, u32)>,
         owner: Option<&AuthenticatedOwner>,
+        scope: Option<EsignActScope<'_>>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         request.intent.content_ref =
             Some(self.esign_command_binding(&request, command, &reminder)?);
@@ -482,11 +577,18 @@ impl Vault {
             now,
             reminder,
             owner,
+            scope,
+            error: None,
         };
-        match owner {
+        let result = match owner {
             Some(owner) => self.dispatch_outbound_intent_as_owner(request, owner, &mut sink),
             None => OutboundDispatchPipeline.dispatch(self, request, &mut sink),
+        };
+        // FIX 6403: a narrowed act's own write failure surfaces here.
+        if let Some(error) = sink.error.take() {
+            return Err(error.into());
         }
+        result
     }
     /// Expiry is an unsealed terminal and never queues a seal job.
     pub fn expire_esign_document(&self, document: EntityId, now: u64) -> Result<()> {
