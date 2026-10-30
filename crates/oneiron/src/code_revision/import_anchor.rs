@@ -15,10 +15,10 @@ use super::CodeRevision;
 use super::import_types::{CodeImportApproval, CodeImportManifest, approval_id, manifest_id};
 use super::promotion::promotion_receipt_in_txn;
 use super::storage::read_code_revision_record_in_txn;
-use super::tree_inventory::CodeTreeInventory;
+use super::tree_inventory::{CodeTreeInventory, MODE_GITLINK};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error, Result};
-use crate::git_wire::{GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::merge_queue::QueueTestedTarget;
 use crate::origin::tree::OriginTreeFile;
 use crate::scan_check::{EngineScan, ScanCount};
@@ -211,6 +211,48 @@ pub fn materialize_code_revision_tree(
     repo: &GitWireRepo,
     revision: &CodeRevision,
 ) -> Result<BTreeMap<String, OriginTreeFile>> {
+    verify_complete_tree(vault, repo, revision)?;
+    CodeTreeInventory::render(vault, git, repo, revision)
+}
+
+/// The untouched blobs a finalized tested revision's complete tree holds,
+/// by path, after the checks [`materialize_code_revision_tree`] makes: each
+/// read at its recorded object and checked against its size and hash, for a
+/// working view (FIX 9940). A submodule link holds no file bytes and is
+/// left out.
+///
+/// # Errors
+/// An ordinary or changed revision, another object store or inventory, a
+/// withheld import, or a missing or changed object.
+pub fn read_code_revision_blobs(
+    vault: &Vault,
+    git: &GitWire<'_>,
+    repo: &GitWireRepo,
+    revision: &CodeRevision,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    verify_complete_tree(vault, repo, revision)?;
+    let mut blobs = BTreeMap::new();
+    for (path, blob) in &revision.blob_frontiers {
+        if blob.mode == MODE_GITLINK {
+            continue;
+        }
+        let content = git.read_object(repo, &GitOid::parse_hex(blob.git_oid.clone())?)?;
+        if content.len() as u64 != blob.size_bytes
+            || blake3::hash(&content).as_bytes() != &blob.content_hash
+        {
+            return Err(Error::InvariantViolation(
+                "a tested tree blob differs from its recorded bytes",
+            ));
+        }
+        blobs.insert(path.clone(), content);
+    }
+    Ok(blobs)
+}
+
+/// The persisted record authenticated, its object store and inventory
+/// digest checked, and an import-bound chain's imported snapshot custody
+/// checked again: untouched bytes are never read past custody.
+fn verify_complete_tree(vault: &Vault, repo: &GitWireRepo, revision: &CodeRevision) -> Result<()> {
     let tested = revision
         .tested_queue
         .as_ref()
@@ -237,5 +279,5 @@ pub fn materialize_code_revision_tree(
             return Err(Error::Refused(detail));
         }
     }
-    CodeTreeInventory::render(vault, git, repo, revision)
+    Ok(())
 }
