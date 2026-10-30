@@ -246,6 +246,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.finalize_stream" => a.spec.clone().ok_or_else(invalid),
         "vault.cancel_stream" => a.spec.clone().ok_or_else(invalid),
         "vault.message_stream_partial" => a.spec.clone().ok_or_else(invalid),
+        "vault.message_streams.refused" => a.spec.clone().ok_or_else(invalid),
         "vault.messages.durability" => a.spec.clone().ok_or_else(invalid),
         "vault.witness" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.upsert" => a.spec.clone().ok_or_else(invalid),
@@ -1850,6 +1851,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.message_stream_partial" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.message_streams.refused" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.messages.durability" => {
@@ -6989,6 +6993,24 @@ async fn execute_agent_verb_row_on(
             let output = oneiron::task_verb::sdk::vault_message_stream_partial(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.message_streams.refused" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.message_streams.refused", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_message_streams_refused(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "vault.messages.durability" => {

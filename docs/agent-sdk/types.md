@@ -1109,6 +1109,8 @@ class Oneiron:
         def message_stream_partial(self, spec: Facade.MessageStreamRequest) -> Facade.MessageStreamPartial:
             """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
         @property
+        def message_streams(self) -> "Oneiron._VaultMessageStreamsVerbs": ...
+        @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
@@ -1547,6 +1549,9 @@ class Oneiron:
             """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
         def resume(self, spec: Facade.RunnerWorkResumeRequest) -> Facade.RunnerWorkResumeView:
             """The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."""
+    class _VaultMessageStreamsVerbs:
+        def refused(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.StreamRecoveryRefusal]:
+            """Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""

@@ -174,6 +174,9 @@ pub(super) fn project_once(
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),
         retired_keys,
+        host_custody: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
         closed_handoffs,
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
