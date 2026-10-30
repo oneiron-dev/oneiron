@@ -100,24 +100,49 @@ pub(crate) fn deleted_elsewhere(
     window: &str,
     notes: impl IntoIterator<Item = EntityId>,
 ) {
-    let notes: Vec<EntityId> = {
-        // Dropped before any window commits: Observer A opens a writer.
-        let txn = vault.store.env.read_txn().ok();
-        notes
-            .into_iter()
-            .filter(|id| {
-                let kind = txn.as_ref().and_then(|txn| {
-                    crate::batch::stored_entity_type(&vault.store, txn, id)
-                        .ok()
-                        .flatten()
-                });
-                kind.is_none_or(|kind| kind == crate::registry::ENTITY_TYPE_NOTE)
-            })
-            .collect()
-    };
+    let notes = note_ids(vault, notes);
     if notes.is_empty() {
         return;
     }
+    scrub_other_windows(vault, window, &notes, true);
+}
+
+/// [`deleted_elsewhere`] for a caller that holds the shared materializer
+/// lock (Observer B's tombstone batch, FIX 12128): the same scrub, without
+/// locking — the lock is not reentrant, so locking here would deadlock.
+/// Each changed window still commits as a mirror of the delete, which that
+/// window's observer skips by origin while persisting and routing it.
+pub(crate) fn deleted_elsewhere_under_lock(
+    vault: &Vault,
+    window: &str,
+    notes: impl IntoIterator<Item = EntityId>,
+) {
+    let notes = note_ids(vault, notes);
+    if notes.is_empty() {
+        return;
+    }
+    scrub_other_windows(vault, window, &notes, false);
+}
+
+/// The NOTEs among `notes`: an id whose stored row is another kind's is no
+/// NOTE, and is passed over.
+fn note_ids(vault: &Vault, notes: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
+    // Dropped before any window commits: Observer A opens a writer.
+    let txn = vault.store.env.read_txn().ok();
+    notes
+        .into_iter()
+        .filter(|id| {
+            let kind = txn.as_ref().and_then(|txn| {
+                crate::batch::stored_entity_type(&vault.store, txn, id)
+                    .ok()
+                    .flatten()
+            });
+            kind.is_none_or(|kind| kind == crate::registry::ENTITY_TYPE_NOTE)
+        })
+        .collect()
+}
+
+fn scrub_other_windows(vault: &Vault, window: &str, notes: &[EntityId], take_lock: bool) {
     for loaded in vault.live_windows() {
         let holds_bundles = matches!(
             loaded.doc.get_value(),
@@ -129,8 +154,8 @@ pub(crate) fn deleted_elsewhere(
         let Some((_, materializer, _)) = vault.live_window(&loaded.key) else {
             continue;
         };
-        let _guard = materializer.lock();
-        match attachments_deleted(&loaded.doc, &notes) {
+        let _guard = take_lock.then(|| materializer.lock());
+        match attachments_deleted(&loaded.doc, notes) {
             Ok(true) => {
                 loaded
                     .doc
