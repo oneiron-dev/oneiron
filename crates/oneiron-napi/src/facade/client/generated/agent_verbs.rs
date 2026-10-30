@@ -4305,6 +4305,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_legal_holds_withdraw_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.withdraw_erase", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_courtesy_delete_send(
         &self,
         input: serde_json::Value,

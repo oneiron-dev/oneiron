@@ -499,6 +499,7 @@ both bindings and their export-census tests in one change.
 - `vault.legal_holds.list`
 - `vault.legal_holds.log`
 - `vault.legal_holds.lift_and_erase`
+- `vault.legal_holds.withdraw_erase`
 - `vault.courtesy_delete.send`
 - `vault.courtesy_delete.sent`
 - `vault.courtesy_delete.incoming`

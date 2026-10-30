@@ -717,6 +717,48 @@ impl Vault {
         self.store.vault_meta.put(txn, &k, &encode(&record)?)?;
         Ok(())
     }
+    /// Withdraws act `id`, which `starter` started, in the caller's writer:
+    /// its record goes, with every holder's started event and matured notice
+    /// for it. Seam addition (L01 pack-j, FIX 10401): the owner's withdrawal
+    /// of the waiting erase this act held back, which the caller records in
+    /// that erase's legal-hold trail first. An act another holder started
+    /// refuses, and so does one a request has claimed, its effect executed or
+    /// in flight, as its record says. `false` when no act `id` is stored.
+    pub(crate) fn withdraw_authority_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &str,
+        starter: EntityId,
+    ) -> Result<bool> {
+        let id = EntityId::from_hex(id)?.to_hex();
+        let k = key(ACT_PREFIX, &id);
+        let Some(raw) = self.store.vault_meta.get(txn, &k)? else {
+            return Ok(false);
+        };
+        let record: PendingAuthorityAct = decode(&raw)?;
+        if record.starter != starter.to_hex() {
+            return Err(invalid());
+        }
+        if record.execution.is_some() {
+            return Err(Error::ConcurrentWrite("authority act already executed"));
+        }
+        self.store.vault_meta.delete(txn, &k)?;
+        // Each holder's rows key as `<prefix><holder hex>:<act id>`.
+        let suffix = format!(":{id}");
+        for prefix in [EVENT_PREFIX, matured::MATURED_PREFIX] {
+            let mut rows = Vec::new();
+            for row in self.store.vault_meta.prefix_iter(txn, prefix)? {
+                let (row_key, _) = row?;
+                if row_key.ends_with(suffix.as_bytes()) {
+                    rows.push(row_key.to_vec());
+                }
+            }
+            for row_key in &rows {
+                self.store.vault_meta.delete(txn, row_key)?;
+            }
+        }
+        Ok(true)
+    }
     /// Binds the receipt a deletion recovery wrote to the act whose claim
     /// named the same request, in that recovery's writer: the effect an
     /// interrupted claim carried finished there, so its receipt is the act's.

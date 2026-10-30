@@ -2646,6 +2646,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.legal_holds.withdraw_erase",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldWithdrawEraseRequest,
+                >(),
+            ),
+            (
                 "vault.courtesy_delete.send",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CourtesyDeleteSendRequest,
@@ -7349,6 +7355,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.legal_holds.list",
     "vault.legal_holds.log",
     "vault.legal_holds.lift_and_erase",
+    "vault.legal_holds.withdraw_erase",
     "vault.embedding_spaces.list",
     "vault.embedding_spaces.declare",
     "vault.embedding_spaces.bind",
@@ -8942,6 +8949,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.legal_holds.lift_and_erase" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::LegalHoldLiftAndErased,
+        >(),
+        "vault.legal_holds.withdraw_erase" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LegalHoldErasesWithdrawn,
         >(),
         "vault.embedding_spaces.list" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::EmbeddingSpacesView,
@@ -13930,6 +13940,13 @@ pub fn mcp_arguments_schema_from_input(
         "vault.legal_holds.list" => &[],
         "vault.legal_holds.log" => &[],
         "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.legal_holds.withdraw_erase" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20579,6 +20596,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 decode(value.clone())?;
         }
+        "vault.legal_holds.withdraw_erase" => {
+            let _input: crate::task_verb::sdk::LegalHoldWithdrawEraseRequest =
+                decode(value.clone())?;
+        }
         "vault.courtesy_delete.send" => {
             let _input: crate::task_verb::sdk::CourtesyDeleteSendRequest = decode(value.clone())?;
         }
@@ -24175,6 +24196,9 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.legal_holds.withdraw_erase" => {
+            encode(vault_legal_holds_withdraw_erase(memory, decode(value)?)?)
         }
         "vault.courtesy_delete.send" => encode(vault_courtesy_delete_send(memory, decode(value)?)?),
         "vault.courtesy_delete.sent" => encode(vault_courtesy_delete_sent(memory, decode(value)?)?),
@@ -29845,6 +29869,16 @@ pub fn vault_legal_holds_lift_and_erase(
     crate::task_verb::sdk::lift_legal_hold_and_erase_as(
         memory.vault(),
         &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
+        input,
+    )
+}
+pub fn vault_legal_holds_withdraw_erase(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldWithdrawEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::LegalHoldErasesWithdrawn> {
+    crate::task_verb::sdk::withdraw_legal_hold_erase_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.withdraw_erase")?,
         input,
     )
 }

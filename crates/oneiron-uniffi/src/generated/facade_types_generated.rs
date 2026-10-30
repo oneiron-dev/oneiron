@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1213 facade rows, 4399 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1165.
+// UniFFI census: 1214 facade rows, 4403 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1166.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -30039,6 +30039,8 @@ pub enum LegalHoldEventKind {
     LiftAndEraseConfirmed,
     #[serde(rename = "erase_confirmed")]
     EraseConfirmed,
+    #[serde(rename = "erase_withdrawn")]
+    EraseWithdrawn,
     #[serde(rename = "erase_completed")]
     EraseCompleted,
     #[serde(rename = "lifted")]
@@ -30066,6 +30068,8 @@ pub enum LegalHoldReason {
     PrivacyEraseKept,
     #[serde(rename = "owner_confirmed")]
     OwnerConfirmed,
+    #[serde(rename = "owner_withdrew")]
+    OwnerWithdrew,
     #[serde(rename = "completion_pending")]
     CompletionPending,
     #[serde(rename = "receipt_completed")]
@@ -30278,6 +30282,45 @@ pub struct LegalHoldLiftAndErased {
     pub records: Vec<LegalHoldErasedRecord>,
     #[serde(rename = "changed", default, skip_serializing_if = "Option::is_none")]
     pub changed: Option<LiftAndEraseShownState>,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldWithdrawEraseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawEraseRequest {
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+}
+
+/// `oneiron::deletion::legal_hold::types::EraseWithdrawal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EraseWithdrawal {
+    #[serde(rename = "withdrawn")]
+    Withdrawn,
+    #[serde(rename = "not_waiting")]
+    NotWaiting,
+    #[serde(rename = "confirmed_by_another_owner")]
+    ConfirmedByAnotherOwner,
+    #[serde(rename = "under_way")]
+    UnderWay,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldWithdrawnErase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawnErase {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "status")]
+    pub status: EraseWithdrawal,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldErasesWithdrawn`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldErasesWithdrawn {
+    #[serde(rename = "records")]
+    pub records: Vec<LegalHoldWithdrawnErase>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteSendRequest`.

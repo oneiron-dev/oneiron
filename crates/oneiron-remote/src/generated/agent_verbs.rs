@@ -1546,6 +1546,9 @@ impl OneironClient {
                 "vault.legal_holds.lift_and_erase" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LegalHoldLiftAndErased,
                 >(client, verb, &input),
+                "vault.legal_holds.withdraw_erase" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LegalHoldErasesWithdrawn,
+                >(client, verb, &input),
                 "vault.courtesy_delete.send" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CourtesyDeleteSent,
                 >(client, verb, &input),
@@ -9856,6 +9859,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.legal_holds.lift_and_erase", value)
+    }
+    pub fn vault_legal_holds_withdraw_erase(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldWithdrawEraseRequest,
+    ) -> Result<oneiron::task_verb::sdk::LegalHoldErasesWithdrawn, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.withdraw_erase", value)
     }
     pub fn vault_courtesy_delete_send(
         &self,

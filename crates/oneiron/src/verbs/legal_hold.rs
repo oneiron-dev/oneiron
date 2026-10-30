@@ -1,6 +1,6 @@
 //! The inputs and answers of the owner's legal-hold rows (OF-470):
-//! `vault.legal_holds.place`, `.widen`, `.list`, `.log` and
-//! `.lift_and_erase`, each a host door. Each fn passes the engine exactly
+//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift_and_erase`
+//! and `.withdraw_erase`, each a host door. Each fn passes the engine exactly
 //! what it asks for, under the vault owner's proof: a server mints it from
 //! the request, as `/v1/owner` does; an embedded handle acts as the vault's
 //! embedded owner. Oneiron's host-order doors have no row here, since no
@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    ErasePendingReason, LegalHold, LegalHoldEvent, LegalHoldTarget, LiftAndEraseOutcome,
-    LiftAndEraseShownState, LiftAndEraseStatus,
+    ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldEvent, LegalHoldTarget,
+    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
 };
 use crate::error::LegalHoldBound;
 use crate::memory::MemoryResult;
@@ -149,6 +149,31 @@ impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
     }
 }
 
+/// `vault.legal_holds.withdraw_erase`'s input: the records whose waiting
+/// erase the owner withdraws (FIX 10401).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawEraseRequest {
+    pub records: Vec<EntityId>,
+}
+
+/// One record the withdrawal named, with what it did to the erase that
+/// waited on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawnErase {
+    pub record: EntityId,
+    pub status: EraseWithdrawal,
+}
+
+/// `vault.legal_holds.withdraw_erase`'s answer: each named record's state,
+/// in id order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldErasesWithdrawn {
+    pub records: Vec<LegalHoldWithdrawnErase>,
+}
+
 /// `vault.legal_holds.place`: the owner's customer hold on `targets`.
 pub fn place_legal_hold_as(
     vault: &Vault,
@@ -199,4 +224,20 @@ pub fn lift_legal_hold_and_erase_as(
             &input.shown_state,
         )?
         .into())
+}
+
+/// `vault.legal_holds.withdraw_erase`: the owner withdraws the erase that
+/// waits on each of `input.records`, under the owner proof the confirm
+/// takes (FIX 10401). A hold the confirm lifted stays lifted.
+pub fn withdraw_legal_hold_erase_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: LegalHoldWithdrawEraseRequest,
+) -> MemoryResult<LegalHoldErasesWithdrawn> {
+    let records = vault
+        .withdraw_waiting_erases(owner, &input.records)?
+        .into_iter()
+        .map(|(record, status)| LegalHoldWithdrawnErase { record, status })
+        .collect();
+    Ok(LegalHoldErasesWithdrawn { records })
 }

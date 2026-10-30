@@ -1756,6 +1756,8 @@ export class Oneiron {
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
       /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
+      /** The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting. */
+      withdraw_erase: (input: Facade.LegalHoldWithdrawEraseRequest): Facade.LegalHoldErasesWithdrawn => this.#call(() => this.#client.vaultLegalHoldsWithdrawErase(input) as Facade.LegalHoldErasesWithdrawn),
     },
     courtesy_delete: {
       /** The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery. */

@@ -7638,6 +7638,21 @@
       "openapi": true
     },
     {
+      "name": "vault.legal_holds.withdraw_erase",
+      "description": "The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting.",
+      "input": "crate::task_verb::sdk::LegalHoldWithdrawEraseRequest",
+      "output": "crate::task_verb::sdk::LegalHoldErasesWithdrawn",
+      "call": "crate::task_verb::sdk::withdraw_legal_hold_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.withdraw_erase\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.courtesy_delete.send",
       "description": "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery.",
       "input": "crate::task_verb::sdk::CourtesyDeleteSendRequest",

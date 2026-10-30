@@ -497,6 +497,7 @@ pub enum AgentVerb {
     VaultLegalHoldsList,
     VaultLegalHoldsLog,
     VaultLegalHoldsLiftAndErase,
+    VaultLegalHoldsWithdrawErase,
     VaultCourtesyDeleteSend,
     VaultCourtesyDeleteSent,
     VaultCourtesyDeleteIncoming,
@@ -1735,6 +1736,7 @@ impl AgentVerb {
         Self::VaultLegalHoldsList,
         Self::VaultLegalHoldsLog,
         Self::VaultLegalHoldsLiftAndErase,
+        Self::VaultLegalHoldsWithdrawErase,
         Self::VaultCourtesyDeleteSend,
         Self::VaultCourtesyDeleteSent,
         Self::VaultCourtesyDeleteIncoming,
@@ -2990,6 +2992,7 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
             Self::VaultLegalHoldsLog => "vault.legal_holds.log",
             Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
+            Self::VaultLegalHoldsWithdrawErase => "vault.legal_holds.withdraw_erase",
             Self::VaultCourtesyDeleteSend => "vault.courtesy_delete.send",
             Self::VaultCourtesyDeleteSent => "vault.courtesy_delete.sent",
             Self::VaultCourtesyDeleteIncoming => "vault.courtesy_delete.incoming",
@@ -4246,6 +4249,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
@@ -5513,6 +5517,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
@@ -6922,6 +6927,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
@@ -7888,6 +7894,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesDeclare
@@ -8860,6 +8867,7 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultLegalHoldsWithdrawErase => &["spec"],
             Self::VaultCourtesyDeleteSend => &["spec"],
             Self::VaultCourtesyDeleteSent => &[],
             Self::VaultCourtesyDeleteIncoming => &[],
@@ -10099,6 +10107,7 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultLegalHoldsWithdrawErase => &["spec"],
             Self::VaultCourtesyDeleteSend => &["spec"],
             Self::VaultCourtesyDeleteSent => &[],
             Self::VaultCourtesyDeleteIncoming => &[],
@@ -12300,6 +12309,9 @@ impl AgentVerb {
             Self::VaultLegalHoldsLog => "The owner-visible legal hold log, oldest first.",
             Self::VaultLegalHoldsLiftAndErase => {
                 "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."
+            }
+            Self::VaultLegalHoldsWithdrawErase => {
+                "The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."
             }
             Self::VaultCourtesyDeleteSend => {
                 "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."

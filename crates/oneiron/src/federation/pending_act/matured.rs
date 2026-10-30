@@ -8,7 +8,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 
-const MATURED_PREFIX: &[u8] = b"shared-act:matured:v1:";
+pub(super) const MATURED_PREFIX: &[u8] = b"shared-act:matured:v1:";
 
 /// Waiting acts beside their row keys.
 type WaitingActs = Vec<(Vec<u8>, PendingAuthorityAct)>;
