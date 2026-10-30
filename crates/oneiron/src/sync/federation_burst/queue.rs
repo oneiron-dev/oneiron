@@ -247,7 +247,7 @@ impl DeferredWork {
             .store
             .sync_queue
             .get(txn, &self.key())?
-            .and_then(|saved| Self::decode(saved).ok())
+            .and_then(|saved| Self::decode(&saved).ok())
             .map(|saved| saved.deadline);
         if let Some(replaced) = replaced
             && replaced != self.deadline
@@ -500,7 +500,7 @@ pub(crate) fn expire_retained_work(vault: &Vault) -> Result<u64> {
                 .store
                 .sync_queue
                 .get(txn, key)?
-                .map(DeferredWork::decode)
+                .map(|saved| DeferredWork::decode(&saved))
                 .transpose()?;
             if let Some(work) = saved
                 && work.key() == *key
