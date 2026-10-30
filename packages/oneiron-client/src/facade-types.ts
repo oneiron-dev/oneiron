@@ -1285,7 +1285,7 @@ export type RetrievalPolicyTrace = { identity: RetrievalPolicyIdentity; envelope
 /** `oneiron::store::retrieval_telemetry::state::RetrievalReplayInputs` */
 export type RetrievalReplayInputs = { query_ref?: string | null; config: unknown; corpus_snapshot_ref?: string | null }
 /** `oneiron_contracts::retrieval_telemetry::RetrievalSignal` */
-export type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector"
+export type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector" | "relevance"
 /** `oneiron_contracts::retrieval_telemetry::RetrievalScoreComponent` */
 export type RetrievalScoreComponent = { signal: RetrievalSignal; rank: number; score: number }
 /** `oneiron::store::retrieval_telemetry::types::RetrievalScoreBreakdown` */
@@ -1327,13 +1327,13 @@ export type RetrievalReplayRun = { source_run_id: RetrievalRunId; turn?: Retriev
 /** `oneiron::verbs::retrieval::RetrievalDiagnosticReplay` */
 export type RetrievalDiagnosticReplay = { contract_version: string; runs: RetrievalReplayRun[] }
 /** `oneiron_contracts::retrieval_telemetry::RetrievalBlendWeights` */
-export type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number }
+export type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number; relevance: number }
 /** `oneiron::store::retrieval_telemetry::types::RetrievalBlendWeightDataWindow` */
 export type RetrievalBlendWeightDataWindow = { run_count: number; outcome_count: number; candidate_count: number; started_at_min?: number | null; started_at_max?: number | null; outcome_updated_at_min?: number | null; outcome_updated_at_max?: number | null }
 /** `oneiron::store::retrieval_telemetry::types::RetrievalBlendWeightTableEntry` */
 export type RetrievalBlendWeightTableEntry = { version: number; weights: RetrievalBlendWeights; tuned_at: number; provenance: Record<string, string>; data_window: RetrievalBlendWeightDataWindow }
 /** `oneiron_contracts::retrieval_telemetry::RetrievalBlendSignal` */
-export type RetrievalBlendSignal = "recency" | "salience" | "confidence" | "gravity"
+export type RetrievalBlendSignal = "recency" | "salience" | "confidence" | "gravity" | "relevance"
 /** `oneiron::store::retrieval_telemetry::types::RetrievalWeightOrigin` */
 export type RetrievalWeightOrigin = "bootstrap" | "learned" | "owner_pin"
 /** `oneiron::store::retrieval_telemetry::types::RetrievalWeightRow` */

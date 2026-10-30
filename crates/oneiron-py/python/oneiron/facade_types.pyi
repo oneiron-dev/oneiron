@@ -3379,7 +3379,7 @@ class RetrievalReplayInputs(TypedDict):
     query_ref: NotRequired[str | None]
     config: Any
     corpus_snapshot_ref: NotRequired[str | None]
-RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
+RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector", "relevance"]
 class RetrievalScoreComponent(TypedDict):
     signal: RetrievalSignal
     rank: int
@@ -3487,6 +3487,7 @@ class RetrievalBlendWeights(TypedDict):
     salience: float
     confidence: float
     gravity: float
+    relevance: float
 class RetrievalBlendWeightDataWindow(TypedDict):
     run_count: int
     outcome_count: int
@@ -3501,7 +3502,7 @@ class RetrievalBlendWeightTableEntry(TypedDict):
     tuned_at: int
     provenance: dict[str, str]
     data_window: RetrievalBlendWeightDataWindow
-RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity"]
+RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity", "relevance"]
 RetrievalWeightOrigin = Literal["bootstrap", "learned", "owner_pin"]
 class RetrievalWeightRow(TypedDict):
     signal: RetrievalBlendSignal
