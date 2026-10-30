@@ -1,32 +1,34 @@
-//! File-plane ASSET rows at sync (FIX 5393 cut 1): no export ships a manifest without its bytes.
+//! File-plane ASSET rows at sync (FIX 5393): no export ships a manifest as a body.
 //!
-//! A file-plane ASSET row holds a manifest in place of its body, and sync
-//! copies rows raw, so a peer would take the manifest for the body. Until a
-//! body transport lands (cut 2), every egress withholds such a row, and an
-//! echo of its body inline is the same row. Each helper asks
-//! [`ASSET_FILE_PLANE`] first: off, no row is a file row, and every caller
-//! keeps its exact behaviour without reading a descriptor.
+//! A file-plane ASSET row holds a manifest in place of its body. A window
+//! carries it by reference (FIX 5489, [`references`]): the row's bytes are
+//! the carrier, its reference rides beside it in the same commit, and the
+//! body moves outside Loro, by the frames of `sync::transport`. An echo of
+//! a body, inline or by reference, is the same row. Each helper asks
+//! [`ASSET_FILE_PLANE`] first: off, no row is a file row, no reference is
+//! read, and every caller keeps its exact behaviour.
 //!
 //! The descriptor decides, never the bytes: a row is a file row only when
 //! the ASSET owns a complete body file for the manifest it stores
-//! ([`asset_body_file_of_row`]). A peer's bytes are never read as a manifest.
-//!
-//! Cut 2 (FIX 5489) moves the body by reference: [`references`] holds the
-//! reference a carrier travels with. Nothing sends one yet.
+//! ([`asset_body_file_of_row`]). A peer's bytes are read as a manifest only
+//! where a reference binds them.
 
-#[allow(dead_code, reason = "FIX 5489 PR2 admits and copies these references")]
 pub(crate) mod references;
 
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
-use loro::LoroMap;
+use loro::{LoroDoc, LoroMap};
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{ASSET_FILE_PLANE, ManifestDbs, asset_body_file_of_row};
+use crate::registry::ENTITY_TYPE_ASSET;
+use crate::store::{
+    ASSET_FILE_PLANE, AssetBodyFacts, ManifestDbs, asset_body_file_of_row, asset_file_in_txn,
+};
 use crate::sync::loro_support::map_for_each_value_bytes;
+use references::AssetBodyRef;
 
 /// Whether the stored row `raw` of `id` is a file-plane ASSET's. Always
 /// `false` while the file plane is off.
@@ -127,4 +129,77 @@ pub(in crate::sync) fn file_echo_equal(
     };
     let body = &carried[ENTITY_METADATA_HEADER_LEN..];
     Ok(body.len() as u64 == len && *blake3::hash(body).as_bytes() == digest)
+}
+
+/// Whether the stored row `stored` of `id` is an ASSET whose body, inline or
+/// in its file, has exactly `facts`. An inline body is measured only when
+/// its length is the one `facts` names.
+///
+/// # Errors
+///
+/// [`asset_file_in_txn`]'s errors.
+pub(in crate::sync) fn stored_body_is(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    stored: &[u8],
+    facts: &AssetBodyFacts,
+) -> Result<bool> {
+    if EntityMetadataHeader::parse(stored).is_none_or(|h| h.entity_type != ENTITY_TYPE_ASSET) {
+        return Ok(false);
+    }
+    let body = &stored[ENTITY_METADATA_HEADER_LEN..];
+    if let Some(manifest) = asset_file_in_txn(store, txn, id, body)? {
+        return Ok(manifest.facts == *facts);
+    }
+    Ok(body.len() as u64 == facts.len && AssetBodyFacts::of(body) == *facts)
+}
+
+/// The echo test of a carrier `body` binds: `carried` is the row `stored` of
+/// `id` when the two hold the same metadata header and the stored body,
+/// inline or in its file, is the one the reference names. Identical
+/// manifest bytes alone prove nothing. `false` while the file plane is off.
+///
+/// # Errors
+///
+/// [`stored_body_is`]'s errors.
+pub(in crate::sync) fn ref_echo_equal(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &AssetBodyRef,
+    stored: &[u8],
+    carried: &[u8],
+) -> Result<bool> {
+    if !ASSET_FILE_PLANE
+        || stored.len() < ENTITY_METADATA_HEADER_LEN
+        || carried.get(..ENTITY_METADATA_HEADER_LEN) != stored.get(..ENTITY_METADATA_HEADER_LEN)
+    {
+        return Ok(false);
+    }
+    stored_body_is(store, txn, id, stored, &body.facts())
+}
+
+/// Both logical echo tests, for a parity site that holds the window `doc`
+/// `carried` comes from: [`file_echo_equal`], and [`ref_echo_equal`] when a
+/// reference of `doc` binds `carried`.
+///
+/// # Errors
+///
+/// Their errors.
+pub(in crate::sync) fn doc_echo_equal(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    doc: &LoroDoc,
+    id: &EntityId,
+    stored: &[u8],
+    carried: &[u8],
+) -> Result<bool> {
+    if file_echo_equal(store, txn, id, stored, carried)? {
+        return Ok(true);
+    }
+    match references::bound_in(doc, id, carried) {
+        Some(body) => ref_echo_equal(store, txn, id, &body, stored, carried),
+        None => Ok(false),
+    }
 }
