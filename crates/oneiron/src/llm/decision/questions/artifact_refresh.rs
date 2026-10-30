@@ -601,7 +601,7 @@ impl Asking<'_> {
                     _ => None,
                 };
                 let export_texts = match exported.as_ref().and_then(|span| span.bytes.as_ref()) {
-                    Some(bytes) => match texts(bytes) {
+                    Some(bytes) => match texts(bytes)? {
                         Some(texts) => Some(texts),
                         None => return Ok(None),
                     },
