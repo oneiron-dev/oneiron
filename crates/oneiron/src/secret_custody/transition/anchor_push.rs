@@ -1,7 +1,9 @@
 //! The owner's kit push (CALLS CUSTODY_KIT_PUSH, Engine ruling 10-19
 //! 08:0x): the one transition the recovery kit still signs, from an install
 //! with no live machine profile, which carries no owner act. Moved whole out
-//! of the parent to make room for FIX 7402: only its paths changed.
+//! of the parent to make room for FIX 7402: only its paths changed, and it
+//! seals under no carrier key, as before (an unprofiled install answers no
+//! live ask).
 
 use super::super::types::{SecretCustodyRecord, SecretCustodyStatus};
 use super::{
@@ -142,7 +144,7 @@ impl Vault {
             };
             let signed_at = signed_after_held_in_txn(self, wtxn, id, &record.0, at)?;
             let pieces =
-                sign_custody_transition(&fold, &anchor, id, &record.0, enactment, signed_at)?;
+                sign_custody_transition(&fold, &anchor, id, &record.0, enactment, signed_at, None)?;
             Ok(remember_custody_pieces_in_txn(self, wtxn, &pieces)?.then_some(pieces))
         })?;
         #[cfg(feature = "sync")]
