@@ -56,12 +56,6 @@ const SLACK_USER_MENTION_OPEN: &str = "<@";
 /// ignoring ASCII case.
 const EMAIL_SUBJECT_REPLY_PREFIXES: &[&str] = &["Re:", "Fwd:", "Fw:"];
 
-/// The lines that open the quoted block of an email reply, each read on a
-/// trimmed line as (how it starts, how it ends): a `>` quote line, and an
-/// `On <date>, <sender> wrote:` attribution, which a client may wrap onto a
-/// second line.
-const EMAIL_QUOTE_MARKERS: &[(&str, &str)] = &[(">", ""), ("On ", "wrote:")];
-
 /// The signature delimiter line (`-- `, read trimmed): the reply's own text
 /// ends above it.
 const EMAIL_SIGNATURE_DELIMITER: &str = "--";
@@ -123,32 +117,11 @@ fn is_email_attribution_line(line: &str) -> bool {
             .is_some_and(|(address, _)| address.contains('@'))
 }
 
-/// An email reply's own top text: its body above the first line that opens
-/// a quoted block ([`EMAIL_QUOTE_MARKERS`], or an attribution line in any
-/// language) or its signature ([`EMAIL_SIGNATURE_DELIMITER`]).
-fn email_top_text(body: &str) -> &str {
-    let mut at = 0;
-    let mut lines = body.split_inclusive('\n').peekable();
-    while let Some(line) = lines.next() {
-        let trimmed = line.trim();
-        let wrapped = lines.peek().map(|next| next.trim());
-        let opens = EMAIL_QUOTE_MARKERS.iter().any(|&(start, end)| {
-            trimmed.starts_with(start)
-                && (trimmed.ends_with(end) || wrapped.is_some_and(|next| next.ends_with(end)))
-        }) || trimmed == EMAIL_SIGNATURE_DELIMITER
-            || is_email_attribution_line(trimmed);
-        if opens {
-            break;
-        }
-        at += line.len();
-    }
-    &body[..at]
-}
-
 /// Whether the message `payload_ref` archives is a STOP, each text compared
 /// whole with [`is_stop_reply`]: a Slack message's text after its leading
 /// mentions, a LINE message's text, and an email's subject after its reply
-/// prefixes or its own top text.
+/// prefixes or its reply top text
+/// ([`crate::channel_identity_provider::EmailProviderInbound::reply_top_text`]).
 fn message_is_stop_reply(vault: &Vault, channel: &str, payload_ref: &str) -> Result<bool> {
     if channel == EMAIL_CHANNEL {
         let Some(email) = vault.read_provider_email(payload_ref)? else {
@@ -158,10 +131,7 @@ fn message_is_stop_reply(vault: &Vault, channel: &str, payload_ref: &str) -> Res
             .subject
             .as_deref()
             .is_some_and(|subject| is_stop_reply(&email_subject_for_stop(subject)));
-        let top_text = email
-            .text_body
-            .as_deref()
-            .is_some_and(|body| is_stop_reply(email_top_text(body)));
+        let top_text = email.reply_top_text.as_deref().is_some_and(is_stop_reply);
         return Ok(subject || top_text);
     }
     let Some(text) = vault.read_provider_event_text(channel, payload_ref)? else {

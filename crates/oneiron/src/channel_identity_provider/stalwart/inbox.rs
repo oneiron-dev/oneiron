@@ -24,8 +24,8 @@ use crate::{EntityId, Error, Result, Vault};
 
 const INBOX_PAGE_SIZE: usize = 100;
 
-/// How much of a message's decoded plain-text body the vault keeps on its
-/// provider event; the server cuts the rest.
+/// How much of a message's decoded plain-text body the server sends, for
+/// the intake to cut the reply's top text from; the server cuts the rest.
 const NATIVE_MAIL_TEXT_BODY_MAX_BYTES: u64 = 16 * 1024;
 
 /// Host-owned progress. Persist only a successfully returned cursor. A mailbox,
@@ -460,8 +460,8 @@ impl StalwartClient {
     /// Quarantines one listed message and hands it to the mail ingress door.
     /// Its bytes stream from the server into the quarantine file, so memory
     /// never holds the message whole; the vault keeps its metadata, its
-    /// subject and bounded plain-text body as the server decoded them, and
-    /// its quarantine reference as its provider event. A capture that leaves
+    /// decoded subject and reply top text, and its quarantine reference as
+    /// its provider event. A capture that leaves
     /// the quarantine's disk below `[limits] code_result_disk_floor_bytes`
     /// asks that row's question and keeps the message. Threading headers take
     /// it to its thread (`Vault::enqueue_inbound_email`); without them it
@@ -515,13 +515,15 @@ impl StalwartClient {
             sender,
             received_at,
         )
-        .with_payload_ref(payload_ref);
+        .with_payload_ref(payload_ref)
+        .with_reply_text(
+            message
+                .get("subject")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            text_body(message),
+        );
         inbound.thread_headers = thread_headers(message);
-        inbound.subject = message
-            .get("subject")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        inbound.text_body = text_body(message);
         archive_native_mail_inbound(vault, &mut inbound, now)?;
         let thread = inbound.thread_headers.clone();
         let input = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
@@ -575,7 +577,7 @@ fn thread_headers(message: &Value) -> Option<EmailThreadHeaders> {
 
 /// The message's first plain-text body part, as the server decoded it and
 /// cut to [`NATIVE_MAIL_TEXT_BODY_MAX_BYTES`].
-fn text_body(message: &Value) -> Option<String> {
+fn text_body(message: &Value) -> Option<&str> {
     let part = message
         .get("textBody")?
         .as_array()?
@@ -587,10 +589,5 @@ fn text_body(message: &Value) -> Option<String> {
         })?
         .get("partId")?
         .as_str()?;
-    message
-        .get("bodyValues")?
-        .get(part)?
-        .get("value")?
-        .as_str()
-        .map(str::to_owned)
+    message.get("bodyValues")?.get(part)?.get("value")?.as_str()
 }

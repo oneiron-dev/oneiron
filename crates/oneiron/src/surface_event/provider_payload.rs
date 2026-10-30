@@ -86,8 +86,8 @@ impl Vault {
 
     /// The message text a provider event's archived body carries: Slack's
     /// `event.text`, LINE's `event.message.text` (the LINE door archives
-    /// one `{destination, event}` wrapper per event), and an email's
-    /// plain-text body ([`Self::read_provider_email`]). `None` for a channel
+    /// one `{destination, event}` wrapper per event), and an email reply's
+    /// own top text ([`Self::read_provider_email`]). `None` for a channel
     /// with no extractor, a non-message event, or a body the vault no longer
     /// holds.
     ///
@@ -104,7 +104,7 @@ impl Vault {
             crate::channel_identity_provider::EMAIL_CHANNEL => {
                 return Ok(self
                     .read_provider_email(payload_ref)?
-                    .and_then(|email| email.text_body));
+                    .and_then(|email| email.reply_top_text));
             }
             _ => return Ok(None),
         };
@@ -121,7 +121,7 @@ impl Vault {
     }
 
     /// The email inbound a mail door archived as its provider event, with
-    /// the subject and plain-text body the provider decoded. `None` for a
+    /// the subject and reply top text the provider decoded. `None` for a
     /// ref that names no archived email, or a body the vault no longer
     /// holds. Its words are foreign inbound data, never instructions.
     pub fn read_provider_email(&self, payload_ref: &str) -> Result<Option<EmailProviderInbound>> {
