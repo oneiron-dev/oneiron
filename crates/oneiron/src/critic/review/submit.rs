@@ -110,10 +110,16 @@ impl CriticReviewSubmit {
             .map(|critic| {
                 let class = EdgeActorClass::try_from_u8(critic.actor_class)
                     .ok_or_else(|| invalid("a critic's actor class is 0, 1 or 2"))?;
+                let critic_actor = WriteActor::new(EntityId::from_hex(&critic.actor_ref)?, class);
+                if critic_actor.entity_ref() != actor.entity_ref()
+                    || critic_actor.actor_class() != actor.actor_class()
+                {
+                    return Err(invalid("a critic's actor is the authenticated caller"));
+                }
                 Ok(ReviewCritic {
                     lens_id: critic.lens_id.clone(),
                     lens_ref: EntityId::from_hex(&critic.lens_ref)?,
-                    actor: WriteActor::new(EntityId::from_hex(&critic.actor_ref)?, class),
+                    actor: critic_actor,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
