@@ -13,6 +13,11 @@ use super::admission::InFlightCounts;
 use crate::managed::ManagedError;
 use crate::managed::ledger::FrozenReport;
 
+/// How long `prepare_reap` waits, once frozen, for device sync to pause
+/// (FIX 5127): within the supervisor's 2 s ctl call (a call). One still
+/// running then reads as a live sync writer.
+const DEVICE_SYNC_PAUSE_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// What a reap's freeze, drain and export found
 /// ([`ManagedState::freeze_drain_export`]).
 pub(super) struct Prepared {
@@ -108,6 +113,9 @@ impl ManagedState {
         // Counted BEFORE drain/export. A writer finishing after export must
         // not turn a stale exported ledger into a quiescent reply.
         let at_freeze = self.freeze_counted()?;
+        // Device sync is not counted; its last write lands before the
+        // export, or it reads as live.
+        self.device_sync_paused(tokio::time::Instant::now() + DEVICE_SYNC_PAUSE_WAIT).await;
         self.drain_export(at_freeze, true, None).await
     }
 

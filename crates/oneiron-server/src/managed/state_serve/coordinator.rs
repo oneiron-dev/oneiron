@@ -612,13 +612,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // A vault that is a device of another home dials it, on that mesh when
         // the home has a paired address there, as plain serve does (WILL-PLAN
         // L14 row 14): the owner's `[device_sync]` or `oneiron device enrol`
-        // names the home. The connection holds one admission for its whole run,
-        // so a frozen vault starts none and a reap waits for it.
+        // names the home. Each run between freezes holds an admission of its
+        // own (FIX 5127): a freeze pauses it, a reap waits for the pause, and
+        // after a thaw it runs again; a frozen vault starts none.
         let device_sync = crate::device_sync::DeviceSyncHost::start_admitted(
             &sync_server,
             &config,
             mesh.as_ref(),
-            &state.background_admission(WriteKind::OwnerWrite),
+            state.device_sync_freeze(),
         )
         .await;
         let artifact_task = artifacts.map(|listener| {
