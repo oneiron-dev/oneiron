@@ -29,8 +29,9 @@ pub(super) struct Session {
 }
 
 impl Session {
-    /// Spawns `command` in a process group of its own; `idle` is how long it
-    /// may go without writing a line.
+    /// Spawns `command` in a process group of its own, which every native
+    /// worker it starts stays in, so stopping the group stops them all;
+    /// `idle` is how long it may go without writing a line.
     pub(super) fn spawn(command: &mut Command, idle: Duration) -> Result<Self, &'static str> {
         #[cfg(unix)]
         {
@@ -88,7 +89,8 @@ impl Session {
     }
 
     /// Whether the process, its reply read, exits successfully within the
-    /// idle time.
+    /// idle time. Past it, its whole process group is killed and the process
+    /// reaped before `HostDeadlineExceeded` returns.
     pub(super) fn finish(mut self) -> Result<bool, &'static str> {
         // No more answers: a process still waiting on one ends.
         self.stdin = None;
@@ -99,7 +101,11 @@ impl Session {
                     self.reaped = true;
                     return Ok(status.success());
                 }
-                Ok(None) if started.elapsed() >= self.idle => return Err("HostDeadlineExceeded"),
+                Ok(None) if started.elapsed() >= self.idle => {
+                    stop(&mut self.child);
+                    self.reaped = true;
+                    return Err("HostDeadlineExceeded");
+                }
                 Ok(None) => std::thread::sleep(Duration::from_millis(1)),
                 Err(_) => return Err("WaitFailed"),
             }

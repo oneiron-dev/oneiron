@@ -27,12 +27,14 @@ pub use command::{
 };
 pub use error::{AudioError, AudioResult};
 pub use evaluation::{CohortFile, CohortManifest, E1Arm, E1SelectionReceipt, WerCountsSerde};
-pub use metrics::{E3Score, WerCounts, aggregate_wer, e3_score, wer_counts};
+pub use metrics::{
+    E3Assignment, E3Score, WerAlignment, WerCounts, aggregate_wer, e3_score, wer_counts,
+};
 pub use packing::pack_speech;
 pub use producer::produce_meeting_transcript;
 pub use recorded_evaluation::{
-    LabelledReference, RecordedArm, RecordedEvaluation, RecordedFile, ReferenceDocument,
-    SpeakerScore, WordCluster, evaluate_recorded_audio,
+    LabelledReference, RecordedArm, RecordedEvaluation, RecordedEvaluationRun, RecordedFile,
+    ReferenceDocument, SpeakerScore, WordCluster, evaluate_recorded_audio,
 };
 pub use types::{
     AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile,
