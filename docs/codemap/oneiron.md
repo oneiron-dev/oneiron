@@ -943,7 +943,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/enrollment/home_node.rs` | src | m | 2 struct · 2 enum · 9 fn · 2 crate-vis | CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass, CampaignHomeNodeDesignation | Campaign-local MACRO home-node election, designation persistence, and admission checks |
 | `src/campaign/enrollment/manual.rs` | src | s | 3 crate-vis | — | Manual enrollment beside the saved-query MACRO ingress |
 | `src/campaign/enrollment/mod.rs` | src | s | 9 re-export · 4 crate-vis | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
-| `src/campaign/enrollment/outbound_leg.rs` | src | m | 1 enum · 2 fn · 3 crate-vis | EnrollmentLegDrive | Outward leg bridging persisted refs to the outbound chokepoint and the ledger |
+| `src/campaign/enrollment/outbound_leg.rs` | src | m | 1 enum · 2 fn · 5 crate-vis | EnrollmentLegDrive | Outward leg bridging persisted refs to the outbound chokepoint and the ledger |
 | `src/campaign/enrollment/program.rs` | src | L | 8 struct · 8 fn · 1 const · 3 crate-vis | AuthoredCampaignProgram, CampaignProgram, CampaignProgramAudience, CampaignProgramDefinition, CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft | Persisted campaign program and step state authorizing both halves of the consequence |
 | `src/campaign/enrollment/reconcile.rs` | src | m | 8 crate-vis | — | One effective `campaign.member` head per person and campaign (FIX 9663, 9664, 10221) |
 | `src/campaign/enrollment/runner.rs` | src | m | 2 struct · 2 enum · 8 fn · 6 crate-vis | CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution | Refs-only attempt payload, advisory dedupe key, leader-gated claim, and membership-leg execution |
@@ -4056,7 +4056,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/dispatch_pipeline/esign_delivery.rs` | src | s | 5 crate-vis | — | E-sign delivery authority (FIX 5238 option 3; an L02 seam that changes no existing body) |
 | `src/outbound/dispatch_pipeline/frozen_payload.rs` | src | s | 3 crate-vis | — | Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes |
 | `src/outbound/dispatch_pipeline/govern.rs` | src | s | 2 fn · 5 crate-vis | — | Gate input assembled from the canonical outbound request |
-| `src/outbound/dispatch_pipeline/mod.rs` | src | s | 3 re-export · 14 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
+| `src/outbound/dispatch_pipeline/mod.rs` | src | s | 3 re-export · 15 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
 | `src/outbound/dispatch_pipeline/pipeline.rs` | src | m | 1 struct · 1 fn · 7 crate-vis | OutboundDispatchPipeline | O2 dispatch: shared request preparation, ledger replay, execution and receipts |
 | `src/outbound/dispatch_pipeline/policy_risk.rs` | src | s | 2 crate-vis | — | Pending gate-outcome name and gate-vs-manifest policy-risk resolution |
 | `src/outbound/dispatch_pipeline/publisher_signature.rs` | src | s | 1 struct · 2 crate-vis | PublisherSignatureAuthorization | The typed authorization a content-free publisher issue signature carries into admission (OF-420, FIX 739) |
@@ -4073,7 +4073,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/intent.rs` | src | s | 3 struct · 1 enum · 15 fn · 1 const · 1 re-export | OutboundIntent, OutboundIntentDraft, OutboundIntentSource, OutboundIntentTrigger | Outbound intent wire vocabulary |
 | `src/outbound/manifests.rs` | src | s | 1 crate-vis | — | Built-in outbound capability manifests |
 | `src/outbound/manifests/channels.rs` | src | m | 11 crate-vis | — | The built-in channel manifests, one builder per capability, in the order… |
-| `src/outbound/mod.rs` | src | s | 1 fn · 13 re-export · 12 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
+| `src/outbound/mod.rs` | src | s | 1 fn · 13 re-export · 13 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
 | `src/outbound/receipt_fields.rs` | src | m | 10 crate-vis | — | Outbound receipt field projection |
 | `src/outbound/recovery_suggestions.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | OutboundRecoverySuggestion | Typed recovery suggestions on a failed or uncertain outbound receipt (FIX 7965): what the caller may do… |
 | `src/outbound/reply_content.rs` | src | s | 1 struct · 3 fn · 1 const | ConnectorReplyBody | The body of an agent's reply to a connector event (OF-519) |
