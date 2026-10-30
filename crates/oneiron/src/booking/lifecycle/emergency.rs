@@ -228,6 +228,7 @@ pub(in crate::booking) fn commit_emergency_item(
                     session_hash: None,
                     confirmation: None,
                     invite_identity: None,
+                    reads: super::transition::booking_read_rows(vault, &*txn, &event)?,
                 },
             )?;
             calendar

@@ -260,6 +260,26 @@ mod entity_ref_serde {
     }
 }
 
+mod entity_refs_serde {
+    use super::{Deserialize, Deserializer, EntityId, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &[EntityId],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(value.iter().map(EntityId::to_hex))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<EntityId>, D::Error> {
+        Vec::<String>::deserialize(deserializer)?
+            .iter()
+            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
+            .collect()
+    }
+}
+
 /// The digest row a lifecycle token resolves through. The token carries no
 /// state; this row is where the EVENT and the permitted action live.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -313,6 +333,10 @@ struct LifecycleReceiptRow {
     session_hash: Option<[u8; 32]>,
     confirmation: Option<BookingConfirmationContext>,
     invite_identity: Option<(String, String)>,
+    /// The rows the writer read to decide this transition (FIX 5483), so a
+    /// replay lists what the first pass read.
+    #[serde(with = "entity_refs_serde")]
+    reads: Vec<EntityId>,
 }
 
 impl LifecycleReceiptRow {
@@ -322,6 +346,12 @@ impl LifecycleReceiptRow {
             uid: self.uid,
             sequence: self.sequence,
         }
+    }
+
+    /// [`Self::into_revision`], beside the read set this receipt kept.
+    fn into_revision_and_reads(self) -> (CalendarRevision, Vec<EntityId>) {
+        let reads = self.reads.clone();
+        (self.into_revision(), reads)
     }
 }
 
