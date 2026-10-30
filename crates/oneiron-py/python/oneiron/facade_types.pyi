@@ -4241,9 +4241,11 @@ class TurnProgramRegistration(TypedDict):
 class DisarmTurnProgram(TypedDict):
     registration: EntityId
 class TurnProgramRebindRequest(TypedDict):
-    attempt: str
+    attempt: NotRequired[str | None]
+    turn_ref: NotRequired[str | None]
+    registration: NotRequired[str | None]
 class TurnProgramRebindReceipt(TypedDict):
-    attempt: str
+    attempt: NotRequired[str | None]
     admission: str
     predecessor_slip: str
     successor_slip: str
