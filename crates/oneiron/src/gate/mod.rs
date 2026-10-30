@@ -35,6 +35,7 @@ mod docx_budget;
 mod doors;
 mod dreamer_grant;
 mod dreamer_precommit;
+mod dreamer_retry_policy;
 pub(crate) mod edit_distance_thresholds;
 mod effect;
 pub(crate) mod fanout_policy;

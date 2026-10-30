@@ -64,9 +64,6 @@ use crate::vault::Vault;
 /// the family table and the structural validator.
 pub const PREDICATE_CALENDAR_EVENT_OUTCOME: &str = "calendar.event_outcome";
 
-/// Default grace between an EVENT's scheduled end and the check-in wake.
-pub const DEFAULT_OUTCOME_GRACE_SECS: u64 = 30 * 60;
-
 /// Opaque reason tag the host echoes back when the check-in wake fires.
 pub const OUTCOME_CHECK_IN_REASON_TAG: &str = "calendar.event_outcome.check_in";
 
@@ -434,22 +431,43 @@ pub struct OutcomeCheckInWake {
 /// not meeting-class.
 ///
 /// The engine owns no timer: this only describes the wake the host is asked to
-/// deliver. `_event_ref` is unused at this layer — the wake carries id, instant,
-/// and tag only, and the recheck at due time takes the EVENT explicitly — but it
-/// stays in the ratified signature so the host call sites do not move when the
-/// contract `WakeEntry` becomes available.
+/// deliver, `grace_secs` after the EVENT's end; the host passes the vault's
+/// grace ([`outcome_grace_secs`]). `_event_ref` is unused at this layer — the
+/// wake carries id, instant, and tag only, and the recheck at due time takes the
+/// EVENT explicitly — but it stays in the signature so the host call sites do
+/// not move when the contract `WakeEntry` becomes available.
 #[must_use]
 pub fn plan_outcome_check_in(
     wake_id: String,
     _event_ref: EntityId,
     event_end_utc: u64,
     signals: MeetingClassSignals,
+    grace_secs: u64,
 ) -> Option<OutcomeCheckInWake> {
     is_meeting_class(signals).then(|| OutcomeCheckInWake {
         id: wake_id,
-        at_utc: event_end_utc.saturating_add(DEFAULT_OUTCOME_GRACE_SECS),
+        at_utc: event_end_utc.saturating_add(grace_secs),
         reason_tag: OUTCOME_CHECK_IN_REASON_TAG.to_owned(),
     })
+}
+
+/// The vault's grace between an EVENT's scheduled end and its check-in, in
+/// seconds: the `calendar_outcome_grace_seconds` policy row the manifest
+/// resolves, else the shipped 1,800.
+///
+/// # Errors
+///
+/// Storage errors from reading the policy manifests.
+pub fn outcome_grace_secs(vault: &Vault) -> Result<u64> {
+    let rtxn = vault.store.env.read_txn()?;
+    outcome_grace_secs_in_txn(vault, &rtxn)
+}
+
+pub(in crate::calendar) fn outcome_grace_secs_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<u64> {
+    Ok(crate::gate::resolve_policy_manifest(&vault.store, rtxn)?.calendar_outcome_grace_seconds())
 }
 
 /// One check-in wake the host has delivered as due.
@@ -467,8 +485,8 @@ pub struct DueOutcomeCheckIn {
 
 /// Rechecks meeting class and current state for one due wake.
 ///
-/// A due wake is not a card. Three things can have changed in the half hour
-/// since it was planned, and all three are re-read here rather than trusted:
+/// A due wake is not a card. Three things can have changed in the grace since
+/// it was planned, and all three are re-read here rather than trusted:
 ///
 /// * the EVENT may have stopped being meeting-class;
 /// * an outcome may have arrived during the grace window — the card would ask a
