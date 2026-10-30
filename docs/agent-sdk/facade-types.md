@@ -782,7 +782,7 @@ export type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Faile
 /** `oneiron::agent_dispatch::spend_record::SpendState` */
 export type SpendState = "open" | "closed"
 /** `oneiron::agent_dispatch::spend_record::SpendPayer` */
-export type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number }
+export type SpendPayer = { party: EntityId; granted_by?: EntityId | null; at_ms: number }
 /** `oneiron::agent_dispatch::spend_record::SpendScope` */
 export type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null }
 /** `oneiron::agent_dispatch::spend_record::SpendSignal` */

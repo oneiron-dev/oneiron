@@ -405,7 +405,7 @@ declare namespace Sdk {
   type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number };
   type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type SpendState = "open" | "closed";
-  type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number };
+  type SpendPayer = { party: EntityId; granted_by?: EntityId | null; at_ms: number };
   type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
   type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
   type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
