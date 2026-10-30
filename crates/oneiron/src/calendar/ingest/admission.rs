@@ -330,10 +330,11 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// Explicit `STATUS:CANCELLED` in the feed: write `calendar.status`
-    /// cancelled with basis `imported_cancel`, unless a live claim already
-    /// says exactly that. Never writes `confirmed` — resurrection is not a
-    /// v1 basis.
+    /// An explicit cancellation in the feed (`METHOD:CANCEL` or
+    /// `STATUS:CANCELLED`): write `calendar.status` cancelled with basis
+    /// `imported_cancel`, unless a live claim already says exactly that, and
+    /// carry it to CAL-07 as pre-start cancellation evidence. Never writes
+    /// `confirmed` — resurrection is not a v1 basis.
     fn apply_imported_cancel(
         &mut self,
         event_ref: EntityId,
@@ -344,27 +345,31 @@ impl PollAdmission<'_> {
         }
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
-        self.admit_status_if_changed(
+        if let Some(status_ref) = self.admit_status_if_changed(
             event_ref,
             &body,
             &source_record_id,
             CalendarStatus::Cancelled,
             CalendarStatusBasis::ImportedCancel,
-        )
+        )? {
+            self.record_cancel_outcome(event_ref, status_ref)?;
+        }
+        Ok(())
     }
 
     /// The multi-source law's conclusion: every live inbound passport
     /// reports absence, so the EVENT reads cancelled with basis
     /// `imported_absence` for an omission or `imported_cancel` for an explicit
-    /// provider tombstone. The EVENT row is never deleted and CAL-07's
-    /// outcome predicate is never written here. The screen body is empty:
-    /// absence carries no inbound content to screen.
+    /// provider tombstone. The EVENT row is never deleted. Only the explicit
+    /// tombstone is cancellation evidence for CAL-07; an omission writes the
+    /// status alone. The screen body is empty: absence carries no inbound
+    /// content to screen.
     fn admit_absence_cancellation(
         &mut self,
         event_ref: EntityId,
         basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
-        self.admit_status_if_changed(
+        let status_ref = self.admit_status_if_changed(
             event_ref,
             &CalendarInboundBody::default(),
             if basis == CalendarStatusBasis::ImportedCancel {
@@ -374,11 +379,48 @@ impl PollAdmission<'_> {
             },
             CalendarStatus::Cancelled,
             basis,
-        )
+        )?;
+        if let Some(status_ref) = status_ref
+            && basis == CalendarStatusBasis::ImportedCancel
+        {
+            self.record_cancel_outcome(event_ref, status_ref)?;
+        }
+        Ok(())
+    }
+
+    /// Carries one explicit imported cancellation into CAL-07 as
+    /// `CancelReceived` machine evidence citing the status claim that
+    /// recorded it. Seen before the EVENT's start it records
+    /// `cancelled_pre_start`; seen after, or on an EVENT with no anchored
+    /// start, it earns nothing. The engine observed the cancellation in the
+    /// bytes it fetched, so the outcome lands as `observed`.
+    fn record_cancel_outcome(
+        &self,
+        event_ref: EntityId,
+        status_ref: EntityId,
+    ) -> Result<(), CalendarError> {
+        let Some(header) = self.vault.read_entity_header(&event_ref)? else {
+            return Ok(());
+        };
+        if header.occurred_start == 0 && header.occurred_end == 0 {
+            return Ok(());
+        }
+        crate::calendar::outcome::record_machine_event_outcome(
+            self.vault,
+            event_ref,
+            header.occurred_start,
+            &crate::calendar::outcome::MachineOutcomeEvidence::CancelReceived {
+                evidence_ref: status_ref,
+                observed_at: self.now,
+            },
+            crate::claim::ClaimSource::Observed,
+        )?;
+        Ok(())
     }
 
     /// Admits one `calendar.status` claim, superseding the prior live status
     /// claim, and skips when the live claim already carries the exact value.
+    /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
         event_ref: EntityId,
@@ -386,7 +428,7 @@ impl PollAdmission<'_> {
         source_record_id: &str,
         status: CalendarStatus,
         basis: CalendarStatusBasis,
-    ) -> Result<(), CalendarError> {
+    ) -> Result<Option<EntityId>, CalendarError> {
         let mut prior_live: Option<EntityId> = None;
         for claim_id in self.vault.claims_for_subject(&event_ref)? {
             let Some(claim) = self.vault.get_claim(&claim_id)? else {
@@ -400,7 +442,7 @@ impl PollAdmission<'_> {
             let current = decode_status_value(&claim.value)
                 .map_err(|_| ingest("stored status claim did not decode"))?;
             if current.status == status && current.basis == basis {
-                return Ok(());
+                return Ok(None);
             }
             prior_live = Some(claim_id);
         }
@@ -415,7 +457,7 @@ impl PollAdmission<'_> {
         if let Some(old_id) = prior_live {
             self.vault.supersede_claim(&new_id, &old_id, self.now)?;
         }
-        Ok(())
+        Ok(Some(new_id))
     }
 
     /// The one admission door: CAL-09's hook runs immediately before the
