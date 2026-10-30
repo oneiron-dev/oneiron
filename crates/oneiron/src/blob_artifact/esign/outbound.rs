@@ -196,8 +196,13 @@ enum NotApplied {
     Failed(crate::Error),
 }
 impl From<crate::Error> for NotApplied {
+    /// The esign ledger's own refusal ([`super::model::invalid`]) inside the
+    /// act is the act's refusal; every other error is a failure (FIX 11863).
     fn from(error: crate::Error) -> Self {
-        Self::Failed(error)
+        match error {
+            crate::Error::InvalidConfig(_) => Self::Refused,
+            error => Self::Failed(error),
+        }
     }
 }
 impl OutboundExecutionSink for EsignSink<'_> {
