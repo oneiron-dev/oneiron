@@ -4,9 +4,9 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::field_set::{
-    FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, append_pack_attribution_fields,
-    append_pack_manifest_fields, append_pack_source_rows_fields, append_task_project_field,
-    append_task_type_fields, append_team_receipt_fields,
+    FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
+    append_pack_attribution_fields, append_pack_manifest_fields, append_pack_source_rows_fields,
+    append_task_project_field, append_task_type_fields, append_team_receipt_fields,
 };
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
@@ -176,6 +176,12 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     if let Some(team) = &team {
         append_team_receipt_fields(&mut receipt.fields, team);
     }
+    // FIX 8259: the lease generation it settled under. Additive; the receipt
+    // id is unchanged and old rows decode without it.
+    receipt.fields.insert(
+        FIELD_LEASE_GENERATION.to_owned(),
+        record.attempt_count.to_string(),
+    );
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }
