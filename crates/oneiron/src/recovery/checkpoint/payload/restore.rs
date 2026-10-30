@@ -11,7 +11,7 @@
 //! the cut, and the restore carries it beside the source's erasures
 //! ([`OpenedPayload::carry_erasures`]).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
 
@@ -176,6 +176,42 @@ impl OpenedPayload {
                 }),
         );
         carried
+    }
+
+    /// Each row the opened bundles and the unavailable calls land, its key
+    /// and value lengths, for the restore's write budget: a no-one-form row
+    /// with the actor parts that fill it back, an actor-keyed row at its
+    /// actor parts' framed key and value. A part an unopened owner holds up
+    /// lands nothing.
+    pub(in crate::recovery::checkpoint) fn row_lengths(&self) -> Vec<(u64, u64)> {
+        let len = |bytes: &[u8]| bytes.len() as u64;
+        let mut rows = Vec::new();
+        for (_, opened) in &self.bundles {
+            let mut filled: BTreeMap<&RowLocator, u64> = BTreeMap::new();
+            for actor in &opened.actor_parts {
+                let bytes = filled.entry(&actor.content_locator).or_default();
+                *bytes = bytes.saturating_add(len(&actor.bytes));
+            }
+            for part in &opened.rows {
+                let at = part.at();
+                if held_up(opened, at) {
+                    continue;
+                }
+                let actors = filled.get(at).copied().unwrap_or(0);
+                rows.push(match part {
+                    RowPart::Exact { value, .. } | RowPart::NoActor { value, .. } => {
+                        (len(&at.key), len(value).saturating_add(actors))
+                    }
+                    RowPart::ActorKeyed { .. } => (0, actors),
+                });
+            }
+        }
+        rows.extend(
+            self.unavailable_calls
+                .iter()
+                .map(|(at, value)| (len(&at.key), len(value))),
+        );
+        rows
     }
 }
 
