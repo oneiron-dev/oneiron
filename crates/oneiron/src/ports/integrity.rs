@@ -386,14 +386,17 @@ fn withdraw_in_txn(
     // A reply TURN that copied a scope summary's words, now stale, takes the
     // withdrawn record's Shell (FIX 931, 11804).
     crate::scope_summary::scrub_withdrawn_copy_in_txn(store, txn, id)?;
-    // An epoch summary copies the words of what it was written from, so it
-    // is withdrawn with any of them, through nested epochs (agent-runtime-v1
-    // §d7), for the same worlds.
-    let pending = epoch_dependents_in_txn(store, txn, id)?;
-    withdraw_epochs_in_txn(store, txn, pending, worlds)
+    // A fold's words leave its run's base ledger in this transaction, not at
+    // the run's next ledger write (FIX 1494).
+    crate::compaction::scrub_withdrawn_fold_summary_in_txn(store, txn, id)?;
+    // What was written from it copies its words, so it is withdrawn with
+    // them, through nested epochs (agent-runtime-v1 §d7) and through a
+    // source's own source (FIX 1494), for the same worlds.
+    let pending = dependents_in_txn(store, txn, id)?;
+    withdraw_source_chain_in_txn(store, txn, pending, worlds)
 }
 /// [`withdraw_in_txn`], then an epoch summary's words leave its row. Its
-/// worlds are recorded and every epoch written from it withdrawn first,
+/// worlds are recorded and everything written from it withdrawn first,
 /// while its body still classifies them.
 fn withdraw_words_in_txn(
     store: &Store,
@@ -402,46 +405,72 @@ fn withdraw_words_in_txn(
     worlds: &CarriedWorlds,
 ) -> Result<()> {
     withdraw_in_txn(store, txn, id, worlds)?;
-    crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, id)?;
-    crate::compaction::scrub_withdrawn_fold_summary_in_txn(store, txn, id)
+    crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, id)
 }
 
-/// Withdraws the epoch summaries in `pending` for `worlds`, and those written
-/// from them. A worklist, not recursion: no chain's depth reaches the stack.
-/// A stale one is not marked again, and is walked again only when this adds
-/// a world to it. Each one walked keeps only its keyframe once those written
-/// from it are found.
-pub(super) fn withdraw_epochs_in_txn(
+/// Withdraws the rows in `pending` for `worlds`, and everything written from
+/// them through the dependency index, in this transaction (FIX 1494): an
+/// epoch summary, a fold's words, an output occurrence or any other row a
+/// withdrawn source's own source reaches is withdrawn as the source's direct
+/// dependents are. A worklist, not recursion: no chain's depth reaches the
+/// stack. A stale row is not marked again, and is walked again only when
+/// this adds a world to it; an EVENT that outlives its source stays, and so
+/// does what was written from it. Each epoch summary walked keeps only its
+/// keyframe once those written from it are found.
+///
+/// Past the dependent walk's batch, a row that is no epoch summary takes the
+/// stale mark alone, which every read honours: its words leave a fold's
+/// ledger at the reads' fence and the run's next ledger write, as before.
+/// No count refuses the walk (rule 5).
+pub(super) fn withdraw_source_chain_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     mut pending: Vec<EntityId>,
     worlds: &CarriedWorlds,
 ) -> Result<()> {
+    let mut budget = super::dependent_walk::policy_in(store, txn)?.batch;
     while let Some(next) = pending.pop() {
+        let epoch = epoch_summary_in(store, txn, &next)?;
+        if !epoch && outlives_withdrawal_in(store, txn, &next)? {
+            continue;
+        }
         let grew = record_withdrawn_in_txn(store, txn, &next, worlds)?;
         let stale = marked_stale_in(store, txn, &next)?;
         if stale && !grew {
             continue;
         }
+        let whole = epoch || budget > 0;
         if !stale {
-            mark_one_stale_in_txn(store, txn, &next)?;
+            if whole {
+                mark_one_stale_in_txn(store, txn, &next)?;
+            } else {
+                put_stale_mark_in_txn(store, txn, &next)?;
+            }
         }
-        pending.extend(epoch_dependents_in_txn(store, txn, &next)?);
-        crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, &next)?;
+        pending.extend(dependents_in_txn(store, txn, &next)?);
+        if epoch {
+            crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, &next)?;
+        } else if whole {
+            budget -= 1;
+            crate::scope_summary::scrub_withdrawn_copy_in_txn(store, txn, &next)?;
+            crate::compaction::scrub_withdrawn_fold_summary_in_txn(store, txn, &next)?;
+        }
     }
     Ok(())
 }
 
-fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-    // A stale TURN or MESSAGE leaves the words its turn says: the Dreamer's
-    // sieve and projector rows of them go as an erasure's do, while the
-    // MESSAGE still names its turn.
-    crate::dreamer_wake::erase_in_txn(store, txn, id)?;
-    // A derived claim can retain erased upstream bytes while its own entity
-    // body remains. Remove every saved digest that copied it in this txn;
-    // clearing the stale bit on regeneration must never revive an old copy.
-    crate::claim::invalidate_weave_digest_source_in_txn(store, txn, id)?;
-    // A second invalidation after a regenerated write fences its completion.
+/// Whether `id` is an EVENT that outlives its source's deletion: a
+/// withdrawal leaves it as it is.
+fn outlives_withdrawal_in(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(super::EntityStoreRead::port_entity_record(store, txn, id)?
+        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)
+        && survives_source_deletion(store, txn, *id)?)
+}
+
+/// The stale mark alone, at `id`'s revision now: every read honours it
+/// ([`stale_in_txn`]). A second invalidation after a regenerated write
+/// fences its completion.
+fn put_stale_mark_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     let revision = store
         .entities
         .get(txn, id.as_bytes())?
@@ -455,6 +484,19 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     store
         .vault_meta
         .put(txn, &stale_key(id), &revision.to_be_bytes())?;
+    Ok(())
+}
+
+fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    // A stale TURN or MESSAGE leaves the words its turn says: the Dreamer's
+    // sieve and projector rows of them go as an erasure's do, while the
+    // MESSAGE still names its turn.
+    crate::dreamer_wake::erase_in_txn(store, txn, id)?;
+    // A derived claim can retain erased upstream bytes while its own entity
+    // body remains. Remove every saved digest that copied it in this txn;
+    // clearing the stale bit on regeneration must never revive an old copy.
+    crate::claim::invalidate_weave_digest_source_in_txn(store, txn, id)?;
+    put_stale_mark_in_txn(store, txn, id)?;
     crate::bm25::deindex_text(store, txn, id)?;
     let had_vector = store.vectors.delete(txn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(store, txn, id, None)?;
@@ -485,16 +527,10 @@ pub(crate) fn source_has_dependents_in_txn(
         .transpose()?
         .is_some())
 }
-/// The epoch summaries written from `id`.
-fn epoch_dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
-    let prefix = [DEP, id.as_bytes()].concat();
-    let mut epochs = Vec::new();
-    for dependent in scan_dependents(store, txn, &prefix)? {
-        if epoch_summary_in(store, txn, &dependent)? {
-            epochs.push(dependent);
-        }
-    }
-    Ok(epochs)
+/// Every row written from some version of `id`, by its dependency rows:
+/// those the epoch walk, a fold's words and an output occurrence record.
+fn dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+    scan_dependents(store, txn, &[DEP, id.as_bytes()].concat())
 }
 /// An entity delete erases every source version; one document-prefix scan
 /// visits only its k dependency rows, a batch at a time past the walk's
@@ -520,10 +556,7 @@ pub(super) fn withdraw_dependent_in_txn(
     worlds: &CarriedWorlds,
 ) -> Result<()> {
     use super::JobQueue;
-    if super::EntityStoreRead::port_entity_record(store, txn, dependent)?
-        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)
-        && crate::calendar::origin::survives_source_deletion(store, txn, *dependent)?
-    {
+    if outlives_withdrawal_in(store, txn, dependent)? {
         return Ok(());
     }
     withdraw_words_in_txn(store, txn, dependent, worlds)?;
