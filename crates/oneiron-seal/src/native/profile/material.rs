@@ -7,7 +7,7 @@ use crate::api::{
     FetchError, FetchMethod, FetchPurpose, FetchRequest, SealConfig, SigningIdentity,
 };
 use crate::error::{FatalCode, SealError, SealStage};
-use crate::memory::SharedBytes;
+use crate::memory::{MemoryLedger, SealMemoryRefusal, SharedBytes};
 
 use super::super::{cms, tsp, verify};
 use super::DssMaterial;
@@ -136,21 +136,28 @@ fn crl_valid(ctx: &SealContext<'_>, issuer_cert_der: &[u8], crl_der: &[u8]) -> O
 /// the certificate itself, or an unrelated cert. A self-signed tip resolves
 /// to itself; an anchor-omitted tip resolves to the anchor. `None` when no
 /// candidate's key signed the certificate: its CRL cannot be authenticated,
-/// so the gather skips it and the material degrades.
+/// so the gather skips it and the material degrades. Each certificate it
+/// decodes is held on `memory` while it is read (FIX 12260).
+///
+/// # Errors
+/// The ledger's refusal.
 pub(super) fn key_bound_issuer<'a>(
     cert_der: &[u8],
     chain: &'a [Vec<u8>],
     anchors: &'a [Vec<u8>],
-) -> Option<&'a [u8]> {
-    let cert = verify::EmbeddedCert::from_der(cert_der)?;
-    chain
-        .iter()
-        .chain(anchors.iter())
-        .find(|cand_der| {
-            verify::EmbeddedCert::from_der(cand_der)
-                .is_some_and(|cand| verify::issued_by(&cert, &cand))
-        })
-        .map(Vec::as_slice)
+    memory: &MemoryLedger,
+) -> Result<Option<&'a [u8]>, SealMemoryRefusal> {
+    let Some(cert) = verify::EmbeddedCert::admitted(cert_der, memory)? else {
+        return Ok(None);
+    };
+    for cand_der in chain.iter().chain(anchors.iter()) {
+        if let Some(cand) = verify::EmbeddedCert::admitted(cand_der, memory)?
+            && verify::issued_by(&cert, &cand)
+        {
+            return Ok(Some(cand_der.as_slice()));
+        }
+    }
+    Ok(None)
 }
 
 /// Gather complete validation material for B-LT (§7.5): signer + TSA chains
@@ -192,6 +199,11 @@ pub(super) async fn gather_validation_material(
     let Ok(anchors) = trust_anchors(ctx.config) else {
         return Ok(None);
     };
+    let memory = ctx
+        .limits
+        .memory
+        .ledger()
+        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
     // Chains must validate at the signing time before their material is
     // worth embedding.
     let signer_chain_ders: Vec<Vec<u8>> = std::iter::once(identity.signer_certificate_der.clone())
@@ -218,7 +230,9 @@ pub(super) async fn gather_validation_material(
             // Issuer identity is bound by key, never by position: the CMS
             // SET OF order is arbitrary, so a positional pick can verify the
             // CRL against the wrong cert and falsely degrade.
-            if let Some(issuer) = key_bound_issuer(cert, chain, &ctx.config.trust_anchors_der) {
+            let issuer = key_bound_issuer(cert, chain, &ctx.config.trust_anchors_der, &memory)
+                .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+            if let Some(issuer) = issuer {
                 for u in urls {
                     if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await? {
                         crls_der.push(crl);

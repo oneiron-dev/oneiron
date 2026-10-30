@@ -32,7 +32,7 @@ pub(crate) use self::oids::{
     OID_DATA, OID_SHA256, OID_SIGNED_DATA,
 };
 pub(crate) use self::parse::{
-    ParsedCms, ParsedSignerInfo, parse_cms, signed_attrs_signature_input,
+    ParsedCms, ParsedSignerInfo, chain_copy, parse_cms, signed_attrs_signature_input,
 };
 pub(crate) use self::policy::{
     cert_signature_algorithm, check_baseline_attrs, check_ess_binding, is_sha256_oid,

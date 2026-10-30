@@ -1,6 +1,6 @@
 //! Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked allocation.
 
-use lopdf::{Object, StringFormat};
+use lopdf::{Dictionary, Object, ObjectId, StringFormat};
 
 use super::parse::{RevisionState, fatal_pdf, input_invalid};
 use crate::error::{FatalCode, InputInvalidCode, SealError};
@@ -73,6 +73,63 @@ enum Emit<'a> {
     Value(&'a Object),
     Key(&'a [u8]),
     Text(&'static [u8]),
+}
+
+/// A value a revision sets on a dictionary it re-emits.
+enum Set<'a> {
+    /// This value.
+    Value(Object),
+    /// The revision state's array with one reference after its last item.
+    Appended(&'a [Object], ObjectId),
+}
+
+/// Writes `base` (none: an empty dictionary) as [`write_object`] would
+/// write it after `Dictionary::set` of each of `sets` in order: a key it
+/// has keeps its place with the new value, a new key goes last. The state's
+/// dictionaries and arrays are read in place, never cloned (FIX 12260).
+fn write_dictionary_with(
+    base: Option<&Dictionary>,
+    sets: &[(&[u8], Set<'_>)],
+    out: &mut Vec<u8>,
+) -> Result<(), SealError> {
+    out.extend_from_slice(b"<< ");
+    for (key, value) in base.into_iter().flat_map(Dictionary::iter) {
+        write_name(key, out);
+        out.push(b' ');
+        match sets.iter().find(|(name, _)| *name == key.as_slice()) {
+            Some((_, set)) => write_set(set, out)?,
+            None => write_object(value, out)?,
+        }
+        out.push(b' ');
+    }
+    for (key, set) in sets {
+        if base.is_none_or(|dict| !dict.has(key)) {
+            write_name(key, out);
+            out.push(b' ');
+            write_set(set, out)?;
+            out.push(b' ');
+        }
+    }
+    out.extend_from_slice(b">>");
+    Ok(())
+}
+
+/// Writes one value [`write_dictionary_with`] sets: an appended array as
+/// its items, then the reference.
+fn write_set(set: &Set<'_>, out: &mut Vec<u8>) -> Result<(), SealError> {
+    match set {
+        Set::Value(value) => write_object(value, out),
+        Set::Appended(items, (num, generation)) => {
+            out.push(b'[');
+            for item in *items {
+                write_object(item, out)?;
+                out.push(b' ');
+            }
+            out.extend_from_slice(format!("{num} {generation} R").as_bytes());
+            out.push(b']');
+            Ok(())
+        }
+    }
 }
 
 /// A real as the same real: the shortest decimal that reads back as the
@@ -247,36 +304,44 @@ fn register_field(
     next: &mut u32,
     field_num: u32,
 ) -> Result<(), SealError> {
-    match (state.acroform, state.acroform_dict.clone()) {
+    let field = (field_num, 0);
+    match (state.acroform, state.acroform_dict.as_ref()) {
         (Some(af_id), Some(af_dict)) => {
-            let mut af = af_dict;
-            let mut fields = state.acroform_fields.clone();
-            fields.push(Object::Reference((field_num, 0)));
-            af.set(b"Fields", Object::Array(fields));
-            af.set(b"SigFlags", Object::Integer(3));
             let mut body = Vec::new();
-            write_object(&Object::Dictionary(af), &mut body)?;
+            write_dictionary_with(
+                Some(af_dict),
+                &[
+                    (b"Fields", Set::Appended(&state.acroform_fields, field)),
+                    (b"SigFlags", Set::Value(Object::Integer(3))),
+                ],
+                &mut body,
+            )?;
             objs.push((af_id.0, af_id.1, body));
         }
         (referenced, seed) => {
             let af_num = next_obj(next)?;
-            let mut af = seed.unwrap_or_default();
             // A dangling /AcroForm reference keeps no fields to preserve.
-            let mut fields = if referenced.is_some() {
-                Vec::new()
+            let fields: &[Object] = if referenced.is_some() {
+                &[]
             } else {
-                state.acroform_fields.clone()
+                &state.acroform_fields
             };
-            fields.push(Object::Reference((field_num, 0)));
-            af.set(b"Fields", Object::Array(fields));
-            af.set(b"SigFlags", Object::Integer(3));
             let mut af_body = Vec::new();
-            write_object(&Object::Dictionary(af), &mut af_body)?;
+            write_dictionary_with(
+                seed,
+                &[
+                    (b"Fields", Set::Appended(fields, field)),
+                    (b"SigFlags", Set::Value(Object::Integer(3))),
+                ],
+                &mut af_body,
+            )?;
             objs.push((af_num, 0, af_body));
-            let mut catalog = state.root_dict.clone();
-            catalog.set(b"AcroForm", Object::Reference((af_num, 0)));
             let mut body = Vec::new();
-            write_object(&Object::Dictionary(catalog), &mut body)?;
+            write_dictionary_with(
+                Some(&state.root_dict),
+                &[(b"AcroForm", Set::Value(Object::Reference((af_num, 0))))],
+                &mut body,
+            )?;
             objs.push((state.root.0, state.root.1, body));
         }
     }
@@ -323,12 +388,15 @@ pub(super) fn build_objects(
             sig_info = Some((sig_num, br_rel, lt_rel));
             // The same terminal field/widget must be reachable from the
             // page /Annots as well as the AcroForm /Fields array.
-            let mut page = state.first_page_dict.clone();
-            let mut annots = state.first_page_annots.clone();
-            annots.push(Object::Reference((field_num, 0)));
-            page.set(b"Annots", Object::Array(annots));
             let mut page_body = Vec::new();
-            write_object(&Object::Dictionary(page), &mut page_body)?;
+            write_dictionary_with(
+                Some(&state.first_page_dict),
+                &[(
+                    b"Annots",
+                    Set::Appended(&state.first_page_annots, (field_num, 0)),
+                )],
+                &mut page_body,
+            )?;
             objs.push((state.first_page.0, state.first_page.1, page_body));
             register_field(state, &mut objs, &mut next, field_num)?;
         }
@@ -358,10 +426,12 @@ pub(super) fn build_objects(
             for (num, body) in material_objects {
                 objs.push((*num, 0, body.clone()));
             }
-            let mut catalog = state.root_dict.clone();
-            catalog.set(b"DSS", Object::Reference((*dss_obj, 0)));
             let mut body = Vec::new();
-            write_object(&Object::Dictionary(catalog), &mut body)?;
+            write_dictionary_with(
+                Some(&state.root_dict),
+                &[(b"DSS", Set::Value(Object::Reference((*dss_obj, 0))))],
+                &mut body,
+            )?;
             objs.push((state.root.0, state.root.1, body));
         }
     }

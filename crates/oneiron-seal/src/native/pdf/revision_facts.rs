@@ -16,6 +16,7 @@ use super::{
 };
 use crate::api::{Counter, SealResourceLimits};
 use crate::memory::SealMemoryRefusal;
+use crate::native::held_bytes;
 use lopdf::{
     Document, ObjectId,
     xref::{XrefEntry, XrefType},
@@ -374,6 +375,15 @@ pub(crate) fn analyze(
         // Index exact raw identities and offsets ONCE. Preserve duplicate
         // counts in the facts, then reconcile each normal xref entry in
         // O(log N) rather than walking every definition for every entry.
+        // The index is held on the operation's ledger before it is built
+        // and given back when it drops, before the next revision's
+        // (FIX 12260).
+        let _raw_held = limits
+            .memory
+            .hold(held_bytes::btree::<(ObjectId, usize), usize>(
+                definitions.len(),
+            ))
+            .map_err(RevisionAnalysisError::Memory)?;
         let mut raw = BTreeMap::<(ObjectId, usize), usize>::new();
         for definition in &definitions {
             *raw.entry((definition.id, definition.byte_span.start))
@@ -393,6 +403,12 @@ pub(crate) fn analyze(
                 }
             }
         }
+        // The facts' copy of the trailer, charged before it is made, as the
+        // definitions are (FIX 12260).
+        limits
+            .memory
+            .admit::<u8>(held_bytes::dictionary(&doc.trailer))
+            .map_err(RevisionAnalysisError::Memory)?;
         revisions.push(RevisionFact {
             byte_end: end,
             xref_offset,
