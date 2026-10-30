@@ -160,4 +160,39 @@ impl Memory<'_> {
         }
         Ok(Some(TaskAskWait::Park(assignee_park(task)?)))
     }
+
+    /// The park a code run's landing or refusal on consult `task` takes in
+    /// place of a refusal, while its ConsultAssignee fact has not landed and
+    /// its body addresses this actor: the same park `tasks.wait` takes, in
+    /// one verified write, so a fact that lands meanwhile still answers it.
+    /// `None` for anything else, read without a write.
+    pub(crate) fn consult_assignee_park(
+        &self,
+        task: EntityId,
+    ) -> MemoryResult<Option<SelfDurableWait>> {
+        let waits = {
+            let txn = self
+                .vault()
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            match task_verb_body_in(self.vault(), &txn, task)? {
+                Some(body) => {
+                    body_executor(&body).is_ok_and(|executor| executor == self.actor())
+                        && waits_for_assignee_fact_in(self.vault(), &txn, task, &body)?
+                }
+                None => false,
+            }
+        };
+        if !waits {
+            return Ok(None);
+        }
+        let wait =
+            self.with_verified_actor_write_txn(|txn| self.consult_assignee_wait_in(txn, task))?;
+        Ok(match wait {
+            Some(TaskAskWait::Park(park)) => Some(park),
+            _ => None,
+        })
+    }
 }
