@@ -197,18 +197,34 @@ pub struct Anchor {
     pub version: u64,
     /// The format-typed position within that version.
     pub locator: Locator,
+    /// The same unit in the artifact's live body, when the body held the
+    /// anchor's version; `None` is a version-only anchor.
+    pub body: Option<BodyAnchor>,
 }
 
 impl Anchor {
-    /// Builds an anchor.
+    /// Builds a version-only anchor.
     #[must_use]
     pub fn new(artifact_id: EntityId, version: u64, locator: Locator) -> Self {
         Self {
             artifact_id,
             version,
             locator,
+            body: None,
         }
     }
+}
+
+/// The body-frontier anchor (ARCH-0075 section 4): where an anchored unit
+/// stands in its artifact's live body. Live edits move no version, so the
+/// thread follows the body here and lands on the version an export makes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BodyAnchor {
+    /// The live body's frontier the locator was read at.
+    pub frontier: Vec<u8>,
+    /// The unit's position in the body at that frontier.
+    pub locator: Locator,
 }
 
 /// A thread's lifecycle state.
