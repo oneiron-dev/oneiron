@@ -716,7 +716,15 @@ impl<'a> Exchange<'a> {
                     let question = declared.and_then(|_| stream_question(&request));
                     let (Some(declared), Some(question)) = (declared, question) else {
                         match live.as_ref() {
-                            Some(live) => live.refuse(request),
+                            Some(live) => match self.elicitation.as_ref() {
+                                Some(declared) => live.refuse_unless_held(
+                                    request,
+                                    declared.vault,
+                                    &declared.binding.key_ref,
+                                    &declared.binding.tool,
+                                ),
+                                None => live.refuse(request),
+                            },
                             None => zeroize_json(request),
                         }
                         continue;

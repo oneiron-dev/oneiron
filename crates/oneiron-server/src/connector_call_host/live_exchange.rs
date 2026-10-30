@@ -284,16 +284,51 @@ impl LiveSession {
     }
 
     /// Refuses one server request this client does not serve once the
+    /// call's issuer binding is read again (FIX 12166): while a hold stands
+    /// or the binding cannot be read the kept header does not go out and
+    /// the request goes unanswered. The request is wiped as it drops
+    /// either way (FIX 11861).
+    pub(super) fn refuse_unless_held(
+        &self,
+        request: Value,
+        vault: &Vault,
+        key_ref: &EntityId,
+        tool: &str,
+    ) {
+        if self.auth.is_none() {
+            self.refuse(request);
+            return;
+        }
+        match vault.connector_issuer_hold(key_ref, tool) {
+            Ok(None) => self.refuse(request),
+            Ok(Some(_)) => zeroize_json(request),
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                zeroize_json(request);
+            }
+        }
+    }
+
+    /// Refuses one server request this client does not serve once the
     /// call's issuer binding is read again (FIX 9303): while a hold stands
     /// the kept header does not go out and the request goes unanswered; the
     /// worker's next answer, cancel or end settles the hold. The request is
     /// wiped as it drops either way (FIX 11861).
     pub(super) fn refuse_unheld(&self, request: Value, receipts: &AnswerReceipts) {
-        if self.issuer_hold(receipts).is_none() {
+        if self.auth.is_none() {
             self.refuse(request);
-        } else {
-            zeroize_json(request);
+            return;
         }
+        let Some(vault) = receipts.vault.upgrade() else {
+            zeroize_json(request);
+            return;
+        };
+        self.refuse_unless_held(
+            request,
+            &vault,
+            &receipts.binding.key_ref,
+            &receipts.binding.tool,
+        );
     }
 
     /// The hold the call `receipts` names meets, its durable issuer binding
