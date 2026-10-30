@@ -15,10 +15,12 @@
 //!
 //! # Windowed, or not at all
 //!
-//! [`expand_window`] is the only expansion door and it always takes the
-//! caller's inclusive [`TimeRange`](crate::TimeRange). There is no unbounded variant to reach
-//! for: a recurrence rule without `COUNT` or `UNTIL` names infinitely many
-//! occurrences, so "expand this series" is not a question with an answer.
+//! [`expand_window`] is the expansion door and it always takes the caller's
+//! inclusive [`TimeRange`](crate::TimeRange); [`expand_window_page`] walks
+//! the same window under a deadline, a page at a time (FIX 11998). There is
+//! no unbounded variant to reach for: a recurrence rule without `COUNT` or
+//! `UNTIL` names infinitely many occurrences, so "expand this series" is not
+//! a question with an answer.
 //!
 //! # The recurrence steps a wall clock
 //!
@@ -51,8 +53,8 @@ mod expansion;
 mod keys;
 mod reseed;
 
-pub(crate) use self::expansion::expand_window_shifting_gaps;
-pub use self::expansion::{expand_master_window, expand_window};
+pub(crate) use self::expansion::expand_window_shifting_gaps_page;
+pub use self::expansion::{ExpansionPage, expand_master_window, expand_window, expand_window_page};
 pub use self::keys::{
     SeriesDtStart, SeriesExceptionKey, exception_identity, mask_master_exceptions,
 };
