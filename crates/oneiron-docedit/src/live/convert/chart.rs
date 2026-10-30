@@ -50,6 +50,83 @@ fn held_plots(was: &NodePayload) -> (Vec<(ChartKind, usize)>, BTreeMap<NodeId, u
     (runs, own)
 }
 
+/// `targets` and the plot each series is drawn in (`assign`, each series
+/// of family `resolved`) after each series `wanted` names an ordinal for
+/// is drawn in that plot of its family (FIX 10295, 9375). In each family a
+/// series names one for, its series take ordinals (the one named, else the
+/// place of its plot among the family's plots that draw a series); the
+/// lowest is drawn in the first such plot, the next in the next, and those
+/// past them each in a new plot of the family after every plot. A plot
+/// every series of which left goes. Only the order of the ordinals counts,
+/// so the export, given the settled ones, lays the plots out as the
+/// settlement did.
+pub(in crate::live) fn place_ordinals(
+    targets: &mut Vec<reshape::PlotTarget>,
+    assign: &mut [usize],
+    resolved: &[ChartKind],
+    wanted: &[Option<u32>],
+) {
+    let mut families: Vec<ChartKind> = Vec::new();
+    for (index, kind) in resolved.iter().enumerate() {
+        if wanted.get(index).copied().flatten().is_some() && !families.contains(kind) {
+            families.push(*kind);
+        }
+    }
+    if families.is_empty() {
+        return;
+    }
+    let drew: Vec<bool> = (0..targets.len()).map(|at| assign.contains(&at)).collect();
+    for kind in families {
+        let plots: Vec<usize> = (0..targets.len())
+            .filter(|&at| targets[at].kind == kind && assign.contains(&at))
+            .collect();
+        let members: Vec<usize> = (0..resolved.len())
+            .filter(|&index| resolved[index] == kind && index < assign.len())
+            .collect();
+        let ordinals: Vec<u64> = members
+            .iter()
+            .map(|&index| match wanted.get(index).copied().flatten() {
+                Some(plot) => u64::from(plot),
+                None => plots
+                    .iter()
+                    .position(|&at| at == assign[index])
+                    .map_or(0, |at| u64::try_from(at).unwrap_or(u64::MAX)),
+            })
+            .collect();
+        let mut used = ordinals.clone();
+        used.sort_unstable();
+        used.dedup();
+        let mut opened: Vec<usize> = Vec::new();
+        for (&index, ordinal) in members.iter().zip(&ordinals) {
+            let rank = used.binary_search(ordinal).unwrap_or(0);
+            assign[index] = match plots.get(rank) {
+                Some(&at) => at,
+                None => {
+                    let extra = rank - plots.len();
+                    while opened.len() <= extra {
+                        targets.push(reshape::PlotTarget { held: None, kind });
+                        opened.push(targets.len() - 1);
+                    }
+                    opened[extra]
+                }
+            };
+        }
+    }
+    let gone: Vec<usize> = (0..targets.len())
+        .filter(|&at| drew.get(at).copied().unwrap_or(false) && !assign.contains(&at))
+        .collect();
+    if gone.is_empty() {
+        return;
+    }
+    for index in assign.iter_mut() {
+        let shift = gone.iter().filter(|&&at| at < *index).count();
+        *index -= shift;
+    }
+    for &at in gone.iter().rev() {
+        targets.remove(at);
+    }
+}
+
 /// Categories as x values: their numbers when every one is a number, else
 /// 1 to n (`true`), as a chart reads text x values.
 fn x_of(categories: &[String]) -> (Vec<Option<serde_json::Number>>, bool) {
@@ -438,6 +515,32 @@ pub(in crate::live) fn settle_chart(
             resolved[index] = ChartKind::Line;
         }
         (targets, assign) = reshape::plot_plan(&plots, *family, &resolved, &own);
+    }
+    // A series asked into another plot of its family, as Plot Series On
+    // Secondary Axis moves it (FIX 10295): a held one whose plot changed
+    // while its family did not, or a new one naming its plot.
+    if let Some(NodePayload::Chart {
+        family: held_family,
+        series: held_series,
+        ..
+    }) = was
+    {
+        let moves: Vec<Option<u32>> = series
+            .iter()
+            .zip(&resolved)
+            .map(|(line, kind)| {
+                let plot = line.plot?;
+                match held_series
+                    .iter()
+                    .find(|held| held.id.is_some() && held.id == line.id)
+                {
+                    Some(held) if held.family.unwrap_or(*held_family) != *kind => None,
+                    Some(held) if held.plot.unwrap_or(0) == plot => None,
+                    _ => Some(plot),
+                }
+            })
+            .collect();
+        place_ordinals(&mut targets, &mut assign, &resolved, &moves);
     }
     if was.is_some() {
         for target in &targets {

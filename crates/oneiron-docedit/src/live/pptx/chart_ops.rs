@@ -87,6 +87,8 @@ impl ChartEdit {
                 values,
                 family: kind,
                 x,
+                x_labels,
+                plot,
                 categories: own,
                 bubble_size,
                 bubble_3d,
@@ -111,8 +113,8 @@ impl ChartEdit {
                         values: values.clone(),
                         family: *kind,
                         x: x.clone(),
-                        x_labels: None,
-                        plot: None,
+                        x_labels: x_labels.clone(),
+                        plot: *plot,
                         categories: own,
                         bubble_size: bubble_size.clone(),
                         bubble_3d: *bubble_3d,
@@ -152,11 +154,22 @@ impl ChartEdit {
                     line.plot = None;
                 }
             }
-            // X values written replace text ones (FIX 9277).
-            Self::SetSeriesX { series: id, x } => {
+            // X values written replace text ones (FIX 9277); labels written
+            // are kept (FIX 10295).
+            Self::SetSeriesX {
+                series: id,
+                x,
+                x_labels,
+            } => {
                 if let Some(line) = find(series, *id) {
                     line.x.clone_from(x);
-                    line.x_labels = None;
+                    line.x_labels.clone_from(x_labels);
+                }
+            }
+            // Settlement draws it in that plot, as the export does.
+            Self::SetSeriesPlot { series: id, plot } => {
+                if let Some(line) = find(series, *id) {
+                    line.plot = Some(*plot);
                 }
             }
             Self::SetSeriesBubbleSize {
@@ -390,6 +403,8 @@ pub(super) fn lower_chart(
                 values: line.map_or_else(Vec::new, |line| line.values.clone()),
                 family: line.and_then(|line| line.family),
                 x: line.and_then(|line| line.x.clone()),
+                x_labels: line.and_then(|line| line.x_labels.clone()),
+                plot: line.and_then(|line| line.plot),
                 categories: line.and_then(|line| line.categories.clone()),
                 bubble_size: line.and_then(|line| line.bubble_size.clone()),
                 bubble_3d: line.and_then(|line| line.bubble_3d),
@@ -448,11 +463,20 @@ pub(super) fn lower_chart(
                 series: id,
                 family: line.family,
             });
+        } else if let Some(plot) = line.plot
+            && plot != was.plot.unwrap_or(0)
+        {
+            // Another plot of its family (FIX 10295); a family change
+            // places it as settlement does.
+            edits.push(ChartEdit::SetSeriesPlot { series: id, plot });
         }
-        if was.x != line.x {
+        // Text x values written where they differ; none leaves them to the
+        // x values, as before (FIX 10295).
+        if was.x != line.x || (line.x_labels.is_some() && was.x_labels != line.x_labels) {
             edits.push(ChartEdit::SetSeriesX {
                 series: id,
                 x: line.x.clone(),
+                x_labels: line.x_labels.clone(),
             });
         }
         if was.bubble_size != line.bubble_size {
