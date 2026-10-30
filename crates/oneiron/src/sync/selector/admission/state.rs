@@ -13,6 +13,7 @@ use crate::sync::types::WindowKey;
 #[cfg(feature = "sync")]
 use super::super::edge::{
     EarlyStamps, HeldStamp, ReleasedStamps, hold_stamps, pending_births, release_born_stamps,
+    stamps_on,
 };
 use super::staged_lane;
 
@@ -126,6 +127,31 @@ impl AdmittedUpdate {
         super::super::born_with::keep_carried(vault, &self.born_with)
     }
 
+    /// After the update's import, holds under the peer that sent it, and
+    /// the `grant` it sent them under, the update's own stamps on each of
+    /// `waiting`: rows it brought whose births wait on their bodies, carriers
+    /// their window binds by reference (FIX 12118). They wait as stamps sent
+    /// ahead of their rows wait, and `release_landed_stamps` releases them
+    /// once a body's landing births the row.
+    pub(crate) fn hold_waiting_births(
+        &self,
+        vault: &Vault,
+        key: &WindowKey,
+        grant: EntityId,
+        waiting: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        match &self.lane {
+            Some(lane) if !waiting.is_empty() => hold_stamps(
+                vault,
+                key,
+                (lane, Some(grant)),
+                &stamps_on(&self.early.with_birth, waiting),
+                true,
+            ),
+            _ => Ok(()),
+        }
+    }
+
     /// After the update's import, the stamps on the rows that import birthed
     /// (`born`, [`release_born_stamps`]).
     pub(crate) fn release(
@@ -141,6 +167,21 @@ impl AdmittedUpdate {
             None => Ok(None),
         }
     }
+}
+
+/// The stamps the held lane of the federation peer `peer` keeps on `row` of
+/// `key`, a row its update brought whose body a transfer landed after that
+/// update's import, once the landing birthed it from `carrier`, the bytes the
+/// update brought (FIX 12118). `None` when none is held.
+#[cfg(feature = "sync")]
+pub(in crate::sync) fn release_landed_stamps(
+    vault: &Vault,
+    key: &WindowKey,
+    peer: EntityId,
+    (row, carrier): (EntityId, Vec<u8>),
+) -> Result<Option<ReleasedStamps>> {
+    let lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
+    release_born_stamps(vault, key, &lane, &[(row, carrier)], &BTreeSet::from([row]), &[])
 }
 
 /// The rows a staged artifact's admitted bytes bring that this vault lacks
