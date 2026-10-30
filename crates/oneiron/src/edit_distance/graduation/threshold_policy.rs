@@ -237,6 +237,31 @@ pub(crate) fn graduation_policy_in_txn(
         .row)
 }
 
+/// The threshold a runtime row sets for `scope`: [`graduation_policy_in_txn`]'s
+/// ranking over the owner's rows and MS-06's per-scope streak dial alone, so
+/// `None` when only the compiled table governs it. For a caller whose offers
+/// keep their own criteria until a written row says otherwise.
+pub(crate) fn runtime_graduation_policy_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    scope: &RampScope,
+) -> Result<Option<ThresholdRow>> {
+    let mut best: Option<Ranked> = None;
+    for row in stored_threshold_rows_in_txn(store, txn)? {
+        consider(&mut best, row, false, scope);
+    }
+    if let Some(streak) = crate::consent_graduation::ramp_floor_override_in_txn(store, txn, scope)?
+    {
+        consider(
+            &mut best,
+            ThresholdRow::for_dialed_streak(scope, streak)?,
+            true,
+            scope,
+        );
+    }
+    Ok(best.map(|ranked| ranked.row))
+}
+
 /// A matching row with the two keys that rank it against the others.
 struct Ranked {
     specificity: u8,

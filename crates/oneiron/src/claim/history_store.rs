@@ -57,7 +57,7 @@ pub(crate) fn machine_history_claim(
     record.source = Some(ClaimSource::Observed);
     record.scope = birth.scope.clone();
     record.world = birth.world;
-    record.rel = birth.rel;
+    record.rel = birth.rel.clone();
     record.scope_facet = birth.scope_facet;
     record.scope_project = birth.scope_project;
     Ok(record)
@@ -84,8 +84,9 @@ pub(crate) fn machine_history_scope_bytes(body: &ClaimBody) -> Result<Vec<u8>> {
             .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
         Value::Binary(body.scope_facet.as_bytes().to_vec()),
         Value::Binary(body.scope_project.as_bytes().to_vec()),
-        body.rel
-            .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
+        Value::Binary(crate::claim::relationship_scope_transcript(
+            body.rel.as_ref(),
+        )),
         body.scope.clone().unwrap_or(Value::Nil),
     ]);
     let mut out = Vec::new();

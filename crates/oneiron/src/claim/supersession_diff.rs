@@ -89,6 +89,49 @@ pub(crate) fn store_in_txn(
     Ok(())
 }
 
+/// [`capture_in_txn`] for a writer that holds the store and not the vault:
+/// the batch apply's commitment lapse (FIX 9726).
+pub(crate) fn capture_in_store_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    old: EntityId,
+    new: EntityId,
+) -> Result<RevisionPair> {
+    let before_raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &old)?
+        .ok_or(Error::EntityNotFound)?;
+    let after_raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &new)?
+        .ok_or(Error::EntityNotFound)?;
+    let before =
+        crate::vault::entity_revision::revision_for_mode_in_txn(store, txn, &old, ReadMode::Live)?
+            .ok_or(Error::CorruptedIndex("supersession before revision"))?;
+    let after =
+        crate::vault::entity_revision::revision_for_mode_in_txn(store, txn, &new, ReadMode::Live)?
+            .ok_or(Error::CorruptedIndex("supersession after revision"))?;
+    Ok(RevisionPair {
+        before,
+        after,
+        before_hash: *blake3::hash(&before_raw).as_bytes(),
+        after_hash: *blake3::hash(&after_raw).as_bytes(),
+    })
+}
+
+/// [`store_in_txn`] for a writer that holds the store and not the vault.
+pub(crate) fn store_in_store_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    old: EntityId,
+    new: EntityId,
+    pair: RevisionPair,
+) -> Result<()> {
+    if PAIRS.contains(store, txn, &(old, new))? {
+        return Err(Error::InvariantViolation(
+            "supersession revision pair already recorded",
+        ));
+    }
+    PAIRS.put(store, txn, &(old, new), &pair)?;
+    Ok(())
+}
+
 pub(crate) fn load_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

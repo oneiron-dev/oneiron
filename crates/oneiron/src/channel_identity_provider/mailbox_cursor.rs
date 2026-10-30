@@ -11,6 +11,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, LegacyJson, SideTable};
+use crate::store::Store;
 
 const MAILBOX_CURSORS: SideTable<HexId, MailboxCursor, LegacyJson> =
     SideTable::new(&side_table::GMAIL_MAILBOX_CURSOR);
@@ -150,4 +151,19 @@ pub(super) fn advance_mailbox_cursor(
         MAILBOX_CURSORS.put(&vault.store, txn, &key, next)?;
         Ok(())
     })
+}
+
+/// Drops `identity_id`'s mailbox progress, in the transaction that deletes
+/// the identity: a deleted identity leaves no cursor behind.
+///
+/// # Errors
+///
+/// Store failure, which fails the deletion with it.
+pub(crate) fn drop_mailbox_cursor_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    identity_id: &EntityId,
+) -> Result<()> {
+    MAILBOX_CURSORS.delete(store, txn, &HexId(*identity_id))?;
+    Ok(())
 }

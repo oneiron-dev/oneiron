@@ -55,7 +55,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer_thing/ports.rs` | src | s | 2 crate-vis | — | A thing agent's two lent ports (FIX 7508, FIX 7733): the adapter its host registers for exactly… |
 | `src/ai_host/dreamer_thing/profile.rs` | src | s | 5 crate-vis | — | The served agent's own generation and the session its parent waits on (FIX 7508, 11449) |
 | `src/ai_host/eval_authoring.rs` | src | s | 1 crate-vis | — | The Coach's eval authoring (ARCH-0053 "Eval authoring", OF-578): each night it keeps each seat's test set… |
-| `src/ai_host/eval_measurement.rs` | src | s | 2 crate-vis | — | The Coach's paired eval measurement (FIX 574, OF-578) |
+| `src/ai_host/eval_measurement.rs` | src | m | 3 crate-vis | — | The Coach's paired eval measurement (FIX 574, OF-578) |
+| `src/ai_host/eval_measurement/helper.rs` | src | s | 1 crate-vis | — | The helper gate's measurement and verdict (FIX 10677, 12069, 12093): each callable helper awaiting its gate… |
 | `src/ai_host/eval_measurement/legs.rs` | src | m | 7 crate-vis | — | The legs' exact-model calls: each arm on its own one-model ladder, as a call of the seat's role, under one… |
 | `src/ai_host/eval_measurement/offer.rs` | src | s | 1 crate-vis | — | A training offer's measured card: the paired measurement of exactly the offer's incumbent and stock… |
 | `src/ai_host/eval_measurement/score.rs` | src | s | 2 crate-vis | — | A leg's blind score: the replay judge's `response_score` question on the task, the answer, the case's… |
@@ -147,13 +148,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/blob_artifacts.rs` | src | L | 25 crate-vis | — | The artifact family's public HTTP surface (ARCH-0078, OF-511): one contract over every blob kind |
 | `src/api/blob_artifacts/read_admission.rs` | src | s | 2 crate-vis | — | The lanes the artifact family's raw reads admit rows through (FIX 7645): a credential's record caveats… |
 | `src/api/body_codec.rs` | src | s | 2 crate-vis | — | Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604) |
-| `src/api/body_spool.rs` | src | s | 17 crate-vis | — | An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5) |
+| `src/api/body_spool.rs` | src | s | 18 crate-vis | — | An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5) |
 | `src/api/body_spool/json.rs` | src | m | 11 crate-vis | — | One JSON object decoded as it is read, its bulk string members streamed (FIX 7917, Rule 5) |
 | `src/api/body_spool/owner_json.rs` | src | s | 2 crate-vis | — | Every `/v1/owner` JSON route's body (FIX 8195, Rule 5) |
-| `src/api/booking.rs` | src | m | 18 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
-| `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
+| `src/api/booking.rs` | src | m | 19 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
+| `src/api/booking/admission.rs` | src | m | 3 crate-vis | — | — |
 | `src/api/booking/client_address_tests.rs` | test | m | — | — | Booking admission charges the client the connection proves (C7): its own peer, or the client a configured… |
-| `src/api/booking/constants.rs` | src | s | 17 crate-vis | — | — |
+| `src/api/booking/constants.rs` | src | s | 18 crate-vis | — | — |
+| `src/api/booking/email_evidence.rs` | src | m | 4 crate-vis | — | The evidence the owner's booking email checks read (FIX 7862, 8138) |
 | `src/api/booking/execute.rs` | src | s | 2 crate-vis | — | The shared executor (ONE-1819): the one door from a machine-readable booking request to the merged solver… |
 | `src/api/booking/free_text.rs` | src | s | 3 crate-vis | — | A booking page's free-text constraint (ONE-1816), parsed on the cheap seat… |
 | `src/api/booking/front.rs` | src | m | 3 crate-vis | — | ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front |
@@ -168,15 +170,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/public_fixture.rs` | src | m | 35 crate-vis | — | Shared fixtures for tests that enter the real public router |
 | `src/api/booking/public_lifecycle_tests.rs` | test | m | — | — | — |
 | `src/api/booking/public_tests.rs` | test | m | — | — | — |
+| `src/api/booking/quarantine_restore.rs` | src | s | 2 crate-vis | — | `POST /v1/owner/booking/quarantine/{claim_ref}/restore`: the owner's restore of a quarantined confirm (FIX… |
 | `src/api/booking/socket_gate.rs` | src | s | 1 crate-vis | — | The serve gate of a stale owner sign-in's held booking socket (FIX 5935) |
 | `src/api/booking/subject.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking/transport.rs` | src | s | 7 crate-vis | — | — |
 | `src/api/booking/turn.rs` | src | s | 3 crate-vis | — | Rule five at the owner's booking windows: authenticated work past one waits for it to open and is never… |
 | `src/api/booking/turn_tests.rs` | test | s | 1 crate-vis | — | Rule five at the owner's booking windows: an authenticated caller past one waits for it to open and is… |
-| `src/api/booking/validate.rs` | src | s | 2 crate-vis | — | — |
+| `src/api/booking/validate.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking_anti_abuse/cache.rs` | src | s | 2 crate-vis | — | Slot-list response cache helpers |
-| `src/api/booking_anti_abuse/guards.rs` | src | m | 8 crate-vis | — | Slot-list/hold/book/amend anti-abuse enforcement guards |
-| `src/api/booking_anti_abuse/mod.rs` | src | s | 2 crate-vis | — | ONE-1817 [BK-06] booking anti-abuse route guards |
+| `src/api/booking_anti_abuse/guards.rs` | src | m | 9 crate-vis | — | Slot-list/hold/book/amend anti-abuse enforcement guards |
+| `src/api/booking_anti_abuse/mod.rs` | src | s | 3 crate-vis | — | ONE-1817 [BK-06] booking anti-abuse route guards |
 | `src/api/booking_anti_abuse/support.rs` | src | s | 5 crate-vis | — | Time, error, JSON, and logging helpers for booking anti-abuse guards |
 | `src/api/booking_anti_abuse/tests_guards.rs` | src | s | 1 crate-vis | — | Guard behavior tests for booking anti-abuse enforcement |
 | `src/api/booking_anti_abuse/tests_quarantine.rs` | src | s | 1 crate-vis | — | Quarantine-behavior tests for booking anti-abuse enforcement |
@@ -566,6 +569,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi/owner_paths.rs` | src | s | 2 crate-vis | — | The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input… |
 | `src/api/openapi/owner_rest_paths.rs` | src | m | 1 crate-vis | — | The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289, FIX 11103, FIX 11611): each… |
 | `src/api/openapi/owner_rest_paths/routes_backups_to_signing_keys.rs` | src | s | 1 crate-vis | — | The REST shapes of the row-less `/v1/owner` routes from `/backups` through `/owner-signing-keys` that parts… |
+| `src/api/openapi/owner_rest_paths/routes_coach.rs` | src | s | 1 crate-vis | — | The REST shape of `PUT /v1/owner/coach/training-checkpoints` (FIX 12086): a raw byte body, not JSON, with… |
 | `src/api/openapi/owner_rest_paths/routes_packs.rs` | src | s | 1 crate-vis | — | The REST shapes of the row-less `/v1/owner` routes under `/packs` (FIX 11611 part D): one [`super::bind`]… |
 | `src/api/openapi/owner_rest_paths/routes_pads_to_runs.rs` | src | s | 1 crate-vis | — | The REST shapes of the row-less `/v1/owner` routes from `/pads` through `/runs` (FIX 11611 part D): one… |
 | `src/api/openapi/owner_rest_paths/routes_secret_scan_to_skills.rs` | src | s | 1 crate-vis | — | The REST shapes of the row-less `/v1/owner` routes from `/secret-scan` through `/skills/judge` (FIX 11611… |
@@ -627,6 +631,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/pack_preview_routes.rs` | src | s | 3 crate-vis | — | `POST /v1/owner/packs/preview` (FIX 5493): the owner's look at a pack folder before `POST /v1/owner/packs`… |
 | `src/api/owner_routes/pack_routes.rs` | src | m | 3 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
 | `src/api/owner_routes/pack_routes/line_chats.rs` | src | s | 1 crate-vis | — | `/v1/owner/packs/line/chats`: the LINE groups and rooms the served bot was seen in, as optional offers to… |
+| `src/api/owner_routes/pack_routes/native_mail_identities.rs` | src | s | 1 crate-vis | — | `/v1/owner/packs/native_mail/identities`: the owner provisions an agent's native mail identity end to end… |
 | `src/api/owner_routes/pack_routes/schema.rs` | src | s | 31 crate-vis | — | The OpenAPI schemas of the row-less `/v1/owner/packs*` writes (FIX 11611 part D): `POST /v1/owner/packs`… |
 | `src/api/owner_routes/pack_routes/setup_routes.rs` | src | m | 11 crate-vis | — | `/v1/owner/packs/setup` and `/v1/owner/packs/slack`: the owner's guided setup of one pack (OF-378), and the… |
 | `src/api/owner_routes/pack_routes/skill_routes.rs` | src | m | 16 crate-vis | — | `/v1/owner/packs/skills`: hub skills import, restore, sync, take their permission and held-out activation… |
@@ -634,9 +639,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/pad_routes.rs` | src | s | 2 crate-vis | — | `/v1/owner/pads/read`: the owner reads an agent's sealed scratchpads, stating a reason the agent sees in its… |
 | `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
 | `src/api/owner_routes/proactivity_routes.rs` | src | L | 2 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
-| `src/api/owner_routes/proactivity_routes/schema.rs` | src | s | 13 crate-vis | — | The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611), `POST… |
+| `src/api/owner_routes/proactivity_routes/schema.rs` | src | s | 16 crate-vis | — | The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611), `POST… |
 | `src/api/owner_routes/proactivity_routes/table.rs` | src | s | 1 crate-vis | — | The `/v1/owner` routes [`super`] serves, one row per method and path: the router and the OpenAPI document… |
-| `src/api/owner_routes/proactivity_routes/training_runs.rs` | src | s | 3 crate-vis | — | `/v1/owner/coach/training-offers/{prepare,authorize,training}` (OF-577): the owner's setup of a Train… |
+| `src/api/owner_routes/proactivity_routes/training_runs.rs` | src | m | 4 crate-vis | — | `/v1/owner/coach/training-offers/{prepare,authorize,training}` (OF-577): the owner's setup of a Train… |
+| `src/api/owner_routes/proactivity_routes/training_runs/checkpoints.rs` | src | s | 3 crate-vis | — | `PUT /v1/owner/coach/training-checkpoints` (FIX 12086): the owner's starting checkpoint into custody… |
 | `src/api/owner_routes/recovery_kit_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173) |
 | `src/api/owner_routes/recovery_kit_target_routes.rs` | src | m | 8 crate-vis | — | The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the material a root change or a late… |
 | `src/api/owner_routes/recovery_kit_target_routes/pad_access.rs` | src | m | 3 crate-vis | — | A late joiner's pad access by the owner's kit, and what the sealed bundle upkeep last moved (FIX 4564, 4953… |
@@ -784,15 +790,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-vm-outbox.rs` | src | s | — | — | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
-| `src/builtin_host.rs` | src | s | 5 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
-| `src/builtin_host/checks.rs` | src | s | 2 crate-vis | — | The served host's connection checks: the engine's provider checks, plus two that need this host's own config |
-| `src/builtin_host/handles.rs` | src | s | 10 crate-vis | — | One handle per served built-in channel: its adapter, the provider account its check bound, and the… |
+| `src/builtin_host.rs` | src | s | 6 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
+| `src/builtin_host/checks.rs` | src | s | 3 crate-vis | — | The served host's connection checks: the engine's provider checks, plus two that need this host's own config |
+| `src/builtin_host/handles.rs` | src | s | 12 crate-vis | — | One handle per served built-in channel: its adapter, the provider account its check bound, and the… |
+| `src/builtin_host/native_mail.rs` | src | s | 5 crate-vis | — | The native mail pack's served inboxes (OF-519, FIX 2096): while the pack is Active, its check Verified and… |
 | `src/builtin_host/slack_app.rs` | src | m | 11 crate-vis | — | The served Slack app and the provider URLs of the built-in channels (OF-519): the manifest the owner creates… |
 | `src/builtin_host/webhooks.rs` | src | m | 5 crate-vis | — | The provider webhooks of the served built-in channels (OF-519) |
 | `src/byte_line.rs` | src | m | 12 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
-| `src/calendar_host.rs` | src | s | 8 crate-vis | — | The calendar host's real CalDAV wire and iMIP submission transport |
+| `src/calendar_host.rs` | src | s | 10 crate-vis | — | The calendar host's real CalDAV wire and iMIP submission transport |
 | `src/calendar_host/caldav.rs` | src | m | 2 crate-vis | — | Real CalDAV discovery, sync-collection and conditional resource writes |
+| `src/calendar_host/feed_poll.rs` | src | s | 1 crate-vis | — | The host's ICS feed poll worker (FIX 7846): it claims each due `calendar.ics.poll` row, polls the feed the… |
 | `src/calendar_host/ics.rs` | src | s | 2 crate-vis | — | Conditional ICS GET at the secret-custody door |
+| `src/calendar_host/transcript_drain.rs` | src | s | 1 crate-vis | — | The host's drain of retained transcript uploads (FIX 9654): an upload that met its caller's open local… |
 | `src/calendar_host/xml.rs` | src | s | 8 crate-vis | — | Namespace-aware DAV multistatus decoding |
 | `src/campaign_enrollment.rs` | src | m | 2 crate-vis | — | Campaign enrollment from saved queries (ARCH-0059, decide-host 1193) |
 | `src/cli.rs` | src | L | 20 struct · 11 enum · 3 fn · 18 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DeviceCommand, DeviceEnrolArgs, DreamerCommand +23 | — |
@@ -887,6 +896,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/backup.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | BackupConfig, BackupConfigOverride | The `[backup]` section: where local backups go, whether `serve` takes them on its own, how often, and how… |
 | `src/config/browser.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | BrowserConfig | `[browser]`: the guest a code run's `self.browser.*` verbs drive |
 | `src/config/browser/readiness.rs` | src | s | 5 crate-vis | — | The server's browser readiness (FIX 7670): one value, seeded at start from the `[browser]` section, its… |
+| `src/config/channel_endpoints.rs` | src | s | 1 struct · 2 crate-vis | ChannelEndpointsConfig | `[channel_endpoints]`: where the served sinks reach each provider's API (FIX 4435) |
 | `src/config/connectors.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ConnectorHostConfig, ConnectorTransport | `[connectors.<name>]`: where this host installed each catalog connector's transport (ONE-2510) |
 | `src/config/desktop.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | DesktopConfig | `[desktop]`: the guest a code run's `self.desktop.*` verbs drive |
 | `src/config/device_sync.rs` | src | s | 1 struct · 6 crate-vis | DeviceSyncConfig | `[device_sync]`: the home this machine keeps its vault in sync with |
@@ -911,7 +921,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/merge/sections.rs` | src | m | 3 fn · 2 crate-vis | — | Environment lookup and application of layered serve sections |
 | `src/config/merge/validation.rs` | src | s | 3 crate-vis | — | Schema-key discovery and validation of resolved serve settings |
 | `src/config/merge_queue.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 const · 2 crate-vis | CheckerBackend, CheckerNetwork, MergeQueueCheckerConfig | `[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868) |
-| `src/config/mod.rs` | src | s | 15 mod · 27 re-export · 5 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 15 mod · 28 re-export · 5 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/broker.rs` | src | s | 2 crate-vis | — | `[models.broker]` as the file writes it, and its check into the [`BrokerConfig`] this server runs its… |
 | `src/config/models/browser_planner.rs` | src | s | 1 fn · 2 const | — | `[models.roles.browser_planner]`: the mid planner a browser subgoal's next code-mode step runs on (CUA E5… |
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
@@ -929,7 +939,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/training.rs` | src | s | 2 struct · 1 fn · 1 const · 2 crate-vis | TrainingConnectorSettings, TrainingSettings | `[models.training]`: the trainer connectors this host dispatches an owner-authorized training run through… |
 | `src/config/models/voice.rs` | src | s | 1 struct · 3 crate-vis | VoiceSettings | `[models.voice]`: the server's own voice loop (OF-410) |
 | `src/config/models/workers.rs` | src | m | 5 struct · 1 enum · 2 crate-vis | ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope | `[models.workers.<id>]`: the model workers this server supervises or probes (FIX 8315, DESIGN-V2 R2) |
-| `src/config/native_mail.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | NativeMailConfig, NativeMailMode | `[native_mail]`: the host's own mail server, a Stalwart instance serving one domain the owner controls… |
+| `src/config/native_mail.rs` | src | s | 1 struct · 1 enum · 3 crate-vis | NativeMailConfig, NativeMailMode | `[native_mail]`: the host's own mail server, a Stalwart instance serving one domain the owner controls… |
 | `src/config/oneironer.rs` | src | m | 4 struct · 3 enum · 9 fn · 1 re-export · 2 crate-vis | OneironerArgs, OneironerBackbone, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider, OneironerTier | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table |
 | `src/config/oneironer/runtime.rs` | src | s | 1 enum · 1 fn | OneironerRuntime | The runtime setting a local tagger's workers are chosen by (FIX 6755, Engine call 4) |
 | `src/config/page_seal.rs` | src | s | 1 crate-vis | — | A sealed vault's page seal from this device's keystore (moved out of `server_config` whole) |
@@ -1144,7 +1154,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/wire.rs` | src | m | 15 crate-vis | — | Version-8 app envelopes |
 | `src/logging.rs` | src | s | 1 re-export · 4 crate-vis | — | What the binaries write to their log sinks, and the panic hook |
 | `src/logging/tests.rs` | test | s | 4 crate-vis | — | — |
-| `src/machine.rs` | src | m | 27 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
+| `src/machine.rs` | src | m | 28 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
 | `src/main.rs` | src | s | — | — | — |
 | `src/managed/args.rs` | src | m | 1 struct · 2 enum · 1 const · 1 re-export · 2 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/args/policy.rs` | src | m | 1 crate-vis | — | The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every… |
@@ -1330,7 +1340,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/media/voice_reference.rs` | src | s | 5 crate-vis | — | Every reference upload re-reads the bank (FIX 9517) |
 | `src/models/mod.rs` | src | m | 2 struct · 1 fn · 15 re-export · 17 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/native_exl3/buffer.rs` | src | s | 13 crate-vis | — | A native call's regions |
-| `src/models/native_exl3/mod.rs` | src | m | 9 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
+| `src/models/native_exl3/mod.rs` | src | L | 9 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
 | `src/models/native_exl3/session_ops.rs` | src | s | 5 crate-vis | — | The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection… |
 | `src/models/native_exl3/transport.rs` | src | m | 19 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
 | `src/models/native_exl3/updates.rs` | src | s | 4 crate-vis | — | In-flight native schedule updates for one device |
@@ -1364,7 +1374,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/voice.rs` | src | s | 2 fn | — | The voice cascade's routes on the media seats (OF-410) |
 | `src/models/voxcpm2_speech.rs` | src | m | 1 crate-vis | — | The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on… |
 | `src/models/walk.rs` | src | m | 19 crate-vis | — | What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the… |
-| `src/models/worker_host.rs` | src | m | 25 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
+| `src/models/worker_host.rs` | src | m | 26 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
 | `src/models/worker_host/bundle.rs` | src | s | 8 crate-vis | — | The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the… |
 | `src/models/worker_host/install.rs` | src | m | 12 crate-vis | — | A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written… |
 | `src/models/worker_host/launch_manifest.rs` | src | s | 8 crate-vis | — | The supervisor's private per-launch manifest (DESIGN-V2 R2): one file per launch binding the bytes the… |
