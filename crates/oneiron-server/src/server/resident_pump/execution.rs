@@ -33,6 +33,22 @@ pub(super) fn run_bound(
     // The run is the attempt's own: a retry is a fresh attempt, and so a
     // fresh run.
     let run_id = EntityId::from_bytes(*status.attempt.id.as_bytes()).map_err(text)?;
+    // FIX 7020: the attempt owner declares every input producer. A failed
+    // declaration is capture-only: later undeclared reports keep the set
+    // unknown, and the run goes on (Engine 03:58 for parked L09).
+    if let Err(error) = vault.declare_attempt_read_producers(
+        status.attempt.id,
+        &[
+            ReadSetProducer::TOOL_ANSWERS,
+            ReadSetProducer::SKILL_PACK,
+            ReadSetProducer::ACTOR_CLAIM,
+            ReadSetProducer::CODE_RUN_TASK_EXPOSURE,
+            ReadSetProducer::CODE_RUN_STEP_INPUT,
+            ReadSetProducer::CODE_RUN_HOST_TASK,
+        ],
+    ) {
+        tracing::warn!(kind = ?error.kind(), "a resident run's input producers were not declared");
+    }
     // One door for the whole run, so its browser lives as long as the run.
     let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let template = provider
@@ -282,15 +298,9 @@ pub(super) fn run_bound(
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
         let outcome = outcome?;
-        // The rows its tool answers were served from, each time the run
-        // stops (FIX 7017). Capture only: a set not recorded stays unknown,
-        // and the run goes on.
-        let rows = outcome.replay_record.agent_verb_rows();
-        let id = status.attempt.id;
-        if let Err(error) = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, rows) {
-            tracing::warn!(kind = ?error.kind(), "a resident run's tool answer rows were not recorded");
-            let _ = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, None);
-        }
+        // Every input producer reports at each stop. Any unknown constituent
+        // keeps the whole set unknown, and the run goes on (FIX 7020).
+        record_resident_read_sets(vault, &status.attempt, &outcome, &exposures);
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
@@ -308,6 +318,52 @@ pub(super) fn run_bound(
             _ => return Ok(BoundRun::Agent(outcome)),
         }
     }
+}
+
+/// Records the resident attempt's complete input witnesses, or None for each
+/// constituent that has none. This is capture only: a failed report marks the
+/// producer unknown and never stops the run (FIX 7020).
+fn record_resident_read_sets(
+    vault: &Vault,
+    attempt: &AttemptRecord,
+    outcome: &EngineExecutorOutcome,
+    exposures: &[TaskExposure],
+) {
+    let record = |producer, rows| {
+        if let Err(error) = vault.record_attempt_sources(attempt.id, producer, rows) {
+            tracing::warn!(
+                producer = producer.as_str(),
+                kind = ?error.kind(),
+                "a resident run's input rows were not recorded"
+            );
+            let _ = vault.record_attempt_sources(attempt.id, producer, None);
+        }
+    };
+    // The load doors report every pack or craft row they read. These empty
+    // reports also close both producers when no such load ran; reports union,
+    // so they never hide a door's rows (the workflow-step precedent).
+    record(ReadSetProducer::SKILL_PACK, Some(Vec::new()));
+    record(ReadSetProducer::ACTOR_CLAIM, Some(Vec::new()));
+    let current_wait = match &outcome.status {
+        EngineExecutorStatus::Waiting(wait) => Some(wait.wait_id),
+        _ => None,
+    };
+    record(
+        ReadSetProducer::TOOL_ANSWERS,
+        oneiron::code_run::resident_tool_answer_rows(&outcome.replay_record, current_wait),
+    );
+    record(
+        ReadSetProducer::CODE_RUN_TASK_EXPOSURE,
+        Some(exposures.iter().map(|exposure| exposure.skill).collect()),
+    );
+    // FIX 7104 lands the complete model-step input set; until then no step
+    // input witness is invented from request digests or TURN ids.
+    record(ReadSetProducer::CODE_RUN_STEP_INPUT, None);
+    // Engine 03:58 (CALLS `FIX 7020 host-built task source`): claimed.task
+    // plus executor_config is host-built, not source-free. Witnessed skill
+    // additions do not prove the host text itself. A future witnessed task
+    // carrier must also cover before-seat Handoff reads and 6999 views/results.
+    record(ReadSetProducer::CODE_RUN_HOST_TASK, None);
 }
 
 /// The exposure a source run's [`TaskExposure::append`] left at the end of
